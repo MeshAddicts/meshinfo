@@ -1,3 +1,7 @@
+{
+  debug
+}
+
 meshinfo.airframes.io {
   root * /html
   tls kevin@airframes.io
