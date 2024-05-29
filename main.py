@@ -53,7 +53,7 @@ def connect_mqtt(broker, port, client_id, username, password):
             mqtt_connect_time = datetime.datetime.now()
             print("Connected to MQTT broker at %s:%d" % (broker, port))
         else:
-            print("Failed to connect, return code %d\n" % rc)
+            print("Failed to connect, error: %s\n" % rc)
 
     client = mqtt_client.Client(mqtt_client.CallbackAPIVersion.VERSION2)
     client.on_connect = on_connect
