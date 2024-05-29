@@ -22,7 +22,7 @@
         </tr>
         {% for message in chat['channels']['0']['messages'] %}
         <tr>
-            <td>{{ datetime.fromtimestamp(message.timestamp) }}</td>
+            <td>{{ datetime.fromtimestamp(message.timestamp).astimezone() }}</td>
             <td>
               <span title="{{ message.from + " / " + nodes[message.from].longname if message.from in nodes else (message.from + ' / Unknown') }}">
                 {{ nodes[message.from].shortname if message.from in nodes else 'UNK' }}
