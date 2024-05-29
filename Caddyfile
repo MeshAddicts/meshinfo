@@ -1,4 +1,7 @@
 meshinfo.airframes.io {
   root * /html
   tls kevin@airframes.io
+  log {
+    output file /var/log/caddy.log
+  }
 }
