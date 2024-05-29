@@ -1,6 +1,8 @@
 # Use the official Python slim image as the base
 FROM python:3.10-slim
 
+LABEL org.opencontainers.image.source https://github.com/kevinelliott/meshinfo
+
 # Create a user for the container
 RUN mkdir /app
 RUN adduser --disabled-password --gecos '' appuser && chown -R appuser /app
