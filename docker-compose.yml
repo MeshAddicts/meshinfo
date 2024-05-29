@@ -29,12 +29,14 @@ services:
     restart: always
 
   meshinfo:
-    image: ghcr.io/kevinelliott/meshinfo:0.0.14
+    image: ghcr.io/kevinelliott/meshinfo:0.0.15
     volumes:
       - ./output:/app/output
     environment:
       - MQTT_HOST=mosquitto
       - MQTT_PORT=1883
+      - MQTT_USERNAME=meshinfo
+      - MQTT_PASSWORD=m3sht4st1c
     restart: always
     depends_on:
       - caddy
