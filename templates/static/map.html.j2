@@ -11,7 +11,7 @@
   <p>
     Map of the mesh as seen by <b>KE-R</b> (!4355f528).
   </p>
-  <p>Last updated: {{ timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+  <p>Last updated: {{ timestamp.astimezone().strftime('%Y-%m-%d %H:%M:%S %z') }}</p>
 
   <div id="map" class="map"></div>
   <div id="popup" class="ol-popup">

@@ -7,7 +7,7 @@
     <p>
       Telemetry as seen by <b>KE-R</b> (!4355f528).
     </p>
-    <p>Last updated: {{ timestamp.astimezone().isoformat() }}</p>
+    <p>Last updated: {{ timestamp.astimezone().strftime('%Y-%m-%d %H:%M:%S %z') }}</p>
     <table border=1 cellpadding=4>
       <tr>
         <td>Timestamp</td>

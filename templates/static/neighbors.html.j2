@@ -8,7 +8,7 @@
       There are <b>{{ active_nodes_with_neighbors|count }}</b> active nodes with neighbors
       that have been heard by the mesh by <b>KE-R</b> (!4355f528).
     </p>
-    <p>Last updated: {{ timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+    <p>Last updated: {{ timestamp.astimezone().strftime('%Y-%m-%d %H:%M:%S %z') }}</p>
     <table border=1 cellspacing=2 cellpadding=4 width=100%>
         <tr bgcolor=lightgray>
             <th>ID</th>

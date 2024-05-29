@@ -8,7 +8,7 @@
     All messages from the mesh as seen by <b>KE-R</b> (!4355f528). Only the messages received
     since this server was last restarted are shown.
   </p>
-  <p>Last updated: {{ timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+  <p>Last updated: {{ timestamp.astimezone().strftime('%Y-%m-%d %H:%M:%S %z') }}</p>
 
   <table border=1 cellpadding=4>
     <tr>
