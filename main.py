@@ -93,6 +93,8 @@ def subscribe(client, topic):
                 handle_telemetry(client, userdata, j)
             if j['type'] == "text":
                 handle_text(client, userdata, j)
+            if j['type'] == "traceroute":
+                handle_traceroute(client, userdata, j)
             prune_expired_nodes()
         except Exception as e:
             print(e)
@@ -226,6 +228,22 @@ def handle_text(client, userdata, msg):
         'rssi': msg['rssi'] if 'rssi' in msg else None,
         'snr': msg['snr'] if 'snr' in msg else None,
     })
+    save()
+
+def handle_traceroute(client, userdata, msg):
+    global traceroutes
+    global traceroutes_by_node
+
+    id = '!' + f'{msg["from"]:x}'
+    to = '!' + f'{msg["to"]:x}'
+    msg['from'] = id
+    msg['to'] = to
+    msg['route'] = msg['payload']['route']
+    if id in traceroutes_by_node:
+        traceroutes_by_node[id].insert(0, msg)
+    else:
+        traceroutes_by_node[id] = [msg]
+    traceroutes.insert(0, msg)
     save()
 
 def load_nodes_from_file():
@@ -402,11 +420,6 @@ def render_static_html_files():
         f.write(rendered_html)
 
     # traceroutes.html
-    traceroutes = [
-        { "channel": 0, "from": 1129706792, "hops_away": 0, "id": 892991172, "route": [ "Mesh Wisblock", "KevinE Router" ], "sender": "!4355f528", "timestamp": 1717002093, "to": 2557740028, "type": "traceroute" },
-        { "channel": 0, "from": 994481224, "hops_away": 0, "id": 2131697104, "route": [ "Unknown", "RIO-1-0" ], "rssi": -106, "sender": "!4355f528", "snr": -4.75, "timestamp": 1717000218, "to": 2988739336, "type": "traceroute" },
-        { "channel": 0, "from": 2767068027, "hops_away": 1, "id": 2029873154, "route": [ "Electric Unucycle mobile, N6OIM/3", "N6OIM-RV-Solar", "KevinE Actual 1", "BLUFFS WIS 2"], "rssi": -53, "sender": "!4355f528", "snr": 5.5, "timestamp": 1716976264, "to": 3812346112, "type": "traceroute" },
-    ]
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/traceroutes.html.j2')
     rendered_html = template.render(nodes=nodes, traceroutes=traceroutes, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
@@ -417,6 +430,7 @@ def save():
     global nodes
     global chat
     global config
+    global traceroutes
 
     start = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
     save_nodes_to_file()
@@ -432,6 +446,7 @@ def save_nodes_to_file():
     save_chat_to_file(chat, "json", f"{config['paths']['data']}/chat.json")
     save_to_json_file(nodes, f"{config['paths']['data']}/nodes.json")
     save_to_json_file(telemetry, f"{config['paths']['data']}/telemetry.json")
+    save_to_json_file(traceroutes, f"{config['paths']['data']}/traceroutes.json")
 
 def save_node_infos_to_file(node_infos, type,path, config=config):
     if type == "json":
@@ -450,6 +465,8 @@ def load():
     global nodes
     global telemetry
     global telemetry_by_node
+    global traceroutes
+    global traceroutes_by_node
 
     try:
       nodes = load_nodes_from_file()
@@ -489,6 +506,23 @@ def load():
     except FileNotFoundError:
       telemetry = []
       telemetry_by_node = {}
+
+    try:
+        traceroutes = load_from_json_file(f"{config['paths']['data']}/traceroutes.json")
+        if traceroutes is None or len(traceroutes) == 0:
+          traceroutes = []
+        if traceroutes_by_node is None or len(traceroutes_by_node) == 0:
+          traceroutes_by_node = {}
+        for msg in traceroutes:
+          id = msg['from']
+          if id not in traceroutes_by_node:
+            traceroutes_by_node[id] = []
+          traceroutes_by_node[id].insert(0, msg)
+        print(f"Loaded {len(traceroutes)} traceroutes from file ({config['paths']['data']}/traceroutes.json)")
+        print(f"Loaded traceroutes data for {len(traceroutes_by_node)} nodes")
+    except FileNotFoundError:
+        traceroutes = []
+        traceroutes_by_node = {}
 
 def load_chat_from_file(type, path, config=config):
     global chat
