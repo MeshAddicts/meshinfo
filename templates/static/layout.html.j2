@@ -27,9 +27,15 @@
           </div>
         </div>
 
-        <div class="">
-          Serving Meshtastic to the Sacramento Valley and surrounding areas.
+        <div>
+          {{ config.mesh.description }}
         </div>
+
+        {% if config.mesh.url %}
+          <div>
+            <a href="{{ config.mesh.url }}" class="text-xs text-gray-900">Website</a>
+          </div>
+        {% endif %}
 
         <nav class="flex flex-col flex-1">
           <h3>Mesh</h3>
