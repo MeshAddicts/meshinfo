@@ -24,4 +24,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 CMD pytho
 COPY . .
 
 # Set the command to run the application
-CMD ["python", "app.py"]
+CMD ["python", "main.py"]
