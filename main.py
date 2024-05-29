@@ -497,6 +497,7 @@ def run():
         os.makedirs(config['paths']['data'])
 
     load()
+    save()
 
     client = connect_mqtt(config['broker']['host'], config['broker']['port'], config['broker']['client_id'])
     subscribe(client, config['broker']['topic'])
