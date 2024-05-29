@@ -1,6 +1,6 @@
 {
-    # Set the default server
-    server_name meshinfo.airframes.io
+    # Set the default domain
+    domain meshinfo.airframes.io
 
     # Enable automatic HTTPS
     tls {
