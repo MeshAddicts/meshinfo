@@ -8,7 +8,7 @@
       There are <b>{{ chat['channels']['0']['messages']|count }}</b> messages on channel 0 that have
       been heard by the mesh by <b>KE-R</b> (!4355f528).
     </p>
-    <p>Last updated: {{ timestamp.astimezone().strftime('%Y-%m-%d %H:%M:%S %z') }}</p>
+    <p>Last updated: {{ timestamp.astimezone(timezone).strftime('%Y-%m-%d %H:%M:%S %z') }}</p>
 
     <h2>Channel 0</h2>
     <table border=1 cellpadding=4>
@@ -22,7 +22,7 @@
         </tr>
         {% for message in chat['channels']['0']['messages'] %}
         <tr>
-            <td>{{ datetime.fromtimestamp(message.timestamp).astimezone() }}</td>
+            <td>{{ datetime.fromtimestamp(message.timestamp).astimezone(timezone).strftime('%Y-%m-%d %H:%M:%S %z') }}</td>
             <td>
               <span title="{{ message.from + " / " + nodes[message.from].longname if message.from in nodes else (message.from + ' / Unknown') }}">
                 {{ nodes[message.from].shortname if message.from in nodes else 'UNK' }}

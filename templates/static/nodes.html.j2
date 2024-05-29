@@ -8,7 +8,7 @@
       There are <b>{{ active_nodes|count }}</b> active out of a total of <b>{{ nodes|count }}</b> seen nodes
       that have been heard by the mesh by <b>KE-R</b> (!4355f528).
     </p>
-    <p>Last updated: {{ timestamp.astimezone().strftime('%Y-%m-%d %H:%M:%S %z') }}</p>
+    <p>Last updated: {{ timestamp.astimezone(timezone).strftime('%Y-%m-%d %H:%M:%S %z') }}</p>
     <table border=1 cellspacing=2 cellpadding=4>
         <tr bgcolor=lightgray>
             <th>ID</th>
