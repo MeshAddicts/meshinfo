@@ -1,4 +1,4 @@
-pattern read #
+topic read #
 
 user meshinfo
 topic readwrite #
