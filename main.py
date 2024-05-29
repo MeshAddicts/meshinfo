@@ -113,7 +113,7 @@ def prune_expired_nodes():
     now = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
     ids_to_delete = []
     for id, node in nodes.items():
-        last_seen = datetime.datetime.astimezone().fromisoformat(node['last_seen']) if isinstance(node['last_seen'], str) else node['last_seen']
+        last_seen = datetime.datetime.fromisoformat(node['last_seen']).astimezone() if isinstance(node['last_seen'], str) else node['last_seen']
         since = (now - last_seen).seconds
         if node['active'] and since >= config['server']['node_activity_prune_threshold']:
             ids_to_delete.append(id)
