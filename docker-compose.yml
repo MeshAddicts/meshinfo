@@ -33,6 +33,7 @@ services:
     volumes:
       - ./output:/app/output
     environment:
+      - PYTHONUNBUFFERED=1
       - MQTT_HOST=mosquitto
       - MQTT_PORT=1883
       - MQTT_USERNAME=meshinfo
