@@ -108,14 +108,16 @@ def convert_node_id_from_int_to_hex(id):
 
 def prune_expired_nodes():
     global config
+    global nodes
 
     now = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
     ids_to_delete = []
     for id, node in nodes.items():
         print('prune_expired_nodes now last_seen')
         print(now)
-        print(node['last_seen'])
-        since = (now - node['last_seen']).seconds
+        last_seen = datetime.datetime.fromisoformat(node['last_seen']) if isinstance(node['last_seen'], str) else node['last_seen']
+        print(last_seen)
+        since = (now - last_seen).seconds
         if node['active'] and since >= config['server']['node_activity_prune_threshold']:
             ids_to_delete.append(id)
             print(f"Node {id} pruned (last heard {since} seconds ago)")
