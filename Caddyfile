@@ -2,7 +2,7 @@
   debug
 }
 
-meshinfo.airframes.io {
+:80 {
   root * /html
   tls kevin@airframes.io
   log {
