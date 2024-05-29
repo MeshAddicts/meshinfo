@@ -501,6 +501,15 @@ def run():
     load()
     save()
 
+    if os.environ.get('MQTT_BROKER') is not None:
+        config['broker']['host'] = os.environ['MQTT_BROKER']
+    if os.environ.get('MQTT_PORT') is not None:
+        config['broker']['port'] = int(os.environ['MQTT_PORT'])
+    if os.environ.get('MQTT_CLIENT_ID') is not None:
+        config['broker']['client_id'] = os.environ['MQTT_CLIENT_ID']
+    if os.environ.get('MQTT_TOPIC') is not None:
+        config['broker']['topic'] = os.environ['MQTT_TOPIC']
+
     client = connect_mqtt(config['broker']['host'], config['broker']['port'], config['broker']['client_id'])
     subscribe(client, config['broker']['topic'])
     client.loop_forever()

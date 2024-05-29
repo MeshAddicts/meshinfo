@@ -4,6 +4,14 @@ FROM python:3.10-slim
 LABEL org.opencontainers.image.source https://github.com/kevinelliott/meshinfo
 LABEL org.opencontainers.image.description "Realtime web UI to run against a Meshtastic regional or private mesh network."
 
+ENV MQTT_BROKER=mosquitto
+ENV MQTT_PORT=1883
+ENV MQTT_TOPIC=msh/#
+ENV MQTT_CLIENT_ID=meshinfo
+ENV MQTT_USERNAME=meshinfo
+ENV MQTT_PASSWORD=meshinfo
+ENV MQTT_TLS=false
+
 # Set the working directory in the container
 RUN mkdir /app
 WORKDIR /app
