@@ -12,19 +12,10 @@ services:
       - CADDY_AGREE=true
     restart: always
 
-  image:
-    image: kevinelliott/meshinfo:0.0.1
+  postgres:
+    image: postgres:latest
     volumes:
-      - ./output:/app/output
-    environment:
-      - ENV_VAR_1=value1
-      - ENV_VAR_2=value2
-    restart: always
-
-  sqlite:
-    image: sqlite:latest
-    volumes:
-      - ./sqlite:/var/lib/sqlite
+      - ./postgres/data:/var/lib/postgresql/data
     restart: always
 
   mosquitto:
@@ -33,3 +24,16 @@ services:
       - ./mosquitto/data:/mosquitto/data
       - ./mosquitto/config:/mosquitto/config
     restart: always
+
+  meshinfo:
+    image: ghcr.io/kevinelliott/meshinfo:0.0.1
+    volumes:
+      - ./output:/app/output
+    environment:
+      - ENV_VAR_1=value1
+      - ENV_VAR_2=value2
+    restart: always
+    depends_on:
+      - caddy
+      - postgres
+      - mosquitto
