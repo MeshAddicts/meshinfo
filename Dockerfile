@@ -7,6 +7,7 @@ LABEL org.opencontainers.image.description "Realtime web UI to run against a Mes
 RUN mkdir /app
 RUN adduser --disabled-password --gecos '' appuser && chown -R appuser /app
 USER appuser
+RUN chown -R appuser /app
 
 # Set the working directory in the container
 WORKDIR /app

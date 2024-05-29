@@ -24,12 +24,12 @@ services:
   mosquitto:
     image: eclipse-mosquitto:latest
     volumes:
-      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/data:/mosquitto/data:rw
       - ./mosquitto/config:/mosquitto/config:rw
     restart: always
 
   meshinfo:
-    image: ghcr.io/kevinelliott/meshinfo:0.0.6
+    image: ghcr.io/kevinelliott/meshinfo:0.0.7
     volumes:
       - ./output:/app/output
     environment:
