@@ -1,0 +1,101 @@
+{% extends "templates/static/layout.html.j2" %}
+
+{% block title %}Nodes{% endblock %}
+
+{% block content %}
+    <h1>Nodes</h1>
+    <p>
+      There are <b>{{ active_nodes|count }}</b> active out of a total of <b>{{ nodes|count }}</b> seen nodes
+      that have been heard by the mesh by <b>KE-R</b> (!4355f528).
+    </p>
+    <p>Last updated: {{ timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+    <table border=1 cellspacing=2 cellpadding=4>
+        <tr bgcolor=lightgray>
+            <th>ID</th>
+            <th colspan=2>Name</th>
+            <th>Hardware</th>
+            <th colspan=4>Last Position</th>
+            <th>Neighbors</th>
+            <th colspan=3>Telemetry</th>
+            <th colspan=2>Seen</th>
+        </tr>
+        <tr bgcolor=lightgray>
+            <th></th>
+            <th>Short</th>
+            <th>Long</th>
+            <th></th>
+            <th>Altitude</th>
+            <th>Latitude</th>
+            <th>Longitude</th>
+            <th>DX</th>
+            <th>Count</th>
+            <th>Battery</th>
+            <th>Voltage</th>
+            <th>Chan Util</th>
+            <th>Last</th>
+            <th>Since</th>
+        </tr>
+        {% for id, node in active_nodes.items() %}
+        <tr>
+            <td>{{ id }}</td>
+            <td style="color: #{{ '777' if node.shortname == 'UNK' else '000' }}">
+              {{ node.shortname }}
+            </td>
+            <td style="color: #{{ '777' if node.shortname == 'UNK' else '000' }}">
+              {{ node.longname }}
+            </td>
+            <td>
+              {% if node.hardware %}
+              {{ hardware(node.hardware).name }}
+              {% endif %}
+            </td>
+            {% if node.position %}
+            <td>
+              {% if node.position.altitude %}
+              {{ node.position.altitude }}
+              {% endif %}
+            </td>
+            <td>{{ node.position.latitude }}</td>
+            <td>{{ node.position.longitude }}</td>
+            <td align=right>{{ node.distance_from_host_node }} km</td>
+            {% else %}
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            {% endif %}
+            {% if node.neighborinfo %}
+            <td align=center>{{ node.neighborinfo.neighbors_count }}</td>
+            {% else %}
+            <td></td>
+            {% endif %}
+            {% if node.telemetry %}
+            <td align=center>
+              {% if 'battery_level' in node.telemetry %}
+              {{ node.telemetry.battery_level }}%
+              {% endif %}
+            </td>
+            <td align=center>
+              {% if 'voltage' in node.telemetry %}
+              {{ node.telemetry.voltage|round(2) }}V
+              {% endif %}
+            </td>
+            <td align=center>
+              {% if 'channel_utilization' in node.telemetry %}
+              {{ node.telemetry.channel_utilization|round(1) }}%
+              {% endif %}
+            </td>
+            {% else %}
+            <td></td>
+            <td></td>
+            <td></td>
+            {% endif %}
+            <td>{{ node.last_seen_human }}</td>
+            <td align=right>{{ node.since.seconds }} secs</td>
+        </tr>
+        {% endfor %}
+    </table>
+    <br><br>
+    <br><br>
+    <a href='nodes.json'>Download JSON</a>
+{% endblock %}

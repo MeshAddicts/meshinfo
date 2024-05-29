@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>{% block title %}{% endblock %}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        corePlugins: {
+          preflight: false,
+        },
+      }
+    </script>
+    {% block head %}{% endblock %}
+</head>
+<body>
+  <div>
+    <!-- Static sidebar for desktop -->
+    <div class="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-60 lg:flex-col">
+      <!-- Sidebar component, swap this element with another sidebar if you like -->
+      <div class="flex flex-col px-6 pb-4 overflow-y-auto bg-gray-300 border-r-2 grow gap-y-5 border-r-cyan-600">
+        <div class="flex items-center h-24 mt-4 shrink-0">
+          <div class="text-2xl">
+            <div class="p-0 m-0">S<span class="text-gray-500">ACRAMENTO</span></div>
+            <div class="p-0 m-0">V<span class="text-gray-500">ALLEY</span></div>
+            <div class="p-0 m-0">M<span class="text-gray-500">ESH</span></div>
+          </div>
+        </div>
+
+        <div class="">
+          Serving Meshtastic to the Sacramento Valley and surrounding areas.
+        </div>
+
+        <nav class="flex flex-col flex-1">
+          <h3>Mesh</h3>
+          <div class="mb-2">
+            <a href="chat.html">Chat</a>
+          </div>
+          <div class="mb-2">
+            <a href="map.html">Map</a>
+          </div>
+          <div class="mb-2">
+            <a href="nodes.html">Nodes</a>
+          </div>
+          <div class="mb-2">
+            <a href="neighbors.html">Node Neighbors</a>
+          </div>
+          <div class="mb-2">
+            <a href="network.html">Network</a>
+          </div>
+          <div class="mb-2">
+            <a href="routes.html">Routes</a>
+          </div>
+          <div class="mb-2">
+            <a href="stats.html">Stats</a>
+          </div>
+          <div class="mb-2">
+            <a href="telemetry.html">Telemetry</a>
+          </div>
+        </nav>
+
+        <nav class="flex flex-col flex-1">
+          <h3>Logs</h3>
+          <div class="mb-2">
+            <a href="mesh_log.html">Mesh Messages</a>
+          </div>
+          <div class="mb-2">
+            <a href="mqtt_log.html">MQTT Messages</a>
+          </div>
+        </nav>
+
+        <div class="flex-grow"></div>
+          Test
+        </div>
+      </div>
+    </div>
+
+    <div class="lg:pl-60">
+      <main class="py-1">
+        <div class="px-4 sm:px-6 lg:px-8">
+          {% block content %}{% endblock %}
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <style>
+      body {
+          font-family: monospace;
+          font-size: 12px;
+          margin: 0;
+          padding: 0;
+      }
+  </style>
+</body>
+</html>

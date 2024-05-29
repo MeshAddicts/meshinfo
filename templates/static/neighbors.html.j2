@@ -1,0 +1,73 @@
+{% extends "templates/static/layout.html.j2" %}
+
+{% block title %}Neighbors{% endblock %}
+
+{% block content %}
+    <h1>Neighbors</h1>
+    <p>
+      There are <b>{{ active_nodes_with_neighbors|count }}</b> active nodes with neighbors
+      that have been heard by the mesh by <b>KE-R</b> (!4355f528).
+    </p>
+    <p>Last updated: {{ timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+    <table border=1 cellspacing=2 cellpadding=4 width=100%>
+        <tr bgcolor=lightgray>
+            <th>ID</th>
+            <th colspan=2>Name</th>
+            <th colspan=2>Neighbors</th>
+            <th colspan=2>Seen</th>
+        </tr>
+        <tr bgcolor=lightgray>
+            <th></th>
+            <th>Short</th>
+            <th>Long</th>
+            <th>Nodes</th>
+            <th>Interval</th>
+            <th>Last</th>
+            <th>Since</th>
+        </tr>
+        {% for id, node in active_nodes_with_neighbors.items() %}
+        <tr>
+            <td>{{ id }}</td>
+            <td style="color: #{{ '777' if node.shortname == 'UNK' else '000' }}">
+              {{ node.shortname }}
+            </td>
+            <td style="color: #{{ '777' if node.shortname == 'UNK' else '000' }}">
+              {{ node.longname }}
+            </td>
+            {% if node.neighborinfo %}
+            <td align=left>
+              <table width=100%>
+              {% for neighbor in node.neighborinfo.neighbors %}
+                <tr>
+                <td width=25%>
+                  {% if neighbor.node_id in nodes %}
+                  {{ nodes[neighbor.node_id].shortname }}
+                  {% else %}
+                  UNK
+                  {% endif %}
+                </td>
+                <td>
+                  SNR: {{ neighbor.snr }}
+                </td>
+                <td align=right>
+                  {% if neighbor.distance %}
+                    {{ neighbor.distance }} km
+                  {% endif %}
+                </td>
+                </tr>
+              {% endfor %}
+              </table>
+            </td>
+            <td align=right>{{ node.neighborinfo.node_broadcast_interval_secs }}s</td>
+            {% else %}
+            <td></td>
+            {% endif %}
+            <td>{{ node.last_seen_human }}</td>
+            <td align=right>{{ node.since.seconds }} secs</td>
+        </tr>
+        {% endfor %}
+    </table>
+    <br><br>
+    <br><br>
+    <a href='nodes.json'>Download JSON</a>
+{% endblock %}

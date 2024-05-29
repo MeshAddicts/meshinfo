@@ -1,0 +1,26 @@
+{% extends "templates/static/layout.html.j2" %}
+
+{% block title %}Mesh Messages{% endblock %}
+
+{% block content %}
+  <h1>Mesh Messages</h1>
+  <p>
+    All messages from the mesh as seen by <b>KE-R</b> (!4355f528). Only the messages received
+    since this server was last restarted are shown.
+  </p>
+  <p>Last updated: {{ timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+
+  <table border=1 cellpadding=4>
+    <tr>
+      <th>Timestamp</th>
+      <th>Message</th>
+    </tr>
+    {% for message in messages[::-1] %}
+    <tr>
+      <td style="white-space:nowrap">{{ datetime.fromtimestamp(json.loads(message).timestamp) }}</td>
+      <td>{{ json.dumps(json.loads(message), indent=2) }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+
+{% endblock %}

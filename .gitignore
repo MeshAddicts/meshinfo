@@ -1,0 +1,6 @@
+__pycache__
+.trunk/
+node_modules/
+
+backups/*
+output/*

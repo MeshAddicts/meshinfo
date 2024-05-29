@@ -1,0 +1,11 @@
+{% extends "templates/static/layout.html.j2" %}
+
+{% block title %}Welcome!{% endblock %}
+
+{% block content %}
+    <h1>Welcome!</h1>
+    <p>
+      This is a site that shows data about the SVM by <b>KE-R</b> (!4355f528).
+    </p>
+    <p>Last updated: {{ timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+{% endblock %}

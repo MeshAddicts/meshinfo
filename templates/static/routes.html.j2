@@ -1,0 +1,11 @@
+{% extends "templates/static/layout.html.j2" %}
+
+{% block title %}Routes{% endblock %}
+
+{% block content %}
+    <h1>Routes</h1>
+    <p>
+      Route paths of the mesh as seen by <b>KE-R</b> (!4355f528).
+    </p>
+    <p>Last updated: {{ timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+{% endblock %}

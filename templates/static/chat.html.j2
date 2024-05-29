@@ -1,0 +1,46 @@
+{% extends "templates/static/layout.html.j2" %}
+
+{% block title %}Chat{% endblock %}
+
+{% block content %}
+    <h1>Chat</h1>
+    <p>
+      There are <b>{{ chat['channels']['0']['messages']|count }}</b> messages on channel 0 that have
+      been heard by the mesh by <b>KE-R</b> (!4355f528).
+    </p>
+    <p>Last updated: {{ timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+
+    <h2>Channel 0</h2>
+    <table border=1 cellpadding=4>
+        <tr>
+            <th>Time</th>
+            <th>From</th>
+            <th>Via</th>
+            <th>Hops</th>
+            <th>To</th>
+            <th width=65%>Message</th>
+        </tr>
+        {% for message in chat['channels']['0']['messages'] %}
+        <tr>
+            <td>{{ datetime.fromtimestamp(message.timestamp) }}</td>
+            <td>
+              <span title="{{ message.from + " / " + nodes[message.from].longname if message.from in nodes else (message.from + ' / Unknown') }}">
+                {{ nodes[message.from].shortname if message.from in nodes else 'UNK' }}
+              </span>
+            </td>
+            <td>
+              <span title="{{ message.sender + " / " + nodes[message.sender].longname if message.sender in nodes else (message.sender + ' / Unknown') }}">
+                {{ nodes[message.sender].shortname if message.sender in nodes else 'UNK' }}
+              </span>
+            </td>
+            <td align=center>{{ message.hops_away }}</td>
+            <td>
+              <span title="{{ message.to + " / " + nodes[message.to].longname if message.to in nodes else (message.to + ' / Unknown') }}">
+                {{ nodes[message.to].shortname if message.to in nodes else 'UNK' }}
+              </span>
+            </td>
+            <td>{{ message.text }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+{% endblock %}

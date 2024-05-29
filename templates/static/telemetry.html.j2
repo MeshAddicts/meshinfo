@@ -1,0 +1,139 @@
+{% extends "templates/static/layout.html.j2" %}
+
+{% block title %}Telemetry{% endblock %}
+
+{% block content %}
+    <h1>Telemetry</h1>
+    <p>
+      Telemetry as seen by <b>KE-R</b> (!4355f528).
+    </p>
+    <p>Last updated: {{ timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+    <table border=1 cellpadding=4>
+      <tr>
+        <td>Timestamp</td>
+        <td>Node</td>
+        <td>Air Util TX</td>
+        <td>Battery Level</td>
+        <td>Channel Utilization</td>
+        <td>Uptime</td>
+        <td>Voltage</td>
+        <td>Current</td>
+        <td>Barometric Pressure</td>
+        <td>Relative Humidity</td>
+        <td>Temperature</td>
+        <td>Gas Resistance</td>
+      </tr>
+      {% for item in telemetry %}
+        <tr>
+          <td style="white-space:nowrap">{{ datetime.fromtimestamp(item.timestamp) }}</td>
+          <td><b>{{ item.from }}</b></td>
+          <td align=right>
+            {% if item.payload.air_util_tx is defined %}
+            {{ item.payload.air_util_tx | round(2) }}%
+            {% endif %}
+          </td>
+          <td align=right>
+            {% if item.payload.battery_level is defined %}
+            {{ item.payload.battery_level | round(2) }}%
+            {% endif %}
+          </td>
+          <td align=right>
+            {% if item.payload.channel_utilization is defined %}
+            {{ item.payload.channel_utilization | round(1) }}%
+            {% endif %}
+          </td>
+          <td align=right>
+            {% if item.payload.uptime_seconds is defined %}
+            {{ item.payload.uptime_seconds }}
+            {% endif %}
+          </td>
+          <td align=right style="white-space:nowrap">
+            {% if item.payload.voltage is defined %}
+            {{ item.payload.voltage | round(2) }} V
+            {% endif %}
+            {% if item.payload.voltage_ch1 is defined and item.payload.voltage_ch2 is defined and item.payload.voltage_ch3 is defined %}
+            <table>
+            <tr>
+              <td>
+                Ch1
+              </td>
+              <td align=right class="pl-2">
+                {{ item.payload.voltage_ch1 | round(2) }} V<br/>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                Ch2
+              </td>
+              <td align=right class="pl-2">
+                {{ item.payload.voltage_ch2 | round(2) }} V<br/>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                Ch3
+              </td>
+              <td align=right class="pl-2">
+                {{ item.payload.voltage_ch3 | round(2) }} V
+              </td>
+            </tr>
+            </table>
+            {% endif %}
+          </td>
+          <td align=right style="white-space:nowrap">
+            {% if item.payload.current is defined %}
+            {{ item.payload.current | round(2) }} mA
+            {% endif %}
+            {% if item.payload.current_ch1 is defined and item.payload.current_ch2 is defined and item.payload.current_ch3 is defined %}
+            <table>
+            <tr>
+              <td>
+                Ch1
+              </td>
+              <td align=right class="pl-2">
+                {{ item.payload.current_ch1 | round(2) }} mA<br/>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                Ch2
+              </td>
+              <td align=right class="pl-2">
+                {{ item.payload.current_ch2 | round(2) }} mA<br/>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                Ch3
+              </td>
+              <td align=right class="pl-2">
+                {{ item.payload.current_ch3 | round(2) }} mA
+              </td>
+            </tr>
+            </table>
+            {% endif %}
+          </td>
+          <td align=right>
+            {% if item.payload.barometric_pressure is defined %}
+            {{ item.payload.barometric_pressure | round(2) }} hPa
+            {% endif %}
+          </td>
+          <td align=right>
+            {% if item.payload.relative_humidity is defined %}
+            {{ item.payload.relative_humidity | round(2) }}%
+            {% endif %}
+          </td>
+          <td align=right>
+            {% if item.payload.temperature is defined %}
+            {{ item.payload.temperature | round(2) }} &deg;C
+            {% endif %}
+          </td>
+          <td align=right>
+            {% if item.payload.gas_resistance is defined %}
+            {{ item.payload.gas_resistance | round(2) }} Ohm
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+{% endblock %}
