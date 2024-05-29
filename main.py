@@ -30,7 +30,25 @@ config = {
       'node_id': '!4355f528',
       'node_activity_prune_threshold': 7200,
       'timezone': 'America/Los_Angeles',
-  }
+  },
+  'mesh': {
+      'name': 'Sac Valley Mesh',
+      'shortname': 'SVM',
+      'description': 'Serving Meshtastic to the Sacramento Valley and surrounding areas.',
+      'url': 'https://sacvalleymesh.com',
+      'contact': 'https://sacvalleymesh.com',
+      'country': 'US',
+      'region': 'California',
+      'metro': 'Sacramento',
+      'latitude': 38.58,
+      'longitude': -121.49,
+      'altitude': 0,
+      'timezone': 'America/Los_Angeles',
+      'announce': {
+        'enabled': True,
+        'interval': 60,
+      },
+  },
 }
 
 chat = {
@@ -346,7 +364,7 @@ def render_static_html_files():
     # index.html
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/index.html.j2')
-    rendered_html = template.render(nodes=nodes, active_nodes=nodes, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
+    rendered_html = template.render(config=config, nodes=nodes, active_nodes=nodes, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/index.html", "w") as f:
         f.write(rendered_html)
 
@@ -357,21 +375,21 @@ def render_static_html_files():
     server_node = nodes[f'{config["server"]["node_id"]}']
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/map.html.j2')
-    rendered_html = template.render(server_node=server_node, nodes=nodes, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
+    rendered_html = template.render(config=config, server_node=server_node, nodes=nodes, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/map.html", "w") as f:
         f.write(rendered_html)
 
     # mesh_log.html
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/mesh_log.html.j2')
-    rendered_html = template.render(messages=messages, json=json, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
+    rendered_html = template.render(config=config, messages=messages, json=json, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/mesh_log.html", "w") as f:
         f.write(rendered_html)
 
     # mqtt_log.html
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/mqtt_log.html.j2')
-    rendered_html = template.render(messages=mqtt_messages, mqtt_connect_time=mqtt_connect_time, json=json, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
+    rendered_html = template.render(config=config, messages=mqtt_messages, mqtt_connect_time=mqtt_connect_time, json=json, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/mqtt_log.html", "w") as f:
         f.write(rendered_html)
 
@@ -382,7 +400,7 @@ def render_static_html_files():
     for id, node in nodes.items():
         if 'active' in node and node['active']:
             active_nodes[id] = _serialize_node(node)
-    rendered_html = template.render(nodes=nodes, active_nodes=active_nodes, hardware=HardwareModel, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
+    rendered_html = template.render(config=config, nodes=nodes, active_nodes=active_nodes, hardware=HardwareModel, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/nodes.html", "w") as f:
         f.write(rendered_html)
 
@@ -393,14 +411,14 @@ def render_static_html_files():
             active_nodes_with_neighbors[id] = _serialize_node(node)
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/neighbors.html.j2')
-    rendered_html = template.render(nodes=nodes, active_nodes=active_nodes, active_nodes_with_neighbors=active_nodes_with_neighbors, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
+    rendered_html = template.render(config=config, nodes=nodes, active_nodes=active_nodes, active_nodes_with_neighbors=active_nodes_with_neighbors, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/neighbors.html", "w") as f:
         f.write(rendered_html)
 
     # routes.html
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/routes.html.j2')
-    rendered_html = template.render(nodes=nodes, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
+    rendered_html = template.render(config=config, nodes=nodes, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/routes.html", "w") as f:
         f.write(rendered_html)
 
@@ -408,21 +426,21 @@ def render_static_html_files():
     stats = {}
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/stats.html.j2')
-    rendered_html = template.render(stats=stats, nodes=nodes, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
+    rendered_html = template.render(config=config, stats=stats, nodes=nodes, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/stats.html", "w") as f:
         f.write(rendered_html)
 
     # telemetry.html
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/telemetry.html.j2')
-    rendered_html = template.render(nodes=nodes, telemetry=telemetry, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
+    rendered_html = template.render(config=config, nodes=nodes, telemetry=telemetry, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/telemetry.html", "w") as f:
         f.write(rendered_html)
 
     # traceroutes.html
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/traceroutes.html.j2')
-    rendered_html = template.render(nodes=nodes, traceroutes=traceroutes, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
+    rendered_html = template.render(config=config, nodes=nodes, traceroutes=traceroutes, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/traceroutes.html", "w") as f:
         f.write(rendered_html)
 
@@ -548,7 +566,7 @@ def save_chat_to_file(chat, type, path, config=config):
     if type == "html":
       env = Environment(loader=FileSystemLoader('.'), autoescape=True)
       template = env.get_template(f'{config["paths"]["templates"]}/static/chat.html.j2')
-      rendered_html = template.render(nodes=nodes, chat=chat, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
+      rendered_html = template.render(config=config, nodes=nodes, chat=chat, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
       with open(path, "w") as f:
           f.write(rendered_html)
 
