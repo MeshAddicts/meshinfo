@@ -9,7 +9,7 @@ ENV MQTT_PORT=1883
 ENV MQTT_TOPIC=msh/#
 ENV MQTT_CLIENT_ID=meshinfo
 ENV MQTT_USERNAME=meshinfo
-ENV MQTT_PASSWORD=meshinfo
+ENV MQTT_PASSWORD=m3sht4st1c
 ENV MQTT_TLS=false
 
 # Set the working directory in the container
