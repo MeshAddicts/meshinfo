@@ -15,7 +15,7 @@ class Node():
         'position': None,
         'telemetry': None,
         'active': False,
-        'last_seen': datetime.datetime.now()
+        'last_seen': datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()
       }
 
     return {
@@ -27,5 +27,5 @@ class Node():
       'position': None,
       'telemetry': None,
       'active': True,
-      'last_seen': datetime.datetime.now()
+      'last_seen': datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()
     }
