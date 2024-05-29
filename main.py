@@ -112,6 +112,7 @@ def prune_expired_nodes():
     now = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
     ids_to_delete = []
     for id, node in nodes.items():
+        print('prune_expired_nodes now last_seen')
         print(now)
         print(node['last_seen'])
         since = (now - node['last_seen']).seconds
@@ -239,6 +240,7 @@ def _serialize_node(node):
     global nodes
 
     last_seen = node["last_seen"] if isinstance(node["last_seen"], datetime.datetime) else datetime.datetime.fromisoformat(node["last_seen"])
+    print('_serialize_node last_seen')
     print(last_seen)
     serialized = {
         "id": node["id"],
@@ -406,8 +408,6 @@ def save():
     save_nodes_to_file()
     render_static_html_files()
     end = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
-    print(start)
-    print(end)
     print(f"Saved in {round(end.timestamp() - start.timestamp(), 3)} seconds")
 
 def save_nodes_to_file():
