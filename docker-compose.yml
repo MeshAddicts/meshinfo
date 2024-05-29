@@ -1,0 +1,35 @@
+version: '3'
+
+services:
+  caddy:
+    image: caddy:latest
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+    environment:
+      - CADDY_AGREE=true
+    restart: always
+
+  image:
+    image: kevinelliott/meshinfo:0.0.1
+    volumes:
+      - ./output:/app/output
+    environment:
+      - ENV_VAR_1=value1
+      - ENV_VAR_2=value2
+    restart: always
+
+  sqlite:
+    image: sqlite:latest
+    volumes:
+      - ./sqlite:/var/lib/sqlite
+    restart: always
+
+  mosquitto:
+    image: eclipse-mosquitto:latest
+    volumes:
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/config:/mosquitto/config
+    restart: always
