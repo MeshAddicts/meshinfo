@@ -426,6 +426,8 @@ def load():
       print(f"Loaded {len(nodes)} existing nodes from file ({config['paths']['data']}/nodes.json)")
     except FileNotFoundError:
       nodes = {}
+    if config['server']['node_id'] not in nodes:
+      nodes[config['server']['node_id']] = Node.default_node(config['server']['node_id'])
     nodes['!ffffffff'] = Node.default_node('!ffffffff')
 
     try:
