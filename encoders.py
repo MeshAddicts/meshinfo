@@ -6,7 +6,7 @@ import json
 class _JSONEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, (datetime.date, datetime.datetime)):
-            return obj.isoformat()
+            return obj.astimezone().isoformat()
         return json.JSONEncoder.default(obj)
 
 class _JSONDecoder(json.JSONDecoder):
