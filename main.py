@@ -247,7 +247,7 @@ def _serialize_node(node):
         "position": _serialize_position(node["position"]) if node["position"] else None,
         "neighborinfo": _serialize_neighborinfo(node) if node['neighborinfo'] else None,
         "telemetry": node["telemetry"],
-        "last_seen_human": last_seen.strftime("%Y-%m-%d %H:%M:%S"),
+        "last_seen_human": last_seen.astimezone().isoformat(),
         "last_seen": last_seen,
         "since": datetime.datetime.now(ZoneInfo(config['server']['timezone'])) - last_seen,
     }
