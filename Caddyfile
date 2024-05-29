@@ -3,7 +3,7 @@
 }
 
 meshinfo.airframes.io {
-	root * /usr/share/caddy
+	root * /srv
 	tls kevin@airframes.io
 	log {
 		output file /var/log/caddy.log
