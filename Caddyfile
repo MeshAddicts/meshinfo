@@ -1,0 +1,13 @@
+{
+    # Set the default server
+    server_name meshinfo.airframes.io
+
+    # Enable automatic HTTPS
+    tls {
+        # Specify the email address for Let's Encrypt's expiration notifications
+        email kevin@airframes.io
+    }
+
+    # Reverse proxy requests to the meshinfo web app
+    reverse_proxy localhost:8000
+}
