@@ -239,7 +239,7 @@ def _serialize_node(node):
         "since": datetime.datetime.now() - last_seen,
     }
     server_node = nodes[f'{config["server"]["node_id"]}']
-    if server_node and 'position' in server_node and server_node["position"]["latitude_i"] != 0 and server_node["position"]["longitude_i"] != 0 and node["position"] and node["position"]["latitude_i"] != 0 and node["position"]["longitude_i"] != 0:
+    if server_node and 'position' in server_node and server_node["position"] and server_node["position"]["latitude_i"] != 0 and server_node["position"]["longitude_i"] != 0 and node["position"] and node["position"]["latitude_i"] != 0 and node["position"]["longitude_i"] != 0:
         serialized["distance_from_host_node"] = round(distance_between_two_points(
             node["position"]["latitude_i"] / 10000000,
             node["position"]["longitude_i"] / 10000000,
