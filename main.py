@@ -113,10 +113,7 @@ def prune_expired_nodes():
     now = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
     ids_to_delete = []
     for id, node in nodes.items():
-        print('prune_expired_nodes now last_seen')
-        print(now)
-        last_seen = datetime.datetime.fromisoformat(node['last_seen']) if isinstance(node['last_seen'], str) else node['last_seen']
-        print(last_seen)
+        last_seen = datetime.datetime.astimezone().fromisoformat(node['last_seen']) if isinstance(node['last_seen'], str) else node['last_seen']
         since = (now - last_seen).seconds
         if node['active'] and since >= config['server']['node_activity_prune_threshold']:
             ids_to_delete.append(id)
@@ -242,8 +239,6 @@ def _serialize_node(node):
     global nodes
 
     last_seen = node["last_seen"] if isinstance(node["last_seen"], datetime.datetime) else datetime.datetime.fromisoformat(node["last_seen"])
-    print('_serialize_node last_seen')
-    print(last_seen)
     serialized = {
         "id": node["id"],
         "shortname": node["shortname"],
