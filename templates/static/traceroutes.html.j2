@@ -24,7 +24,7 @@
           <td>{{ item.to }}</td>
           <td>{{ item.hops_away }}</td>
           <td>{{ item.route | join(' -> ') }}</td>
-          <td>{{ len(item.route) }}</td>
+          <td>{{ item.route | length }}</td>
         </tr>
       {% endfor %}
     </table>
