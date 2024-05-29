@@ -3,13 +3,9 @@ FROM python:3.10-slim
 
 LABEL org.opencontainers.image.source https://github.com/kevinelliott/meshinfo
 LABEL org.opencontainers.image.description "Realtime web UI to run against a Meshtastic regional or private mesh network."
-# Create a user for the container
-RUN mkdir /app
-RUN adduser --disabled-password --gecos '' appuser && chown -R appuser /app
-USER appuser
-RUN chown -R appuser /app
 
 # Set the working directory in the container
+RUN mkdir /app
 WORKDIR /app
 
 # Copy the requirements file
