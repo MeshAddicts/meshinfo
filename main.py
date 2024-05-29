@@ -12,7 +12,14 @@ from meshtastic import HardwareModel
 from models import Node
 
 config = {
-  'broker': { 'host': 'localhost', 'port': 1883, 'client_id': 'nodes_list', 'topic': 'msh/2/json/#' },
+  'broker': {
+      'host': 'localhost',
+      'port': 1883,
+      'client_id': 'meshinfo',
+      'topic': 'msh/2/json/#',
+      'username': 'username',
+      'password': 'password',
+  },
   'paths': {
       'data': 'output/data',
       'output': 'output',
@@ -39,7 +46,7 @@ nodes = {}
 telemetry = []
 telemetry_by_node = {}
 
-def connect_mqtt(broker, port, client_id):
+def connect_mqtt(broker, port, client_id, username, password):
     def on_connect(client, userdata, flags, rc, properties=None):
         global mqtt_connect_time
         if rc == 0:
@@ -50,6 +57,7 @@ def connect_mqtt(broker, port, client_id):
 
     client = mqtt_client.Client(mqtt_client.CallbackAPIVersion.VERSION2)
     client.on_connect = on_connect
+    client.username_pw_set(username, password)
     client.connect(broker, port)
     return client
 
@@ -510,7 +518,7 @@ def run():
     if os.environ.get('MQTT_TOPIC') is not None:
         config['broker']['topic'] = os.environ['MQTT_TOPIC']
 
-    client = connect_mqtt(config['broker']['host'], config['broker']['port'], config['broker']['client_id'])
+    client = connect_mqtt(config['broker']['host'], config['broker']['port'], config['broker']['client_id'], config['broker']['username'], config['broker']['password'])
     subscribe(client, config['broker']['topic'])
     client.loop_forever()
 
