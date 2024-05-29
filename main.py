@@ -2,6 +2,7 @@
 
 import datetime
 import json
+from zoneinfo import ZoneInfo
 import paho.mqtt.client as mqtt_client
 import os
 from jinja2 import Environment, FileSystemLoader
@@ -42,7 +43,7 @@ chat = {
 }
 messages = []
 mqtt_messages = []
-mqtt_connect_time = datetime.datetime.now()
+mqtt_connect_time = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
 nodes = {}
 telemetry = []
 telemetry_by_node = {}
@@ -51,7 +52,7 @@ def connect_mqtt(broker, port, client_id, username, password):
     def on_connect(client, userdata, flags, rc, properties=None):
         global mqtt_connect_time
         if rc == 0:
-            mqtt_connect_time = datetime.datetime.now()
+            mqtt_connect_time = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
             print("Connected to MQTT broker at %s:%d" % (broker, port))
         else:
             print("Failed to connect, error: %s\n" % rc)
@@ -101,7 +102,7 @@ def subscribe(client, topic):
 
 def update_node(id, node):
     node['active'] = True
-    node['last_seen'] = datetime.datetime.now()
+    node['last_seen'] = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
     nodes[id] = node
 
 def convert_node_id_from_int_to_hex(id):
@@ -110,7 +111,7 @@ def convert_node_id_from_int_to_hex(id):
 def prune_expired_nodes():
     global config
 
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
     ids_to_delete = []
     for id, node in nodes.items():
         since = (now - node['last_seen']).seconds
@@ -248,7 +249,7 @@ def _serialize_node(node):
         "telemetry": node["telemetry"],
         "last_seen_human": last_seen.strftime("%Y-%m-%d %H:%M:%S"),
         "last_seen": last_seen,
-        "since": datetime.datetime.now() - last_seen,
+        "since": datetime.datetime.now(ZoneInfo(config['server']['timezone'])) - last_seen,
     }
     server_node = nodes[f'{config["server"]["node_id"]}']
     if server_node and 'position' in server_node and server_node["position"] and server_node["position"]["latitude_i"] != 0 and server_node["position"]["longitude_i"] != 0 and node["position"] and node["position"]["latitude_i"] != 0 and node["position"]["longitude_i"] != 0:
@@ -322,7 +323,7 @@ def render_static_html_files():
     # index.html
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/index.html.j2')
-    rendered_html = template.render(nodes=nodes, active_nodes=nodes, datetime=datetime.datetime, timestamp=datetime.datetime.now())
+    rendered_html = template.render(nodes=nodes, active_nodes=nodes, datetime=datetime.datetime, timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/index.html", "w") as f:
         f.write(rendered_html)
 
@@ -333,21 +334,21 @@ def render_static_html_files():
     server_node = nodes[f'{config["server"]["node_id"]}']
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/map.html.j2')
-    rendered_html = template.render(server_node=server_node, nodes=nodes, datetime=datetime.datetime, timestamp=datetime.datetime.now())
+    rendered_html = template.render(server_node=server_node, nodes=nodes, datetime=datetime.datetime, timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/map.html", "w") as f:
         f.write(rendered_html)
 
     # mesh_log.html
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/mesh_log.html.j2')
-    rendered_html = template.render(messages=messages, json=json, datetime=datetime.datetime, timestamp=datetime.datetime.now())
+    rendered_html = template.render(messages=messages, json=json, datetime=datetime.datetime, timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/mesh_log.html", "w") as f:
         f.write(rendered_html)
 
     # mqtt_log.html
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/mqtt_log.html.j2')
-    rendered_html = template.render(messages=mqtt_messages, mqtt_connect_time=mqtt_connect_time, json=json, datetime=datetime.datetime, timestamp=datetime.datetime.now())
+    rendered_html = template.render(messages=mqtt_messages, mqtt_connect_time=mqtt_connect_time, json=json, datetime=datetime.datetime, timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/mqtt_log.html", "w") as f:
         f.write(rendered_html)
 
@@ -358,7 +359,7 @@ def render_static_html_files():
     for id, node in nodes.items():
         if 'active' in node and node['active']:
             active_nodes[id] = _serialize_node(node)
-    rendered_html = template.render(nodes=nodes, active_nodes=active_nodes, hardware=HardwareModel, datetime=datetime.datetime, timestamp=datetime.datetime.now())
+    rendered_html = template.render(nodes=nodes, active_nodes=active_nodes, hardware=HardwareModel, datetime=datetime.datetime, timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/nodes.html", "w") as f:
         f.write(rendered_html)
 
@@ -369,14 +370,14 @@ def render_static_html_files():
             active_nodes_with_neighbors[id] = _serialize_node(node)
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/neighbors.html.j2')
-    rendered_html = template.render(nodes=nodes, active_nodes=active_nodes, active_nodes_with_neighbors=active_nodes_with_neighbors, datetime=datetime.datetime, timestamp=datetime.datetime.now())
+    rendered_html = template.render(nodes=nodes, active_nodes=active_nodes, active_nodes_with_neighbors=active_nodes_with_neighbors, datetime=datetime.datetime, timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/neighbors.html", "w") as f:
         f.write(rendered_html)
 
     # routes.html
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/routes.html.j2')
-    rendered_html = template.render(nodes=nodes, datetime=datetime.datetime, timestamp=datetime.datetime.now())
+    rendered_html = template.render(nodes=nodes, datetime=datetime.datetime, timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/routes.html", "w") as f:
         f.write(rendered_html)
 
@@ -384,14 +385,14 @@ def render_static_html_files():
     stats = {}
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/stats.html.j2')
-    rendered_html = template.render(stats=stats, nodes=nodes, datetime=datetime.datetime, timestamp=datetime.datetime.now())
+    rendered_html = template.render(stats=stats, nodes=nodes, datetime=datetime.datetime, timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/stats.html", "w") as f:
         f.write(rendered_html)
 
     # telemetry.html
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/telemetry.html.j2')
-    rendered_html = template.render(nodes=nodes, telemetry=telemetry, datetime=datetime.datetime, timestamp=datetime.datetime.now())
+    rendered_html = template.render(nodes=nodes, telemetry=telemetry, datetime=datetime.datetime, timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/telemetry.html", "w") as f:
         f.write(rendered_html)
 
@@ -400,10 +401,10 @@ def save():
     global chat
     global config
 
-    start = datetime.datetime.now()
+    start = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
     save_nodes_to_file()
     render_static_html_files()
-    end = datetime.datetime.now()
+    end = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
     print(f"Saved in {round(end.timestamp() - start.timestamp(), 3)} seconds")
 
 def save_nodes_to_file():
@@ -422,7 +423,7 @@ def save_node_infos_to_file(node_infos, type,path, config=config):
     if type == "html":
       env = Environment(loader=FileSystemLoader('.'), autoescape=True)
       template = env.get_template(f'{config["paths"]["templates"]}/static/node_infos.html.j2')
-      rendered_html = template.render(node_infos=node_infos, datetime=datetime.datetime, timestamp=datetime.datetime.now())
+      rendered_html = template.render(node_infos=node_infos, datetime=datetime.datetime, timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
       with open(path, "w") as f:
           f.write(rendered_html)
 
@@ -496,7 +497,7 @@ def save_chat_to_file(chat, type, path, config=config):
     if type == "html":
       env = Environment(loader=FileSystemLoader('.'), autoescape=True)
       template = env.get_template(f'{config["paths"]["templates"]}/static/chat.html.j2')
-      rendered_html = template.render(nodes=nodes, chat=chat, datetime=datetime.datetime, timestamp=datetime.datetime.now())
+      rendered_html = template.render(nodes=nodes, chat=chat, datetime=datetime.datetime, timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
       with open(path, "w") as f:
           f.write(rendered_html)
 
