@@ -47,6 +47,8 @@ mqtt_connect_time = datetime.datetime.now(ZoneInfo(config['server']['timezone'])
 nodes = {}
 telemetry = []
 telemetry_by_node = {}
+traceroutes = []
+traceroutes_by_node = {}
 
 def connect_mqtt(broker, port, client_id, username, password):
     def on_connect(client, userdata, flags, rc, properties=None):
@@ -131,6 +133,8 @@ def handle_log(msg):
         f.write(f"{msg.payload.decode()}\n")
 
 def handle_neighborinfo(client, userdata, msg):
+    global nodes
+
     id = '!' + f'{msg["from"]:x}'
     if id in nodes:
       node = nodes[id]
@@ -319,6 +323,7 @@ def render_static_html_files():
     global chat
     global nodes
     global telemetry
+    global traceroutes
 
     # index.html
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
@@ -394,6 +399,18 @@ def render_static_html_files():
     template = env.get_template(f'{config["paths"]["templates"]}/static/telemetry.html.j2')
     rendered_html = template.render(nodes=nodes, telemetry=telemetry, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/telemetry.html", "w") as f:
+        f.write(rendered_html)
+
+    # traceroutes.html
+    traceroutes = [
+        { "channel": 0, "from": 1129706792, "hops_away": 0, "id": 892991172, "route": [ "Mesh Wisblock", "KevinE Router" ], "sender": "!4355f528", "timestamp": 1717002093, "to": 2557740028, "type": "traceroute" },
+        { "channel": 0, "from": 994481224, "hops_away": 0, "id": 2131697104, "route": [ "Unknown", "RIO-1-0" ], "rssi": -106, "sender": "!4355f528", "snr": -4.75, "timestamp": 1717000218, "to": 2988739336, "type": "traceroute" },
+        { "channel": 0, "from": 2767068027, "hops_away": 1, "id": 2029873154, "route": [ "Electric Unucycle mobile, N6OIM/3", "N6OIM-RV-Solar", "KevinE Actual 1", "BLUFFS WIS 2"], "rssi": -53, "sender": "!4355f528", "snr": 5.5, "timestamp": 1716976264, "to": 3812346112, "type": "traceroute" },
+    ]
+    env = Environment(loader=FileSystemLoader('.'), autoescape=True)
+    template = env.get_template(f'{config["paths"]["templates"]}/static/traceroutes.html.j2')
+    rendered_html = template.render(nodes=nodes, traceroutes=traceroutes, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
+    with open(f"{config['paths']['output']}/traceroutes.html", "w") as f:
         f.write(rendered_html)
 
 def save():

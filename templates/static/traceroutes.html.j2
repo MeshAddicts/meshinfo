@@ -1,0 +1,31 @@
+{% extends "templates/static/layout.html.j2" %}
+
+{% block title %}Traceroutes{% endblock %}
+
+{% block content %}
+    <h1>Traceroutes</h1>
+    <p>
+      Traceroutes as seen by <b>KE-R</b> (!4355f528).
+    </p>
+    <p>Last updated: {{ timestamp.astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</p>
+    <table border=1 cellpadding=4>
+      <tr>
+        <td>Timestamp</td>
+        <td>From</td>
+        <td>To</td>
+        <td>Hops</td>
+        <td>Route</td>
+        <td>Route Hops</td>
+      </tr>
+      {% for item in traceroutes %}
+        <tr>
+          <td style="white-space:nowrap">{{ datetime.fromtimestamp(item.timestamp).astimezone(zoneinfo) }}</td>
+          <td>{{ item.from }}</td>
+          <td>{{ item.to }}</td>
+          <td>{{ item.hops_away }}</td>
+          <td>{{ item.route.join(' -> ') }}</td>
+          <td>{{ len(item.route) }}</td>
+        </tr>
+      {% endfor %}
+    </table>
+{% endblock %}
