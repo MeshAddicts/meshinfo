@@ -497,7 +497,7 @@ def save_chat_to_file(chat, type, path, config=config):
     if type == "html":
       env = Environment(loader=FileSystemLoader('.'), autoescape=True)
       template = env.get_template(f'{config["paths"]["templates"]}/static/chat.html.j2')
-      rendered_html = template.render(nodes=nodes, chat=chat, datetime=datetime.datetime, timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
+      rendered_html = template.render(nodes=nodes, chat=chat, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
       with open(path, "w") as f:
           f.write(rendered_html)
 
