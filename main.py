@@ -27,7 +27,8 @@ config = {
   },
   'server': {
       'node_id': '!4355f528',
-      'node_activity_prune_threshold': 7200
+      'node_activity_prune_threshold': 7200,
+      'timezone': 'America/Los_Angeles',
   }
 }
 
@@ -508,6 +509,8 @@ def run():
         os.makedirs(config['paths']['output'])
     if not os.path.exists(config['paths']['data']):
         os.makedirs(config['paths']['data'])
+
+    os.environ['TZ'] = config['server']['timezone']
 
     load()
     save()
