@@ -1,6 +1,4 @@
 meshinfo.airframes.io {
   root * /html
-  tls {
-    email kevin@airframes.io
-  }
+  tls kevin@airframes.io
 }
