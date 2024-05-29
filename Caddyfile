@@ -1,11 +1,11 @@
 {
-  debug
+	debug
 }
 
 :80 {
-  root * /html
-  tls kevin@airframes.io
-  log {
-    output file /var/log/caddy.log
-  }
+	root * /html
+	tls kevin@airframes.io
+	log {
+		output file /var/log/caddy.log
+	}
 }
