@@ -6,7 +6,7 @@ LABEL org.opencontainers.image.description "Realtime web UI to run against a Mes
 
 ENV MQTT_BROKER=mosquitto
 ENV MQTT_PORT=1883
-ENV MQTT_TOPIC=msh/#
+ENV MQTT_TOPIC=msh/2/json/#
 ENV MQTT_CLIENT_ID=meshinfo
 ENV MQTT_USERNAME=meshinfo
 ENV MQTT_PASSWORD=m3sht4st1c

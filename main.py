@@ -78,20 +78,22 @@ def subscribe(client, topic):
     def on_message(client, userdata, msg, properties=None):
         # {"channel":0,"from":3663958104,"hops_away":2,"id":1525817618,"payload":{"hardware":43,"id":"!da639058","longname":"SMRN-SS-Ca sacvalleymesh.com","shortname":"JTRC"},"rssi":-106,"sender":"!4355f528","snr":-5.5,"timestamp":1715852073,"to":2086296284,"type":"nodeinfo"}
         # parse msg.payload.decode() from json string to object
-        print(msg.payload)
-        j = json.loads(msg.payload.decode(), cls=_JSONDecoder)
-        handle_log(msg)
-        if j['type'] == "neighborinfo":
-            handle_neighborinfo(client, userdata, j)
-        if j['type'] == "nodeinfo":
-            handle_nodeinfo(client, userdata, j)
-        if j['type'] == "position":
-            handle_position(client, userdata, j)
-        if j['type'] == "telemetry":
-            handle_telemetry(client, userdata, j)
-        if j['type'] == "text":
-            handle_text(client, userdata, j)
-        prune_expired_nodes()
+        try:
+            j = json.loads(msg.payload.decode(), cls=_JSONDecoder)
+            handle_log(msg)
+            if j['type'] == "neighborinfo":
+                handle_neighborinfo(client, userdata, j)
+            if j['type'] == "nodeinfo":
+                handle_nodeinfo(client, userdata, j)
+            if j['type'] == "position":
+                handle_position(client, userdata, j)
+            if j['type'] == "telemetry":
+                handle_telemetry(client, userdata, j)
+            if j['type'] == "text":
+                handle_text(client, userdata, j)
+            prune_expired_nodes()
+        except Exception as e:
+            print(e)
 
     client.subscribe(topic)
     client.on_message = on_message
