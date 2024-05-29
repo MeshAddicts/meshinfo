@@ -2,7 +2,7 @@
 	debug
 }
 
-meshinfo.airframes.io {
+svm.meshinfo.network, meshinfo.airframes.io {
 	root * /srv
 	encode gzip
 	file_server
