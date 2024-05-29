@@ -2,8 +2,8 @@
 	debug
 }
 
-:80 {
-	root * /html
+meshinfo.airframes.io {
+	root * /usr/share/caddy
 	tls kevin@airframes.io
 	log {
 		output file /var/log/caddy.log
