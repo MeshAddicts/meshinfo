@@ -20,6 +20,20 @@
   </div>
 
   <script type="module">
+    const default_position = {
+      latitude: 38.5816,
+      longitude: -121.4944,
+    };
+    var server_position
+    if (server_node.position === null) {
+      server_position = default_position;
+    } else {
+      server_position = {
+        latitude: server_node.position.latitude_i / 10000000,
+        longitude: server_node.position.longitude_i / 10000000,
+      };
+    }
+
     const map = new ol.Map({
       layers: [
         new ol.layer.Tile({
@@ -28,7 +42,7 @@
       ],
       target: 'map',
       view: new ol.View({
-        center: ol.proj.fromLonLat([{{ server_node.position.longitude_i / 10000000 }}, {{ server_node.position.latitude_i / 10000000 }}]),
+        center: ol.proj.fromLonLat([{{ server_position.longitude }}, {{ server_position.latitude }}]),
         zoom: 8.3,
       }),
     });
