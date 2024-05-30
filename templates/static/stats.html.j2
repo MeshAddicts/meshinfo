@@ -10,6 +10,7 @@
     </p>
     <p>Last updated: {{ timestamp.astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</p>
 
+    <h3>Current</h3>
     <div>
       <h3>Active Nodes</h3>
       <div>
@@ -17,46 +18,47 @@
       </div>
     </div>
 
+    <h3>Persisted</h3>
     <div>
       <h3>Known Nodes</h3>
       <div>
         <div>{{ stats.total_nodes }}</div>
       </div>
     </div>
-
     <div>
       <h3>Chat Messages</h3>
       <div>
         <div>{{ stats.total_chat }}</div>
       </div>
     </div>
-
-    <div>
-      <h3>Messages (Total)</h3>
-      <div>
-        <div>{{ stats.total_messages }}</div>
-      </div>
-    </div>
-
-    <div>
-      <h3>Messages (MQTT)</h3>
-      <div>
-        <div>{{ stats.total_mqtt_messages }}</div>
-      </div>
-    </div>
-
     <div>
       <h3>Telemetry</h3>
       <div>
         <div>{{ stats.total_telemetry }}</div>
       </div>
     </div>
-
     <div>
       <h3>Traceroutes</h3>
       <div>
         <div>{{ stats.total_traceroutes }}</div>
       </div>
     </div>
+
+    <h3>Since Last Restart</h3>
+    <div>
+      <h3>Messages (Session Total)</h3>
+      <div>
+        <div>{{ stats.total_messages }}</div>
+      </div>
+    </div>
+
+    <div>
+      <h3>Messages (Session MQTT)</h3>
+      <div>
+        <div>{{ stats.total_mqtt_messages }}</div>
+      </div>
+    </div>
+
+
 
 {% endblock %}
