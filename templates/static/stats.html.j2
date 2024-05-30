@@ -11,17 +11,15 @@
     <p>Last updated: {{ timestamp.astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</p>
 
     <div>
-      <h2>Active Nodes</h2>
+      <h3>Active Nodes</h3>
       <div>
-        <div>Nodes</div>
         <div>{{ stats.active_nodes }}</div>
       </div>
     </div>
 
     <div>
-      <h2>Messages (Total)</h2>
+      <h3>Messages (Total)</h3>
       <div>
-        <div>Messages Heard</div>
         <div>{{ stats.total_messages }}</div>
       </div>
     </div>
