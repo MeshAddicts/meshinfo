@@ -425,7 +425,7 @@ def render_static_html_files():
     # stats.html
     stats = {
         'active_nodes': 0,
-        'total_chat': len(chat),
+        'total_chat': len(chat['channels']['0']['messages']),
         'total_nodes': len(nodes),
         'total_messages': len(messages),
         'total_mqtt_messages': len(mqtt_messages),
