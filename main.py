@@ -423,7 +423,18 @@ def render_static_html_files():
         f.write(rendered_html)
 
     # stats.html
-    stats = {}
+    stats = {
+        'active_nodes': 0,
+        'total_chat': len(chat),
+        'total_nodes': len(nodes),
+        'total_messages': len(messages),
+        'total_mqtt_messages': len(mqtt_messages),
+        'total_telemetry': len(telemetry),
+        'total_traceroutes': len(traceroutes),
+    }
+    for _, node in nodes.items():
+        if 'active' in node and node['active']:
+            stats['active_nodes'] += 1
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/stats.html.j2')
     rendered_html = template.render(config=config, stats=stats, nodes=nodes, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
