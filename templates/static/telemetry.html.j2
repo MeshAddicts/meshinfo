@@ -119,7 +119,7 @@
             {% endif %}
           </td>
           <td align=right>
-            {% if item.payload.relative_humidity is defined and !isinstance(NoneType) %}
+            {% if item.payload.relative_humidity is defined and item.payload.relative_humidity %}
             {{ item.payload.relative_humidity | round(2) }}%
             {% endif %}
           </td>
