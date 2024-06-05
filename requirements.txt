@@ -1,3 +1,5 @@
 paho-mqtt
 jinja2
 scipy
+python-dotenv
+discord.py

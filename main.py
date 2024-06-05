@@ -6,11 +6,16 @@ from zoneinfo import ZoneInfo
 import paho.mqtt.client as mqtt_client
 import os
 from jinja2 import Environment, FileSystemLoader
+import discord
+from discord import Interaction, app_commands
+from dotenv import load_dotenv
 
 from encoders import _JSONDecoder, _JSONEncoder
 from geo import distance_between_two_points
 from meshtastic import HardwareModel
 from models import Node
+
+load_dotenv()
 
 config = {
   'broker': {
@@ -49,6 +54,14 @@ config = {
         'interval': 60,
       },
   },
+  'integrations': {
+      'discord': {
+        'enabled': True,
+        'token': 'token',
+        'channel': '1247618108810596392',
+        'webhook': 'webhook',
+      },
+  }
 }
 
 chat = {
@@ -607,6 +620,40 @@ def run():
 
     client = connect_mqtt(config['broker']['host'], config['broker']['port'], config['broker']['client_id'], config['broker']['username'], config['broker']['password'])
     subscribe(client, config['broker']['topic'])
+
+    # if os.environ.get('DISCORD_TOKEN') is not None:
+    #     config['integrations']['discord']['token'] = os.environ['DISCORD_TOKEN']
+    #     config['integrations']['discord']['channel_id'] = os.environ['DISCORD_CHANNEL_ID']
+    #     config['integrations']['discord']['enabled'] = True
+    #     discord_client = discord.Client(intents=discord.Intents.all())
+    #     tree = app_commands.CommandTree(discord_client)
+
+    #     @tree.command(
+    #         name="lookup",
+    #         description="Look up a node by ID",
+    #         guild=discord.Object(id=1234910729480441947)
+    #     )
+    #     async def lookup_node(ctx: Interaction, node_id: str):
+    #         node = nodes[node_id]
+    #         if node is None:
+    #             await ctx.response.send_message(f"Node {node_id} not found.")
+    #             return
+    #         await ctx.response.send_message(f"Node {node['id']}: Short Name = {node['shortname']}, Long Name = {node['longname']}, Hardware = {node['hardware']}, Position = {node['position']}, Last Seen = {node['last_seen']}, Active = {node['active']}")
+
+    #     @discord_client.event
+    #     async def on_ready():
+    #         print(f'Discord: Logged in as {discord_client.user} (ID: {discord_client.user.id})')
+    #         await tree.sync(guild=discord.Object(id=1234910729480441947))
+    #         print("Discord: Synced slash commands")
+
+    #     @discord_client.event
+    #     async def on_message(message):
+    #         print(f'Discord: {message.channel.id}: {message.author}: {message.content}')
+    #         if message.content.startswith('!test'):
+    #             await message.channel.send('Test successful!')
+
+    #     discord_client.run(config['integrations']['discord']['token'])
+
     client.loop_forever()
 
 if __name__ == "__main__":
