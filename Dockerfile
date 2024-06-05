@@ -1,5 +1,4 @@
-# Use the official Python slim image as the base
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 LABEL org.opencontainers.image.source https://github.com/kevinelliott/meshinfo
 LABEL org.opencontainers.image.description "Realtime web UI to run against a Meshtastic regional or private mesh network."
