@@ -20,6 +20,16 @@
   </div>
 
   <script type="module">
+    async function reverseGeocode(lon, lat) {
+      return fetch('http://nominatim.openstreetmap.org/reverse?format=json&lon=' + lon + '&lat=' + lat)
+        .then(function(response) {
+          return response.json();
+        }).then(function(json) {
+          console.log(json);
+          return json;
+        });
+    }
+
     const default_position = {
       latitude: 38.5816,
       longitude: -121.4944,
@@ -69,6 +79,7 @@
               id: '{{ id }}',
               shortname: '{{ node.shortname }}',
               longname: '{{ node.longname }}',
+              last_seen: '{{ node.last_seen }}',
               position: [{{ node.position.longitude_i / 10000000 }}, {{ node.position.latitude_i / 10000000 }}],
             },
           }),
@@ -122,7 +133,7 @@
       return false;
     };
 
-    map.on('singleclick', function (event) {
+    map.on('singleclick', async function (event) {
       if (map.hasFeatureAtPixel(event.pixel) === true) {
         var coordinate = event.coordinate;
         var feature = map.forEachFeatureAtPixel(event.pixel, function(feature) {
@@ -131,9 +142,14 @@
         if (feature) {
           var properties = feature.getProperties();
           var node = properties.node;
+          console.log(node);
+          var address = await reverseGeocode(node.position[0], node.position[1]);
+          var display_name = [address.address.town, address.address.city, address.address.county, address.address.state, address.address.country].filter(Boolean).join(', ');
           content.innerHTML = '<b>' + node.longname + '</b><br/>'
             + node.shortname + ' / ' + node.id + '<br/><br/>'
-            + '<b>Position</b><br/>' + node.position;
+            + '<b>Position</b><br/>' + node.position + '<br/><br/>'
+            + '<b>Location</b><br/>' + display_name + '<br/><br/>'
+            + '<b>Last Seen</b><br/>' + node.last_seen + '<br/><br/>';
           overlay.setPosition(ol.proj.fromLonLat(node.position));
         } else {
           content.innerHTML = '<b>Unknown</b>';
