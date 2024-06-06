@@ -21,7 +21,7 @@
 
   <script type="module">
     async function reverseGeocode(lon, lat) {
-      return fetch('http://nominatim.openstreetmap.org/reverse?format=json&lon=' + lon + '&lat=' + lat)
+      return fetch('https://nominatim.openstreetmap.org/reverse?format=json&lon=' + lon + '&lat=' + lat)
         .then(function(response) {
           return response.json();
         }).then(function(json) {
