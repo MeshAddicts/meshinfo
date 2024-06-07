@@ -11,7 +11,7 @@ if [ -z "$1" ]
     exit 1
 fi
 
-REPO=kevinelliott/meshinfo
+REPO=MeshAddicts/meshinfo
 VERSION=$1
 
 docker build -t ghcr.io/$REPO:$VERSION --platform=linux/amd64 . && docker push ghcr.io/$REPO:$VERSION
