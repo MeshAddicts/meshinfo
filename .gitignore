@@ -2,6 +2,7 @@ __pycache__
 .trunk/
 node_modules/
 .github_pat
+.env
 
 backups/*
 output/*
