@@ -8,6 +8,7 @@ import os
 from jinja2 import Environment, FileSystemLoader
 from dotenv import load_dotenv
 
+from config import Config
 from encoders import _JSONDecoder, _JSONEncoder
 from geo import distance_between_two_points
 from meshtastic import HardwareModel
@@ -15,53 +16,7 @@ from models import Node
 
 load_dotenv()
 
-config = {
-  'broker': {
-      'host': 'localhost',
-      'port': 1883,
-      'client_id': 'meshinfo',
-      'topic': 'msh/2/json/#',
-      'username': 'username',
-      'password': 'password',
-  },
-  'paths': {
-      'data': 'output/data',
-      'output': 'output',
-      'templates': 'templates'
-  },
-  'server': {
-      'node_id': '!4355f528',
-      'node_activity_prune_threshold': 7200,
-      'timezone': 'America/Los_Angeles',
-  },
-  'mesh': {
-      'name': 'Sac Valley Mesh',
-      'shortname': 'SVM',
-      'description': 'Serving Meshtastic to the Sacramento Valley and surrounding areas.',
-      'url': 'https://sacvalleymesh.com',
-      'contact': 'https://sacvalleymesh.com',
-      'country': 'US',
-      'region': 'California',
-      'metro': 'Sacramento',
-      'latitude': 38.58,
-      'longitude': -121.49,
-      'altitude': 0,
-      'timezone': 'America/Los_Angeles',
-      'announce': {
-        'enabled': True,
-        'interval': 60,
-      },
-  },
-  'integrations': {
-      'discord': {
-        'enabled': True,
-        'token': 'token',
-        'channel': '1247618108810596392',
-        'webhook': 'webhook',
-      },
-  }
-}
-
+config = Config.load()
 chat = {
     'channels': {
         '0': {
