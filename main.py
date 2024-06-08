@@ -6,8 +6,6 @@ from zoneinfo import ZoneInfo
 import paho.mqtt.client as mqtt_client
 import os
 from jinja2 import Environment, FileSystemLoader
-import discord
-from discord import Interaction, app_commands
 from dotenv import load_dotenv
 
 from encoders import _JSONDecoder, _JSONEncoder
