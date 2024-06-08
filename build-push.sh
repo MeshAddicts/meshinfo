@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-# set version from args
-
 # build and push
 
 # set version from args if not, exit
