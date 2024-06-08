@@ -6,3 +6,5 @@ node_modules/
 
 backups/*
 output/*
+mosquitto/data/*
+postgres/data/*
