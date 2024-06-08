@@ -12,7 +12,7 @@ from config import Config
 from encoders import _JSONDecoder, _JSONEncoder
 from geo import distance_between_two_points
 from meshtastic import HardwareModel
-from models import Node
+from models.node import Node
 
 load_dotenv()
 
