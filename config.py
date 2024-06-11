@@ -4,7 +4,7 @@ import datetime
 
 class Config:
   @classmethod
-  def load():
+  def load(cls):
     return {
       'broker': {
           'host': 'localhost',
