@@ -24,7 +24,10 @@ class Config:
           'node_activity_prune_threshold': 7200,
           'timezone': 'America/Los_Angeles',
           'start_time': datetime.datetime.now(datetime.timezone.utc).astimezone(),
-          'save_interval': 60,
+          'intervals': {
+            'data_save': 60,
+            'render': 5
+          }
       },
       'mesh': {
           'name': 'Sac Valley Mesh',

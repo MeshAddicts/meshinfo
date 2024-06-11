@@ -427,12 +427,21 @@ def save():
     global config
     global traceroutes
 
-    start = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
-    if (config['server']['start_time'] - start).total_seconds() >= config['server']['save_interval'] == 0:
+    save_start = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
+    last_data = config['server']['last_data_save'] if 'last_data_save' in config['server'] else config['server']['start_time']
+    since_last_data = (save_start - last_data).total_seconds()
+    last_render = config['server']['last_render'] if 'last_render' in config['server'] else config['server']['start_time']
+    since_last_render = (save_start - last_render).total_seconds()
+
+    if since_last_data >= config['server']['intervals']['data_save']:
         save_nodes_to_file()
+        end = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
+        print(f"Saved in {round(end.timestamp() - save_start.timestamp(), 3)} seconds")
+
+    if since_last_render >= config['server']['intervals']['render']:
         render_static_html_files()
         end = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
-        print(f"Saved in {round(end.timestamp() - start.timestamp(), 3)} seconds")
+        print(f"Rendered in {round(end.timestamp() - save_start.timestamp(), 3)} seconds")
 
 def save_nodes_to_file():
     global config
