@@ -428,10 +428,11 @@ def save():
     global traceroutes
 
     start = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
-    save_nodes_to_file()
-    render_static_html_files()
-    end = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
-    print(f"Saved in {round(end.timestamp() - start.timestamp(), 3)} seconds")
+    if (config['server']['start_time'] - start) % config['server']['save_interval'] == 0:
+        save_nodes_to_file()
+        render_static_html_files()
+        end = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
+        print(f"Saved in {round(end.timestamp() - start.timestamp(), 3)} seconds")
 
 def save_nodes_to_file():
     global config
