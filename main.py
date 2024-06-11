@@ -432,7 +432,7 @@ def save():
     since_last_data = (save_start - last_data).total_seconds()
     last_render = config['server']['last_render'] if 'last_render' in config['server'] else config['server']['start_time']
     since_last_render = (save_start - last_render).total_seconds()
-    print(f"Last data save: {last_data}, Last render: {last_render}")
+    print(f"Since last - data save: {since_last_data}, render: {since_last_render}")
 
     if since_last_data >= config['server']['intervals']['data_save']:
         save_nodes_to_file()
