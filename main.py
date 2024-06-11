@@ -438,11 +438,13 @@ def save():
         save_nodes_to_file()
         end = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
         print(f"Saved in {round(end.timestamp() - save_start.timestamp(), 3)} seconds")
+        config['server']['last_data_save'] = end
 
     if since_last_render >= config['server']['intervals']['render']:
         render_static_html_files()
         end = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
         print(f"Rendered in {round(end.timestamp() - save_start.timestamp(), 3)} seconds")
+        config['server']['last_render'] = end
 
 def save_nodes_to_file():
     global config
