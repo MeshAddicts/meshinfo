@@ -1,7 +1,10 @@
-__pycache__
+**/__pycache__
 .trunk/
 node_modules/
 .github_pat
+.env
 
 backups/*
 output/*
+mosquitto/data/*
+postgres/data/*

@@ -2,4 +2,5 @@ paho-mqtt
 jinja2
 scipy
 python-dotenv
+fastapi
 discord.py

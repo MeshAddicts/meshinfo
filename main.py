@@ -6,64 +6,17 @@ from zoneinfo import ZoneInfo
 import paho.mqtt.client as mqtt_client
 import os
 from jinja2 import Environment, FileSystemLoader
-import discord
-from discord import Interaction, app_commands
 from dotenv import load_dotenv
 
+from config import Config
 from encoders import _JSONDecoder, _JSONEncoder
 from geo import distance_between_two_points
 from meshtastic import HardwareModel
-from models import Node
+from models.node import Node
 
 load_dotenv()
 
-config = {
-  'broker': {
-      'host': 'localhost',
-      'port': 1883,
-      'client_id': 'meshinfo',
-      'topic': 'msh/2/json/#',
-      'username': 'username',
-      'password': 'password',
-  },
-  'paths': {
-      'data': 'output/data',
-      'output': 'output',
-      'templates': 'templates'
-  },
-  'server': {
-      'node_id': '!4355f528',
-      'node_activity_prune_threshold': 7200,
-      'timezone': 'America/Los_Angeles',
-  },
-  'mesh': {
-      'name': 'Sac Valley Mesh',
-      'shortname': 'SVM',
-      'description': 'Serving Meshtastic to the Sacramento Valley and surrounding areas.',
-      'url': 'https://sacvalleymesh.com',
-      'contact': 'https://sacvalleymesh.com',
-      'country': 'US',
-      'region': 'California',
-      'metro': 'Sacramento',
-      'latitude': 38.58,
-      'longitude': -121.49,
-      'altitude': 0,
-      'timezone': 'America/Los_Angeles',
-      'announce': {
-        'enabled': True,
-        'interval': 60,
-      },
-  },
-  'integrations': {
-      'discord': {
-        'enabled': True,
-        'token': 'token',
-        'channel': '1247618108810596392',
-        'webhook': 'webhook',
-      },
-  }
-}
-
+config = Config.load()
 chat = {
     'channels': {
         '0': {
@@ -474,11 +427,24 @@ def save():
     global config
     global traceroutes
 
-    start = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
-    save_nodes_to_file()
-    render_static_html_files()
-    end = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
-    print(f"Saved in {round(end.timestamp() - start.timestamp(), 3)} seconds")
+    save_start = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
+    last_data = config['server']['last_data_save'] if 'last_data_save' in config['server'] else config['server']['start_time']
+    since_last_data = (save_start - last_data).total_seconds()
+    last_render = config['server']['last_render'] if 'last_render' in config['server'] else config['server']['start_time']
+    since_last_render = (save_start - last_render).total_seconds()
+    print(f"Since last - data save: {since_last_data}, render: {since_last_render}")
+
+    if since_last_data >= config['server']['intervals']['data_save']:
+        save_nodes_to_file()
+        end = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
+        print(f"Saved in {round(end.timestamp() - save_start.timestamp(), 3)} seconds")
+        config['server']['last_data_save'] = end
+
+    if since_last_render >= config['server']['intervals']['render']:
+        render_static_html_files()
+        end = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
+        print(f"Rendered in {round(end.timestamp() - save_start.timestamp(), 3)} seconds")
+        config['server']['last_render'] = end
 
 def save_nodes_to_file():
     global config

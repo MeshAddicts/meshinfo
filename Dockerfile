@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-LABEL org.opencontainers.image.source https://github.com/kevinelliott/meshinfo
+LABEL org.opencontainers.image.source https://github.com/MeshAddicts/meshinfo
 LABEL org.opencontainers.image.description "Realtime web UI to run against a Meshtastic regional or private mesh network."
 
 ENV MQTT_BROKER=mosquitto
