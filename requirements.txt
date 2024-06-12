@@ -4,3 +4,4 @@ scipy
 python-dotenv
 fastapi
 discord.py
+psycopg2
