@@ -1,3 +1,8 @@
+### macOS ###
+.DS_Store
+.AppleDouble
+.LSOverride
+
 **/__pycache__
 .trunk/
 node_modules/
