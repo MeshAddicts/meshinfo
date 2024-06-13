@@ -34,3 +34,7 @@ To make deployment to run an instance for your mesh easy, Docker support is incl
 
 - Statistics
 - Overview of Routes
+
+## Chat
+
+If you're using this and have questions, or perhaps you want to join in on the dev effort and want to interact collaboratively, come chat with us on [#meshinfo on the SacValleyMesh Discord](https://discord.gg/sVHDNAAB).
