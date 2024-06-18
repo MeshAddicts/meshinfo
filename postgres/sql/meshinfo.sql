@@ -16,33 +16,22 @@ SET default_table_access_method = heap;
 CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA public;
 COMMENT ON EXTENSION postgis IS 'PostGIS geometry and geography spatial types and functions';
 
--- This function is tied to a trigger, to create the Geometry
--- when a new position with latitude, longitude and altitude is inserted
-
-CREATE FUNCTION public.fn_add_geom_update() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-UPDATE node_positions SET geom=ST_MakePoint(NEW.longitude / 10000000, NEW.latitude/ 10000000, 0) where id=NEW.id;
-RETURN NULL;
-END;
-$$;
-
 CREATE TABLE public.mesh_packets (
-    id bigint NOT NULL,
-    packet_id bigint NOT NULL,
+    source bigint NOT NULL,
     dest bigint,
-    channel integer NOT NULL,
+    packet_id bigint NOT NULL,
     rx_snr integer,
     rx_rssi integer,
     hop_limit integer,
     hop_start integer,
     portnum character varying,
-    toi timestamp with time zone
+    toi timestamp with time zone,
+    channel_id character varying,
+    gateway_id bigint NOT NULL
 );
 
 CREATE TABLE public.node_infos (
-  id bigint NOT NULL PRIMARY KEY,
+  id bigserial NOT NULL PRIMARY KEY,
   node_id bigint NOT NULL,
   long_name character varying(100),
   short_name character varying(10),
@@ -66,37 +55,6 @@ CREATE TABLE public.node_positions (
 
 ALTER TABLE ONLY public.node_positions
     ADD CONSTRAINT node_position_pkey1 PRIMARY KEY (id, longitude, latitude);
-
--- this view shows us the most recent position of every node we've
--- gotten a position for
-
-CREATE VIEW public.last_position AS
- SELECT DISTINCT ON (id) id,
-    updated_at,
-    geom
-   FROM public.node_positions
-  ORDER BY id, updated_at DESC;
-
-CREATE VIEW public.current_nodes AS
-  SELECT DISTINCT ON (node_id) node_id, long_name, short_name, mac_addr, hw_model, role, latitude, longitude, altitude, geom
-  FROM (
-    SELECT
-      n.id AS node_id,
-      ni.long_name,
-      ni.short_name,
-      ni.mac_addr,
-      ni.hw_model,
-      ni.role,
-      np.latitude,
-      np.longitude,
-      np.altitude,
-      np.geom,
-      np.created_at
-    FROM mesh_packets n
-    JOIN node_infos ni ON n.id = ni.node_id
-    JOIN node_positions np ON n.id = np.node_id
-    ORDER BY n.id, np.created_at DESC
-  ) AS current_nodes;
 
 CREATE TABLE public.text_messages (
   id BIGINT PRIMARY KEY,
@@ -148,6 +106,37 @@ CREATE TABLE public.neighbor_info (
     snr double precision
 );
 
+-- this view shows us the most recent position of every node we've
+-- gotten a position for
+
+CREATE VIEW public.last_position AS
+ SELECT DISTINCT ON (id) id,
+    updated_at,
+    geom
+   FROM public.node_positions
+  ORDER BY id, updated_at DESC;
+
+CREATE VIEW public.current_nodes AS
+  SELECT DISTINCT ON (node_id) node_id, long_name, short_name, mac_addr, hw_model, role, latitude, longitude, altitude, geom
+  FROM (
+    SELECT
+      n.source AS node_id,
+      ni.long_name,
+      ni.short_name,
+      ni.mac_addr,
+      ni.hw_model,
+      ni.role,
+      np.latitude,
+      np.longitude,
+      np.altitude,
+      np.geom,
+      np.created_at
+    FROM mesh_packets n
+    JOIN node_infos ni ON n.source = ni.node_id
+    JOIN node_positions np ON n.source = np.node_id
+    ORDER BY n.source, np.created_at DESC
+  ) AS current_nodes;
+
 -- This view uses the neighbor info packets to create a table
 -- showing all known linkages in a network
 
@@ -165,6 +154,18 @@ CREATE VIEW public.neighbor_map AS
 CREATE INDEX idx_neighbor_info_id ON public.neighbor_info USING btree (id);
 CREATE INDEX idx_neighbor_info_neighbor_id ON public.neighbor_info USING btree (neighbor_id);
 CREATE INDEX idx_neighbor_info_pair ON public.neighbor_info USING btree (id, neighbor_id);
-CREATE INDEX idx_nodes_pk ON public.mesh_packets USING btree (id, packet_id);
+CREATE INDEX idx_nodes_pk ON public.mesh_packets USING btree (source, packet_id);
 CREATE INDEX node_position_geom_idx ON public.node_positions USING gist (geom);
+
+-- This function is tied to a trigger, to create the Geometry
+-- when a new position with latitude, longitude and altitude is inserted
+
+CREATE FUNCTION public.fn_add_geom_update() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+UPDATE node_positions SET geom=ST_MakePoint(NEW.longitude / 10000000, NEW.latitude/ 10000000, 0) where node_id=NEW.node_id;
+RETURN NULL;
+END;
+$$;
 CREATE TRIGGER geom_inserted AFTER INSERT ON public.node_positions FOR EACH ROW EXECUTE FUNCTION public.fn_add_geom_update();
