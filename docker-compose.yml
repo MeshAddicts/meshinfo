@@ -29,7 +29,7 @@ services:
     restart: always
 
   meshinfo:
-    image: ghcr.io/meshaddicts/meshinfo:0.0.68
+    image: ghcr.io/meshaddicts/meshinfo:latest
     volumes:
       - ./output:/app/output
     environment:
