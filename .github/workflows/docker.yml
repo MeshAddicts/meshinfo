@@ -3,6 +3,7 @@ name: Docker Image
 on:
   push:
     branches:
+      - 'main'
       - 'develop'
     tags:
       - v*
