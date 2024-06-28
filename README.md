@@ -90,7 +90,7 @@ scripts/docker-build.sh 0.0.1dev5
 Tag the release using git and push up the tag. The image will be build by GitHub automatically (see: https://github.com/MeshAddicts/meshinfo/actions/workflows/docker.yml).
 
 ```
-git tag v0.0.0 && git push --tags
+git tag v0.0.0 && git push && git push --tags
 ```
 
 ## Contributing
