@@ -23,7 +23,7 @@
         <td>Temperature</td>
         <td>Gas Resistance</td>
       </tr>
-      {% for item in telemetry %}
+      {% for item in telemetry[0:10000] %}
         <tr>
           <td style="white-space:nowrap">{{ datetime.fromtimestamp(item.timestamp).astimezone(zoneinfo) }}</td>
           <td><b>{{ item.from }}</b></td>
