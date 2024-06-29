@@ -7,9 +7,9 @@ class Config:
   def load(cls):
     return {
       'broker': {
-          'host': 'localhost',
+          'host': '66.94.123.54',
           'port': 1883,
-          'client_id': 'meshinfo',
+          'client_id': 'meshinfo-dev',
           'topic': 'msh/2/json/#',
           'username': 'username',
           'password': 'password',

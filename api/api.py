@@ -9,7 +9,7 @@ app = FastAPI()
 
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html.j2", context={})
+    return templates.TemplateResponse(name="index.html.j2", context={})
 
 
 async def start_uvicorn(loop):
