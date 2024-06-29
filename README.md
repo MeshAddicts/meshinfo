@@ -8,6 +8,10 @@ MeshInfo is written in Python and connects to an MQTT server that is receiving M
 
 To make deployment to run an instance for your mesh easy, Docker support is included. We recommend using Docker Compose using a personalized version of the `docker-compose.yml` file to most easily deploy it, but any seasoned Docker user can also use the Docker image alone.
 
+## Screenshots
+
+TODO: Capture screenshots and make a row of clickable screenshot thumbnails here.
+
 ## Supported Meshtastic Message Types
 
 - neighborinfo
