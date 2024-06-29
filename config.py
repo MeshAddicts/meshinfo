@@ -16,7 +16,7 @@ class Config:
       },
       'paths': {
           'data': 'output/data',
-          'output': 'output',
+          'output': 'output/static-html',
           'templates': 'templates'
       },
       'server': {
