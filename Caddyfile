@@ -2,7 +2,7 @@
 	debug
 }
 
-svm.meshinfo.network {
+svm.meshinfo.network, svm1.meshinfo.network {
 	root * /srv
 	encode gzip
 	file_server
