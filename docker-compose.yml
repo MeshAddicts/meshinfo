@@ -6,7 +6,8 @@ services:
       - 443:443
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
-      - ./output:/srv
+      - ./output/static-html:/srv
+      - ./public/images:/srv/images
     environment:
       - CADDY_AGREE=true
     restart: always
