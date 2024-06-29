@@ -101,6 +101,15 @@
             last_seen: '{{ node.last_seen }}',
             position: [{{ node.position.longitude_i / 10000000 }}, {{ node.position.latitude_i / 10000000 }}],
             online: {% if node.last_seen > (datetime.datetime.now(zoneinfo) - datetime.timedelta(seconds=7200)) %}true{% else %}false{% endif %},
+            neighbors: [
+              {% for neighbor in node.neighborinfo.neighbors %}
+                {
+                  id: '{{ neighbor.node_id }}',
+                  snr: '{{ neighbor.snr }}',
+                  distance: '{{ neighbor.distance }}',
+                },
+              {% endfor %}
+            ],
           },
         });
         {% if node.last_seen > (datetime.datetime.now(zoneinfo) - datetime.timedelta(seconds=7200)) %}
@@ -170,12 +179,23 @@
           console.log(node);
           var address = await reverseGeocode(node.position[0], node.position[1]);
           var display_name = [address.address.town, address.address.city, address.address.county, address.address.state, address.address.country].filter(Boolean).join(', ');
-          content.innerHTML = '<b>' + node.longname + '</b><br/>'
+
+          var panel = '<b>' + node.longname + '</b><br/>'
             + node.shortname + ' / ' + node.id + '<br/><br/>'
             + '<b>Position</b><br/>' + node.position + '<br/><br/>'
             + '<b>Location</b><br/>' + display_name + '<br/><br/>'
             + '<b>Status</b><br/>' + (node.online ? 'Online' : 'Offline') + '<br/><br/>'
             + '<b>Last Seen</b><br/>' + node.last_seen + '<br/><br/>';
+          panel += '<b>Neighbors</b><br/>';
+          if (node.neighbors.length == 0) {
+            panel += 'None';
+          } else {
+            panel += node.neighbors.map(function(neighbor) {
+              return neighbor.id + ' / ' + neighbor.snr + ' / ' + neighbor.distance + ' km';
+            }).join('<br/>');
+          }
+
+          content.innerHTML = panel;
           overlay.setPosition(ol.proj.fromLonLat(node.position));
         } else {
           content.innerHTML = '<b>Unknown</b>';
