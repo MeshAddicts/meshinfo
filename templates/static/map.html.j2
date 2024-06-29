@@ -1,4 +1,4 @@
-{% extends "templates/static/layout.html.j2" %}
+{% extends "templates/static/layout-map.html.j2" %}
 
 {% block title %}Map{% endblock %}
 {% block head %}
@@ -7,18 +7,11 @@
 {% endblock %}
 
 {% block content %}
-  <h1>Map</h1>
-  <p>
-    Map of the mesh as seen by <b>KE-R</b> (!4355f528).
-  </p>
-  <p>Last updated: {{ timestamp.astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</p>
-
   <div id="map" class="map"></div>
   <div id="popup" class="ol-popup">
     <a href="#" id="popup-closer" class="ol-popup-closer"></a>
     <div id="popup-content"></div>
   </div>
-
   <script type="module">
     async function reverseGeocode(lon, lat) {
       return fetch('https://nominatim.openstreetmap.org/reverse?format=json&lon=' + lon + '&lat=' + lat)
@@ -59,13 +52,13 @@
 
     var defaultStyle = new ol.style.Style({
       image: new ol.style.Circle({
-        radius: 10,
+        radius: 6,
         fill: new ol.style.Fill({
-          color: 'rgba(0, 0, 255, 0.1)'
+          color: 'rgba(0, 0, 240, 1)'
         }),
         stroke: new ol.style.Stroke({
-          color: 'blue',
-          width: 1
+          color: 'white',
+          width: 2
         })
       })
     });
@@ -161,7 +154,6 @@
       }
     });
   </script>
-
   <style>
     #map {
       height: 100%;
