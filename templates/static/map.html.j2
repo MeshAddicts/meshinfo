@@ -46,7 +46,7 @@
       target: 'map',
       view: new ol.View({
         center: ol.proj.fromLonLat([server_position.longitude, server_position.latitude]),
-        zoom: 8.3,
+        zoom: 9.5,
       }),
     });
 
@@ -63,22 +63,54 @@
       })
     });
 
-    const features = [
-      {% for id, node in nodes.items() %}
-        {% if node.position is defined and node.position %}
-          new ol.Feature({
-            geometry: new ol.geom.Point(ol.proj.fromLonLat([{{ node.position.longitude_i / 10000000 }}, {{ node.position.latitude_i / 10000000 }}])),
-            node: {
-              id: '{{ id }}',
-              shortname: '{{ node.shortname }}',
-              longname: '{{ node.longname }}',
-              last_seen: '{{ node.last_seen }}',
-              position: [{{ node.position.longitude_i / 10000000 }}, {{ node.position.latitude_i / 10000000 }}],
-            },
-          }),
+    var offlineStyle = new ol.style.Style({
+      image: new ol.style.Circle({
+        radius: 6,
+        fill: new ol.style.Fill({
+          color: 'rgba(0, 0, 0, 0.50)'
+        }),
+        stroke: new ol.style.Stroke({
+          color: 'white',
+          width: 2
+        })
+      })
+    });
+
+    var onlineStyle = new ol.style.Style({
+      image: new ol.style.Circle({
+        radius: 6,
+        fill: new ol.style.Fill({
+          color: 'rgba(50, 240, 50, 1)'
+        }),
+        stroke: new ol.style.Stroke({
+          color: 'white',
+          width: 2
+        })
+      })
+    });
+
+    const features = [];
+    {% for id, node in nodes.items() %}
+      {% if node.position is defined and node.position %}
+        var feature = new ol.Feature({
+          geometry: new ol.geom.Point(ol.proj.fromLonLat([{{ node.position.longitude_i / 10000000 }}, {{ node.position.latitude_i / 10000000 }}])),
+          node: {
+            id: '{{ id }}',
+            shortname: '{{ node.shortname }}',
+            longname: '{{ node.longname }}',
+            last_seen: '{{ node.last_seen }}',
+            position: [{{ node.position.longitude_i / 10000000 }}, {{ node.position.latitude_i / 10000000 }}],
+            online: {% if node.last_seen > (datetime.datetime.now(zoneinfo) - datetime.timedelta(seconds=7200)) %}true{% else %}false{% endif %},
+          },
+        });
+        {% if node.last_seen > (datetime.datetime.now(zoneinfo) - datetime.timedelta(seconds=7200)) %}
+          feature.setStyle(onlineStyle);
+        {% else %}
+          feature.setStyle(offlineStyle);
         {% endif %}
-      {% endfor %}
-    ];
+        features.push(feature);
+      {% endif %}
+    {% endfor %}
 
     const layer = new ol.layer.Vector({
       style: defaultStyle,
@@ -103,13 +135,13 @@
 
     var selectedStyle = new ol.style.Style({
       image: new ol.style.Circle({
-        radius: 10,
+        radius: 6,
         fill: new ol.style.Fill({
-          color: 'rgba(255, 0, 0, 0.1)'
+          color: 'rgba(0, 0, 240, 1)'
         }),
         stroke: new ol.style.Stroke({
-          color: 'red',
-          width: 1
+          color: 'orange',
+          width: 2
         })
       })
     });
@@ -142,6 +174,7 @@
             + node.shortname + ' / ' + node.id + '<br/><br/>'
             + '<b>Position</b><br/>' + node.position + '<br/><br/>'
             + '<b>Location</b><br/>' + display_name + '<br/><br/>'
+            + '<b>Status</b><br/>' + (node.online ? 'Online' : 'Offline') + '<br/><br/>'
             + '<b>Last Seen</b><br/>' + node.last_seen + '<br/><br/>';
           overlay.setPosition(ol.proj.fromLonLat(node.position));
         } else {

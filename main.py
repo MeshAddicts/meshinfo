@@ -17,22 +17,21 @@ from models.node import Node
 load_dotenv()
 
 config = Config.load()
-chat = {
-    'channels': {
-        '0': {
-          'name': 'General',
-          'messages': []
-        }
+chat: dict = {}
+chat['channels'] = {
+    '0': {
+        'name': 'General',
+        'messages': []
     }
 }
-messages = []
-mqtt_messages = []
+messages: list = []
+mqtt_messages: list = []
 mqtt_connect_time = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
-nodes = {}
-telemetry = []
-telemetry_by_node = {}
-traceroutes = []
-traceroutes_by_node = {}
+nodes: dict = {}
+telemetry: list = []
+telemetry_by_node: dict = {}
+traceroutes: list = []
+traceroutes_by_node: dict = {}
 
 def connect_mqtt(broker, port, client_id, username, password):
     def on_connect(client, userdata, flags, rc, properties=None):
@@ -45,7 +44,7 @@ def connect_mqtt(broker, port, client_id, username, password):
 
     client = mqtt_client.Client(client_id=client_id, callback_api_version=mqtt_client.CallbackAPIVersion.VERSION2)
     client.on_connect = on_connect
-    # client.username_pw_set(username, password)
+    client.username_pw_set(username, password)
     client.connect(broker, port)
     return client
 
@@ -90,6 +89,18 @@ def update_node(id, node):
     node['active'] = True
     node['last_seen'] = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
     nodes[id] = node
+
+def find_node_by_int_id(id: int):
+    return nodes.get(convert_node_id_from_int_to_hex(id), None)
+
+def find_node_by_hex_id(id: str):
+    return nodes.get(id, None)
+
+def find_node_by_short_name(sn: str):
+    for id, node in nodes.items():
+        if node['shortname'] == sn:
+            return node
+    return None
 
 def convert_node_id_from_int_to_hex(id):
     return '!' + f'{id:x}'
@@ -358,7 +369,7 @@ def render_static_html_files():
     server_node = nodes[f'{config["server"]["node_id"]}']
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/map.html.j2')
-    rendered_html = template.render(config=config, server_node=server_node, nodes=nodes, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
+    rendered_html = template.render(config=config, server_node=server_node, nodes=nodes, datetime=datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/map.html", "w") as f:
         f.write(rendered_html)
 
@@ -581,7 +592,7 @@ def save_chat_to_file(chat, type, path, config=config):
     if type == "html":
       env = Environment(loader=FileSystemLoader('.'), autoescape=True)
       template = env.get_template(f'{config["paths"]["templates"]}/static/chat.html.j2')
-      rendered_html = template.render(config=config, nodes=nodes, chat=chat, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
+      rendered_html = template.render(config=config, nodes=nodes, chat=chat, calculate_distance_between_nodes=calculate_distance_between_nodes, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
       with open(path, "w") as f:
           f.write(rendered_html)
 
