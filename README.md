@@ -45,25 +45,32 @@ If you're using this and have questions, or perhaps you want to join in on the d
 
 #### Setup
 
-```
+```sh
 git clone https://github.com/MeshAddicts/meshinfo.git
 ```
 
 #### To Run
 
 Change to the directory.
-```
+
+```sh
 cd meshinfo
 ```
 
-```
+```sh
 docker compose down && git pull && docker compose up -d
 ```
 
 #### To Update
 
-```
+```sh
 docker compose down && git pull && docker compose up -d
+```
+
+### Directly (without Docker)
+
+```sh
+python3 main.py
 ```
 
 ## Development
@@ -71,17 +78,20 @@ docker compose down && git pull && docker compose up -d
 ### Building a local Docker image
 
 Clone the repository.
-```
+
+```sh
 git clone https://github.com/MeshAddicts/meshinfo.git
 ```
 
 If already existing, be sure to pull updates.
-```
+
+```sh
 git fetch && git pull
 ```
 
 Build. Be sure to specify a related version number and suffix (this example `dev5` but could be your name or initials and a number) as this will help prevent collisions in your local image cache when testing.
-```
+
+```sh
 scripts/docker-build.sh 0.0.1dev5
 ```
 
@@ -89,7 +99,7 @@ scripts/docker-build.sh 0.0.1dev5
 
 Tag the release using git and push up the tag. The image will be build by GitHub automatically (see: https://github.com/MeshAddicts/meshinfo/actions/workflows/docker.yml).
 
-```
+```sh
 git tag v0.0.0 && git push && git push --tags
 ```
 
