@@ -5,6 +5,7 @@ services:
       - 80:80
       - 443:443
     volumes:
+      - ./caddy/data:/data/caddy
       - ./Caddyfile:/etc/caddy/Caddyfile
       - ./output/static-html:/srv
       - ./public/images:/srv/images
