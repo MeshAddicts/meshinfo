@@ -69,8 +69,11 @@ docker compose down && git pull && docker compose up -d
 
 ### Directly (without Docker)
 
+Be sure you have `Python 3.12.4` or higher installed.
+
 ```sh
-python3 main.py
+pip install -r requirements.txt
+python main.py
 ```
 
 ## Development
