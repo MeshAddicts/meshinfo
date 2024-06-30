@@ -369,7 +369,7 @@ def render_static_html_files():
     server_node = nodes[f'{config["server"]["node_id"]}']
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/map.html.j2')
-    rendered_html = template.render(config=config, server_node=server_node, nodes=nodes, datetime=datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
+    rendered_html = template.render(config=config, server_node=server_node, nodes=nodes, calculate_distance_between_nodes=calculate_distance_between_nodes, convert_node_id_from_int_to_hex=convert_node_id_from_int_to_hex, datetime=datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/map.html", "w") as f:
         f.write(rendered_html)
 

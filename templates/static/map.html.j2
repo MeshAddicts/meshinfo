@@ -89,6 +89,30 @@
       })
     });
 
+    const nodes = {};
+    var neighborLayers = [];
+    {% for id, node in nodes.items() %}
+      {% if node.position is defined and node.position %}
+      nodes['{{ id }}'] = {
+        id: '{{ id }}',
+        shortname: '{{ node.shortname }}',
+        longname: '{{ node.longname }}',
+        last_seen: '{{ node.last_seen }}',
+        position: [{{ node.position.longitude_i / 10000000 }}, {{ node.position.latitude_i / 10000000 }}],
+        online: {% if node.last_seen > (datetime.datetime.now(zoneinfo) - datetime.timedelta(seconds=7200)) %}true{% else %}false{% endif %},
+        neighbors: [
+          {% for neighbor in node.neighborinfo.neighbors %}
+            {
+              id: '{{ neighbor.node_id }}',
+              snr: '{{ neighbor.snr }}',
+              distance: '{{ neighbor.distance }}',
+            },
+          {% endfor %}
+        ],
+      };
+      {% endif %}
+    {% endfor %}
+
     const features = [];
     {% for id, node in nodes.items() %}
       {% if node.position is defined and node.position %}
@@ -104,7 +128,7 @@
             neighbors: [
               {% for neighbor in node.neighborinfo.neighbors %}
                 {
-                  id: '{{ neighbor.node_id }}',
+                  id: '{{ convert_node_id_from_int_to_hex(neighbor.node_id) }}',
                   snr: '{{ neighbor.snr }}',
                   distance: '{{ neighbor.distance }}',
                 },
@@ -162,6 +186,10 @@
 
     closer.onclick = function() {
       select.getFeatures().clear();
+      neighborLayers.map(function(layer) {
+        map.removeLayer(layer);
+      });
+      neighborLayers = [];
       overlay.setPosition(undefined);
       closer.blur();
       return false;
@@ -193,8 +221,36 @@
             panel += node.neighbors.map(function(neighbor) {
               return neighbor.id + ' / ' + neighbor.snr + ' / ' + neighbor.distance + ' km';
             }).join('<br/>');
-          }
 
+            node.neighbors.map(function(neighbor) {
+              var nnode = nodes[neighbor.id];
+              if (!nnode || !nnode.position) {
+                return;
+              }
+              var points = [node.position, nnode.position];
+
+              for (var i = 0; i < points.length; i++) {
+                  points[i] = ol.proj.transform(points[i], 'EPSG:4326', 'EPSG:3857');
+              }
+
+              var featureLine = new ol.Feature({
+                  geometry: new ol.geom.LineString(points)
+              });
+
+              var vectorLine = new ol.source.Vector({});
+              vectorLine.addFeature(featureLine);
+
+              var vectorLineLayer = new ol.layer.Vector({
+                  source: vectorLine,
+                  style: new ol.style.Style({
+                      fill: new ol.style.Fill({ color: '#66FF66', weight: 8 }),
+                      stroke: new ol.style.Stroke({ color: '#66FF66', width: 4 })
+                  })
+              });
+              neighborLayers.push(vectorLineLayer);
+              map.addLayer(vectorLineLayer);
+            });
+          }
           content.innerHTML = panel;
           overlay.setPosition(ol.proj.fromLonLat(node.position));
         } else {
