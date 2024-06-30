@@ -331,6 +331,12 @@
             });
           }
 
+          panel += '<br/><br/>';
+
+          panel += '<b>Elsewhere</b><br/>';
+          var node_id = parseInt(node.id.replace('!', ''), 16);
+          panel += '<a href="https://meshview.armooo.net/packet_list/' + node_id + '" target="_blank">Armooo\'s MeshView</a><br/>';
+
           content.innerHTML = panel;
           overlay.setPosition(ol.proj.fromLonLat(node.position));
         } else {
