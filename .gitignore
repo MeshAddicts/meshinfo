@@ -8,3 +8,4 @@ backups/*
 output/*
 mosquitto/data/*
 postgres/data/*
+config.json
