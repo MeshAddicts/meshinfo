@@ -8,7 +8,7 @@
 
 {% block content %}
   <div id="map" class="map"></div>
-  <div id="popup" class="ol-popup">
+  <div id="nodeDetail" class="ol-popup">
     <a href="#" id="popup-closer" class="ol-popup-closer"></a>
     <div id="popup-content"></div>
   </div>
@@ -103,7 +103,7 @@
         neighbors: [
           {% for neighbor in node.neighborinfo.neighbors %}
             {
-              id: '{{ neighbor.node_id }}',
+              id: '{{ convert_node_id_from_int_to_hex(neighbor.node_id) }}',
               snr: '{{ neighbor.snr }}',
               distance: '{{ neighbor.distance }}',
             },
@@ -153,7 +153,7 @@
     });
     map.addLayer(layer);
 
-    var container = document.getElementById('popup');
+    var container = document.getElementById('nodeDetail');
     var content = document.getElementById('popup-content');
     var closer = document.getElementById('popup-closer');
 
@@ -196,6 +196,11 @@
     };
 
     map.on('singleclick', async function (event) {
+      neighborLayers.map(function(layer) {
+        map.removeLayer(layer);
+      });
+      neighborLayers = [];
+
       if (map.hasFeatureAtPixel(event.pixel) === true) {
         var coordinate = event.coordinate;
         var feature = map.forEachFeatureAtPixel(event.pixel, function(feature) {
@@ -214,12 +219,21 @@
             + '<b>Location</b><br/>' + display_name + '<br/><br/>'
             + '<b>Status</b><br/>' + (node.online ? 'Online' : 'Offline') + '<br/><br/>'
             + '<b>Last Seen</b><br/>' + node.last_seen + '<br/><br/>';
-          panel += '<b>Neighbors</b><br/>';
+
+          panel += '<b>Neighbors Heard</b><br/>';
           if (node.neighbors.length == 0) {
             panel += 'None';
           } else {
             panel += node.neighbors.map(function(neighbor) {
-              return neighbor.id + ' / ' + neighbor.snr + ' / ' + neighbor.distance + ' km';
+              var nnode = nodes[neighbor.id];
+              if (!nnode) {
+                return '<span class="text-gray-600">UNK </span> / SNR: ' + neighbor.snr;
+              }
+              const distance = Math.sqrt(
+                Math.pow(node.position[0] - nnode.position[0], 2) +
+                Math.pow(node.position[1] - nnode.position[1], 2)
+              ) * 111.32;
+              return nnode.shortname + ' / SNR: ' + neighbor.snr + ' / Distance: ' + distance.toFixed(2) + ' km';
             }).join('<br/>');
 
             node.neighbors.map(function(neighbor) {
@@ -251,6 +265,73 @@
               map.addLayer(vectorLineLayer);
             });
           }
+          panel += '<br/><br/>';
+
+          panel += '<b>Heard By Nodes</b><br/>';
+          var heard_by = Object.keys(nodes).filter(function(id) {
+            return nodes[id].neighbors.some(function(neighbor) {
+              return neighbor.id == node.id;
+            });
+          });
+          if (heard_by.length == 0) {
+            panel += 'None';
+          } else {
+            panel += heard_by.map(function(id) {
+              var nnode = nodes[id];
+              var neighbor = nnode.neighbors.find(function(neighbor) {
+                return neighbor.id == node.id;
+              });
+              if (!nnode) {
+                return '<span class="text-gray-600">UNK </span> / SNR: ' + neighbor.snr;
+              }
+              // calculate distance between two nodes without using ol.sphere
+              const distance = Math.sqrt(
+                Math.pow(node.position[0] - nnode.position[0], 2) +
+                Math.pow(node.position[1] - nnode.position[1], 2)
+              ) * 111.32;
+              return nnode.shortname + ' / SNR: ' + neighbor.snr + ' / Distance: ' + distance.toFixed(2) + ' km';
+            }).join('<br/>');
+
+            // add the heard_by lines
+            heard_by.map(function(id) {
+              var nnode = nodes[id];
+              if (!nnode || !nnode.position) {
+                return;
+              }
+              var points = [node.position, nnode.position];
+
+              for (var i = 0; i < points.length; i++) {
+                  points[i] = ol.proj.transform(points[i], 'EPSG:4326', 'EPSG:3857');
+              }
+
+              var featureLine = new ol.Feature({
+                  geometry: new ol.geom.LineString(points)
+              });
+
+              var vectorLine = new ol.source.Vector({});
+              vectorLine.addFeature(featureLine);
+
+              var lineStyle = new ol.style.Style({
+                  fill: new ol.style.Fill({ color: '#6666FF', weight: 8 }),
+                  stroke: new ol.style.Stroke({ color: '#6666FF', width: 4 })
+              });
+              // if the nnode is also a neighbor of the node, make the line purple
+              if (node.neighbors.some(function(neighbor) { return neighbor.id == id; })) {
+                lineStyle = new ol.style.Style({
+                  fill: new ol.style.Fill({ color: '#FF66FF', weight: 8 }),
+                  stroke: new ol.style.Stroke({ color: '#FF66FF', width: 4 })
+                });
+              }
+
+              var vectorLineLayer = new ol.layer.Vector({
+                  source: vectorLine,
+                  style: lineStyle
+              });
+              neighborLayers.push(vectorLineLayer);
+              map.addLayer(vectorLineLayer);
+            });
+          }
+
           content.innerHTML = panel;
           overlay.setPosition(ol.proj.fromLonLat(node.position));
         } else {
