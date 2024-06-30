@@ -12,6 +12,19 @@
     <a href="#" id="popup-closer" class="ol-popup-closer"></a>
     <div id="popup-content"></div>
   </div>
+  <div id="legend" class="p-2 bg-white">
+    <div class="text-lg">LEGEND</div>
+    <div class="align-items-center">
+      <div class="inline-block w-12 h-1 bg-green-400"></div>
+      <div class="inline-block">Neighbor Heard</div>
+    </div>
+    <div>
+      <div class="inline-block w-12 h-1 bg-blue-400"></div> Heard By Neighbor
+    </div>
+    <div>
+      <div class="inline-block w-12 h-1 bg-purple-400"></div> Both Heard Each Other
+    </div>
+  </div>
   <script type="module">
     async function reverseGeocode(lon, lat) {
       return fetch('https://nominatim.openstreetmap.org/reverse?format=json&lon=' + lon + '&lat=' + lat)
@@ -114,36 +127,22 @@
     {% endfor %}
 
     const features = [];
-    {% for id, node in nodes.items() %}
-      {% if node.position is defined and node.position %}
+    // Add nodes to the map, loop through all nodes
+    // and add a feature for each node that has a position
+    Object.values(nodes).forEach(function(node) {
+      if (node.position) {
         var feature = new ol.Feature({
-          geometry: new ol.geom.Point(ol.proj.fromLonLat([{{ node.position.longitude_i / 10000000 }}, {{ node.position.latitude_i / 10000000 }}])),
-          node: {
-            id: '{{ id }}',
-            shortname: '{{ node.shortname }}',
-            longname: '{{ node.longname }}',
-            last_seen: '{{ node.last_seen }}',
-            position: [{{ node.position.longitude_i / 10000000 }}, {{ node.position.latitude_i / 10000000 }}],
-            online: {% if node.last_seen > (datetime.datetime.now(zoneinfo) - datetime.timedelta(seconds=7200)) %}true{% else %}false{% endif %},
-            neighbors: [
-              {% for neighbor in node.neighborinfo.neighbors %}
-                {
-                  id: '{{ convert_node_id_from_int_to_hex(neighbor.node_id) }}',
-                  snr: '{{ neighbor.snr }}',
-                  distance: '{{ neighbor.distance }}',
-                },
-              {% endfor %}
-            ],
-          },
+          geometry: new ol.geom.Point(ol.proj.fromLonLat(node.position)),
+          node: node,
         });
-        {% if node.last_seen > (datetime.datetime.now(zoneinfo) - datetime.timedelta(seconds=7200)) %}
+        if (node.online) {
           feature.setStyle(onlineStyle);
-        {% else %}
+        } else {
           feature.setStyle(offlineStyle);
-        {% endif %}
+        }
         features.push(feature);
-      {% endif %}
-    {% endfor %}
+      }
+    });
 
     const layer = new ol.layer.Vector({
       style: defaultStyle,
@@ -348,6 +347,12 @@
     #map {
       height: 100%;
       width: 100%;
+    }
+    #legend {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
     }
     .ol-popup {
       position: absolute;
