@@ -223,17 +223,20 @@
           if (node.neighbors.length == 0) {
             panel += 'None';
           } else {
+            panel += "<table border=1 cellpadding=2 cellspacing=0 width=100% class='border border-gray-300'>";
+            panel += "<tr><th width=33% align=left>Node</th><th width=33% align=center>SNR</th><th width=33% align=right>Distance</th></tr>";
             panel += node.neighbors.map(function(neighbor) {
               var nnode = nodes[neighbor.id];
               if (!nnode) {
-                return '<span class="text-gray-600">UNK </span> / SNR: ' + neighbor.snr;
+                return '<tr><td class="text-gray-600">UNK</td><td align=center>' + neighbor.snr + '</td><td></td></tr>';
               }
               const distance = Math.sqrt(
                 Math.pow(node.position[0] - nnode.position[0], 2) +
                 Math.pow(node.position[1] - nnode.position[1], 2)
               ) * 111.32;
-              return nnode.shortname + ' / SNR: ' + neighbor.snr + ' / Distance: ' + distance.toFixed(2) + ' km';
-            }).join('<br/>');
+              return '<tr><td align=left>' + nnode.shortname + '</td><td align=center>' + neighbor.snr + '</td><td align=right>' + distance.toFixed(2) + ' km</td></tr>';
+            }).join('');
+            panel += "</table>";
 
             node.neighbors.map(function(neighbor) {
               var nnode = nodes[neighbor.id];
@@ -266,7 +269,7 @@
           }
           panel += '<br/><br/>';
 
-          panel += '<b>Heard By Nodes</b><br/>';
+          panel += '<b>Heard By Neighbors</b><br/>';
           var heard_by = Object.keys(nodes).filter(function(id) {
             return nodes[id].neighbors.some(function(neighbor) {
               return neighbor.id == node.id;
@@ -275,21 +278,24 @@
           if (heard_by.length == 0) {
             panel += 'None';
           } else {
+            panel += "<table border=1 cellpadding=2 cellspacing=0 width=100% class='border border-gray-300'>";
+            panel += "<tr><th width=33% align=left>Node</th><th width=33% align=center>SNR</th><th width=33% align=right>Distance</th></tr>";
             panel += heard_by.map(function(id) {
               var nnode = nodes[id];
               var neighbor = nnode.neighbors.find(function(neighbor) {
                 return neighbor.id == node.id;
               });
               if (!nnode) {
-                return '<span class="text-gray-600">UNK </span> / SNR: ' + neighbor.snr;
+                return '<tr><td class="text-gray-600">UNK</td><td align=center>' + neighbor.snr + '</td><td></td></tr>';
               }
               // calculate distance between two nodes without using ol.sphere
               const distance = Math.sqrt(
                 Math.pow(node.position[0] - nnode.position[0], 2) +
                 Math.pow(node.position[1] - nnode.position[1], 2)
               ) * 111.32;
-              return nnode.shortname + ' / SNR: ' + neighbor.snr + ' / Distance: ' + distance.toFixed(2) + ' km';
-            }).join('<br/>');
+              return '<tr><td align=left>' + nnode.shortname + '</td><td align=center>' + neighbor.snr + '</td><td align=right>' + distance.toFixed(2) + ' km</td></tr>';
+            }).join('');
+            panel += "</table>";
 
             // add the heard_by lines
             heard_by.map(function(id) {
@@ -331,7 +337,7 @@
             });
           }
 
-          panel += '<br/><br/>';
+          panel += '<br/>';
 
           panel += '<b>Elsewhere</b><br/>';
           var node_id = parseInt(node.id.replace('!', ''), 16);
