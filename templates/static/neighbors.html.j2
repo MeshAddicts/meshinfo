@@ -13,14 +13,15 @@
         <tr bgcolor=lightgray>
             <th>ID</th>
             <th colspan=2>Name</th>
-            <th colspan=2>Neighbors</th>
+            <th colspan=3>Neighbors</th>
             <th colspan=2>Seen</th>
         </tr>
         <tr bgcolor=lightgray>
             <th></th>
             <th>Short</th>
             <th>Long</th>
-            <th>Nodes</th>
+            <th>Heard</th>
+            <th>Heard By</th>
             <th>Interval</th>
             <th>Last</th>
             <th>Since</th>
@@ -39,25 +40,54 @@
               <table width=100%>
               {% for neighbor in node.neighborinfo.neighbors %}
                 <tr>
-                <td width=25%>
-                  {% if neighbor.node_id in nodes %}
-                  {{ nodes[neighbor.node_id].shortname }}
-                  {% else %}
-                  UNK
-                  {% endif %}
-                </td>
-                <td>
-                  SNR: {{ neighbor.snr }}
-                </td>
-                <td align=right>
-                  {% if neighbor.distance %}
-                    {{ neighbor.distance }} km
-                  {% endif %}
-                </td>
+                  <td width=25%>
+                    {% if neighbor.node_id in nodes %}
+                    {{ nodes[neighbor.node_id].shortname }}
+                    {% else %}
+                    UNK
+                    {% endif %}
+                  </td>
+                  <td>
+                    SNR: {{ neighbor.snr }}
+                  </td>
+                  <td align=right>
+                    {% if neighbor.distance %}
+                      {{ neighbor.distance }} km
+                    {% endif %}
+                  </td>
                 </tr>
               {% endfor %}
               </table>
             </td>
+            <td align=left>
+              <table width=100%>
+              {% for nid, nnode in nodes.items() %}
+              {% if nnode.neighborinfo %}
+              {% for neighbor in nnode.neighborinfo.neighbors %}
+              {% if convert_node_id_from_int_to_hex(neighbor.node_id) == id %}
+                <tr>
+                  <td width=25%>
+                    {% if nid in nodes %}
+                      {{ nodes[nid].shortname }}
+                    {% else %}
+                      UNK
+                    {% endif %}
+                  </td>
+                  <td>
+                    SNR: {{ neighbor.snr }}
+                  </td>
+                  <td align=right>
+                    {% set dist = calculate_distance_between_nodes(nodes[nid], nodes[id]) %}
+                    {% if dist %}
+                    {{ dist }} km
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endif %}
+              {% endfor %}
+              {% endif %}
+              {% endfor %}
+              </table>
             <td align=right>{{ node.neighborinfo.node_broadcast_interval_secs }}s</td>
             {% else %}
             <td></td>

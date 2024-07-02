@@ -16,11 +16,16 @@
             <th>Time</th>
             <th>From</th>
             <th>Via</th>
-            <th>Hops</th>
             <th>To</th>
+            <th>Hops</th>
+            <th>DX</th>
             <th width=65%>Message</th>
         </tr>
         {% for message in chat['channels']['0']['messages'] %}
+        {% set node_from = nodes[message.from] if message.from in nodes else None %}
+        {% set node_sender = nodes[message.sender] if message.sender in nodes else None %}
+        {% set node_to = nodes[message.to] if message.to in nodes else None %}
+        {% set distance_from_sender = calculate_distance_between_nodes(node_from, node_sender) if node_from and node_sender else None %}
         <tr>
             <td>{{ datetime.fromtimestamp(message.timestamp).astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</td>
             <td>
@@ -33,11 +38,16 @@
                 {{ nodes[message.sender].shortname if message.sender in nodes else 'UNK' }}
               </span>
             </td>
-            <td align=center>{{ message.hops_away }}</td>
             <td>
               <span title="{{ message.to + " / " + nodes[message.to].longname if message.to in nodes else (message.to + ' / Unknown') }}">
                 {{ nodes[message.to].shortname if message.to in nodes else 'UNK' }}
               </span>
+            </td>
+            <td align=center>{{ message.hops_away }}</td>
+            <td align=right>
+              {% if distance_from_sender %}
+              {{ distance_from_sender }} km
+              {% endif %}
             </td>
             <td>{{ message.text }}</td>
         </tr>

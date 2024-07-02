@@ -5,8 +5,10 @@ services:
       - 80:80
       - 443:443
     volumes:
+      - ./caddy/data:/data/caddy
       - ./Caddyfile:/etc/caddy/Caddyfile
-      - ./output:/srv
+      - ./output/static-html:/srv
+      - ./public/images:/srv/images
     environment:
       - CADDY_AGREE=true
     restart: always
@@ -29,7 +31,7 @@ services:
     restart: always
 
   meshinfo:
-    image: ghcr.io/meshaddicts/meshinfo:0.0.65
+    image: ghcr.io/meshaddicts/meshinfo:latest
     volumes:
       - ./output:/app/output
     environment:
