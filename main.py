@@ -38,7 +38,7 @@ def connect_mqtt(broker, port, client_id, username, password):
         global mqtt_connect_time
         if rc == 0:
             mqtt_connect_time = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
-            print("Connected to MQTT broker at %s:%d" % (broker, port))
+            print("Connected to MQTT broker at %s:%d (as client_id %s)" % (broker, port, client_id))
         else:
             print("Failed to connect, error: %s\n" % rc)
 
@@ -104,6 +104,11 @@ def find_node_by_short_name(sn: str):
 
 def convert_node_id_from_int_to_hex(id):
     return '!' + f'{id:x}'
+
+def convert_node_id_from_hex_to_int(id):
+    if id[0] != '!':
+        return int(id, 16)
+    return int(id[1:], 16)
 
 def calculate_distance_between_nodes(node1, node2):
     if node1 is None or node2 is None:
@@ -369,7 +374,7 @@ def render_static_html_files():
     server_node = nodes[f'{config["server"]["node_id"]}']
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)
     template = env.get_template(f'{config["paths"]["templates"]}/static/map.html.j2')
-    rendered_html = template.render(config=config, server_node=server_node, nodes=nodes, calculate_distance_between_nodes=calculate_distance_between_nodes, convert_node_id_from_int_to_hex=convert_node_id_from_int_to_hex, datetime=datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
+    rendered_html = template.render(config=config, server_node=server_node, nodes=nodes, calculate_distance_between_nodes=calculate_distance_between_nodes, convert_node_id_from_hex_to_int=convert_node_id_from_hex_to_int, convert_node_id_from_int_to_hex=convert_node_id_from_int_to_hex, datetime=datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
     with open(f"{config['paths']['output']}/map.html", "w") as f:
         f.write(rendered_html)
 
