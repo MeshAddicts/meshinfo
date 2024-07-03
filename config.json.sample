@@ -13,7 +13,7 @@
     "templates": "templates"
   },
   "server": {
-    "node_id": "!4355f528",
+    "node_id": "4355f528",
     "node_activity_prune_threshold": 7200,
     "timezone": "America/Los_Angeles",
     "start_time": null,

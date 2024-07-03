@@ -272,8 +272,9 @@ def _serialize_node(node):
     global nodes
 
     last_seen = node["last_seen"] if isinstance(node["last_seen"], datetime.datetime) else datetime.datetime.fromisoformat(node["last_seen"])
+    id = node["id"] if isinstance(node["id"][1:], str) and node["id"].startswith("!") else node["id"]
     serialized = {
-        "id": node["id"],
+        "id": id,
         "shortname": node["shortname"],
         "longname": node["longname"],
         "hardware": node["hardware"],
