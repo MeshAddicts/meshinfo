@@ -22,6 +22,7 @@ services:
     restart: always
 
   mqtt:
+    container_name: mqtt
     image: eclipse-mosquitto:latest
     ports:
       - 1883:1883
