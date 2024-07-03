@@ -8,7 +8,7 @@ class _JSONEncoder(json.JSONEncoder):
         if isinstance(obj, (datetime.date, datetime.datetime)):
             return obj.astimezone().isoformat()
         if isinstance(obj, str) and obj.startswith('!'):
-            return obj[1:]
+            return json.JSONEncoder.default(obj[1:])
         return json.JSONEncoder.default(obj)
 
 class _JSONDecoder(json.JSONDecoder):
