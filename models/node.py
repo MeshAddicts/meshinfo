@@ -3,7 +3,9 @@ import datetime
 class Node():
   @staticmethod
   def default_node(id):
-    if id == '!ffffffff':
+    if id[0] == '!':
+      id = id[1:]
+    if id == 'ffffffff':
       return {
         'id': id,
         'neighborinfo': None,

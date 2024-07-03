@@ -47,7 +47,8 @@
             </td>
             <td style="color: #{{ '777' if node.shortname == 'UNK' else '000' }}">
               {% if id %}
-              <a href='node_{{ id }}.html'>{{ node.shortname }}</a>
+              {% set id = id|replace('!', '') %}
+                <a href='node_{{ id }}.html'>{{ node.shortname }}</a>
               {% else %}
                 {{ node.shortname }}
               {% endif %}

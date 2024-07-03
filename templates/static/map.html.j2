@@ -106,7 +106,6 @@
     var neighborLayers = [];
     {% for id, node in nodes.items() %}
       {% if node.position is defined and node.position %}
-      {% set id = id|replace('!', '') %}
       nodes['{{ id }}'] = {
         id: '{{ id }}',
         shortname: '{{ node.shortname }}',
@@ -209,7 +208,6 @@
         if (feature) {
           var properties = feature.getProperties();
           var node = properties.node;
-          console.log(node);
           var address = await reverseGeocode(node.position[0], node.position[1]);
           var display_name = [address.address.town, address.address.city, address.address.county, address.address.state, address.address.country].filter(Boolean).join(', ');
 

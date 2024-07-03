@@ -502,6 +502,12 @@ def save_nodes_to_file():
     global chat
     global nodes
 
+    old_nodes = nodes
+    nodes = {}
+    for id, node in old_nodes.items():
+        if id[0] == '!':
+            id = id[1:]
+        nodes['id'] = id
     save_chat_to_file(chat, "json", f"{config['paths']['data']}/chat.json")
     save_to_json_file(nodes, f"{config['paths']['data']}/nodes.json")
     save_to_json_file(telemetry, f"{config['paths']['data']}/telemetry.json")
