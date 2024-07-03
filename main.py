@@ -394,6 +394,16 @@ def render_static_html_files():
     with open(f"{config['paths']['output']}/mqtt_log.html", "w") as f:
         f.write(rendered_html)
 
+    # node_{{id}}.html
+    for id, node in nodes.items():
+        id = id.replace('!', '')
+        print(f"Rendering node_{id}.html")
+        env = Environment(loader=FileSystemLoader('.'), autoescape=True)
+        template = env.get_template(f'{config["paths"]["templates"]}/static/node.html.j2')
+        rendered_html = template.render(config=config, node=node, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
+        with open(f"{config['paths']['output']}/node_{id}.html", "w") as f:
+            f.write(rendered_html)
+
     # nodes.html
     print("Rendering nodes.html")
     env = Environment(loader=FileSystemLoader('.'), autoescape=True)

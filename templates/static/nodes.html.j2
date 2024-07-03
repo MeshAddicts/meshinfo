@@ -37,9 +37,18 @@
         </tr>
         {% for id, node in active_nodes.items() %}
         <tr>
-            <td>{{ id }}</td>
+            <td>
+              {% if id %}
+              {% set id = id|replace('!', '') %}
+              <a href='node_{{ id }}.html'>{{ id }}</a>
+              {% endif %}
+            </td>
             <td style="color: #{{ '777' if node.shortname == 'UNK' else '000' }}">
-              {{ node.shortname }}
+              {% if id %}
+              <a href='node_{{ id }}.html'>{{ node.shortname }}</a>
+              {% else %}
+                {{ node.shortname }}
+              {% endif %}
             </td>
             <td style="color: #{{ '777' if node.shortname == 'UNK' else '000' }}">
               {{ node.longname }}
