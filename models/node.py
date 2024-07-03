@@ -2,9 +2,9 @@ import datetime
 
 class Node():
   @staticmethod
-  def default_node(id):
-    if id[0] == '!':
-      id = id[1:]
+  def default_node(id: str):
+    if id.startswith('!'):
+      id = id.replace('!', '')
     if id == 'ffffffff':
       return {
         'id': id,

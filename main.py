@@ -85,7 +85,7 @@ def subscribe(client, topic):
     client.subscribe(topic)
     client.on_message = on_message
 
-def update_node(id, node):
+def update_node(id: str, node):
     node['active'] = True
     node['last_seen'] = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
     nodes[id] = node
@@ -102,13 +102,13 @@ def find_node_by_short_name(sn: str):
             return node
     return None
 
-def convert_node_id_from_int_to_hex(id):
+def convert_node_id_from_int_to_hex(id: int):
     return f'{id:x}'
 
-def convert_node_id_from_hex_to_int(id):
-    if id[0] != '!':
-        return int(id, 16)
-    return int(id[1:], 16)
+def convert_node_id_from_hex_to_int(id: str):
+    if id.startswith('!'):
+        id = id.replace('!', '')
+    return int(id, 16)
 
 def calculate_distance_between_nodes(node1, node2):
     if node1 is None or node2 is None:
@@ -127,12 +127,12 @@ def prune_expired_nodes():
     global nodes
 
     now = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
-    ids_to_delete = []
+    ids_to_delete: list[str] = []
     for id, node in nodes.items():
         last_seen = datetime.datetime.fromisoformat(node['last_seen']).astimezone() if isinstance(node['last_seen'], str) else node['last_seen']
         since = (now - last_seen).seconds
         if node['active'] and since >= config['server']['node_activity_prune_threshold']:
-            ids_to_delete.append(id)
+            ids_to_delete.append(node['id'])
             print(f"Node {id} pruned (last heard {since} seconds ago)")
     for id in ids_to_delete:
         nodes[id]['active'] = False
@@ -183,6 +183,7 @@ def handle_nodeinfo(client, userdata, msg):
     save()
 
 def handle_position(client, userdata, msg):
+    global nodes
     id = f'{msg["from"]:x}'
     if id in nodes:
         node = nodes[id]
@@ -272,7 +273,7 @@ def _serialize_node(node):
     global nodes
 
     last_seen = node["last_seen"] if isinstance(node["last_seen"], datetime.datetime) else datetime.datetime.fromisoformat(node["last_seen"])
-    id = node["id"] if isinstance(node["id"][1:], str) and node["id"].startswith("!") else node["id"]
+    id = node["id"].replace("!","") if isinstance(node["id"], str) and node["id"].startswith("!") else node["id"]
     serialized = {
         "id": id,
         "shortname": node["shortname"],
@@ -346,7 +347,7 @@ def _serialize_position(position):
 
 def sort_nodes_by_shortname():
     global nodes
-    nodes = dict(sorted(nodes.items(), key=lambda item: item[1]['shortname']))
+    nodes = dict(sorted(nodes.items(), key=lambda item: item[1]["shortname"]))
 
 def render_static_html_files():
     global config
@@ -472,6 +473,8 @@ def render_static_html_files():
     with open(f"{config['paths']['output']}/traceroutes.html", "w") as f:
         f.write(rendered_html)
 
+    print("Done rendering static files")
+
 def save():
     global nodes
     global chat
@@ -488,7 +491,7 @@ def save():
     if since_last_data >= config['server']['intervals']['data_save']:
         save_nodes_to_file()
         end = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
-        print(f"Saved in {round(end.timestamp() - save_start.timestamp(), 3)} seconds")
+        print(f"Saved json data in {round(end.timestamp() - save_start.timestamp(), 3)} seconds")
         config['server']['last_data_save'] = end
 
     if since_last_render >= config['server']['intervals']['render']:
@@ -505,13 +508,17 @@ def save_nodes_to_file():
     old_nodes = nodes
     nodes = {}
     for id, node in old_nodes.items():
-        if id[0] == '!':
-            id = id[1:]
-        nodes['id'] = id
+        if id.startswith('!'):
+            id = id.replace('!', '')
+        nodes[id] = node
     save_chat_to_file(chat, "json", f"{config['paths']['data']}/chat.json")
+    print(f"Saved {len(chat['channels']['0']['messages'])} chat messages to file ({config['paths']['data']}/chat.json)")
     save_to_json_file(nodes, f"{config['paths']['data']}/nodes.json")
+    print(f"Saved {len(nodes)} nodes to file ({config['paths']['data']}/nodes.json)")
     save_to_json_file(telemetry, f"{config['paths']['data']}/telemetry.json")
+    print(f"Saved {len(telemetry)} telemetry to file ({config['paths']['data']}/telemetry.json)")
     save_to_json_file(traceroutes, f"{config['paths']['data']}/traceroutes.json")
+    print(f"Saved {len(traceroutes)} traceroutes to file ({config['paths']['data']}/traceroutes.json)")
 
 def save_node_infos_to_file(node_infos, type,path, config=config):
     if type == "json":
