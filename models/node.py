@@ -3,8 +3,7 @@ import datetime
 class Node():
   @staticmethod
   def default_node(id: str):
-    if id.startswith('!'):
-      id = id.replace('!', '')
+    id = id.replace('!', '')
     if id == 'ffffffff':
       return {
         'id': id,

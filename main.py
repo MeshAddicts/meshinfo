@@ -151,7 +151,7 @@ def handle_neighborinfo(client, userdata, msg):
 
     msg['from'] = f'{msg["from"]:x}'
     msg['to'] = f'{msg["to"]:x}'
-    if msg['sender'] and isinstance(msg['sender'], str) and msg['sender'].startswith('!'):
+    if msg['sender'] and isinstance(msg['sender'], str):
       msg['sender'] = msg['sender'].replace('!', '')
 
     id = msg['from']
@@ -172,7 +172,7 @@ def handle_nodeinfo(client, userdata, msg):
 
     msg['from'] = f'{msg["from"]:x}'
     msg['to'] = f'{msg["to"]:x}'
-    if msg['sender'] and isinstance(msg['sender'], str) and msg['sender'].startswith('!'):
+    if msg['sender'] and isinstance(msg['sender'], str):
       msg['sender'] = msg['sender'].replace('!', '')
 
     id = msg['payload']['id']
@@ -198,7 +198,7 @@ def handle_position(client, userdata, msg):
 
     msg['from'] = f'{msg["from"]:x}'
     msg['to'] = f'{msg["to"]:x}'
-    if msg['sender'] and isinstance(msg['sender'], str) and msg['sender'].startswith('!'):
+    if msg['sender'] and isinstance(msg['sender'], str):
       msg['sender'] = msg['sender'].replace('!', '')
 
     id = msg['from']
@@ -220,7 +220,7 @@ def handle_telemetry(client, userdata, msg):
 
     msg['from'] = f'{msg["from"]:x}'
     msg['to'] = f'{msg["to"]:x}'
-    if msg['sender'] and isinstance(msg['sender'], str) and msg['sender'].startswith('!'):
+    if msg['sender'] and isinstance(msg['sender'], str):
       msg['sender'] = msg['sender'].replace('!', '')
 
     id = msg['from']
@@ -248,7 +248,7 @@ def handle_text(client, userdata, msg):
 
     msg['from'] = f'{msg["from"]:x}'
     msg['to'] = f'{msg["to"]:x}'
-    if msg['sender'] and isinstance(msg['sender'], str) and msg['sender'].startswith('!'):
+    if msg['sender'] and isinstance(msg['sender'], str):
       msg['sender'] = msg['sender'].replace('!', '')
 
     chat['channels'][str(msg['channel'])]['messages'].insert(0, {
@@ -271,7 +271,7 @@ def handle_traceroute(client, userdata, msg):
 
     msg['from'] = f'{msg["from"]:x}'
     msg['to'] = f'{msg["to"]:x}'
-    if msg['sender'] and isinstance(msg['sender'], str) and msg['sender'].startswith('!'):
+    if msg['sender'] and isinstance(msg['sender'], str):
       msg['sender'] = msg['sender'].replace('!', '')
     msg['route'] = msg['payload']['route']
     if id in traceroutes_by_node:
