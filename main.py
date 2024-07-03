@@ -149,7 +149,12 @@ def handle_log(msg):
 def handle_neighborinfo(client, userdata, msg):
     global nodes
 
-    id = f'{msg["from"]:x}'
+    msg['from'] = f'{msg["from"]:x}'
+    msg['to'] = f'{msg["to"]:x}'
+    if msg['sender'] and isinstance(msg['sender'], str) and msg['sender'].startswith('!'):
+      msg['sender'] = msg['sender'].replace('!', '')
+
+    id = msg['from']
     if id in nodes:
       node = nodes[id]
       node['neighborinfo'] = msg['payload']
@@ -164,6 +169,12 @@ def handle_neighborinfo(client, userdata, msg):
 
 def handle_nodeinfo(client, userdata, msg):
     global nodes
+
+    msg['from'] = f'{msg["from"]:x}'
+    msg['to'] = f'{msg["to"]:x}'
+    if msg['sender'] and isinstance(msg['sender'], str) and msg['sender'].startswith('!'):
+      msg['sender'] = msg['sender'].replace('!', '')
+
     id = msg['payload']['id']
     if id in nodes:
         node = nodes[id]
@@ -184,7 +195,13 @@ def handle_nodeinfo(client, userdata, msg):
 
 def handle_position(client, userdata, msg):
     global nodes
-    id = f'{msg["from"]:x}'
+
+    msg['from'] = f'{msg["from"]:x}'
+    msg['to'] = f'{msg["to"]:x}'
+    if msg['sender'] and isinstance(msg['sender'], str) and msg['sender'].startswith('!'):
+      msg['sender'] = msg['sender'].replace('!', '')
+
+    id = msg['from']
     if id in nodes:
         node = nodes[id]
         node['position'] = msg['payload'] if 'payload' in msg else None
@@ -229,13 +246,16 @@ def handle_telemetry(client, userdata, msg):
 def handle_text(client, userdata, msg):
     global chat
 
-    id = f'{msg["from"]:x}'
-    to = f'{msg["to"]:x}'
+    msg['from'] = f'{msg["from"]:x}'
+    msg['to'] = f'{msg["to"]:x}'
+    if msg['sender'] and isinstance(msg['sender'], str) and msg['sender'].startswith('!'):
+      msg['sender'] = msg['sender'].replace('!', '')
+
     chat['channels'][str(msg['channel'])]['messages'].insert(0, {
         'id': msg['id'],
         'sender': msg['sender'],
-        'from': id,
-        'to': to,
+        'from': msg['from'],
+        'to': msg['to'],
         'channel': str(msg['channel']),
         'text': msg['payload']['text'],
         'timestamp': msg['timestamp'],
@@ -249,10 +269,10 @@ def handle_traceroute(client, userdata, msg):
     global traceroutes
     global traceroutes_by_node
 
-    id = f'{msg["from"]:x}'
-    to = f'{msg["to"]:x}'
-    msg['from'] = id
-    msg['to'] = to
+    msg['from'] = f'{msg["from"]:x}'
+    msg['to'] = f'{msg["to"]:x}'
+    if msg['sender'] and isinstance(msg['sender'], str) and msg['sender'].startswith('!'):
+      msg['sender'] = msg['sender'].replace('!', '')
     msg['route'] = msg['payload']['route']
     if id in traceroutes_by_node:
         traceroutes_by_node[id].insert(0, msg)
@@ -276,7 +296,7 @@ def _serialize_node(node):
     global nodes
 
     last_seen = node["last_seen"] if isinstance(node["last_seen"], datetime.datetime) else datetime.datetime.fromisoformat(node["last_seen"])
-    id = node["id"].replace("!","") if isinstance(node["id"], str) and node["id"].startswith("!") else node["id"]
+    id = node["id"].replace("!","") if isinstance(node["id"], str) else node["id"]
     serialized = {
         "id": id,
         "shortname": node["shortname"],
