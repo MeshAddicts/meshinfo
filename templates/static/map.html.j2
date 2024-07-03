@@ -339,9 +339,9 @@
           panel += '<br/>';
 
           panel += '<b>Elsewhere</b><br/>';
-          var node_id = parseInt(node.id.replace('!', ''), 16);
+          var node_id = parseInt(node.id, 16);
           panel += '<a href="https://meshview.armooo.net/packet_list/' + node_id + '" target="_blank">Armooo\'s MeshView</a><br/>';
-          panel += '<a href="https://app.bayme.sh/node/' + node.id.replace('!', '') + '" target="_blank">Bay Mesh Explorer</a><br/>';
+          panel += '<a href="https://app.bayme.sh/node/' + node.id + '" target="_blank">Bay Mesh Explorer</a><br/>';
           panel += '<a href="https://meshtastic.liamcottle.net/?node_id=' + node_id + '" target="_blank">Liam\'s Map</a><br/>';
           panel += '<a href="https://meshmap.net/#' + node_id + '" target="_blank">MeshMap</a><br/>';
 
