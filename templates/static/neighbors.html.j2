@@ -28,9 +28,20 @@
         </tr>
         {% for id, node in active_nodes_with_neighbors.items() %}
         <tr>
-            <td>{{ id }}</td>
+            <td>
+              {% if id %}
+              {% set id = id|replace('!', '') %}
+              <a href='node_{{ id }}.html'>{{ id }}</a>
+              {% else %}
+              {{ id }}
+              {% endif %}
+            </td>
             <td style="color: #{{ '777' if node.shortname == 'UNK' else '000' }}">
-              {{ node.shortname }}
+              {% if id %}
+                <a href='node_{{ id }}.html'>{{ node.shortname }}</a>
+              {% else %}
+                <span class="text-gray-500">{{ node.shortname }}</span>
+              {% endif %}
             </td>
             <td style="color: #{{ '777' if node.shortname == 'UNK' else '000' }}">
               {{ node.longname }}

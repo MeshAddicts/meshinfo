@@ -103,7 +103,7 @@ def find_node_by_short_name(sn: str):
     return None
 
 def convert_node_id_from_int_to_hex(id):
-    return '!' + f'{id:x}'
+    return f'{id:x}'
 
 def convert_node_id_from_hex_to_int(id):
     if id[0] != '!':
@@ -149,7 +149,7 @@ def handle_log(msg):
 def handle_neighborinfo(client, userdata, msg):
     global nodes
 
-    id = '!' + f'{msg["from"]:x}'
+    id = f'{msg["from"]:x}'
     if id in nodes:
       node = nodes[id]
       node['neighborinfo'] = msg['payload']
@@ -183,8 +183,7 @@ def handle_nodeinfo(client, userdata, msg):
     save()
 
 def handle_position(client, userdata, msg):
-    # convert msg['from'] to hex
-    id = '!' + f'{msg["from"]:x}'
+    id = f'{msg["from"]:x}'
     if id in nodes:
         node = nodes[id]
         node['position'] = msg['payload'] if 'payload' in msg else None
@@ -201,7 +200,7 @@ def handle_telemetry(client, userdata, msg):
     global nodes
     global telemetry
 
-    id = '!' + f'{msg["from"]:x}'
+    id = f'{msg["from"]:x}'
     if id in nodes:
         node = nodes[id]
         node['telemetry'] = msg['payload'] if 'payload' in msg else None
@@ -216,8 +215,8 @@ def handle_telemetry(client, userdata, msg):
     if id not in telemetry_by_node:
       telemetry_by_node[id] = []
     if 'payload' in msg:
-      msg['from'] = '!' + f'{msg["from"]:x}'
-      msg['to'] = '!' + f'{msg["to"]:x}'
+      msg['from'] = f'{msg["from"]:x}'
+      msg['to'] = f'{msg["to"]:x}'
       telemetry.insert(0, msg)
       telemetry_by_node[id].insert(0, msg)
 
@@ -226,8 +225,8 @@ def handle_telemetry(client, userdata, msg):
 def handle_text(client, userdata, msg):
     global chat
 
-    id = '!' + f'{msg["from"]:x}'
-    to = '!' + f'{msg["to"]:x}'
+    id = f'{msg["from"]:x}'
+    to = f'{msg["to"]:x}'
     chat['channels'][str(msg['channel'])]['messages'].insert(0, {
         'id': msg['id'],
         'sender': msg['sender'],
@@ -246,8 +245,8 @@ def handle_traceroute(client, userdata, msg):
     global traceroutes
     global traceroutes_by_node
 
-    id = '!' + f'{msg["from"]:x}'
-    to = '!' + f'{msg["to"]:x}'
+    id = f'{msg["from"]:x}'
+    to = f'{msg["to"]:x}'
     msg['from'] = id
     msg['to'] = to
     msg['route'] = msg['payload']['route']
@@ -534,7 +533,7 @@ def load():
       nodes = {}
     if config['server']['node_id'] not in nodes:
       nodes[config['server']['node_id']] = Node.default_node(config['server']['node_id'])
-    nodes['!ffffffff'] = Node.default_node('!ffffffff')
+    nodes['ffffffff'] = Node.default_node('ffffffff')
 
     try:
       chat = load_chat_from_file("json", f"{config['paths']['data']}/chat.json")
