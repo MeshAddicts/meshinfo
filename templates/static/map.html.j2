@@ -12,6 +12,14 @@
     <a href="#" id="popup-closer" class="ol-popup-closer"></a>
     <div id="popup-content"></div>
   </div>
+  <div id="details" class="p-4 bg-white">
+    <div class="flex items-center w-full justify-items-stretch">
+      <div id="details-title" class="flex-auto text-lg text-start">NODE NAME</div>
+      <div id="details-subtitle" class="flex-auto ml-4 text-sm text-end">NODE</div>
+    </div>
+    <div id="details-content" class="align-items-center">
+    </div>
+  </div>
   <div id="legend" class="p-2 bg-white">
     <div class="text-lg">LEGEND</div>
     <div class="align-items-center">
@@ -160,6 +168,11 @@
     var content = document.getElementById('popup-content');
     var closer = document.getElementById('popup-closer');
 
+    var nodeDetails = document.getElementById('details');
+    var nodeTitle = document.getElementById('details-title');
+    var nodeSubtitle = document.getElementById('details-subtitle');
+    var nodeContent = document.getElementById('details-content');
+
     var overlay = new ol.Overlay({
       element: container,
       autoPan: true,
@@ -195,6 +208,9 @@
       neighborLayers = [];
       overlay.setPosition(undefined);
       closer.blur();
+      nodeTitle.innerHTML = '';
+      nodeSubtitle.innerHTML = '';
+      nodeContent.innerHTML = '';
       return false;
     };
 
@@ -349,14 +365,25 @@
           panel += '<a href="https://meshtastic.liamcottle.net/?node_id=' + node_id + '" target="_blank">Liam\'s Map</a><br/>';
           panel += '<a href="https://meshmap.net/#' + node_id + '" target="_blank">MeshMap</a><br/>';
 
-          content.innerHTML = panel;
-          overlay.setPosition(ol.proj.fromLonLat(node.position));
+          //content.innerHTML = panel;
+          //overlay.setPosition(ol.proj.fromLonLat(node.position));
+
+          nodeTitle.innerHTML = node.longname;
+          nodeSubtitle.innerHTML = node.shortname;
+          nodeContent.innerHTML = panel;
         } else {
-          content.innerHTML = '<b>Unknown</b>';
-          overlay.setPosition(coordinate);
+          //content.innerHTML = '<b>Unknown</b>';
+          //overlay.setPosition(coordinate);
+
+          nodeTitle.innerHTML = 'Unknown';
+          nodeSubtitle.innerHTML = 'UNK';
+          nodeContent.innerHTML = '';
         }
       } else {
-        overlay.setPosition(undefined);
+        //overlay.setPosition(undefined);
+        nodeTitle.innerHTML = '';
+        nodeSubtitle.innerHTML = '';
+        nodeContent.innerHTML = '';
         closer.blur();
       }
     });
@@ -367,6 +394,12 @@
       width: 100%;
     }
     #legend {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      z-index: 1000;
+    }
+    #details {
       position: absolute;
       top: 10px;
       right: 10px;
