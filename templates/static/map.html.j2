@@ -112,17 +112,20 @@
         longname: '{{ node.longname }}',
         last_seen: '{{ node.last_seen }}',
         position: [{{ node.position.longitude_i / 10000000 }}, {{ node.position.latitude_i / 10000000 }}],
-        online: {% if node.last_seen > (datetime.datetime.now(zoneinfo) - datetime.timedelta(seconds=7200)) %}true{% else %}false{% endif %},
-        neighbors: [
-          {% for neighbor in node.neighborinfo.neighbors %}
-            {
-              id: '{{ convert_node_id_from_int_to_hex(neighbor.node_id) }}',
-              snr: '{{ neighbor.snr }}',
-              distance: '{{ neighbor.distance }}',
-            },
-          {% endfor %}
-        ],
+        online: {% if node.last_seen > (datetime.datetime.now(zoneinfo) - datetime.timedelta(seconds=7200)) %}true{% else %}false{% endif %}
       };
+      {% if node.neighbors %}
+      nodes['{{ id }}'].neighbors = [
+        {% for neighbor in node.neighborinfo.neighbors %}
+          {
+            id: '{{ convert_node_id_from_int_to_hex(neighbor.node_id) }}',
+            snr: '{{ neighbor.snr }}',
+            distance: '{{ neighbor.distance }}',
+          },
+        {% endfor %}
+      ];
+      {% else %}
+      nodes['{{ id }}'].neighbors = [];
       {% endif %}
     {% endfor %}
 
