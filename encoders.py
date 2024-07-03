@@ -7,7 +7,7 @@ class _JSONEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, (datetime.date, datetime.datetime)):
             return obj.astimezone().isoformat()
-        if isinstance(obj, str) and obj.startswith('!'):
+        if isinstance(obj, str):
             return obj.replace('!', '')
         return obj
 
@@ -22,10 +22,18 @@ class _JSONDecoder(json.JSONDecoder):
             if key in {'last_seen'}:
                 ret[key] = datetime.datetime.fromisoformat(value)
             elif key in {'id'}:
-                if isinstance(value, str) and value.startswith('!'):
+                if isinstance(value, str):
+                    ret[key] = value.replace('!', '')
+                else:
+                    ret[key] = value
+            elif key in {'sender'}:
+                if isinstance(value, str):
                     ret[key] = value.replace('!', '')
                 else:
                     ret[key] = value
             else:
-                ret[key] = value
+                if isinstance(value, str):
+                    ret[key] = value.replace('!', '')
+                else:
+                    ret[key] = value
         return ret
