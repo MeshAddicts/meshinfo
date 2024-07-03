@@ -201,7 +201,12 @@ def handle_telemetry(client, userdata, msg):
     global nodes
     global telemetry
 
-    id = f'{msg["from"]:x}'
+    msg['from'] = f'{msg["from"]:x}'
+    msg['to'] = f'{msg["to"]:x}'
+    if msg['sender'] and isinstance(msg['sender'], str) and msg['sender'].startswith('!'):
+      msg['sender'] = msg['sender'].replace('!', '')
+
+    id = msg['from']
     if id in nodes:
         node = nodes[id]
         node['telemetry'] = msg['payload'] if 'payload' in msg else None
@@ -213,10 +218,6 @@ def handle_telemetry(client, userdata, msg):
         update_node(id, node)
         print(f"Node {id} skeleton added with telemetry")
 
-    msg['from'] = f'{msg["from"]:x}'
-    msg['to'] = f'{msg["to"]:x}'
-    if msg['sender'] and isinstance(msg['sender'], str) and msg['sender'].startswith('!'):
-      msg['sender'] = msg['sender'].replace('!', '')
     if id not in telemetry_by_node:
       telemetry_by_node[id] = []
     if 'payload' in msg:
