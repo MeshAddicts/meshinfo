@@ -45,4 +45,4 @@ services:
     depends_on:
       - caddy
       - postgres
-      - mosquitto
+      - mqtt
