@@ -114,7 +114,7 @@
         position: [{{ node.position.longitude_i / 10000000 }}, {{ node.position.latitude_i / 10000000 }}],
         online: {% if node.last_seen > (datetime.datetime.now(zoneinfo) - datetime.timedelta(seconds=7200)) %}true{% else %}false{% endif %}
       };
-      {% if node.neighborinfo && node.neighborinfo.neighbors %}
+      {% if node.neighborinfo and node.neighborinfo.neighbors %}
       nodes['{{ id }}'].neighbors = [
         {% for neighbor in node.neighborinfo.neighbors %}
           {
