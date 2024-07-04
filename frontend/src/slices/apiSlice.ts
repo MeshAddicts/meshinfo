@@ -1,6 +1,6 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 
-import { IChatResponse, INode, INodesResponse } from "../types";
+import { IChatResponse, INodesResponse } from "../types";
 
 export const apiSlice = createApi({
   reducerPath: "api",
@@ -40,7 +40,7 @@ export const apiSlice = createApi({
       },
       providesTags: [{ type: "Chat", id: "LIST" }],
     }),
-    getNodes: builder.query<Record<string, INode>, void>({
+    getNodes: builder.query<INodesResponse, void>({
       query: () => "nodes.json",
       transformResponse: (response: INodesResponse) =>
         Object.fromEntries(

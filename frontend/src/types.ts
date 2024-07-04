@@ -1,5 +1,3 @@
-import { Coordinate } from "ol/coordinate";
-
 export interface IChatResponse {
   channels: Record<string, IChannel>;
 }
@@ -24,21 +22,7 @@ export interface IMessage {
   text: string;
 }
 
-export type INodesResponse = Record<string, INode & INodeResponse>;
-
-export interface INodeResponse {
-  position?: {
-    latitude_i: number;
-    longitude_i: number;
-  };
-  neighborinfo?: {
-    last_sent_by_id: string;
-    neighbors_count: number;
-    node_broadcast_interval_secs: number;
-    node_id: number;
-    neighbors?: INeighbor[];
-  };
-}
+export type INodesResponse = Record<string, INode>;
 
 export interface INode {
   id: string;
