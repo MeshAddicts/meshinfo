@@ -43,7 +43,7 @@ export const Chat = () => {
                     nodes[message.sender]?.longname ?? "Unknown"
                   }`}
                 >
-                  {nodes[message.sender].shortname ?? "UNK"}
+                  {nodes[message.sender]?.shortname ?? "UNK"}
                 </span>
               </td>
               <td align="center">{message.hops_away}</td>
@@ -53,7 +53,7 @@ export const Chat = () => {
                     nodes[message.to]?.longname ?? "Unknown"
                   }`}
                 >
-                  {nodes[message.to].shortname ?? "UNK"}
+                  {nodes[message.to]?.shortname ?? "UNK"}
                 </span>
               </td>
               <td>{message.text}</td>
