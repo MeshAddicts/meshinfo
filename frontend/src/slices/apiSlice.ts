@@ -1,6 +1,6 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 
-import { IChatResponse, INode, INodesResponse } from "../types";
+import { IChatResponse, INodesResponse } from "../types";
 
 export const apiSlice = createApi({
   reducerPath: "api",
@@ -9,33 +9,55 @@ export const apiSlice = createApi({
   endpoints: (builder) => ({
     getChats: builder.query<IChatResponse, void>({
       query: () => "chat.json",
+      transformResponse: (response: IChatResponse) => {
+        const channels = Object.fromEntries(
+          Object.entries(response.channels).map(([id, channel]) => [
+            id,
+            {
+              ...channel,
+              totalMessages: channel.messages.length,
+              messages: Object.values(
+                channel.messages.reduce(
+                  (acc, message) => ({
+                    ...acc,
+                    [message.id]: {
+                      ...message,
+                      sender: (acc[message.id]?.sender ?? []).concat(
+                        message.sender
+                      ),
+                    },
+                  }),
+                  {} as Record<
+                    string,
+                    IChatResponse["channels"]["0"]["messages"][0]
+                  >
+                )
+              ),
+            },
+          ])
+        );
+        return { channels };
+      },
       providesTags: [{ type: "Chat", id: "LIST" }],
     }),
-    getNodes: builder.query<Record<string, INode>, void>({
+    getNodes: builder.query<INodesResponse, void>({
       query: () => "nodes.json",
-      transformResponse: (response: INodesResponse) => {
-        const now = new Date();
-        return Object.fromEntries(
+      transformResponse: (response: INodesResponse) =>
+        Object.fromEntries(
           Object.entries(response).map(([id, node]) => [
             id,
             {
               ...node,
-              online: new Date(node.last_seen) > new Date(now.getTime() - 7200),
               position: node.position
-                ? [
-                    (node.position?.longitude_i ?? 0) / 10000000,
-                    (node.position?.latitude_i ?? 0) / 10000000,
-                  ]
+                ? {
+                    ...node.position,
+                    latitude: node.position.latitude_i / 1e7,
+                    longitude: node.position.longitude_i / 1e7,
+                  }
                 : undefined,
-              neighbors: node.neighborinfo?.neighbors?.map((neighbor) => ({
-                id: neighbor.node_id.toString(16),
-                snr: neighbor.snr,
-                distance: neighbor.distance,
-              })),
             },
           ])
-        );
-      },
+        ),
       providesTags: [{ type: "Node", id: "LIST" }],
     }),
   }),

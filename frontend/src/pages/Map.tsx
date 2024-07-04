@@ -19,9 +19,42 @@ import { useEffect, useMemo, useRef } from "react";
 import { useGetNodesQuery } from "../slices/apiSlice";
 import { INode } from "../types";
 
+type IMapNode = INode & {
+  online: boolean;
+  position?: Coordinate;
+  neighbors?: {
+    id: string;
+    snr: number;
+    distance: number;
+  }[];
+};
+
 export function Map() {
   const mapRef = useRef<HTMLDivElement>(null);
-  const { data: nodes = {} } = useGetNodesQuery();
+  const { data: rawNodes = {} } = useGetNodesQuery();
+  const nodes = useMemo(() => {
+    const now = new Date();
+    return Object.fromEntries(
+      Object.entries(rawNodes).map(([id, node]) => [
+        id,
+        {
+          ...node,
+          online: new Date(node.last_seen) > new Date(now.getTime() - 7200),
+          position: node.position
+            ? [
+                (node.position?.longitude_i ?? 0) / 10000000,
+                (node.position?.latitude_i ?? 0) / 10000000,
+              ]
+            : undefined,
+          neighbors: node.neighborinfo?.neighbors?.map((neighbor) => ({
+            id: neighbor.node_id.toString(16),
+            snr: neighbor.snr,
+            distance: neighbor.distance,
+          })),
+        },
+      ])
+    );
+  }, [rawNodes]);
 
   const serverNode = useMemo(() => nodes["4355f528"], [nodes]);
 
@@ -238,7 +271,7 @@ export function Map() {
         if (feature) {
           const properties = feature.getProperties();
           const { node } = properties as {
-            node: INode & { position: Coordinate }; // if it's a node, it will have a position
+            node: IMapNode & { position: Coordinate }; // if it's a node, it will have a position
           };
           const address = await reverseGeocode(
             node.position[0].toString(),
@@ -498,8 +531,8 @@ export function Map() {
       <div id="legend" className="p-2 bg-white">
         <div className="text-lg">LEGEND</div>
         <div className="align-items-center">
-          <div className="inline-block w-12 h-1 bg-green-400" />
-          <div className="inline-block">Heard A Neighbor</div>
+          <div className="inline-block w-12 h-1 bg-green-400" /> Heard A
+          Neighbor
         </div>
         <div>
           <div className="inline-block w-12 h-1 bg-blue-400" /> Heard By
