@@ -550,7 +550,7 @@ def save():
     since_last_backfill = (save_start - last_backfill).total_seconds()
     print(f"Since last - data save: {since_last_data}, render: {since_last_render}, backfill: {since_last_backfill}")
 
-    if since_last_backfill >= 3600:
+    if since_last_backfill >= 900:
         backfill_node_infos()
         end = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
         print(f"Backfilled in {round(end.timestamp() - save_start.timestamp(), 3)} seconds")
