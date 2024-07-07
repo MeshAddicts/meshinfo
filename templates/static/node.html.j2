@@ -108,6 +108,45 @@
   </ul>
 
   <script type="module">
+    var defaultStyle = new ol.style.Style({
+      image: new ol.style.Circle({
+        radius: 6,
+        fill: new ol.style.Fill({
+          color: 'rgba(0, 0, 240, 1)'
+        }),
+        stroke: new ol.style.Stroke({
+          color: 'white',
+          width: 2
+        })
+      })
+    });
+
+    var offlineStyle = new ol.style.Style({
+      image: new ol.style.Circle({
+        radius: 6,
+        fill: new ol.style.Fill({
+          color: 'rgba(0, 0, 0, 0.50)'
+        }),
+        stroke: new ol.style.Stroke({
+          color: 'white',
+          width: 2
+        })
+      })
+    });
+
+    var onlineStyle = new ol.style.Style({
+      image: new ol.style.Circle({
+        radius: 6,
+        fill: new ol.style.Fill({
+          color: 'rgba(50, 240, 50, 1)'
+        }),
+        stroke: new ol.style.Stroke({
+          color: 'white',
+          width: 2
+        })
+      })
+    });
+
     var node = {
       id: '{{ node.id }}',
       shortname: '{{ node.shortname }}',
@@ -117,6 +156,7 @@
         latitude: 38.575764,
         longitude: -121.478851
       },
+      active: {{ node.active | tojson }},
     };
 
     {% if node.position and node.position.longitude_i and node.position.latitude_i %}
@@ -140,6 +180,27 @@
         zoom: 12,
       }),
     });
+
+    var features = [];
+    var feature = new ol.Feature({
+      geometry: new ol.geom.Point(ol.proj.fromLonLat([node.position.longitude, node.position.latitude])),
+      node: node,
+    });
+    if (node.active) {
+      feature.setStyle(onlineStyle);
+    } else {
+      feature.setStyle(offlineStyle);
+    }
+    features.push(feature);
+
+    const layer = new ol.layer.Vector({
+      style: defaultStyle,
+      source: new ol.source.Vector({
+        features: features
+      })
+    });
+    map.addLayer(layer);
+
   </script>
   <style>
     #map {
