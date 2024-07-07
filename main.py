@@ -7,6 +7,7 @@ import paho.mqtt.client as mqtt_client
 import os
 from jinja2 import Environment, FileSystemLoader
 from dotenv import load_dotenv
+import requests
 
 from config import Config
 from encoders import _JSONDecoder, _JSONEncoder
@@ -499,6 +500,41 @@ def render_static_html_files():
 
     print("Done rendering static files")
 
+def backfill_node_infos():
+    global nodes
+
+    # get nodes that need shortname and longname
+    nodes_needing_enrichment = {}
+    for id, node in nodes.items():
+        if 'shortname' not in node or 'longname' not in node or node['shortname'] == 'UNK' or node['longname'] == 'Unknown':
+            nodes_needing_enrichment[id] = node
+    print(f"Nodes needing enrichment: {len(nodes_needing_enrichment)}")
+    if len(nodes_needing_enrichment) > 0:
+        enrich_nodes(nodes_needing_enrichment)
+
+def enrich_nodes(node_to_enrich):
+    global nodes
+
+    node_ids = list(node_to_enrich.keys())
+    print(f"Enriching nodes: {','.join(node_ids)}")
+    for node_id in node_ids:
+        print(f"Enriching {node_id}")
+        url = f"https://data.bayme.sh/api/node/infos?ids={node_id}"
+        response = requests.get(url)
+        # print(f"Response code: {response.status_code}")
+        if response.status_code == 200:
+            data = response.json()
+            for node_id, node_info in data.items():
+                print(f"Got info for {node_id}")
+                if node_id in nodes:
+                    print(f"Enriched {node_id}")
+                    node = nodes[node_id]
+                    node['shortname'] = node_info['shortName']
+                    node['longname'] = node_info['longName']
+                    nodes[node_id] = node
+        else:
+            print(f"Failed to get info for {node_id}")
+
 def save():
     global nodes
     global chat
@@ -510,7 +546,15 @@ def save():
     since_last_data = (save_start - last_data).total_seconds()
     last_render = config['server']['last_render'] if 'last_render' in config['server'] else config['server']['start_time']
     since_last_render = (save_start - last_render).total_seconds()
-    print(f"Since last - data save: {since_last_data}, render: {since_last_render}")
+    last_backfill = config['server']['last_backfill'] if 'last_backfill' in config['server'] else config['server']['start_time']
+    since_last_backfill = (save_start - last_backfill).total_seconds()
+    print(f"Since last - data save: {since_last_data}, render: {since_last_render}, backfill: {since_last_backfill}")
+
+    if since_last_backfill >= 3600:
+        backfill_node_infos()
+        end = datetime.datetime.now(ZoneInfo(config['server']['timezone']))
+        print(f"Backfilled in {round(end.timestamp() - save_start.timestamp(), 3)} seconds")
+        config['server']['last_backfill'] = end
 
     if since_last_data >= config['server']['intervals']['data_save']:
         save_nodes_to_file()
