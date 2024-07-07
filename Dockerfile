@@ -3,12 +3,6 @@ FROM python:3.12-slim
 LABEL org.opencontainers.image.source https://github.com/MeshAddicts/meshinfo
 LABEL org.opencontainers.image.description "Realtime web UI to run against a Meshtastic regional or private mesh network."
 
-ENV MQTT_BROKER=mqtt
-ENV MQTT_PORT=1883
-ENV MQTT_TOPIC=msh/2/json/#
-ENV MQTT_CLIENT_ID=meshinfo
-ENV MQTT_USERNAME=meshinfo
-ENV MQTT_PASSWORD=m3sht4st1c
 ENV MQTT_TLS=false
 ENV PYTHONUNBUFFERED=1
 
