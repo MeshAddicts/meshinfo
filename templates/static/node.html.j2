@@ -1,7 +1,154 @@
 {% extends "templates/static/layout.html.j2" %}
 
 {% block title %}{{ node.shortname }} | Node | MeshInfo{% endblock %}
+{% block head %}
+  <script src="https://cdn.jsdelivr.net/npm/openlayers@4.6.5/dist/ol.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/openlayers@4.6.5/dist/ol.min.css" rel="stylesheet">
+{% endblock %}
 
 {% block content %}
-    <h1>Node: {{ node.shortname }}</h1>
+  <h5 class="text-gray-500">Node Detail</h5>
+  <h1>{{ node.shortname }} - {{ node.longname }}</h1>
+
+  <div class="flex align-middle mb-2">
+  {% if node.telemetry %}
+  {% if node.telemetry.air_util_tx %}
+      <span class="mr-3 align-middle" title="Air Util TX">
+        <img src="/images/icon/up.svg" alt="Air Util TX" class="w-4 h-4 inline-block align-middle">
+        {{ node.telemetry.air_util_tx | round(1) }}%
+      </span>
+    {% endif %}
+    {% if node.telemetry.channel_utilization %}
+      <span class="mr-3 align-middle" title="Channel Util">
+        <img src="/images/icon/down.svg" alt="Channel Util" class="w-4 h-4 inline-block align-middle">
+        {{ node.telemetry.channel_utilization | round(1) }}%
+      </span>
+    {% endif %}
+    {% if node.telemetry.battery_level %}
+      <span class="mr-3 align-middle" title="Battery Level">
+        <img src="/images/icon/battery.svg" alt="Battery" class="w-4 h-4 inline-block align-middle">
+        {{ node.telemetry.battery_level | round(0) }}%
+      </span>
+    {% endif %}
+    {% if node.telemetry.temperature %}
+      <span class="mr-3 align-middle" title="Temperature">
+        <img src="/images/icon/temperature.svg" alt="Temperature" class="w-4 h-4 inline-block align-middle">
+        {{ node.telemetry.temperature | round(1) }}&deg;C
+      </span>
+    {% endif %}
+    {% if node.telemetry.humidity %}
+      <span class="mr-3 align-middle" title="Humidity">
+        <img src="/images/icon/humidity.svg" alt="Humidity" class="w-4 h-4 inline-block align-middle">
+        {{ node.telemetry.humidity }}%
+      </span>
+    {% endif %}
+    {% if node.telemetry.voltage %}
+      <span class="mr-3 align-middle" title="Voltage">
+        <img src="/images/icon/voltage.svg" alt="Voltage" class="w-4 h-4 inline-block align-middle">
+        {{ node.telemetry.voltage | round(1) }}&deg;C
+      </span>
+    {% endif %}
+  {% endif %}
+  </div>
+
+  <div id="map" class="map"></div>
+
+  <p>ID: {{ node.id }}</p>
+  <p>
+    Type:
+    {% if node.hardware %}
+      {{ hardware(node.hardware).name }}
+    {% else %}
+      Unknown
+    {% endif %}
+  </p>
+  <p>
+    Status:
+    {% if node.active %}
+      <span class="text-green-500">Online</span>
+    {% else %}
+      <span class="text-gray-700">Offline</span>
+    {% endif %}
+  </p>
+  <p>Position:
+    {% if node.position and node.position.latitude_i and node.position.longitude_i %}
+      {{ node.position.longitude_i / 1e7 }}, {{ node.position.latitude_i / 1e7 }}
+    {% else %}
+      Unknown
+    {% endif %}
+  </p>
+  <p>Altitude:
+    {% if node.position and node.position.altitude %}
+      {{ node.position.altitude }}
+    {% else %}
+      Unknown
+    {% endif %}
+  </p>
+  <p>Last Seen: {{ node.last_seen }}</p>
+
+  <h3 class="text-gray-600">Heard</h3>
+  <p>Heard {{ node.neighborinfo.neighbors|count }} zero-hop nodes</p>
+  <ul>
+    {% for neighbor in node.neighborinfo.neighbors %}
+      <li>{{ neighbor }}</li>
+    {% endfor %}
+  </ul>
+
+  <h3 class="text-gray-600">Heard By</h3>
+  <ul>
+    {% for id, node in nodes.items() %}
+      {% if node.neighborinfo and node.neighborinfo.neighbors %}
+        {% for neighbor in node.neighborinfo.neighbors %}
+          {% if neighbor.node_id == node.id %}
+            <li>{{ id }}</li>
+          {% endif %}
+        {% endfor %}
+      {% endif %}
+    {% endfor %}
+  </ul>
+
+  <script type="module">
+    var node = {
+      id: '{{ node.id }}',
+      shortname: '{{ node.shortname }}',
+      longname: '{{ node.longname }}',
+      position: {
+        latitude: {{ node.position.latitude_i }} / 1e7,
+        longitude: {{ node.position.longitude_i }} / 1e7,
+        altitude: {{ node.position.altitude }},
+      },
+      last_seen: '{{ node.last_seen }}',
+    };
+
+    if (node.position.latitude && node.position.longitude) {
+      var node_position = {
+        latitude: node.position.latitude,
+        longitude: node.position.longitude,
+      };
+    } else {
+      var node_position = {
+        latitude: 0,
+        longitude: 0,
+      };
+    }
+
+    const map = new ol.Map({
+      layers: [
+        new ol.layer.Tile({
+          source: new ol.source.OSM(),
+        }),
+      ],
+      target: 'map',
+      view: new ol.View({
+        center: ol.proj.fromLonLat([node_position.longitude, node_position.latitude]),
+        zoom: 12,
+      }),
+    });
+  </script>
+  <style>
+    #map {
+      height: 400px;
+      width: 400px;
+    }
+  </style>
 {% endblock %}

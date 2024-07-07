@@ -424,7 +424,7 @@ def render_static_html_files():
         print(f"Rendering node_{id}.html")
         env = Environment(loader=FileSystemLoader('.'), autoescape=True)
         template = env.get_template(f'{config["paths"]["templates"]}/static/node.html.j2')
-        rendered_html = template.render(config=config, node=node, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
+        rendered_html = template.render(config=config, nodes=nodes, node=node, hardware=HardwareModel, datetime=datetime.datetime, zoneinfo=ZoneInfo(config['server']['timezone']), timestamp=datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
         with open(f"{config['paths']['output']}/node_{id}.html", "w") as f:
             f.write(rendered_html)
 
