@@ -62,13 +62,13 @@ cd meshinfo
 ```
 
 ```sh
-docker compose down && git pull && docker compose up -d
+docker compose pull && docker compose down && docker compose up -d && docker compose ps && docker compose logs -f meshinfo
 ```
 
 #### To Update
 
 ```sh
-docker compose down && git pull && docker compose up -d
+git fetch && git pull && docker compose pull && docker compose down && docker compose up -d && docker compose ps && docker compose logs -f meshinfo
 ```
 
 ### Directly (without Docker)
