@@ -113,20 +113,19 @@
       shortname: '{{ node.shortname }}',
       longname: '{{ node.longname }}',
       last_seen: '{{ node.last_seen }}',
+      position: {
+        latitude: 38.575764,
+        longitude: -121.478851
+      },
     };
+
     {% if node.position and node.position.longitude_i and node.position.latitude_i %}
-      node.position = {
-        latitude: {{ node.position.latitude_i / 1e7 }},
-        longitude: {{ node.position.longitude_i / 1e7 }},
-      };
-    {% else %}
-      node.position = {
-        latitude: 0,
-        longitude: 0,
-      };
+    node.position.latitude = {{ node.position.latitude_i / 1e7 }};
+    node.position.longitude = {{ node.position.longitude_i / 1e7 }};
     {% endif %}
+
     {% if node.position and node.position.altitude %}
-      node.position.altitude = {{ node.position.altitude }};
+    node.position.altitude = {{ node.position.altitude }};
     {% endif %}
 
     const map = new ol.Map({
@@ -137,7 +136,7 @@
       ],
       target: 'map',
       view: new ol.View({
-        center: ol.proj.fromLonLat([node.longitude, node.latitude]),
+        center: ol.proj.fromLonLat([node.position.longitude, node.position.latitude]),
         zoom: 12,
       }),
     });
