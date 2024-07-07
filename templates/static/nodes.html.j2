@@ -87,17 +87,17 @@
             <td></td>
             {% endif %}
             {% if node.telemetry %}
-            <td align=center>
+            <td align=right>
               {% if 'battery_level' in node.telemetry %}
               {{ node.telemetry.battery_level }}%
               {% endif %}
             </td>
-            <td align=center>
+            <td align=right>
               {% if 'voltage' in node.telemetry %}
               {{ node.telemetry.voltage|round(2) }}V
               {% endif %}
             </td>
-            <td align=center>
+            <td align=right>
               {% if 'channel_utilization' in node.telemetry %}
               {{ node.telemetry.channel_utilization|round(1) }}%
               {% endif %}
