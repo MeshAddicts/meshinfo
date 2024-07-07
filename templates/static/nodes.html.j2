@@ -16,7 +16,7 @@
             <th>Hardware</th>
             <th colspan=4>Last Position</th>
             <th>Neighbors</th>
-            <th colspan=3>Telemetry</th>
+            <th colspan=4>Telemetry</th>
             <th colspan=1>Seen</th>
         </tr>
         <tr bgcolor=lightgray>
@@ -30,13 +30,16 @@
             <th>DX</th>
             <th>Count</th>
             <th>
-              <img src="images/icons/battery.png" class="w-4 h-4 inline-block" alt="Battery" title="Battery">
+              <img src="images/icons/battery.svg" class="w-4 h-4 inline-block" alt="Battery" title="Battery">
             </th>
             <th>
-              <img src="images/icons/voltage.png" class="w-4 h-4 inline-block" alt="Voltage" title="Voltage">
+              <img src="images/icons/voltage.svg" class="w-4 h-4 inline-block" alt="Voltage" title="Voltage">
             </th>
             <th>
-              <img src="images/icons/down.png" class="w-4 h-4 inline-block" alt="Channel Util" title="Channel Util">
+              <img src="images/icons/up.svg" alt="Air Util TX" class="w-4 h-4 inline-block" title="Air Util TX">
+            </th>
+            <th>
+              <img src="images/icons/down.svg" class="w-4 h-4 inline-block" alt="Channel Util" title="Channel Util">
             </th>
             <th>Since</th>
         </tr>
@@ -98,11 +101,17 @@
               {% endif %}
             </td>
             <td align=right>
+              {% if 'air_util_tx' in node.telemetry %}
+              {{ node.telemetry.air_util_tx|round(1) }}%
+              {% endif %}
+            </td>
+            <td align=right>
               {% if 'channel_utilization' in node.telemetry %}
               {{ node.telemetry.channel_utilization|round(1) }}%
               {% endif %}
             </td>
             {% else %}
+            <td></td>
             <td></td>
             <td></td>
             <td></td>
