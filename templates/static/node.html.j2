@@ -14,37 +14,37 @@
   {% if node.telemetry %}
   {% if node.telemetry.air_util_tx %}
       <span class="mr-3 align-middle" title="Air Util TX">
-        <img src="/images/icon/up.svg" alt="Air Util TX" class="w-4 h-4 inline-block align-middle">
+        <img src="images/icon/up.svg" alt="Air Util TX" class="w-4 h-4 inline-block align-middle">
         {{ node.telemetry.air_util_tx | round(1) }}%
       </span>
     {% endif %}
     {% if node.telemetry.channel_utilization %}
       <span class="mr-3 align-middle" title="Channel Util">
-        <img src="/images/icon/down.svg" alt="Channel Util" class="w-4 h-4 inline-block align-middle">
+        <img src="images/icon/down.svg" alt="Channel Util" class="w-4 h-4 inline-block align-middle">
         {{ node.telemetry.channel_utilization | round(1) }}%
       </span>
     {% endif %}
     {% if node.telemetry.battery_level %}
       <span class="mr-3 align-middle" title="Battery Level">
-        <img src="/images/icon/battery.svg" alt="Battery" class="w-4 h-4 inline-block align-middle">
+        <img src="images/icon/battery.svg" alt="Battery" class="w-4 h-4 inline-block align-middle">
         {{ node.telemetry.battery_level | round(0) }}%
       </span>
     {% endif %}
     {% if node.telemetry.temperature %}
       <span class="mr-3 align-middle" title="Temperature">
-        <img src="/images/icon/temperature.svg" alt="Temperature" class="w-4 h-4 inline-block align-middle">
+        <img src="images/icon/temperature.svg" alt="Temperature" class="w-4 h-4 inline-block align-middle">
         {{ node.telemetry.temperature | round(1) }}&deg;C
       </span>
     {% endif %}
     {% if node.telemetry.humidity %}
       <span class="mr-3 align-middle" title="Humidity">
-        <img src="/images/icon/humidity.svg" alt="Humidity" class="w-4 h-4 inline-block align-middle">
+        <img src="images/icon/humidity.svg" alt="Humidity" class="w-4 h-4 inline-block align-middle">
         {{ node.telemetry.humidity }}%
       </span>
     {% endif %}
     {% if node.telemetry.voltage %}
       <span class="mr-3 align-middle" title="Voltage">
-        <img src="/images/icon/voltage.svg" alt="Voltage" class="w-4 h-4 inline-block align-middle">
+        <img src="images/icon/voltage.svg" alt="Voltage" class="w-4 h-4 inline-block align-middle">
         {{ node.telemetry.voltage | round(1) }}&deg;C
       </span>
     {% endif %}
