@@ -17,7 +17,7 @@
             <th colspan=4>Last Position</th>
             <th>Neighbors</th>
             <th colspan=3>Telemetry</th>
-            <th colspan=2>Seen</th>
+            <th colspan=1>Seen</th>
         </tr>
         <tr bgcolor=lightgray>
             <th></th>
@@ -29,10 +29,15 @@
             <th>Longitude</th>
             <th>DX</th>
             <th>Count</th>
-            <th>Battery</th>
-            <th>Voltage</th>
-            <th>Chan Util</th>
-            <th>Last</th>
+            <th>
+              <img src="images/icons/battery.png" class="w-4 h-4 inline-block" alt="Battery" title="Battery">
+            </th>
+            <th>
+              <img src="images/icons/voltage.png" class="w-4 h-4 inline-block" alt="Voltage" title="Voltage">
+            </th>
+            <th>
+              <img src="images/icons/down.png" class="w-4 h-4 inline-block" alt="Channel Util" title="Channel Util">
+            </th>
             <th>Since</th>
         </tr>
         {% for id, node in active_nodes.items() %}
@@ -62,9 +67,9 @@
               {% endif %}
             </td>
             {% if node.position %}
-            <td>
+            <td align=right>
               {% if node.position.altitude %}
-              {{ node.position.altitude }}
+              {{ node.position.altitude }} m
               {% endif %}
             </td>
             <td>{{ node.position.latitude }}</td>
@@ -102,8 +107,7 @@
             <td></td>
             <td></td>
             {% endif %}
-            <td>{{ node.last_seen_human }}</td>
-            <td align=right>{{ node.since.seconds }} secs</td>
+            <td align=right title="{{ node.last_seen_human }}">{{ node.since.seconds }} secs</td>
         </tr>
         {% endfor %}
     </table>
