@@ -2,11 +2,15 @@
 
 Realtime web UI to run against a Meshtastic regional or private mesh network.
 
+[![Docker Image](https://github.com/MeshAddicts/meshinfo/actions/workflows/docker.yml/badge.svg)](https://github.com/MeshAddicts/meshinfo/actions/workflows/docker.yml) ![GitHub Release](https://img.shields.io/github/v/release/meshaddicts/meshinfo) ![GitHub commit activity](https://img.shields.io/github/commit-activity/t/meshaddicts/meshinfo)
+
 ## Overview
 
 MeshInfo is written in Python and connects to an MQTT server that is receiving Meshtastic messages for the purpose of visualizing and inspecting traffic. It (currently) uses a filesystem to persist content, such as node info and telemetry. There are plans to optionally support Postgres and SQLite3 as optional persistance storage methods.
 
-To make deployment to run an instance for your mesh easy, Docker support is included. We recommend using Docker Compose using a personalized version of the `docker-compose.yml` file to most easily deploy it, but any seasoned Docker user can also use the Docker image alone.
+To make deployment to run an instance for your mesh easy, Docker support is included. We recommend using Docker Compose with a personalized version of the `docker-compose.yml` file to most easily deploy it, but any seasoned Docker user can also use the Docker image alone.
+
+If you use MeshInfo and have a publicly accessible instance, we'd like to know! Drop a note to kevin@airframes.io with details and we'll link it below.
 
 ## Screenshots
 
@@ -62,13 +66,13 @@ cd meshinfo
 ```
 
 ```sh
-docker compose down && git pull && docker compose up -d
+docker compose pull && docker compose down && docker compose up -d && docker compose ps && docker compose logs -f meshinfo
 ```
 
 #### To Update
 
 ```sh
-docker compose down && git pull && docker compose up -d
+git fetch && git pull && docker compose pull && docker compose down && docker compose up -d && docker compose ps && docker compose logs -f meshinfo
 ```
 
 ### Directly (without Docker)

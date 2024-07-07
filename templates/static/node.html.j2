@@ -1,7 +1,215 @@
 {% extends "templates/static/layout.html.j2" %}
 
 {% block title %}{{ node.shortname }} | Node | MeshInfo{% endblock %}
+{% block head %}
+  <script src="https://cdn.jsdelivr.net/npm/openlayers@4.6.5/dist/ol.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/openlayers@4.6.5/dist/ol.min.css" rel="stylesheet">
+{% endblock %}
 
 {% block content %}
-    <h1>Node: {{ node.shortname }}</h1>
+  <h5 class="text-gray-500">Node Detail</h5>
+  <h1>{{ node.shortname }} - {{ node.longname }}</h1>
+
+  <div class="flex align-middle mb-4">
+  {% if node.telemetry %}
+  {% if node.telemetry.air_util_tx %}
+      <span class="mr-3 align-middle" title="Air Util TX">
+        <img src="images/icons/up.svg" alt="Air Util TX" class="w-4 h-4 inline-block align-middle">
+        {{ node.telemetry.air_util_tx | round(1) }}%
+      </span>
+    {% endif %}
+    {% if node.telemetry.channel_utilization %}
+      <span class="mr-3 align-middle" title="Channel Util">
+        <img src="images/icons/down.svg" alt="Channel Util" class="w-4 h-4 inline-block align-middle">
+        {{ node.telemetry.channel_utilization | round(1) }}%
+      </span>
+    {% endif %}
+    {% if node.telemetry.battery_level %}
+      <span class="mr-3 align-middle" title="Battery Level">
+        <img src="images/icons/battery.svg" alt="Battery" class="w-4 h-4 inline-block align-middle">
+        {{ node.telemetry.battery_level | round(0) }}%
+      </span>
+    {% endif %}
+    {% if node.telemetry.temperature %}
+      <span class="mr-3 align-middle" title="Temperature">
+        <img src="images/icons/temperature.svg" alt="Temperature" class="w-4 h-4 inline-block align-middle">
+        {{ node.telemetry.temperature | round(1) }}&deg;C
+      </span>
+    {% endif %}
+    {% if node.telemetry.humidity %}
+      <span class="mr-3 align-middle" title="Humidity">
+        <img src="images/icons/humidity.svg" alt="Humidity" class="w-4 h-4 inline-block align-middle">
+        {{ node.telemetry.humidity }}%
+      </span>
+    {% endif %}
+    {% if node.telemetry.voltage %}
+      <span class="mr-3 align-middle" title="Voltage">
+        <img src="images/icons/voltage.svg" alt="Voltage" class="w-4 h-4 inline-block align-middle">
+        {{ node.telemetry.voltage | round(1) }}&deg;C
+      </span>
+    {% endif %}
+  {% endif %}
+  </div>
+
+  {% if node.position and node.position.latitude_i and node.position.longitude_i %}
+  <div id="map" class="map"></div>
+  {% endif %}
+
+  <p>ID: {{ node.id }}</p>
+  <p>
+    Type:
+    {% if node.hardware %}
+      {{ hardware(node.hardware).name }}
+    {% else %}
+      Unknown
+    {% endif %}
+  </p>
+  <p>
+    Status:
+    {% if node.active %}
+      <span class="text-green-500">Online</span>
+    {% else %}
+      <span class="text-gray-700">Offline</span>
+    {% endif %}
+  </p>
+  <p>Position:
+    {% if node.position and node.position.latitude_i and node.position.longitude_i %}
+      {{ node.position.longitude_i / 1e7 }}, {{ node.position.latitude_i / 1e7 }}
+    {% else %}
+      Unknown
+    {% endif %}
+  </p>
+  <p>Altitude:
+    {% if node.position and node.position.altitude %}
+      {{ node.position.altitude }}
+    {% else %}
+      Unknown
+    {% endif %}
+  </p>
+  <p>Last Seen: {{ node.last_seen }}</p>
+
+  <h3 class="text-gray-600">Heard</h3>
+  <p>Heard {{ node.neighborinfo.neighbors|count }} zero-hop nodes</p>
+  <ul>
+    {% for neighbor in node.neighborinfo.neighbors %}
+      <li>{{ neighbor }}</li>
+    {% endfor %}
+  </ul>
+
+  <h3 class="text-gray-600">Heard By</h3>
+  <ul>
+    {% for id, node in nodes.items() %}
+      {% if node.neighborinfo and node.neighborinfo.neighbors %}
+        {% for neighbor in node.neighborinfo.neighbors %}
+          {% if neighbor.node_id == node.id %}
+            <li>{{ id }}</li>
+          {% endif %}
+        {% endfor %}
+      {% endif %}
+    {% endfor %}
+  </ul>
+
+  <script type="module">
+    var defaultStyle = new ol.style.Style({
+      image: new ol.style.Circle({
+        radius: 6,
+        fill: new ol.style.Fill({
+          color: 'rgba(0, 0, 240, 1)'
+        }),
+        stroke: new ol.style.Stroke({
+          color: 'white',
+          width: 2
+        })
+      })
+    });
+
+    var offlineStyle = new ol.style.Style({
+      image: new ol.style.Circle({
+        radius: 6,
+        fill: new ol.style.Fill({
+          color: 'rgba(0, 0, 0, 0.50)'
+        }),
+        stroke: new ol.style.Stroke({
+          color: 'white',
+          width: 2
+        })
+      })
+    });
+
+    var onlineStyle = new ol.style.Style({
+      image: new ol.style.Circle({
+        radius: 6,
+        fill: new ol.style.Fill({
+          color: 'rgba(50, 240, 50, 1)'
+        }),
+        stroke: new ol.style.Stroke({
+          color: 'white',
+          width: 2
+        })
+      })
+    });
+
+    var node = {
+      id: '{{ node.id }}',
+      shortname: '{{ node.shortname }}',
+      longname: '{{ node.longname }}',
+      last_seen: '{{ node.last_seen }}',
+      position: {
+        latitude: 38.575764,
+        longitude: -121.478851
+      },
+      active: {{ node.active | tojson }},
+    };
+
+    {% if node.position and node.position.longitude_i and node.position.latitude_i %}
+    node.position.latitude = {{ node.position.latitude_i / 1e7 }};
+    node.position.longitude = {{ node.position.longitude_i / 1e7 }};
+    {% endif %}
+
+    {% if node.position and node.position.altitude %}
+    node.position.altitude = {{ node.position.altitude }};
+    {% endif %}
+
+    {% if node.position and node.position.latitude_i and node.position.longitude_i %}
+    const map = new ol.Map({
+      layers: [
+        new ol.layer.Tile({
+          source: new ol.source.OSM(),
+        }),
+      ],
+      target: 'map',
+      view: new ol.View({
+        center: ol.proj.fromLonLat([node.position.longitude, node.position.latitude]),
+        zoom: 12,
+      }),
+    });
+
+    var features = [];
+    var feature = new ol.Feature({
+      geometry: new ol.geom.Point(ol.proj.fromLonLat([node.position.longitude, node.position.latitude])),
+      node: node,
+    });
+    if (node.active) {
+      feature.setStyle(onlineStyle);
+    } else {
+      feature.setStyle(offlineStyle);
+    }
+    features.push(feature);
+
+    const layer = new ol.layer.Vector({
+      style: defaultStyle,
+      source: new ol.source.Vector({
+        features: features
+      })
+    });
+    map.addLayer(layer);
+    {% endif %}
+
+  </script>
+  <style>
+    #map {
+      height: 400px;
+      width: 400px;
+    }
+  </style>
 {% endblock %}

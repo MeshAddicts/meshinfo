@@ -231,8 +231,7 @@
           var address = await reverseGeocode(node.position[0], node.position[1]);
           var display_name = [address.address.town, address.address.city, address.address.county, address.address.state, address.address.country].filter(Boolean).join(', ');
 
-          var panel = '<b>' + node.longname + '</b><br/>'
-            + node.shortname + ' / ' + node.id + '<br/><br/>'
+          var panel = '<a href="node_' + node.id + '.html">' + node.shortname + ' / ' + node.id + '</a><br/><br/>'
             + '<b>Position</b><br/>' + node.position + '<br/><br/>'
             + '<b>Location</b><br/>' + display_name + '<br/><br/>'
             + '<b>Status</b><br/>' + (node.online ? 'Online' : 'Offline') + '<br/><br/>'
