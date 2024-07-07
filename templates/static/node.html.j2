@@ -51,7 +51,9 @@
   {% endif %}
   </div>
 
+  {% if node.position and node.position.latitude_i and node.position.longitude_i %}
   <div id="map" class="map"></div>
+  {% endif %}
 
   <p>ID: {{ node.id }}</p>
   <p>
@@ -168,6 +170,7 @@
     node.position.altitude = {{ node.position.altitude }};
     {% endif %}
 
+    {% if node.position and node.position.latitude_i and node.position.longitude_i %}
     const map = new ol.Map({
       layers: [
         new ol.layer.Tile({
@@ -200,6 +203,7 @@
       })
     });
     map.addLayer(layer);
+    {% endif %}
 
   </script>
   <style>
