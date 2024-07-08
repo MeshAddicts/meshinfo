@@ -7,7 +7,7 @@
     <script>
       tailwind.config = {
         corePlugins: {
-          preflight: false,
+          preflight: true,
         },
       }
     </script>
@@ -38,81 +38,89 @@
         {% endif %}
 
         <nav class="flex flex-col flex-1">
-          <h3>Mesh</h3>
-          <div class="mb-2">
+          <h3 class="font-bold">Mesh</h3>
+          <div class="mb-1">
             <a href="chat.html">
-              <img src="images/icons/chat.svg" width="20" height="20" align="middle" style="vertical-align: middle;">
+              <img src="images/icons/chat.svg" width="20" height="20" align="middle" class="inline-block" style="vertical-align: middle;">
               Chat
             </a>
           </div>
-          <div class="mb-2">
+          <div class="mb-1">
             <a href="map.html">
-              <img src="images/icons/map.svg" width="20" height="20" align="middle" style="vertical-align: middle;">
+              <img src="images/icons/map.svg" width="20" height="20" align="middle" class="inline-block" style="vertical-align: middle;">
               Map
             </a>
           </div>
-          <div class="mb-2">
+          <div class="mb-1">
             <a href="nodes.html">
-              <img src="images/icons/node.svg" width="20" height="20" align="middle" style="vertical-align: middle;">
+              <img src="images/icons/node.svg" width="20" height="20" align="middle" class="inline-block" style="vertical-align: middle;">
               Nodes
             </a>
           </div>
-          <div class="mb-2">
+          <div class="mb-1">
             <a href="neighbors.html">
-              <img src="images/icons/neighbors.svg" width="20" height="20" align="middle" style="vertical-align: middle;">
+              <img src="images/icons/neighbors.svg" width="20" height="20" align="middle" class="inline-block" style="vertical-align: middle;">
               Node Neighbors
             </a>
           </div>
-          <div class="mb-2">
+          <div class="mb-1">
             <a href="stats.html">
-              <img src="images/icons/stats.svg" width="20" height="20" align="middle" style="vertical-align: middle;">
+              <img src="images/icons/stats.svg" width="20" height="20" align="middle" class="inline-block" style="vertical-align: middle;">
               Stats
             </a>
           </div>
-          <div class="mb-2">
+          <div class="mb-1">
             <a href="telemetry.html">
-              <img src="images/icons/telemetry.svg" width="20" height="20" align="middle" style="vertical-align: middle;">
+              <img src="images/icons/telemetry.svg" width="20" height="20" align="middle" class="inline-block" style="vertical-align: middle;">
               Telemetry
             </a>
           </div>
-          <div class="mb-2">
+          <div class="mb-1">
             <a href="traceroutes.html">
-              <img src="images/icons/route2.svg" width="20" height="20" align="middle" style="vertical-align: middle;">
+              <img src="images/icons/route2.svg" width="20" height="20" align="middle" class="inline-block" style="vertical-align: middle;">
               Traceroutes
             </a>
           </div>
         </nav>
 
         <nav class="flex flex-col flex-1">
-          <h3>Logs</h3>
-          <div class="mb-2">
+          <h3 class="font-bold">Logs</h3>
+          <div class="mb-1">
             <a href="mesh_log.html">Mesh Messages</a>
           </div>
-          <div class="mb-2">
+          <div class="mb-1">
             <a href="mqtt_log.html">MQTT Messages</a>
           </div>
         </nav>
 
         <nav class="flex flex-col flex-1">
-          <h3>Other Tools</h3>
-          <div class="mb-2">
+          <h3 class="font-bold">Other Tools</h3>
+          <div class="mb-1">
             <a href="https://meshview.armooo.net" target="_blank">Armooo's MeshView</a>
           </div>
-          <div class="mb-2">
+          <div class="mb-1">
             <a href="https://meshtastic.liamcottle.net" target="_blank">Liam's Meshtastic Web</a>
           </div>
-          <div class="mb-2">
+          <div class="mb-1">
             <a href="https://meshmap.net" target="_blank">MeshMap</a>
           </div>
-          <div class="mb-2">
+          <div class="mb-1">
             <a href="https://app.bayme.sh" target="_blank">Bay Mesh Explorer</a>
           </div>
-          <div class="mb-2">
+          <div>
             <a href="https://heywhatsthat.com/profiler.html" target="_blank">HWT Path Profiler</a>
           </div>
         </nav>
 
         <div class="flex-grow"></div>
+
+        <div class="flex flex-col">
+          <div class="font-bold">Data Updated</div>
+          <div>{{ timestamp.astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</div>
+        </div>
+
+        <div class="flex-grow"></div>
+
         <div class="flex flex-col">
           <h5 class="mb-2">Powered by MeshInfo</h5>
           <a href="https://github.com/kevinelliott/meshinfo" class="text-xs text-gray-500">
@@ -124,7 +132,7 @@
 
     <div class="lg:pl-60">
       <main class="py-1">
-        <div class="px-4 sm:px-6 lg:px-8">
+        <div class="w-full px-4 py-2 sm:px-6 sm:py-2 lg:px-6 lg:py-2">
           {% block content %}{% endblock %}
         </div>
       </main>
@@ -133,10 +141,10 @@
 
   <style>
       body {
-          font-family: monospace;
-          font-size: 12px;
-          margin: 0;
-          padding: 0;
+        font-family: monospace;
+        font-size: 12px;
+        margin: 0;
+        padding: 0;
       }
       a {
         text-decoration: none;

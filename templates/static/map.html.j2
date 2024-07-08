@@ -126,7 +126,7 @@
       nodes['{{ id }}'].neighbors = [
         {% for neighbor in node.neighborinfo.neighbors %}
           {
-            id: '{{ convert_node_id_from_int_to_hex(neighbor.node_id) }}',
+            id: '{{ utils.convert_node_id_from_int_to_hex(neighbor.node_id) }}',
             snr: '{{ neighbor.snr }}',
             distance: '{{ neighbor.distance }}',
           },

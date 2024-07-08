@@ -7,8 +7,10 @@
 {% endblock %}
 
 {% block content %}
-  <h5 class="text-gray-500">Node Detail</h5>
-  <h1>{{ node.shortname }} - {{ node.longname }}</h1>
+  <h5 class="mb-2 text-gray-500">
+    <a href="nodes.html">Nodes</a> &gt; {{ node.shortname }}
+  </h5>
+  <h1 class="mb-2 text-xl">{{ node.shortname }} - {{ node.longname }}</h1>
 
   <div class="flex align-middle mb-4">
   {% if node.telemetry %}

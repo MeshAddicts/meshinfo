@@ -3,11 +3,12 @@
 {% block title %}Telemetry{% endblock %}
 
 {% block content %}
-    <h1>Telemetry</h1>
-    <p>
-      Telemetry as seen by <b>KE-R</b> (!4355f528).
+    <h5 class="mb-2 text-gray-500">Telemetry</h5>
+    <h1 class="mb-2 text-xl">Telemetry</h1>
+    <p class="mb-2">
+      Telemetry as seen by <b>{{ config['server']['node_id'] }}</b> ({{ config['server']['node_id'] }}).
     </p>
-    <p>Last updated: {{ timestamp.astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</p>
+
     <table border=1 cellpadding=4>
       <tr>
         <td>Timestamp</td>
