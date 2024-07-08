@@ -1,5 +1,6 @@
 {
   "broker": {
+    "enabled": true,
     "host": "mqtt.meshtastic.org",
     "port": 1883,
     "client_id_prefix": "meshinfo-dev",
