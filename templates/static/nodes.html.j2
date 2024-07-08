@@ -3,122 +3,130 @@
 {% block title %}Nodes{% endblock %}
 
 {% block content %}
-    <h1>Nodes</h1>
-    <p>
+    <h5 class="mb-2 text-gray-500">Nodes</h5>
+    <h1 class="mb-2 text-xl">Nodes</h1>
+    <p class="mb-2">
       There are <b>{{ active_nodes|count }}</b> active out of a total of <b>{{ nodes|count }}</b> seen nodes
-      that have been heard by the mesh by <b>KE-R</b> (!4355f528).
+      that have been heard by the mesh by <b>{{ config['server']['node_id'] }}</b> ({{ config['server']['node_id'] }}).
     </p>
-    <p>Last updated: {{ timestamp.astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</p>
-    <table border=1 cellspacing=2 cellpadding=4>
-        <tr bgcolor=lightgray>
-            <th>ID</th>
-            <th colspan=2>Name</th>
-            <th>Hardware</th>
-            <th colspan=4>Last Position</th>
-            <th>Neighbors</th>
-            <th colspan=4>Telemetry</th>
-            <th colspan=1>Seen</th>
+    <table class="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50">
+      <thead>
+        <tr>
+          <th class="border border-gray-500 bg-gray-400" colspan=2>ID</th>
+          <th class="border border-gray-500 bg-gray-400" colspan=2>Name</th>
+          <th class="hidden sm:table-cell border border-gray-500 bg-gray-400">Hardware</th>
+          <th class="hidden xl:table-cell border border-gray-500 bg-gray-400" colspan=4>Last Position</th>
+          <th class="hidden md:table-cell border border-gray-500 bg-gray-400">Neighbors</th>
+          <th class="hidden 2xl:table-cell border border-gray-500 bg-gray-400" colspan=4>Telemetry</th>
+          <th class="border border-gray-500 bg-gray-400" colspan=1>Seen</th>
         </tr>
-        <tr bgcolor=lightgray>
-            <th></th>
-            <th>Short</th>
-            <th>Long</th>
-            <th></th>
-            <th>Altitude</th>
-            <th>Latitude</th>
-            <th>Longitude</th>
-            <th>DX</th>
-            <th>Count</th>
-            <th>
-              <img src="images/icons/battery.svg" class="w-4 h-4 inline-block" alt="Battery" title="Battery">
-            </th>
-            <th>
-              <img src="images/icons/voltage.svg" class="w-4 h-4 inline-block" alt="Voltage" title="Voltage">
-            </th>
-            <th>
-              <img src="images/icons/up.svg" alt="Air Util TX" class="w-4 h-4 inline-block" title="Air Util TX">
-            </th>
-            <th>
-              <img src="images/icons/down.svg" class="w-4 h-4 inline-block" alt="Channel Util" title="Channel Util">
-            </th>
-            <th>Since</th>
+        <tr>
+          <th class="w-8 min-w-8 max-w-8 h-8 min-h-8 max-h-8 border border-gray-500 bg-gray-400"></th>
+          <th class="border border-gray-500 bg-gray-400"></th>
+          <th class="border border-gray-500 bg-gray-400">Short</th>
+          <th class="border border-gray-500 bg-gray-400">Long</th>
+          <th class="hidden sm:table-cell border border-gray-500 bg-gray-400"></th>
+          <th class="hidden xl:table-cell border border-gray-500 bg-gray-400">Altitude</th>
+          <th class="hidden xl:table-cell border border-gray-500 bg-gray-400">Latitude</th>
+          <th class="hidden xl:table-cell border border-gray-500 bg-gray-400">Longitude</th>
+          <th class="hidden xl:table-cell border border-gray-500 bg-gray-400">DX</th>
+          <th class="hidden md:table-cell border border-gray-500 bg-gray-400">Count</th>
+          <th class="hidden 2xl:table-cell border border-gray-500 bg-gray-400">
+            <img src="images/icons/battery.svg" class="w-4 h-4 inline-block" alt="Battery" title="Battery">
+          </th>
+          <th class="hidden 2xl:table-cell border border-gray-500 bg-gray-400">
+            <img src="images/icons/voltage.svg" class="w-4 h-4 inline-block" alt="Voltage" title="Voltage">
+          </th>
+          <th class="hidden 2xl:table-cell border border-gray-500 bg-gray-400">
+            <img src="images/icons/up.svg" alt="Air Util TX" class="w-4 h-4 inline-block" title="Air Util TX">
+          </th>
+          <th class="hidden 2xl:table-cell border border-gray-500 bg-gray-400">
+            <img src="images/icons/down.svg" class="w-4 h-4 inline-block" alt="Channel Util" title="Channel Util">
+          </th>
+          <th class="border border-gray-500 bg-gray-400">Since</th>
         </tr>
+      </thead>
+      <tbody>
         {% for id, node in active_nodes.items() %}
         <tr>
-            <td>
-              {% if id %}
-              {% set id = id|replace('!', '') %}
-                <a href='node_{{ id }}.html'>{{ id }}</a>
-              {% else %}
-                {{ id }}
-              {% endif %}
-            </td>
-            <td style="color: #{{ '777' if node.shortname == 'UNK' else '000' }}">
-              {% if id %}
-              {% set id = id|replace('!', '') %}
-                <a href='node_{{ id }}.html'>{{ node.shortname }}</a>
-              {% else %}
-                {{ node.shortname }}
-              {% endif %}
-            </td>
-            <td style="color: #{{ '777' if node.shortname == 'UNK' else '000' }}">
-              {{ node.longname }}
-            </td>
-            <td>
-              {% if node.hardware %}
-              {{ hardware(node.hardware).name }}
-              {% endif %}
-            </td>
-            {% if node.position %}
-            <td align=right>
-              {% if node.position.altitude %}
-              {{ node.position.altitude }} m
-              {% endif %}
-            </td>
-            <td>{{ node.position.latitude }}</td>
-            <td>{{ node.position.longitude }}</td>
-            <td align=right>{{ node.distance_from_host_node }} km</td>
+          <td class="w-8 min-w-8 max-w-8 h-8 min-h-8 max-h-8 p-0 box-border border border-gray-400" align=center valign=middle>
+            <img src="https://api.dicebear.com/9.x/bottts-neutral/svg?seed={{ id }}" alt="Avatar" class="w-8 h-8 object-cover">
+          </td>
+          <td class="p-1 border border-gray-400">
+            {% if id %}
+            {% set id = id|replace('!', '') %}
+              <a href='node_{{ id }}.html'>{{ id }}</a>
             {% else %}
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
+              {{ id }}
             {% endif %}
-            {% if node.neighborinfo %}
-            <td align=center>{{ node.neighborinfo.neighbors_count }}</td>
+          </td>
+          <td class="p-1 border border-gray-400" style="color: #{{ '777' if node.shortname == 'UNK' else '000' }}">
+            {% if id %}
+            {% set id = id|replace('!', '') %}
+              <a href='node_{{ id }}.html'>{{ node.shortname }}</a>
             {% else %}
-            <td></td>
+              {{ node.shortname }}
             {% endif %}
-            {% if node.telemetry %}
-            <td align=right>
-              {% if 'battery_level' in node.telemetry %}
-              {{ node.telemetry.battery_level }}%
-              {% endif %}
-            </td>
-            <td align=right>
-              {% if 'voltage' in node.telemetry %}
-              {{ node.telemetry.voltage|round(2) }}V
-              {% endif %}
-            </td>
-            <td align=right>
-              {% if 'air_util_tx' in node.telemetry %}
-              {{ node.telemetry.air_util_tx|round(1) }}%
-              {% endif %}
-            </td>
-            <td align=right>
-              {% if 'channel_utilization' in node.telemetry %}
-              {{ node.telemetry.channel_utilization|round(1) }}%
-              {% endif %}
-            </td>
-            {% else %}
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
+          </td>
+          <td class="p-1 border border-gray-400 text-nowrap truncate" style="color: #{{ '777' if node.shortname == 'UNK' else '000' }}">
+            {{ node.longname }}
+          </td>
+          <td class="hidden sm:table-cell p-1 border border-gray-400 text-nowrap truncate">
+            {% if node.hardware %}
+            {{ hardware(node.hardware).name }}
             {% endif %}
-            <td align=right title="{{ node.last_seen_human }}">{{ node.since.seconds }} secs</td>
+          </td>
+          {% if node.position %}
+          <td class="hidden xl:table-cell p-1 border border-gray-400" align=right>
+            {% if node.position.altitude %}
+            {{ node.position.altitude }} m
+            {% endif %}
+          </td>
+          <td class="hidden xl:table-cell p-1 border border-gray-400">{{ node.position.latitude }}</td>
+          <td class="hidden xl:table-cell p-1 border border-gray-400">{{ node.position.longitude }}</td>
+          <td class="hidden xl:table-cell p-1 border border-gray-400 text-nowrap" align=right>{{ node.distance_from_host_node }} km</td>
+          {% else %}
+          <td class="hidden xl:table-cell p-1 border border-gray-400"></td>
+          <td class="hidden xl:table-cell p-1 border border-gray-400"></td>
+          <td class="hidden xl:table-cell p-1 border border-gray-400"></td>
+          <td class="hidden xl:table-cell p-1 border border-gray-400"></td>
+          {% endif %}
+          {% if node.neighborinfo %}
+          <td class="hidden md:table-cell p-1 border border-gray-400" align=center>{{ node.neighborinfo.neighbors_count }}</td>
+          {% else %}
+          <td class="hidden md:table-cell p-1 border border-gray-400"></td>
+          {% endif %}
+          {% if node.telemetry %}
+          <td class="hidden 2xl:table-cell p-1 border border-gray-400" align=right>
+            {% if 'battery_level' in node.telemetry %}
+            {{ node.telemetry.battery_level }}%
+            {% endif %}
+          </td>
+          <td class="hidden 2xl:table-cell p-1 border border-gray-400" align=right>
+            {% if 'voltage' in node.telemetry %}
+            {{ node.telemetry.voltage|round(2) }}V
+            {% endif %}
+          </td>
+          <td class="hidden 2xl:table-cell p-1 border border-gray-400" align=right>
+            {% if 'air_util_tx' in node.telemetry %}
+            {{ node.telemetry.air_util_tx|round(1) }}%
+            {% endif %}
+          </td>
+          <td class="hidden 2xl:table-cell p-1 border border-gray-400" align=right>
+            {% if 'channel_utilization' in node.telemetry %}
+            {{ node.telemetry.channel_utilization|round(1) }}%
+            {% endif %}
+          </td>
+          {% else %}
+          <td class="hidden 2xl:table-cell p-1 border border-gray-400"></td>
+          <td class="hidden 2xl:table-cell p-1 border border-gray-400"></td>
+          <td class="hidden 2xl:table-cell p-1 border border-gray-400"></td>
+          <td class="hidden 2xl:table-cell p-1 border border-gray-400"></td>
+          {% endif %}
+          <td class="p-1 border border-gray-400 text-nowrap" align=right title="{{ node.last_seen_human }}">{{ node.since.seconds }} secs</td>
         </tr>
         {% endfor %}
+      </tbody>
     </table>
     <br><br>
     <br><br>
