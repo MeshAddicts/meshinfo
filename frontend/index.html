@@ -7,7 +7,7 @@
     <title>MeshInfo</title>
   </head>
   <body>
-    <div>
+    <div class="w-full h-full">
       <!-- Static sidebar for desktop -->
       <div
         class="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-60 lg:flex-col"
@@ -31,37 +31,96 @@
           <div>%VITE_MESH_DESCRIPTION%</div>
 
           <div>
-            <a href="%VITE_MESH_URL%" class="text-xs text-gray-900">Website</a>
+            <a href="%VITE_MESH_DESCRIPTION%" class="text-xs text-gray-900"
+              >Website</a
+            >
           </div>
 
           <nav class="flex flex-col flex-1">
             <h3>Mesh</h3>
             <div class="mb-2">
-              <a href="chat">Chat</a>
+              <a href="chat">
+                <img
+                  src="images/icons/chat.svg"
+                  width="20"
+                  height="20"
+                  align="middle"
+                  style="vertical-align: middle"
+                />
+                Chat
+              </a>
             </div>
             <div class="mb-2">
-              <a href="map">Map</a>
+              <a href="map">
+                <img
+                  src="images/icons/map.svg"
+                  width="20"
+                  height="20"
+                  align="middle"
+                  style="vertical-align: middle"
+                />
+                Map
+              </a>
             </div>
             <div class="mb-2">
-              <a href="nodes">Nodes</a>
+              <a href="nodes">
+                <img
+                  src="images/icons/node.svg"
+                  width="20"
+                  height="20"
+                  align="middle"
+                  style="vertical-align: middle"
+                />
+                Nodes
+              </a>
             </div>
             <div class="mb-2">
-              <a href="neighbors">Node Neighbors</a>
+              <a href="neighbors.html">
+                <img
+                  src="images/icons/neighbors.svg"
+                  width="20"
+                  height="20"
+                  align="middle"
+                  style="vertical-align: middle"
+                />
+                Node Neighbors
+              </a>
             </div>
             <div class="mb-2">
-              <a href="network">Network</a>
+              <a href="stats.html">
+                <img
+                  src="images/icons/stats.svg"
+                  width="20"
+                  height="20"
+                  align="middle"
+                  style="vertical-align: middle"
+                />
+                Stats
+              </a>
             </div>
             <div class="mb-2">
-              <a href="routes">Routes</a>
+              <a href="telemetry.html">
+                <img
+                  src="images/icons/telemetry.svg"
+                  width="20"
+                  height="20"
+                  align="middle"
+                  style="vertical-align: middle"
+                />
+                Telemetry
+              </a>
             </div>
             <div class="mb-2">
-              <a href="stats">Stats</a>
-            </div>
-            <div class="mb-2">
-              <a href="telemetry">Telemetry</a>
-            </div>
-            <div class="mb-2">
-              <a href="traceroutes">Traceroutes</a>
+              <a href="traceroutes.html">
+                <img
+                  src="images/icons/route2.svg"
+                  width="20"
+                  height="20"
+                  align="middle"
+                  style="vertical-align: middle"
+                />
+                Traceroutes
+              </a>
             </div>
           </nav>
 
@@ -72,6 +131,33 @@
             </div>
             <div class="mb-2">
               <a href="mqtt_log.html">MQTT Messages</a>
+            </div>
+          </nav>
+
+          <nav class="flex flex-col flex-1">
+            <h3>Other Tools</h3>
+            <div class="mb-2">
+              <a href="https://meshview.armooo.net" target="_blank"
+                >Armooo's MeshView</a
+              >
+            </div>
+            <div class="mb-2">
+              <a href="https://meshtastic.liamcottle.net" target="_blank"
+                >Liam's Meshtastic Web</a
+              >
+            </div>
+            <div class="mb-2">
+              <a href="https://meshmap.net" target="_blank">MeshMap</a>
+            </div>
+            <div class="mb-2">
+              <a href="https://app.bayme.sh" target="_blank"
+                >Bay Mesh Explorer</a
+              >
+            </div>
+            <div class="mb-2">
+              <a href="https://heywhatsthat.com/profiler.html" target="_blank"
+                >HWT Path Profiler</a
+              >
             </div>
           </nav>
 
@@ -91,11 +177,7 @@
         </div>
       </div>
 
-      <div class="lg:pl-60">
-        <main>
-          <div class="px-4 sm:px-6 lg:px-8" id="root"></div>
-        </main>
-      </div>
+      <div id="root" class="lg:pl-60 h-full"></div>
     </div>
 
     <style>
@@ -104,6 +186,18 @@
         font-size: 12px;
         margin: 0;
         padding: 0;
+        height: 100vh;
+        width: 100vw;
+      }
+      a {
+        text-decoration: none;
+        color: #33f;
+      }
+      a:visited {
+        color: #33f;
+      }
+      nav a:hover {
+        color: #000;
       }
     </style>
 
