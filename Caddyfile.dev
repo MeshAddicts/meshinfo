@@ -1,0 +1,12 @@
+{
+	debug
+}
+
+localhost {
+	root * /srv
+	encode gzip
+	file_server
+	log {
+		output file /var/log/caddy.log
+	}
+}
