@@ -37,9 +37,11 @@
               </a>
             </td>
             <td class="p-1 text-center border border-gray-400">
+              {% if node_sender %}
               <a href="node_{{ node_sender.id }}.html" title="{{ message.sender + " / " + nodes[message.sender].longname if message.sender in nodes else (message.sender + ' / Unknown') }}">
                 {{ nodes[message.sender].shortname if message.sender in nodes else 'UNK' }}
               </a>
+              {% endif %}
             </td>
             <td class="p-1 text-center border border-gray-400">
               {% if node_to and node_to.id != 'ffffffff' %}
