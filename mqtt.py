@@ -12,7 +12,6 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 
 from encoders import _JSONDecoder
-import _meshtastic
 from models.node import Node
 import utils
 
