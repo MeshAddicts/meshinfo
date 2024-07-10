@@ -363,6 +363,8 @@ class MQTT:
             msg['to'] = f'{msg["to"]:x}'
         if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
             msg['sender'] = msg['sender'].replace('!', '')
+        if 'channel' not in msg:
+            msg['channel'] = 0
 
         if str(msg['channel']) not in self.data.chat['channels']:
             self.data.chat['channels'][str(msg['channel'])] = {
