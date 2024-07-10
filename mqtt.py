@@ -206,7 +206,14 @@ class MQTT:
         msg['to'] = f'{msg["to"]:x}'
         if msg['sender'] and isinstance(msg['sender'], str):
             msg['sender'] = msg['sender'].replace('!', '')
-            msg['route'] = msg['payload']['route']
+        msg['route'] = msg['payload']['route']
+        msg['route_ids'] = []
+        for r in msg['route']:
+            node = self.data.find_node_by_longname(r)
+            if node:
+                msg['route_ids'].append(node['id'])
+            else:
+                msg['route_ids'].append(r)
 
         if id in self.data.traceroutes_by_node:
             self.data.traceroutes_by_node[id].insert(0, msg)
