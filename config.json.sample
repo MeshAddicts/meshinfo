@@ -1,5 +1,6 @@
 {
   "broker": {
+    "enabled": true,
     "host": "mqtt.meshtastic.org",
     "port": 1883,
     "client_id_prefix": "meshinfo-dev",
@@ -18,6 +19,7 @@
     "timezone": "America/Los_Angeles",
     "start_time": null,
     "intervals": {
+      "enrich": 60,
       "data_save": 60,
       "render": 5
     }
@@ -46,6 +48,14 @@
       "token": "token",
       "channel": "1247618108810596392",
       "webhook": "webhook"
+    },
+    "geocoding": {
+      "enabled": false,
+      "provider": "geocode.maps.co",
+      "geocode.maps.co": {
+        "api_key": "XXXXXXXXXXXXXXXX"
+      }
     }
-  }
+  },
+  "debug": false
 }

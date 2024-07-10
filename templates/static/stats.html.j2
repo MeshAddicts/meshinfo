@@ -3,62 +3,63 @@
 {% block title %}Stats{% endblock %}
 
 {% block content %}
-    <h1>Stats</h1>
-    <p>
-      Some revelations based on messages that have
-      been heard by the mesh by <b>KE-R</b> (!4355f528).
-    </p>
-    <p>Last updated: {{ timestamp.astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</p>
+  <h5 class="mb-2 text-gray-500">Stats</h5>
+  <h1 class="mb-2 text-xl">Stats</h1>
+  <p class="mb-2">
+    Some revelations based on messages that have
+    been heard by the mesh by <b>KE-R</b> (!4355f528).
+  </p>
 
-    <h3 class="text-xl">Current</h3>
+  <h3 class="text-lg">Current</h3>
+  <div class="mb-4">
+    <h3>Active Nodes</h3>
     <div>
-      <h3>Active Nodes</h3>
-      <div>
-        <div>{{ stats.active_nodes }}</div>
-      </div>
+      <div>{{ stats.active_nodes }}</div>
     </div>
+  </div>
 
-    <h3 class="text-xl">Persisted</h3>
-    <div>
+  <div class="mb-4">
+    <h3 class="text-lg">Persisted</h3>
+    <div class="mb-2">
       <h3>Known Nodes</h3>
       <div>
         <div>{{ stats.total_nodes }}</div>
       </div>
     </div>
-    <div>
+    <div class="mb-2">
       <h3>Chat Messages</h3>
       <div>
         <div>{{ stats.total_chat }}</div>
       </div>
     </div>
-    <div>
+    <div class="mb-2">
       <h3>Telemetry</h3>
       <div>
         <div>{{ stats.total_telemetry }}</div>
       </div>
     </div>
-    <div>
+    <div class="mb-2">
       <h3>Traceroutes</h3>
       <div>
         <div>{{ stats.total_traceroutes }}</div>
       </div>
     </div>
+  </div>
 
-    <h3 class="text-xl">Since Last Restart</h3>
-    <div>
+  <div class="mb-4">
+    <h3 class="text-lg">Since Last Restart</h3>
+    <div class="mb-2">
       <h3>Messages (Session Total)</h3>
       <div>
         <div>{{ stats.total_messages }}</div>
       </div>
     </div>
-
-    <div>
+    <div class="mb-2">
       <h3>Messages (Session MQTT)</h3>
       <div>
         <div>{{ stats.total_mqtt_messages }}</div>
       </div>
     </div>
-
-
+  </div>
 
 {% endblock %}
