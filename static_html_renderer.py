@@ -29,6 +29,7 @@ class StaticHTMLRenderer:
     self.render_stats()
     self.render_telemetry()
     self.render_traceroutes()
+    print("Done rendering static HTML files")
 
   def save_file(self, filename, content):
     with open(f"{self.output_path}/{filename}", "w", encoding='utf-8') as f:
@@ -42,7 +43,8 @@ class StaticHTMLRenderer:
     return html
 
   def render_html_and_save(self, filename, **kwargs):
-    print(f"Rendering {filename}")
+    if self.config['debug']:
+      print(f"Rendering {filename}")
     html = self.render_html(filename, **kwargs)
     self.save_file(filename, html)
 
@@ -152,6 +154,7 @@ class StaticHTMLRenderer:
         node=node,
         nodes=self.data.nodes,
         hardware=meshtastic.HardwareModel,
+        utils=utils,
         datetime=datetime.datetime,
         zoneinfo=ZoneInfo(self.config['server']['timezone']),
         timestamp=datetime.datetime.now(ZoneInfo(self.config['server']['timezone']))
@@ -235,13 +238,15 @@ class StaticHTMLRenderer:
         "since": datetime.datetime.now(ZoneInfo(self.config['server']['timezone'])) - last_seen,
     }
     server_node = self.data.nodes[f'{self.config["server"]["node_id"]}']
-    if server_node and 'position' in server_node and server_node["position"] and server_node["position"]["latitude_i"] != 0 and server_node["position"]["longitude_i"] != 0 and node["position"] and node["position"]["latitude_i"] != 0 and node["position"]["longitude_i"] != 0:
-        serialized["distance_from_host_node"] = round(geo.distance_between_two_points(
-            node["position"]["latitude_i"] / 10000000,
-            node["position"]["longitude_i"] / 10000000,
-            server_node["position"]["latitude_i"] / 10000000,
-            server_node["position"]["longitude_i"] / 10000000
-          ), 2)
+    if server_node and 'position' in server_node and node and 'position' in node:
+      if server_node["position"] and 'latitude_i' in server_node["position"] and 'longitude_i' in server_node["position"] and node["position"] and 'latitude_i' in node["position"] and 'longitude_i' in node["position"]:
+        if server_node["position"]["latitude_i"] != 0 and server_node["position"]["longitude_i"] != 0 and node["position"] and node["position"]["latitude_i"] != 0 and node["position"]["longitude_i"] != 0:
+          serialized["distance_from_host_node"] = round(geo.distance_between_two_points(
+              node["position"]["latitude_i"] / 10000000,
+              node["position"]["longitude_i"] / 10000000,
+              server_node["position"]["latitude_i"] / 10000000,
+              server_node["position"]["longitude_i"] / 10000000
+            ), 2)
     return serialized
 
   def _serialize_neighborinfo(self, node):
@@ -268,7 +273,7 @@ class StaticHTMLRenderer:
       }
       if id in self.data.nodes:
         ni = self.data.nodes[id]
-        if from_node['position'] and ni['position']:
+        if from_node['position'] and ni['position'] and 'latitude_i' in from_node['position'] and 'longitude_i' in from_node['position'] and 'latitude_i' in ni['position'] and 'longitude_i' in ni['position']:
           neighbor["distance"] = round(geo.distance_between_two_points(
             from_node["position"]["latitude_i"] / 10000000,
             from_node["position"]["longitude_i"] / 10000000,
@@ -287,8 +292,15 @@ class StaticHTMLRenderer:
     else:
         altitude = None
 
+    if "latitude_i" in position and "longitude_i" in position:
+       latitude = position["latitude_i"] / 10000000
+       longitude = position["longitude_i"] / 10000000
+    else:
+       latitude = None
+       longitude = None
+
     return {
         "altitude": altitude,
-        "latitude": position["latitude_i"] / 10000000,
-        "longitude": position["longitude_i"] / 10000000
+        "latitude": latitude,
+        "longitude": longitude
     }
