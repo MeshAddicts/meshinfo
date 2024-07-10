@@ -106,6 +106,15 @@ Build. Be sure to specify a related version number and suffix (this example `dev
 scripts/docker-build.sh 0.0.1dev5
 ```
 
+### Running via Docker Compose while developing
+
+```sh
+docker compose -f docker-compose-dev.yml up --build --force-recreate
+```
+
+You will need to CTRL-C and run again if you make any changes to the python code, but not if you only make changes to
+the templates.
+
 ### Release
 
 Tag the release using git and push up the tag. The image will be build by GitHub automatically (see: https://github.com/MeshAddicts/meshinfo/actions/workflows/docker.yml).
