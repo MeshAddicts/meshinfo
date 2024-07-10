@@ -3,30 +3,60 @@
 {% block title %}Traceroutes{% endblock %}
 
 {% block content %}
-    <h5 class="mb-2 text-gray-500">Traceroutes</h5>
-    <h1 class="mb-2 text-xl">Traceroutes</h1>
-    <p class="mb-2">
-      Traceroutes as seen by <b>{{ config['server']['node_id'] }}</b> ({{ config['server']['node_id'] }}).
-    </p>
+  <h5 class="mb-2 text-gray-500">Traceroutes</h5>
+  <h1 class="mb-2 text-xl">Traceroutes</h1>
+  <p class="mb-2">
+    Traceroutes as seen by <b>{{ nodes[config['server']['node_id']].shortname }}</b> ({{ config['server']['node_id'] }}).
+  </p>
 
-    <table border=1 cellpadding=4>
+  <table class="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50">
+    <thead>
       <tr>
-        <td>Timestamp</td>
-        <td>From</td>
-        <td>To</td>
-        <td>Hops</td>
-        <td>Route</td>
-        <td>Route Hops</td>
+        <th class="p-1 border border-gray-500 bg-gray-400" align=left>Timestamp</th>
+        <th class="p-1 border border-gray-500 bg-gray-400" align=left>From</th>
+        <th class="p-1 border border-gray-500 bg-gray-400" align=left>To</th>
+        <th class="p-1 border border-gray-500 bg-gray-400" align=left>Hops</th>
+        <th class="p-1 border border-gray-500 bg-gray-400" align=left>Route</th>
+        <th class="p-1 border border-gray-500 bg-gray-400 text-nowrap" align=left>Route Hops</th>
       </tr>
+    </thead>
+    <tbody>
       {% for item in traceroutes %}
         <tr>
-          <td style="white-space:nowrap">{{ datetime.fromtimestamp(item.timestamp).astimezone(zoneinfo) }}</td>
-          <td>{{ item.from }}</td>
-          <td>{{ item.to }}</td>
-          <td>{{ item.hops_away }}</td>
-          <td>{{ item.route | join('<span class="text-gray-300"> > </span>') | safe }}</td>
-          <td>{{ item.route | length }}</td>
+          <td class="p-1 border border-gray-400 text-nowrap">{{ datetime.fromtimestamp(item.timestamp).astimezone(zoneinfo) }}</td>
+          <td class="p-1 border border-gray-400">
+            {% set fnode = nodes[item.from] %}
+            {% if fnode %}
+              <a href="node_{{ item.from }}.html">{{ fnode.shortname }}</a>
+            {% else %}
+              <span class="text-gray-500">UNK</span>
+            {% endif %}
+          </td>
+          <td class="p-1 border border-gray-400">
+            {% set tnode = nodes[item.to] %}
+            {% if tnode %}
+              <a href="node_{{ item.to }}.html">{{ tnode.shortname }}</a>
+            {% else %}
+              <span class="text-gray-500">UNK</span>
+            {% endif %}
+          </td>
+          <td class="p-1 border border-gray-400" align=center>{{ item.hops_away }}</td>
+          <td class="p-1 border border-gray-400">
+            {% for hop in item.route_ids %}
+              {% set hnode = nodes[hop] %}
+              {% if hnode %}
+                <a href="node_{{ hop }}.html">{{ hnode.shortname }}</a>
+              {% else %}
+                <span class="text-gray-500">UNK</span>
+              {% endif %}
+              {% if not loop.last %}
+                <span class="text-gray-300"> > </span>
+              {% endif %}
+            {% endfor %}
+          </td>
+          <td class="p-1 border border-gray-400" align=center>{{ item.route | length }}</td>
         </tr>
       {% endfor %}
-    </table>
+    </tbody>
+  </table>
 {% endblock %}
