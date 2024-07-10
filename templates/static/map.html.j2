@@ -113,7 +113,7 @@
     const nodes = {};
     var neighborLayers = [];
     {% for id, node in nodes.items() %}
-      {% if node.position is defined and node.position and node.position.longitude_i %}
+      {% if node.position is defined and node.position and node.position.longitude_i and node.position.latitude_i %}
       nodes['{{ id }}'] = {
         id: '{{ id }}',
         shortname: '{{ node.shortname }}',
