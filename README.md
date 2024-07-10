@@ -12,6 +12,8 @@ To make deployment to run an instance for your mesh easy, Docker support is incl
 
 If you use MeshInfo and have a publicly accessible instance, we'd like to know! Drop a note to kevin@airframes.io with details and we'll link it below.
 
+See an example instance running on the [Sacramento Valley Mesh](https://svm1.meshinfo.network/nodes.html).
+
 ## Screenshots
 
 TODO: Capture screenshots and make a row of clickable screenshot thumbnails here.
