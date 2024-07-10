@@ -49,7 +49,11 @@
       {% set inode = nodes[item.from] %}
       <tr>
         <td class="p-1 border border-gray-400 text-nowrap">
+          {% if 'timestamp' in item %}
           {{ datetime.fromtimestamp(item.timestamp).astimezone(zoneinfo) }}
+          {% else %}
+          <span class="text-gray-500">Unknown</span>
+          {% endif %}
         </td>
         <td class="p-1 border border-gray-400">
           {% if inode %}

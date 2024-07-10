@@ -5,3 +5,5 @@ python-dotenv
 fastapi
 discord.py
 requests
+meshtastic
+cryptography
