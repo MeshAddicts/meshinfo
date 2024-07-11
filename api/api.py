@@ -101,8 +101,8 @@ class API:
 
 
 
-        config = uvicorn.Config(app, host="0.0.0.0", port=9000, loop=loop)
-        server = uvicorn.Server(config)
+        conf = uvicorn.Config(app=app, host="0.0.0.0", port=9000, loop=loop)
+        server = uvicorn.Server(conf)
         print(f"Starting Uvicorn server bound at http://{config.host}:{config.port}")
         await server.serve()
         print("Uvicorn server stopped")
