@@ -21,9 +21,9 @@
       <div class="flex flex-col px-6 pb-4 overflow-y-auto bg-gray-300 border-r-2 grow gap-y-5 border-r-cyan-600">
         <div class="flex items-center h-24 mt-4 shrink-0">
           <div class="text-2xl">
-            <div class="p-0 m-0">S<span class="text-gray-500">ACRAMENTO</span></div>
-            <div class="p-0 m-0">V<span class="text-gray-500">ALLEY</span></div>
-            <div class="p-0 m-0">M<span class="text-gray-500">ESH</span></div>
+            {% for word in config.mesh.name.split() %}
+              <div class="p-0 m-0">{{ word[0] }}<span class="text-gray-500">{{ word[1:] }}</span></div>
+            {% endfor %}
           </div>
         </div>
 
