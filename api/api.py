@@ -5,6 +5,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
+import utils
+
 templates = Jinja2Templates(directory="./templates/api")
 app = FastAPI()
 
@@ -18,9 +20,23 @@ class API:
         async def root(request: Request):
             return templates.TemplateResponse(request=request, name="index.html.j2", context={})
 
-        @app.get("/nodes")
+        @app.get("/v1/nodes")
         async def nodes(request: Request) -> JSONResponse:
             return jsonable_encoder(self.data.nodes)
+
+        @app.get("/v1/nodes/{id}")
+        async def node(request: Request, id: str) -> JSONResponse:
+            try:
+                node_id = int(id)
+            except ValueError:
+                node_id = id
+
+            if isinstance(node_id, str) and id in self.data.nodes:
+                return jsonable_encoder(self.data.nodes[node_id])
+            elif isinstance(node_id, int) and utils.convert_node_id_from_int_to_hex(node_id) in self.data.nodes:
+                return jsonable_encoder(self.data.nodes[utils.convert_node_id_from_int_to_hex(node_id)])
+            else:
+                return JSONResponse(status_code=404, content={"error": "Node not found"})
 
         config = uvicorn.Config(app, host="0.0.0.0", port=9000, loop=loop)
         server = uvicorn.Server(config)
