@@ -46,7 +46,7 @@ class API:
                     if longname != "":
                         nodes_to_keep = []
                         for id in nodes:
-                            if longname.lower() in nodes[id]["long_name"].lower():
+                            if longname.lower() in nodes[id]["longname"].lower():
                                 nodes_to_keep.append(id)
                         nodes = { k: v for k, v in nodes.items() if k in nodes_to_keep }
 
@@ -57,7 +57,7 @@ class API:
                     if shortname != "":
                         nodes_to_keep = []
                         for id in nodes:
-                            if shortname.lower() in nodes[id]["short_name"].lower():
+                            if shortname.lower() in nodes[id]["shortname"].lower():
                                 nodes_to_keep.append(id)
                         nodes = { k: v for k, v in nodes.items() if k in nodes_to_keep }
 
