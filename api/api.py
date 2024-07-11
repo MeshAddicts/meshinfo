@@ -116,9 +116,9 @@ class API:
 
             texts = []
             for channel in self.data.chat['channels'].keys():
-                for message in channel['messages']:
+                for message in self.data.chat['channels'][channel]['messages']:
                     if message['from'] == node_id or message['to'] == node_id:
-                        texts.append(message['text'])
+                        texts.append(message)
                 return jsonable_encoder({ "texts": texts })
             else:
                 return JSONResponse(status_code=404, content={"error": "texts not found"})
