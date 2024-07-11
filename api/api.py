@@ -20,11 +20,6 @@ class API:
         async def root(request: Request):
             return templates.TemplateResponse(request=request, name="index.html.j2", context={})
 
-        @app.get("/v1/config")
-        async def config(request: Request) -> JSONResponse:
-            # TODO: Sanitize config (i.e. username, password, api_key, etc)
-            return jsonable_encoder({ "config": self.config })
-
         @app.get("/v1/nodes")
         async def nodes(request: Request) -> JSONResponse:
             return jsonable_encoder({"nodes": self.data.nodes })
@@ -42,6 +37,11 @@ class API:
                 return jsonable_encoder({ "node": self.data.nodes[utils.convert_node_id_from_int_to_hex(node_id)] })
             else:
                 return JSONResponse(status_code=404, content={"error": "Node not found"})
+
+        @app.get("/v1/server/config")
+        async def config(request: Request) -> JSONResponse:
+            # TODO: Sanitize config (i.e. username, password, api_key, etc)
+            return jsonable_encoder({ "config": self.config })
 
 
 
