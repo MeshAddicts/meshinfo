@@ -6,8 +6,10 @@ integrations.
 
 ## Endpoint Overview
 
-* `/v1/node/:id`
 * `/v1/nodes`
+* `/v1/nodes/:id`
+* `/v1/nodes/:id/telemetry`
+* `/v1/nodes/:id/text`
 * `/v1/server/config`
 
 ## Endpoint Details
