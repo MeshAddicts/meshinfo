@@ -78,7 +78,7 @@ class API:
                                 nodes_to_keep.append(id)
                         nodes = { k: v for k, v in nodes.items() if k in nodes_to_keep }
 
-            return jsonable_encoder({"nodes": nodes })
+            return jsonable_encoder({ "nodes": nodes, "count": len(nodes) })
 
         @app.get("/v1/nodes/{id}")
         async def node(request: Request, id: str) -> JSONResponse:
