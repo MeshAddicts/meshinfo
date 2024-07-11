@@ -22,9 +22,25 @@ class API:
 
         @app.get("/v1/nodes")
         async def nodes(request: Request) -> JSONResponse:
-            if request.query_params.get("ids"):
-                return jsonable_encoder({ "nodes": [ self.data.nodes[id] for id in request.query_params.get("ids").split(",") ] })
-            return jsonable_encoder({"nodes": self.data.nodes })
+            nodes = []
+            if "ids" in request.query_params.keys():
+                ids: str|None = request.query_params.get("ids")
+                if ids is not None:
+                    ids = ids.strip()
+                    if ids != "":
+                        nodes = []
+                        for id in ids.split(","):
+                            try:
+                                node_id = int(id)
+                                node_id = utils.convert_node_id_from_int_to_hex(node_id)
+                            except ValueError:
+                                node_id = id
+                            if id in self.data.nodes:
+                                nodes.append(self.data.nodes[id])
+            else:
+                nodes = self.data.nodes
+
+            return jsonable_encoder({"nodes": nodes })
 
         @app.get("/v1/nodes/{id}")
         async def node(request: Request, id: str) -> JSONResponse:
