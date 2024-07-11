@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 
+import asyncio
 import datetime
 from zoneinfo import ZoneInfo
 import os
 from dotenv import load_dotenv
 
+from api import api
 from config import Config
 from memory_data_store import MemoryDataStore
 from mqtt import MQTT
@@ -15,7 +17,7 @@ config = Config.load()
 data = MemoryDataStore(config)
 data.update('mqtt_connect_time', datetime.datetime.now(ZoneInfo(config['server']['timezone'])))
 
-def run():
+async def main():
     global config
     global data
 
@@ -29,10 +31,15 @@ def run():
     data.load()
     data.save()
 
-    if config['broker']['enabled'] is True:
-        print("Connecting to MQTT broker")
-        mqtt = MQTT(config, data)
-        mqtt.subscribe(config['broker']['topic'])
+    async with asyncio.TaskGroup() as tg:
+        loop = asyncio.get_event_loop()
+        api_server = api.API(config, data)
+        tg.create_task(api_server.serve(loop))
+        if config['broker']['enabled'] is True:
+            print("Connecting to MQTT broker")
+            mqtt = MQTT(config, data)
+            tg.create_task(mqtt.connect())
+        # tg.create_task(discord.start_bot())
 
     # discord
     # if os.environ.get('DISCORD_TOKEN') is not None:
@@ -69,4 +76,4 @@ def run():
     #     discord_client.run(config['integrations']['discord']['token'])
 
 if __name__ == "__main__":
-    run()
+    asyncio.run(main())

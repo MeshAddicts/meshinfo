@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 
+import asyncio
 import base64
 import datetime
 import json
+import time
 import traceback
 from zoneinfo import ZoneInfo
+import aiomqtt
 from meshtastic import mesh_pb2, mqtt_pb2, portnums_pb2, telemetry_pb2
-import paho.mqtt.client as mqtt_client
 from google.protobuf.json_format import MessageToJson
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
@@ -30,196 +32,204 @@ class MQTT:
         self.username = config['broker']['username']
         self.password = config['broker']['password']
 
-        self.client = self.connect()
-        self.client.loop_forever()
-
     ### actions
 
-    def connect(self):
-        ### paho callbacks
+    async def connect(self):
+        while True:
+            try:
+                async with aiomqtt.Client(
+                    hostname = self.config["broker"]["host"],
+                    port = self.config["broker"]["port"],
+                    identifier = self.config["broker"]["client_id"],
+                    username = self.config["broker"]["username"],
+                    password = self.config["broker"]["password"],
+                ) as client:
+                    print("Connected to MQTT broker at %s:%d" % (
+                        self.config["broker"]["host"],
+                        self.config["broker"]["port"],
+                    ))
+                    if "topics" in self.config["broker"] and self.config["broker"]["topics"] is not None and isinstance(self.config["broker"]["topics"], list):
+                        for topic in self.config["broker"]["topics"]:
+                            await client.subscribe(topic)
+                    elif "topic" in self.config["broker"] and self.config["broker"]["topic"] is not None and isinstance(self.config["broker"]["topic"], str):
+                        await client.subscribe(self.config["broker"]["topic"])
+                    else:
+                        print("No MQTT topics to subscribe to defined in config broker.topics or broker.topic")
+                        exit(1)
 
-        def on_connect(client, userdata, flags, rc, properties=None):
-            if rc == 0:
-                self.data.mqtt_connect_time = datetime.datetime.now(ZoneInfo(self.config['server']['timezone']))
-                print("Connected to MQTT broker at %s:%d (as client_id %s)" % (self.host, self.port, self.client_id))
-                if 'topic' in self.config['broker'] and self.config['broker']['topic'] is not None and isinstance(self.config['broker']['topic'], str):
-                    self.subscribe(self.config['broker']['topic'])
-                if 'topics' in self.config['broker'] and self.config['broker']['topics'] is not None and isinstance(self.config['broker']['topics'], list):
-                    for topic in self.config['broker']['topics']:
-                        self.subscribe(topic)
+                    self.data.mqtt_connect_time = datetime.datetime.now(ZoneInfo(self.config['server']['timezone']))
+                    async for msg in client.messages:
+                        # paho adds a timestamp to messages which is not in
+                        # aiomqtt. We will do that ourself here so it is compatible.
+                        msg.timestamp = time.monotonic() # type: ignore
+                        self.process_mqtt_msg(client, msg)
+            except aiomqtt.MqttError as err:
+                print("Disconnected from MQTT broker: %s", err)
+                print("Reconnecting...")
+                await asyncio.sleep(5)
+
+    def process_mqtt_msg(self, client, msg):
+        if '/2/e/' in msg.topic.value or '/2/map/' in msg.topic.value:
+            print(f"Received a protobuf message: {msg.topic} {msg.payload}")
+            is_encrypted = False
+            mp = mesh_pb2.MeshPacket()
+            outs = {}
+
+            try:
+                se = mqtt_pb2.ServiceEnvelope()
+                se.ParseFromString(msg.payload)
+                mp = se.packet
+                outs = json.loads(MessageToJson(mp, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
+                print(f"Decoded protobuf message: {outs}")
+            except Exception as e:
+                # print(f"*** ParseFromString: {str(e)}")
+                pass
+
+            if mp.HasField("encrypted") and not mp.HasField("decoded"):
+                try:
+                    nonce_packet_id = getattr(mp, "id").to_bytes(8, "little")
+                    nonce_from_node = getattr(mp, "from").to_bytes(8, "little")
+                    nonce = nonce_packet_id + nonce_from_node
+                    cipher = Cipher(algorithms.AES(key_bytes), modes.CTR(nonce), backend=default_backend())
+                    decryptor = cipher.decryptor()
+                    decrypted_bytes = decryptor.update(getattr(mp, "encrypted")) + decryptor.finalize()
+                    data = mesh_pb2.Data()
+                    data.ParseFromString(decrypted_bytes)
+                    mp.decoded.CopyFrom(data)
+                    outs = json.loads(MessageToJson(mp, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
+                except Exception as e:
+                    print(f"*** Decryption failed: {str(e)}")
+                    return
+                is_encrypted = True
+
+            outs['rssi'] = mp.rx_rssi
+            outs['snr'] = mp.rx_snr
+            outs['timestamp'] = mp.rx_time
+
+            # TODO: Need to handle this
+            # self.handle_log(mp.decoded)
+
+            if mp.decoded.portnum == portnums_pb2.TEXT_MESSAGE_APP:
+                text = mp.decoded.payload.decode("utf-8")
+                payload = { "text": text }
+                outs["type"] = "text"
+                outs["payload"] = payload
+                print(f"Decoded protobuf message: text: {outs}")
+                self.handle_text(outs)
+
+            elif mp.decoded.portnum == portnums_pb2.MAP_REPORT_APP:
+                report = mesh_pb2.Position()
+                report.ParseFromString(mp.decoded.payload)
+                out = json.loads(MessageToJson(report, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
+                outs["type"] = "mapreport"
+                outs["payload"] = out
+                print(f"Decoded protobuf message: mapreport: {outs}")
+                # self.handle_mapreport(outs)
+
+            elif mp.decoded.portnum == portnums_pb2.NEIGHBORINFO_APP:
+                info = mesh_pb2.NeighborInfo()
+                info.ParseFromString(mp.decoded.payload)
+                out = json.loads(MessageToJson(info, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
+                outs["type"] = "neighborinfo"
+                outs["payload"] = out
+                print(f"Decoded protobuf message: neighborinfo: {outs}")
+                self.handle_neighborinfo(outs)
+
+            elif mp.decoded.portnum == portnums_pb2.NODEINFO_APP:
+                info = mesh_pb2.User()
+                info.ParseFromString(mp.decoded.payload)
+                out = json.loads(MessageToJson(info, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
+                out["id"] = out['id'].replace('!', '')
+                outs["type"] = "nodeinfo"
+                outs["payload"] = out
+                print(f"Decoded protobuf message: nodeinfo: {outs}")
+                self.handle_nodeinfo(outs)
+
+            elif mp.decoded.portnum == portnums_pb2.ROUTING_APP:
+                data = mesh_pb2.Routing()
+                data.ParseFromString(mp.decoded.payload)
+                out = json.loads(MessageToJson(data, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
+                outs["type"] = "routing"
+                outs["payload"] = out
+                print(f"Decoded protobuf message: routing: {outs}")
+                # self.handle_routing(outs)
+
+            elif mp.decoded.portnum == portnums_pb2.TRACEROUTE_APP:
+                route = mesh_pb2.RouteDiscovery()
+                route.ParseFromString(mp.decoded.payload)
+                out = json.loads(MessageToJson(route, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
+                if 'route' in out:
+                    route = []
+                    for r in out['route']:
+                        id = utils.convert_node_id_from_int_to_hex(r)
+                        route.append(id)
+                    outs["route"] = route
+                outs["type"] = "traceroute"
+                outs["payload"] = out
+                print(f"Decoded protobuf message: traceroute: {outs}")
+                self.handle_traceroute(outs)
+
+            elif mp.decoded.portnum == portnums_pb2.POSITION_APP:
+                pos = mesh_pb2.Position()
+                pos.ParseFromString(mp.decoded.payload)
+                out = json.loads(MessageToJson(pos, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
+                outs["type"] = "position"
+                outs["payload"] = out
+                print(f"Decoded protobuf message: position: {outs}")
+                self.handle_position(outs)
+
+            elif mp.decoded.portnum == portnums_pb2.TELEMETRY_APP:
+                env = telemetry_pb2.Telemetry()
+                env.ParseFromString(mp.decoded.payload)
+                out = json.loads(MessageToJson(env, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
+                if 'rx_time' in outs:
+                    out['timestamp'] = datetime.datetime.fromtimestamp(outs['rx_time'] / 1000).astimezone(ZoneInfo(self.config['server']['timezone']))
+                outs["type"] = "telemetry"
+                if 'device_metrics' in out:
+                    outs["payload"] = out['device_metrics']
+                if 'environment_metrics' in out:
+                    outs["payload"] = out['environment_metrics']
+                print(f"Decoded protobuf message: telemetry: {outs}")
+                self.handle_telemetry(outs)
 
             else:
-                print("Failed to connect, error: %s\n" % rc)
+                print(f"Received an unknown protobuf message: {mp}")
 
-        def on_message(client, userdata, msg, properties=None):
-            if '/2/e/' in msg.topic or '/2/map/' in msg.topic:
-                print(f"Received a protobuf message: {msg.topic} {msg.payload}")
-                is_encrypted = False
-                mp = mesh_pb2.MeshPacket()
-                outs = {}
-
-                try:
-                    se = mqtt_pb2.ServiceEnvelope()
-                    se.ParseFromString(msg.payload)
-                    mp = se.packet
-                    outs = json.loads(MessageToJson(mp, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
-                    print(f"Decoded protobuf message: {outs}")
-                except Exception as e:
-                    # print(f"*** ParseFromString: {str(e)}")
-                    pass
-
-                if mp.HasField("encrypted") and not mp.HasField("decoded"):
-                    try:
-                        nonce_packet_id = getattr(mp, "id").to_bytes(8, "little")
-                        nonce_from_node = getattr(mp, "from").to_bytes(8, "little")
-                        nonce = nonce_packet_id + nonce_from_node
-                        cipher = Cipher(algorithms.AES(key_bytes), modes.CTR(nonce), backend=default_backend())
-                        decryptor = cipher.decryptor()
-                        decrypted_bytes = decryptor.update(getattr(mp, "encrypted")) + decryptor.finalize()
-                        data = mesh_pb2.Data()
-                        data.ParseFromString(decrypted_bytes)
-                        mp.decoded.CopyFrom(data)
-                        outs = json.loads(MessageToJson(mp, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
-                    except Exception as e:
-                        print(f"*** Decryption failed: {str(e)}")
-                        return
-                    is_encrypted = True
-
-                outs['rssi'] = mp.rx_rssi
-                outs['snr'] = mp.rx_snr
-                outs['timestamp'] = mp.rx_time
-
-                # TODO: Need to handle this
-                # self.handle_log(mp.decoded)
-
-                if mp.decoded.portnum == portnums_pb2.TEXT_MESSAGE_APP:
-                    text = mp.decoded.payload.decode("utf-8")
-                    payload = { "text": text }
-                    outs["type"] = "text"
-                    outs["payload"] = payload
-                    print(f"Decoded protobuf message: text: {outs}")
-                    self.handle_text(outs)
-
-                elif mp.decoded.portnum == portnums_pb2.MAP_REPORT_APP:
-                    report = mesh_pb2.Position()
-                    report.ParseFromString(mp.decoded.payload)
-                    out = json.loads(MessageToJson(report, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
-                    outs["type"] = "mapreport"
-                    outs["payload"] = out
-                    print(f"Decoded protobuf message: mapreport: {outs}")
-                    # self.handle_mapreport(outs)
-
-                elif mp.decoded.portnum == portnums_pb2.NEIGHBORINFO_APP:
-                    info = mesh_pb2.NeighborInfo()
-                    info.ParseFromString(mp.decoded.payload)
-                    out = json.loads(MessageToJson(info, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
-                    outs["type"] = "neighborinfo"
-                    outs["payload"] = out
-                    print(f"Decoded protobuf message: neighborinfo: {outs}")
-                    self.handle_neighborinfo(outs)
-
-                elif mp.decoded.portnum == portnums_pb2.NODEINFO_APP:
-                    info = mesh_pb2.User()
-                    info.ParseFromString(mp.decoded.payload)
-                    out = json.loads(MessageToJson(info, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
-                    out["id"] = out['id'].replace('!', '')
-                    outs["type"] = "nodeinfo"
-                    outs["payload"] = out
-                    print(f"Decoded protobuf message: nodeinfo: {outs}")
-                    self.handle_nodeinfo(outs)
-
-                elif mp.decoded.portnum == portnums_pb2.ROUTING_APP:
-                    data = mesh_pb2.Routing()
-                    data.ParseFromString(mp.decoded.payload)
-                    out = json.loads(MessageToJson(data, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
-                    outs["type"] = "routing"
-                    outs["payload"] = out
-                    print(f"Decoded protobuf message: routing: {outs}")
-                    # self.handle_routing(outs)
-
-                elif mp.decoded.portnum == portnums_pb2.TRACEROUTE_APP:
-                    route = mesh_pb2.RouteDiscovery()
-                    route.ParseFromString(mp.decoded.payload)
-                    out = json.loads(MessageToJson(route, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
-                    if 'route' in out:
+        elif '/2/json/' in msg.topic.value:
+            print(f"Received a JSON message: {msg.topic} {msg.payload}")
+            try:
+                decoded = msg.payload.decode("utf-8")
+                j = json.loads(decoded, cls=_JSONDecoder)
+                self.handle_log(msg)
+                if j['type'] == "neighborinfo":
+                    self.handle_neighborinfo(j)
+                if j['type'] == "nodeinfo":
+                    self.handle_nodeinfo(j)
+                if j['type'] == "position":
+                    self.handle_position(j)
+                if j['type'] == "telemetry":
+                    self.handle_telemetry(j)
+                if j['type'] == "text":
+                    self.handle_text(j)
+                if j['type'] == "traceroute":
+                    if 'route' in j['payload']:
                         route = []
-                        for r in out['route']:
-                           id = utils.convert_node_id_from_int_to_hex(r)
-                           route.append(id)
-                        outs["route"] = route
-                    outs["type"] = "traceroute"
-                    outs["payload"] = out
-                    print(f"Decoded protobuf message: traceroute: {outs}")
-                    self.handle_traceroute(outs)
+                        for r in j['payload']['route']:
+                            node = self.data.find_node_by_longname(r)
+                            if node is not None:
+                                id = node['id']
+                            else:
+                                id = None
+                            route.append(id)
+                        j['route'] = route
+                    self.handle_traceroute(j)
+                self.prune_expired_nodes()
+            except Exception as e:
+                print(e)
+                traceback.print_exc()
 
-                elif mp.decoded.portnum == portnums_pb2.POSITION_APP:
-                    pos = mesh_pb2.Position()
-                    pos.ParseFromString(mp.decoded.payload)
-                    out = json.loads(MessageToJson(pos, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
-                    outs["type"] = "position"
-                    outs["payload"] = out
-                    print(f"Decoded protobuf message: position: {outs}")
-                    self.handle_position(outs)
-
-                elif mp.decoded.portnum == portnums_pb2.TELEMETRY_APP:
-                    env = telemetry_pb2.Telemetry()
-                    env.ParseFromString(mp.decoded.payload)
-                    out = json.loads(MessageToJson(env, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
-                    if 'rx_time' in outs:
-                        out['timestamp'] = datetime.datetime.fromtimestamp(outs['rx_time'] / 1000).astimezone(ZoneInfo(self.config['server']['timezone']))
-                    outs["type"] = "telemetry"
-                    if 'device_metrics' in out:
-                        outs["payload"] = out['device_metrics']
-                    if 'environment_metrics' in out:
-                        outs["payload"] = out['environment_metrics']
-                    print(f"Decoded protobuf message: telemetry: {outs}")
-                    self.handle_telemetry(outs)
-
-                else:
-                    print(f"Received an unknown protobuf message: {mp}")
-
-            elif '/2/json/' in msg.topic:
-                print(f"Received a JSON message: {msg.topic} {msg.payload}")
-                try:
-                    decoded = msg.payload.decode("utf-8")
-                    j = json.loads(decoded, cls=_JSONDecoder)
-                    self.handle_log(msg)
-                    if j['type'] == "neighborinfo":
-                        self.handle_neighborinfo(j)
-                    if j['type'] == "nodeinfo":
-                        self.handle_nodeinfo(j)
-                    if j['type'] == "position":
-                        self.handle_position(j)
-                    if j['type'] == "telemetry":
-                        self.handle_telemetry(j)
-                    if j['type'] == "text":
-                        self.handle_text(j)
-                    if j['type'] == "traceroute":
-                        if 'route' in j['payload']:
-                            route = []
-                            for r in j['payload']['route']:
-                                node = self.data.find_node_by_longname(r)
-                                if node is not None:
-                                    id = node['id']
-                                else:
-                                    id = None
-                                route.append(id)
-                            j['route'] = route
-                        self.handle_traceroute(j)
-                    self.prune_expired_nodes()
-                except Exception as e:
-                    print(e)
-                    traceback.print_exc()
-
-        client = mqtt_client.Client(client_id=self.client_id, callback_api_version=mqtt_client.CallbackAPIVersion.VERSION2)
-        client.on_connect = on_connect
-        client.on_message = on_message
-        client.username_pw_set(self.username, self.password)
-        client.connect(self.host, self.port)
-        return client
-
-    def publish(self, topic, msg):
-        result = self.client.publish(topic, msg)
+    async def publish(self, client, topic, msg):
+        result = await client.publish(topic, msg)
         status = result[0]
         if status == 0:
             print(f"Send `{msg}` to topic `{topic}`")
@@ -229,12 +239,12 @@ class MQTT:
             print(f"Failed to send message to topic {topic}")
             return False
 
-    def subscribe(self, topic):
-        self.client.subscribe(topic)
+    def subscribe(self, client, topic):
+        client.subscribe(topic)
         print(f"Subscribed to topic `{topic}`")
 
-    def unsubscribe(self, topic):
-        self.client.unsubscribe(topic)
+    def unsubscribe(self, client, topic):
+        client.unsubscribe(topic)
 
     ### message handlers
 
