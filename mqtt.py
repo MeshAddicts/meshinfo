@@ -62,13 +62,13 @@ class MQTT:
                         # paho adds a timestamp to messages which is not in
                         # aiomqtt. We will do that ourself here so it is compatible.
                         msg.timestamp = time.monotonic() # type: ignore
-                        self.process_mqtt_msg(client, msg)
+                        await self.process_mqtt_msg(client, msg)
             except aiomqtt.MqttError as err:
                 print("Disconnected from MQTT broker: %s", err)
                 print("Reconnecting...")
                 await asyncio.sleep(5)
 
-    def process_mqtt_msg(self, client, msg):
+    async def process_mqtt_msg(self, client, msg):
         if '/2/e/' in msg.topic.value or '/2/map/' in msg.topic.value:
             print(f"Received a protobuf message: {msg.topic} {msg.payload}")
             is_encrypted = False
@@ -115,7 +115,7 @@ class MQTT:
                 outs["type"] = "text"
                 outs["payload"] = payload
                 print(f"Decoded protobuf message: text: {outs}")
-                self.handle_text(outs)
+                await self.handle_text(outs)
 
             elif mp.decoded.portnum == portnums_pb2.MAP_REPORT_APP:
                 report = mesh_pb2.Position().FromString(mp.decoded.payload)
@@ -131,7 +131,7 @@ class MQTT:
                 outs["type"] = "neighborinfo"
                 outs["payload"] = out
                 print(f"Decoded protobuf message: neighborinfo: {outs}")
-                self.handle_neighborinfo(outs)
+                await self.handle_neighborinfo(outs)
 
             elif mp.decoded.portnum == portnums_pb2.NODEINFO_APP:
                 info = mesh_pb2.User().FromString(mp.decoded.payload)
@@ -140,7 +140,7 @@ class MQTT:
                 outs["type"] = "nodeinfo"
                 outs["payload"] = out
                 print(f"Decoded protobuf message: nodeinfo: {outs}")
-                self.handle_nodeinfo(outs)
+                await self.handle_nodeinfo(outs)
 
             elif mp.decoded.portnum == portnums_pb2.ROUTING_APP:
                 data = mesh_pb2.Routing().FromString(mp.decoded.payload)
@@ -162,7 +162,7 @@ class MQTT:
                 outs["type"] = "traceroute"
                 outs["payload"] = out
                 print(f"Decoded protobuf message: traceroute: {outs}")
-                self.handle_traceroute(outs)
+                await self.handle_traceroute(outs)
 
             elif mp.decoded.portnum == portnums_pb2.POSITION_APP:
                 pos = mesh_pb2.Position().FromString(mp.decoded.payload)
@@ -170,7 +170,7 @@ class MQTT:
                 outs["type"] = "position"
                 outs["payload"] = out
                 print(f"Decoded protobuf message: position: {outs}")
-                self.handle_position(outs)
+                await self.handle_position(outs)
 
             elif mp.decoded.portnum == portnums_pb2.TELEMETRY_APP:
                 env = telemetry_pb2.Telemetry().FromString(mp.decoded.payload)
@@ -183,7 +183,7 @@ class MQTT:
                 if 'environment_metrics' in out:
                     outs["payload"] = out['environment_metrics']
                 print(f"Decoded protobuf message: telemetry: {outs}")
-                self.handle_telemetry(outs)
+                await self.handle_telemetry(outs)
 
             else:
                 print(f"Received an unknown protobuf message: {mp}")
@@ -193,17 +193,17 @@ class MQTT:
             try:
                 decoded = msg.payload.decode("utf-8")
                 j = json.loads(decoded, cls=_JSONDecoder)
-                self.handle_log(msg)
+                await self.handle_log(msg)
                 if j['type'] == "neighborinfo":
-                    self.handle_neighborinfo(j)
+                    await self.handle_neighborinfo(j)
                 if j['type'] == "nodeinfo":
-                    self.handle_nodeinfo(j)
+                    await self.handle_nodeinfo(j)
                 if j['type'] == "position":
-                    self.handle_position(j)
+                    await self.handle_position(j)
                 if j['type'] == "telemetry":
-                    self.handle_telemetry(j)
+                    await self.handle_telemetry(j)
                 if j['type'] == "text":
-                    self.handle_text(j)
+                    await self.handle_text(j)
                 if j['type'] == "traceroute":
                     if 'route' in j['payload']:
                         route = []
@@ -215,8 +215,8 @@ class MQTT:
                                 id = None
                             route.append(id)
                         j['route'] = route
-                    self.handle_traceroute(j)
-                self.prune_expired_nodes()
+                    await self.handle_traceroute(j)
+                await self.prune_expired_nodes()
             except Exception as e:
                 print(e)
                 traceback.print_exc()
@@ -232,23 +232,23 @@ class MQTT:
             print(f"Failed to send message to topic {topic}")
             return False
 
-    def subscribe(self, client, topic):
+    async def subscribe(self, client, topic):
         client.subscribe(topic)
         print(f"Subscribed to topic `{topic}`")
 
-    def unsubscribe(self, client, topic):
+    async def unsubscribe(self, client, topic):
         client.unsubscribe(topic)
 
     ### message handlers
 
-    def handle_log(self, msg):
+    async def handle_log(self, msg):
         print(f"MQTT >> {msg.topic} -- {msg.payload.decode("utf-8")}")
         self.data.messages.append(msg.payload.decode("utf-8"))
         self.data.mqtt_messages.append(msg)
         with open(f'{self.config["paths"]["data"]}/message-log.jsonl', 'a', encoding='utf-8') as f:
             f.write(f"{msg.payload.decode("utf-8")}\n")
 
-    def handle_neighborinfo(self, msg):
+    async def handle_neighborinfo(self, msg):
         msg['from'] = f'{msg["from"]:x}'
         if 'to' in msg:
             msg['to'] = f'{msg["to"]:x}'
@@ -266,9 +266,9 @@ class MQTT:
             node['neighborinfo'] = msg['payload']
             self.data.update_node(id, node)
             print(f"Node {id} skeleton added with neighborinfo")
-        self.data.save()
+        await self.data.save()
 
-    def handle_nodeinfo(self, msg):
+    async def handle_nodeinfo(self, msg):
         msg['from'] = f'{msg["from"]:x}'
         if 'to' in msg:
             msg['to'] = f'{msg["to"]:x}'
@@ -309,9 +309,9 @@ class MQTT:
             self.data.update_node(id, node)
             print(f"Node {id} added")
         self.sort_nodes_by_shortname()
-        self.data.save()
+        await self.data.save()
 
-    def handle_position(self, msg):
+    async def handle_position(self, msg):
         msg['from'] = f'{msg["from"]:x}'
         if 'to' in msg:
             msg['to'] = f'{msg["to"]:x}'
@@ -329,9 +329,9 @@ class MQTT:
             node['position'] = msg['payload'] if 'payload' in msg else None
             self.data.update_node(id, node)
             print(f"Node {id} skeleton added with position")
-        self.data.save()
+        await self.data.save()
 
-    def handle_telemetry(self, msg):
+    async def handle_telemetry(self, msg):
         msg['from'] = f'{msg["from"]:x}'
         if 'to' in msg:
             msg['to'] = f'{msg["to"]:x}'
@@ -357,9 +357,9 @@ class MQTT:
             self.data.telemetry.insert(0, msg)
             self.data.telemetry_by_node[id].insert(0, msg)
 
-        self.data.save()
+        await self.data.save()
 
-    def handle_text(self, msg):
+    async def handle_text(self, msg):
         msg['from'] = f'{msg["from"]:x}'
         if 'to' in msg:
             msg['to'] = f'{msg["to"]:x}'
@@ -388,9 +388,9 @@ class MQTT:
         if 'sender' in msg:
             chat['sender'] = msg['sender']
         self.data.chat['channels'][str(msg['channel'])]['messages'].insert(0, chat)
-        self.data.save()
+        await self.data.save()
 
-    def handle_traceroute(self, msg):
+    async def handle_traceroute(self, msg):
         msg['from'] = f'{msg["from"]:x}'
         if 'to' in msg:
             msg['to'] = f'{msg["to"]:x}'
@@ -416,12 +416,12 @@ class MQTT:
         else:
             self.data.traceroutes_by_node[id] = [msg]
         self.data.traceroutes.insert(0, msg)
-        self.data.save()
+        await self.data.save()
 
     ### helpers
 
     # TODO: where should this really live?
-    def prune_expired_nodes(self):
+    async def prune_expired_nodes(self):
         now = datetime.datetime.now(ZoneInfo(self.config['server']['timezone']))
         ids_to_delete: list[str] = []
         for id, node in self.data.nodes.items():

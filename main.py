@@ -29,7 +29,7 @@ async def main():
     os.environ['TZ'] = config['server']['timezone']
 
     data.load()
-    data.save()
+    await data.save()
 
     async with asyncio.TaskGroup() as tg:
         loop = asyncio.get_event_loop()

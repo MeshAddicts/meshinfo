@@ -142,7 +142,7 @@ class MemoryDataStore:
         return None
 
 
-  def save(self):
+  async def save(self):
     save_start = datetime.now(ZoneInfo(self.config['server']['timezone']))
     last_data = self.config['server']['last_data_save'] if 'last_data_save' in self.config['server'] else self.config['server']['start_time']
     since_last_data = (save_start - last_data).total_seconds()
