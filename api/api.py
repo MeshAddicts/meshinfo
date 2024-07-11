@@ -22,6 +22,8 @@ class API:
 
         @app.get("/v1/nodes")
         async def nodes(request: Request) -> JSONResponse:
+            if request.query_params.get("ids"):
+                return jsonable_encoder({ "nodes": [ self.data.nodes[id] for id in request.query_params.get("ids").split(",") ] })
             return jsonable_encoder({"nodes": self.data.nodes })
 
         @app.get("/v1/nodes/{id}")
