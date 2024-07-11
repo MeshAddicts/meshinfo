@@ -1,4 +1,4 @@
-paho-mqtt
+aiomqtt
 jinja2
 scipy
 python-dotenv
