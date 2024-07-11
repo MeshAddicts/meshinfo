@@ -22,13 +22,13 @@ class API:
 
         @app.get("/v1/nodes")
         async def nodes(request: Request) -> JSONResponse:
-            nodes = []
+            nodes = self.data.nodes
             if "ids" in request.query_params.keys():
                 ids: str|None = request.query_params.get("ids")
                 if ids is not None:
                     ids = ids.strip()
                     if ids != "":
-                        nodes = []
+                        nodes_to_keep = []
                         for id in ids.split(","):
                             try:
                                 node_id = int(id)
@@ -36,9 +36,25 @@ class API:
                             except ValueError:
                                 node_id = id
                             if id in self.data.nodes:
-                                nodes.append(self.data.nodes[id])
-            else:
-                nodes = self.data.nodes
+                                nodes_to_keep.append(node_id)
+                        nodes = { k: v for k, v in nodes.items() if k in nodes_to_keep }
+
+            if "status" in request.query_params.keys():
+                status: str|None = request.query_params.get("status")
+                if status is not None:
+                    status = status.strip()
+                    if status == "online":
+                        nodes_to_keep = []
+                        for id in nodes:
+                            if nodes[id]["active"] == True:
+                                nodes_to_keep.append(id)
+                        nodes = { k: v for k, v in nodes.items() if k in nodes_to_keep }
+                    elif status == "offline":
+                        nodes_to_keep = []
+                        for id in nodes:
+                            if nodes[id]["active"] == False:
+                                nodes_to_keep.append(id)
+                        nodes = { k: v for k, v in nodes.items() if k in nodes_to_keep }
 
             return jsonable_encoder({"nodes": nodes })
 
