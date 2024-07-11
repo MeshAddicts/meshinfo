@@ -39,6 +39,17 @@ class API:
                                 nodes_to_keep.append(node_id)
                         nodes = { k: v for k, v in nodes.items() if k in nodes_to_keep }
 
+            if "shortname" in request.query_params.keys():
+                shortname: str|None = request.query_params.get("shortname")
+                if shortname is not None:
+                    shortname = shortname.strip()
+                    if shortname != "":
+                        nodes_to_keep = []
+                        for id in nodes:
+                            if shortname.lower() in nodes[id]["shortname"].lower():
+                                nodes_to_keep.append(id)
+                        nodes = { k: v for k, v in nodes.items() if k in nodes_to_keep }
+
             if "status" in request.query_params.keys():
                 status: str|None = request.query_params.get("status")
                 if status is not None:
