@@ -119,6 +119,20 @@ class API:
             else:
                 return JSONResponse(status_code=404, content={"error": "Text not found"})
 
+        @app.get("/v1/nodes/{id}/traceroutes")
+        async def node_traceroutes(request: Request, id: str) -> JSONResponse:
+            try:
+                node_id = int(id)
+                node_id = utils.convert_node_id_from_int_to_hex(node_id)
+            except ValueError:
+                node_id = id
+
+            if node_id in self.data.traceroutes:
+                return jsonable_encoder({ "traceroutes": self.data.traceroutes[node_id] })
+            else:
+                return JSONResponse(status_code=404, content={"error": "Traceroutes not found"})
+
+
         @app.get("/v1/server/config")
         async def server_config(request: Request) -> JSONResponse:
             # TODO: Sanitize config (i.e. username, password, api_key, etc)
