@@ -95,7 +95,7 @@ class API:
                 return JSONResponse(status_code=404, content={"error": "Node not found"})
 
         @app.get("/v1/server/config")
-        async def config(request: Request) -> JSONResponse:
+        async def server_config(request: Request) -> JSONResponse:
             # TODO: Sanitize config (i.e. username, password, api_key, etc)
             return jsonable_encoder({ "config": self.config })
 
@@ -103,6 +103,6 @@ class API:
 
         conf = uvicorn.Config(app=app, host="0.0.0.0", port=9000, loop=loop)
         server = uvicorn.Server(conf)
-        print(f"Starting Uvicorn server bound at http://{config.host}:{config.port}")
+        print(f"Starting Uvicorn server bound at http://{self.config.host}:{self.config.port}")
         await server.serve()
         print("Uvicorn server stopped")
