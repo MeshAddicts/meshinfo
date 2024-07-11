@@ -91,7 +91,7 @@ class API:
             if node_id in self.data.nodes:
                 return jsonable_encoder({ "node": self.data.nodes[node_id] })
             else:
-                return JSONResponse(status_code=404, content={"error": "Node not found"})
+                return JSONResponse(status_code=404, content={"error": "node not found"})
 
         @app.get("/v1/nodes/{id}/telemetry")
         async def node_telemetry(request: Request, id: str) -> JSONResponse:
@@ -104,9 +104,9 @@ class API:
             if node_id in self.data.telemetry:
                 return jsonable_encoder({ "telemetry": self.data.telemetry[node_id] })
             else:
-                return JSONResponse(status_code=404, content={"error": "Telemetry not found"})
+                return JSONResponse(status_code=404, content={"error": "telemetry not found"})
 
-        @app.get("/v1/nodes/{id}/text")
+        @app.get("/v1/nodes/{id}/texts")
         async def node_text(request: Request, id: str) -> JSONResponse:
             try:
                 node_id = int(id)
@@ -114,10 +114,14 @@ class API:
             except ValueError:
                 node_id = id
 
-            if node_id in self.data.text:
-                return jsonable_encoder({ "text": self.data.text[node_id] })
+            texts = []
+            for channel in self.data.chat['channels'].keys():
+                for message in channel['messages']:
+                    if message['from'] == node_id or message['to'] == node_id:
+                        texts.append(message['text'])
+                return jsonable_encoder({ "texts": texts })
             else:
-                return JSONResponse(status_code=404, content={"error": "Text not found"})
+                return JSONResponse(status_code=404, content={"error": "texts not found"})
 
         @app.get("/v1/nodes/{id}/traceroutes")
         async def node_traceroutes(request: Request, id: str) -> JSONResponse:
@@ -130,7 +134,7 @@ class API:
             if node_id in self.data.traceroutes:
                 return jsonable_encoder({ "traceroutes": self.data.traceroutes[node_id] })
             else:
-                return JSONResponse(status_code=404, content={"error": "Traceroutes not found"})
+                return JSONResponse(status_code=404, content={"error": "traceroutes not found"})
 
 
         @app.get("/v1/server/config")
