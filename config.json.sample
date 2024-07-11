@@ -1,15 +1,18 @@
 {
   "broker": {
+    "enabled": true,
     "host": "mqtt.meshtastic.org",
     "port": 1883,
     "client_id_prefix": "meshinfo-dev",
-    "topic": "msh/US/CA/+/2/json/#",
+    "topics": [
+      "msh/US/CA/+/2/json/#"
+    ],
     "username": "meshdev",
     "password": "large4cats"
   },
   "paths": {
     "data": "output/data",
-    "output": "output",
+    "output": "output/static-html",
     "templates": "templates"
   },
   "server": {
@@ -18,7 +21,8 @@
     "timezone": "America/Los_Angeles",
     "start_time": null,
     "intervals": {
-      "data_save": 60,
+      "enrich": 900,
+      "data_save": 300,
       "render": 5
     }
   },
@@ -46,6 +50,14 @@
       "token": "token",
       "channel": "1247618108810596392",
       "webhook": "webhook"
+    },
+    "geocoding": {
+      "enabled": false,
+      "provider": "geocode.maps.co",
+      "geocode.maps.co": {
+        "api_key": "XXXXXXXXXXXXXXXX"
+      }
     }
-  }
+  },
+  "debug": false
 }

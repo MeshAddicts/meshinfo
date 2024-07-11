@@ -1,6 +1,9 @@
-paho-mqtt
+aiomqtt
 jinja2
 scipy
 python-dotenv
 fastapi
 discord.py
+requests
+meshtastic
+cryptography

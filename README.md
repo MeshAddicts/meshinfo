@@ -12,6 +12,8 @@ To make deployment to run an instance for your mesh easy, Docker support is incl
 
 If you use MeshInfo and have a publicly accessible instance, we'd like to know! Drop a note to kevin@airframes.io with details and we'll link it below.
 
+See an example instance running on the [Sacramento Valley Mesh](https://svm1.meshinfo.network/nodes.html).
+
 ## Screenshots
 
 TODO: Capture screenshots and make a row of clickable screenshot thumbnails here.
@@ -105,6 +107,15 @@ Build. Be sure to specify a related version number and suffix (this example `dev
 ```sh
 scripts/docker-build.sh 0.0.1dev5
 ```
+
+### Running via Docker Compose while developing
+
+```sh
+docker compose -f docker-compose-dev.yml up --build --force-recreate
+```
+
+You will need to CTRL-C and run again if you make any changes to the python code, but not if you only make changes to
+the templates.
 
 ### Release
 

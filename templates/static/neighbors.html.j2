@@ -3,92 +3,103 @@
 {% block title %}Neighbors{% endblock %}
 
 {% block content %}
-    <h1>Neighbors</h1>
-    <p>
+    <h5 class="mb-2 text-gray-500">Neighbors</h5>
+    <h1 class="mb-2 text-xl">Neighbors</h1>
+    <p class="mb-2">
       There are <b>{{ active_nodes_with_neighbors|count }}</b> active nodes with neighbors
       that have been heard by the mesh by <b>KE-R</b> (!4355f528).
     </p>
-    <p>Last updated: {{ timestamp.astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</p>
-    <table border=1 cellspacing=2 cellpadding=4 width=100%>
-        <tr bgcolor=lightgray>
-            <th>ID</th>
-            <th colspan=2>Name</th>
-            <th colspan=3>Neighbors</th>
-            <th colspan=2>Seen</th>
+
+    <table class="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50">
+      <thead>
+        <tr>
+          <th class="w-20 max-w-20 border border-gray-500 bg-gray-400">ID</th>
+          <th class="border border-gray-500 bg-gray-400" colspan=2>Name</th>
+          <th class="border border-gray-500 bg-gray-400" colspan=3>Neighbors</th>
+          <th class="hidden xl:table-cell border border-gray-500 bg-gray-400" colspan=2>Seen</th>
         </tr>
-        <tr bgcolor=lightgray>
-            <th></th>
-            <th>Short</th>
-            <th>Long</th>
-            <th>Heard</th>
-            <th>Heard By</th>
-            <th>Interval</th>
-            <th>Last</th>
-            <th>Since</th>
+        <tr>
+          <th class="w-12 max-w-12 border border-gray-500 bg-gray-400"></th>
+          <th class="w-12 max-w-12 border border-gray-500 bg-gray-400">Short</th>
+          <th class="border border-gray-500 bg-gray-400">Long</th>
+          <th class="border border-gray-500 bg-gray-400">Heard</th>
+          <th class="border border-gray-500 bg-gray-400">Heard By</th>
+          <th class="border border-gray-500 bg-gray-400">Interval</th>
+          <th class="hidden xl:table-cell border border-gray-500 bg-gray-400">Last</th>
+          <th class="hidden xl:table-cell w-20 max-w-20 border border-gray-500 bg-gray-400">Since</th>
         </tr>
+      </thead>
+      <tbody>
         {% for id, node in active_nodes_with_neighbors.items() %}
         <tr>
-            <td>
-              {% if id %}
-              {% set id = id|replace('!', '') %}
-                <a href='node_{{ id }}.html'>{{ id }}</a>
-              {% else %}
+          <td class="p-1 border border-gray-400" align=center valign=middle>
+            {% if id %}
+            {% set id = id|replace('!', '') %}
+              <a href='node_{{ id }}.html'>
+                <img src="https://api.dicebear.com/9.x/bottts-neutral/svg?seed={{ id }}" alt="Avatar" class="w-16 h-16 mb-1 object-cover">
                 {{ id }}
-              {% endif %}
-            </td>
-            <td style="color: #{{ '777' if node.shortname == 'UNK' else '000' }}">
-              {% if id %}
-                <a href='node_{{ id }}.html'>{{ node.shortname }}</a>
-              {% else %}
-                <span class="text-gray-500">{{ node.shortname }}</span>
-              {% endif %}
-            </td>
-            <td style="color: #{{ '777' if node.shortname == 'UNK' else '000' }}">
-              {{ node.longname }}
-            </td>
-            {% if node.neighborinfo %}
-            <td align=left>
-              <table width=100%>
+              </a>
+            {% else %}
+              <img src="https://api.dicebear.com/9.x/bottts-neutral/svg?seed={{ id }}" alt="Avatar" class="w-16 h-16 mb-1 object-cover">
+              {{ id }}
+            {% endif %}
+          </td>
+          <td class="p-1 border border-gray-400" style="color: #{{ '777' if node.shortname == 'UNK' else '000' }}" align=center>
+            {% if id %}
+              <a href='node_{{ id }}.html'>{{ node.shortname }}</a>
+            {% else %}
+              <span class="text-gray-500">{{ node.shortname }}</span>
+            {% endif %}
+          </td>
+          <td class="p-1 border border-gray-400" style="color: #{{ '777' if node.shortname == 'UNK' else '000' }}">
+            {{ node.longname }}
+          </td>
+          {% if node.neighborinfo %}
+          <td class="p-0 border border-gray-400" valign=top>
+            <table class="table-auto min-w-full">
+              <tbody class="divide-y divide-dashed divide-gray-400">
               {% for neighbor in node.neighborinfo.neighbors %}
                 <tr>
-                  <td width=25%>
+                  <td class="w-1/3 p-1 text-nowrap">
                     {% if neighbor.node_id in nodes %}
-                    {{ nodes[neighbor.node_id].shortname }}
+                    <a href="node_{{ nodes[neighbor.node_id].id }}.html">{{ nodes[neighbor.node_id].shortname }}</a>
                     {% else %}
-                    UNK
+                    <span class="text-gray-500">UNK</span>
                     {% endif %}
                   </td>
-                  <td>
+                  <td class="p-1 text-nowrap">
                     SNR: {{ neighbor.snr }}
                   </td>
-                  <td align=right>
+                  <td class="p-1 text-nowrap" align=right>
                     {% if neighbor.distance %}
                       {{ neighbor.distance }} km
                     {% endif %}
                   </td>
                 </tr>
               {% endfor %}
-              </table>
-            </td>
-            <td align=left>
-              <table width=100%>
+              </tbody>
+            </table>
+          </td>
+          <td class="p-0 border border-gray-400" valign=top>
+            <table class="table-auto min-w-full">
+              <tbody class="divide-y divide-dashed divide-gray-400">
               {% for nid, nnode in nodes.items() %}
               {% if nnode.neighborinfo %}
               {% for neighbor in nnode.neighborinfo.neighbors %}
-              {% if convert_node_id_from_int_to_hex(neighbor.node_id) == id %}
+              {% if utils.convert_node_id_from_int_to_hex(neighbor.node_id) == id %}
                 <tr>
-                  <td width=25%>
+                  <td class="w-1/3 p-1 text-nowrap" width=25%>
                     {% if nid in nodes %}
-                      {{ nodes[nid].shortname }}
+                      <a href="node_{{ nid }}.html">{{ nodes[nid].shortname }}</a>
                     {% else %}
-                      UNK
+                      <span class="text-gray-500">UNK</span>
                     {% endif %}
                   </td>
-                  <td>
+                  <td class="p-1 text-nowrap">
                     SNR: {{ neighbor.snr }}
                   </td>
-                  <td align=right>
-                    {% set dist = calculate_distance_between_nodes(nodes[nid], nodes[id]) %}
+                  <td class="p-1 text-nowrap" align=right>
+                    {% set dist = utils.calculate_distance_between_nodes(nodes[nid], nodes[id]) %}
                     {% if dist %}
                     {{ dist }} km
                     {% endif %}
@@ -98,15 +109,17 @@
               {% endfor %}
               {% endif %}
               {% endfor %}
-              </table>
-            <td align=right>{{ node.neighborinfo.node_broadcast_interval_secs }}s</td>
-            {% else %}
-            <td></td>
-            {% endif %}
-            <td>{{ node.last_seen_human }}</td>
-            <td align=right>{{ node.since.seconds }} secs</td>
+              </tbody>
+            </table>
+          <td class="p-1 border border-gray-400" align=right>{{ node.neighborinfo.node_broadcast_interval_secs }}s</td>
+          {% else %}
+          <td class="p-1 border border-gray-400"></td>
+          {% endif %}
+          <td class="hidden xl:table-cell p-1 border border-gray-400">{{ node.last_seen_human }}</td>
+          <td class="hidden xl:table-cell p-1 text-nowrap border border-gray-400" align=right>{{ node.since.seconds }} secs</td>
         </tr>
         {% endfor %}
+      </tbody>
     </table>
     <br><br>
     <br><br>

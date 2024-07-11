@@ -3,54 +3,66 @@
 {% block title %}Chat{% endblock %}
 
 {% block content %}
-    <h1>Chat</h1>
-    <p>
+    <h5 class="mb-2 text-gray-500">Chat</h5>
+    <h1 class="mb-2 text-xl">Chat</h1>
+    <p class="mb-2">
       There are <b>{{ chat['channels']['0']['messages']|count }}</b> messages on channel 0 that have
       been heard by the mesh by <b>KE-R</b> (!4355f528).
     </p>
-    <p>Last updated: {{ timestamp.astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</p>
 
-    <h2>Channel 0</h2>
-    <table border=1 cellpadding=4>
+    <h2 class="text-lg font-bold">Channel 0</h2>
+    <table class="w-full max-w-full table-fixed border-collapse border border-gray-500 bg-gray-50">
+      <thead>
         <tr>
-            <th>Time</th>
-            <th>From</th>
-            <th>Via</th>
-            <th>To</th>
-            <th>Hops</th>
-            <th>DX</th>
-            <th width=65%>Message</th>
+            <th class="w-32 max-w-32 border border-gray-500 bg-gray-400">Time</th>
+            <th class="w-12 max-w-12 border border-gray-500 bg-gray-400">From</th>
+            <th class="w-12 max-w-12 border border-gray-500 bg-gray-400">Via</th>
+            <th class="w-12 max-w-12 border border-gray-500 bg-gray-400">To</th>
+            <th class="w-12 max-w-12 border border-gray-500 bg-gray-400">Hops</th>
+            <th class="w-20 max-w-20 border border-gray-500 bg-gray-400">DX</th>
+            <th class="p-1 text-wrap border border-gray-500 bg-gray-400">Message</th>
         </tr>
+      </thead>
+      <tbody>
         {% for message in chat['channels']['0']['messages'] %}
         {% set node_from = nodes[message.from] if message.from in nodes else None %}
         {% set node_sender = nodes[message.sender] if message.sender in nodes else None %}
         {% set node_to = nodes[message.to] if message.to in nodes else None %}
-        {% set distance_from_sender = calculate_distance_between_nodes(node_from, node_sender) if node_from and node_sender else None %}
+        {% set distance_from_sender = utils.calculate_distance_between_nodes(node_from, node_sender) if node_from and node_sender else None %}
         <tr>
-            <td>{{ datetime.fromtimestamp(message.timestamp).astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</td>
-            <td>
-              <span title="{{ message.from + " / " + nodes[message.from].longname if message.from in nodes else (message.from + ' / Unknown') }}">
+            <td class="p-1 border border-gray-400">{{ datetime.fromtimestamp(message.timestamp).astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</td>
+            <td class="p-1 text-center border border-gray-400">
+              <a href="node_{{ node_from.id }}.html" title="{{ message.from + " / " + nodes[message.from].longname if message.from in nodes else (message.from + ' / Unknown') }}">
                 {{ nodes[message.from].shortname if message.from in nodes else 'UNK' }}
-              </span>
+              </a>
             </td>
-            <td>
-              <span title="{{ message.sender + " / " + nodes[message.sender].longname if message.sender in nodes else (message.sender + ' / Unknown') }}">
+            <td class="p-1 text-center border border-gray-400">
+              {% if node_sender %}
+              <a href="node_{{ node_sender.id }}.html" title="{{ message.sender + " / " + nodes[message.sender].longname if message.sender in nodes else (message.sender + ' / Unknown') }}">
                 {{ nodes[message.sender].shortname if message.sender in nodes else 'UNK' }}
-              </span>
+              </a>
+              {% endif %}
             </td>
-            <td>
-              <span title="{{ message.to + " / " + nodes[message.to].longname if message.to in nodes else (message.to + ' / Unknown') }}">
+            <td class="p-1 text-center border border-gray-400">
+              {% if node_to and node_to.id != 'ffffffff' %}
+              <a href="node_{{ node_to.id }}.html" title="{{ message.to + " / " + nodes[message.to].longname if message.to in nodes else (message.to + ' / Unknown') }}">
                 {{ nodes[message.to].shortname if message.to in nodes else 'UNK' }}
-              </span>
+              </a>
+              {% else %}
+              <span class="text-gray-500">ALL</span>
+              {% endif %}
             </td>
-            <td align=center>{{ message.hops_away }}</td>
-            <td align=right>
+            <td class="p-1 border border-gray-400" align=center>{{ message.hops_away }}</td>
+            <td class="p-1 text-nowrap border border-gray-400" align=right>
               {% if distance_from_sender %}
               {{ distance_from_sender }} km
               {% endif %}
             </td>
-            <td>{{ message.text }}</td>
+            <td class="p-1 text-wrap border border-gray-400">
+              {{ message.text }}
+            </td>
         </tr>
         {% endfor %}
+      </tbody>
     </table>
 {% endblock %}

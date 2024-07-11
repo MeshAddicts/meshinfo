@@ -1,0 +1,52 @@
+services:
+  caddy:
+    image: caddy:latest
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - ./caddy/data:/data/caddy
+      - ./Caddyfile.dev:/etc/caddy/Caddyfile
+      - ./output/static-html:/srv
+      - ./public/images:/srv/images
+    environment:
+      - CADDY_AGREE=true
+    restart: always
+
+  postgres:
+    image: postgres:latest
+    volumes:
+      - ./postgres/data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_PASSWORD=password
+    restart: always
+
+  mqtt:
+    container_name: mqtt
+    image: eclipse-mosquitto:latest
+    ports:
+      - 1883:1883
+    volumes:
+      - ./mosquitto/data:/mosquitto/data:rw
+      - ./mosquitto/config:/mosquitto/config:rw
+    restart: always
+
+  meshinfo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./config.json:/app/config.json
+      - ./output:/app/output
+      - ./templates:/app/templates
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MQTT_HOST=mqtt
+      - MQTT_PORT=1883
+      - MQTT_USERNAME=meshinfo
+      - MQTT_PASSWORD=m3sht4st1c
+    restart: always
+    depends_on:
+      - caddy
+      - postgres
+      - mqtt
