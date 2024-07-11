@@ -47,7 +47,7 @@ TODO: Capture screenshots and make a row of clickable screenshot thumbnails here
 
 ## Chat
 
-If you're using this and have questions, or perhaps you want to join in on the dev effort and want to interact collaboratively, come chat with us on [#meshinfo on the SacValleyMesh Discord](https://discord.gg/sVHDNAAB).
+If you're using this and have questions, or perhaps you want to join in on the dev effort and want to interact collaboratively, come chat with us on [#meshinfo on the SacValleyMesh Discord](https://discord.gg/tj6dADagDJ).
 
 ## Running
 
