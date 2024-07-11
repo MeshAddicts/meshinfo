@@ -119,9 +119,7 @@ class API:
                 for message in self.data.chat['channels'][channel]['messages']:
                     if message['from'] == node_id or message['to'] == node_id:
                         texts.append(message)
-                return jsonable_encoder({ "texts": texts })
-            else:
-                return JSONResponse(status_code=404, content={"error": "texts not found"})
+            return jsonable_encoder({ "texts": texts })
 
         @app.get("/v1/nodes/{id}/traceroutes")
         async def node_traceroutes(request: Request, id: str) -> JSONResponse:
@@ -131,11 +129,11 @@ class API:
             except ValueError:
                 node_id = id
 
-            if node_id in self.data.traceroutes:
-                return jsonable_encoder({ "traceroutes": self.data.traceroutes[node_id] })
-            else:
-                return JSONResponse(status_code=404, content={"error": "traceroutes not found"})
-
+            traceroutes = []
+            for traceroute in self.data.traceroutes:
+                if traceroute['from'] == node_id or traceroute['to'] == node_id:
+                    traceroutes.append(traceroute)
+            return jsonable_encoder({ "traceroutes": traceroutes })
 
         @app.get("/v1/server/config")
         async def server_config(request: Request) -> JSONResponse:
