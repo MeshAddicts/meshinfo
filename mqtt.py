@@ -118,8 +118,7 @@ class MQTT:
                 self.handle_text(outs)
 
             elif mp.decoded.portnum == portnums_pb2.MAP_REPORT_APP:
-                report = mesh_pb2.Position()
-                report.ParseFromString(mp.decoded.payload)
+                report = mesh_pb2.Position().FromString(mp.decoded.payload)
                 out = json.loads(MessageToJson(report, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
                 outs["type"] = "mapreport"
                 outs["payload"] = out
@@ -127,8 +126,7 @@ class MQTT:
                 # self.handle_mapreport(outs)
 
             elif mp.decoded.portnum == portnums_pb2.NEIGHBORINFO_APP:
-                info = mesh_pb2.NeighborInfo()
-                info.ParseFromString(mp.decoded.payload)
+                info = mesh_pb2.NeighborInfo().FromString(mp.decoded.payload)
                 out = json.loads(MessageToJson(info, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
                 outs["type"] = "neighborinfo"
                 outs["payload"] = out
@@ -136,8 +134,7 @@ class MQTT:
                 self.handle_neighborinfo(outs)
 
             elif mp.decoded.portnum == portnums_pb2.NODEINFO_APP:
-                info = mesh_pb2.User()
-                info.ParseFromString(mp.decoded.payload)
+                info = mesh_pb2.User().FromString(mp.decoded.payload)
                 out = json.loads(MessageToJson(info, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
                 out["id"] = out['id'].replace('!', '')
                 outs["type"] = "nodeinfo"
@@ -146,8 +143,7 @@ class MQTT:
                 self.handle_nodeinfo(outs)
 
             elif mp.decoded.portnum == portnums_pb2.ROUTING_APP:
-                data = mesh_pb2.Routing()
-                data.ParseFromString(mp.decoded.payload)
+                data = mesh_pb2.Routing().FromString(mp.decoded.payload)
                 out = json.loads(MessageToJson(data, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
                 outs["type"] = "routing"
                 outs["payload"] = out
@@ -155,8 +151,7 @@ class MQTT:
                 # self.handle_routing(outs)
 
             elif mp.decoded.portnum == portnums_pb2.TRACEROUTE_APP:
-                route = mesh_pb2.RouteDiscovery()
-                route.ParseFromString(mp.decoded.payload)
+                route = mesh_pb2.RouteDiscovery().FromString(mp.decoded.payload)
                 out = json.loads(MessageToJson(route, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
                 if 'route' in out:
                     route = []
@@ -170,8 +165,7 @@ class MQTT:
                 self.handle_traceroute(outs)
 
             elif mp.decoded.portnum == portnums_pb2.POSITION_APP:
-                pos = mesh_pb2.Position()
-                pos.ParseFromString(mp.decoded.payload)
+                pos = mesh_pb2.Position().FromString(mp.decoded.payload)
                 out = json.loads(MessageToJson(pos, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
                 outs["type"] = "position"
                 outs["payload"] = out
@@ -179,8 +173,7 @@ class MQTT:
                 self.handle_position(outs)
 
             elif mp.decoded.portnum == portnums_pb2.TELEMETRY_APP:
-                env = telemetry_pb2.Telemetry()
-                env.ParseFromString(mp.decoded.payload)
+                env = telemetry_pb2.Telemetry().FromString(mp.decoded.payload)
                 out = json.loads(MessageToJson(env, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
                 if 'rx_time' in outs:
                     out['timestamp'] = datetime.datetime.fromtimestamp(outs['rx_time'] / 1000).astimezone(ZoneInfo(self.config['server']['timezone']))
