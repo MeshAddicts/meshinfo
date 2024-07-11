@@ -84,15 +84,40 @@ class API:
         async def node(request: Request, id: str) -> JSONResponse:
             try:
                 node_id = int(id)
+                node_id = utils.convert_node_id_from_int_to_hex(node_id)
             except ValueError:
                 node_id = id
 
-            if isinstance(node_id, str) and id in self.data.nodes:
+            if node_id in self.data.nodes:
                 return jsonable_encoder({ "node": self.data.nodes[node_id] })
-            elif isinstance(node_id, int) and utils.convert_node_id_from_int_to_hex(node_id) in self.data.nodes:
-                return jsonable_encoder({ "node": self.data.nodes[utils.convert_node_id_from_int_to_hex(node_id)] })
             else:
                 return JSONResponse(status_code=404, content={"error": "Node not found"})
+
+        @app.get("/v1/nodes/{id}/telemetry")
+        async def node_telemetry(request: Request, id: str) -> JSONResponse:
+            try:
+                node_id = int(id)
+                node_id = utils.convert_node_id_from_int_to_hex(node_id)
+            except ValueError:
+                node_id = id
+
+            if node_id in self.data.telemetry:
+                return jsonable_encoder({ "telemetry": self.data.telemetry[node_id] })
+            else:
+                return JSONResponse(status_code=404, content={"error": "Telemetry not found"})
+
+        @app.get("/v1/nodes/{id}/text")
+        async def node_text(request: Request, id: str) -> JSONResponse:
+            try:
+                node_id = int(id)
+                node_id = utils.convert_node_id_from_int_to_hex(node_id)
+            except ValueError:
+                node_id = id
+
+            if node_id in self.data.text:
+                return jsonable_encoder({ "text": self.data.text[node_id] })
+            else:
+                return JSONResponse(status_code=404, content={"error": "Text not found"})
 
         @app.get("/v1/server/config")
         async def server_config(request: Request) -> JSONResponse:
