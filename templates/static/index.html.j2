@@ -5,7 +5,7 @@
 {% block content %}
     <h1>Welcome!</h1>
     <p>
-      This is a site that shows data about the <b>{{ config['server']['name' }}</b> by
+      This is a site that shows data about the <b>{{ config['server']['name'] }}</b> by
       <a href="node_{{ config['server']['node_id'] }}.html">{{ config['server']['node_id'] }}</a> ({{ config['server']['node_id'] }}).
     </p>
     <p>Last updated: {{ timestamp.astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</p>
