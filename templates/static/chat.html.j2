@@ -7,7 +7,7 @@
     <h1 class="mb-2 text-xl">Chat</h1>
     <p class="mb-2">
       There are <b>{{ chat['channels']['0']['messages']|count }}</b> messages on channel 0 that have
-      been heard by the mesh by <b>KE-R</b> (!4355f528).
+      been heard by the mesh by <a href="node_{{ config['server']['node_id'] }}.html">{{ config['server']['node_id'] }}</a> ({{ config['server']['node_id'] }}).
     </p>
 
     <h2 class="text-lg font-bold">Channel 0</h2>

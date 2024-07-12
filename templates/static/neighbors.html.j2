@@ -7,7 +7,7 @@
     <h1 class="mb-2 text-xl">Neighbors</h1>
     <p class="mb-2">
       There are <b>{{ active_nodes_with_neighbors|count }}</b> active nodes with neighbors
-      that have been heard by the mesh by <b>KE-R</b> (!4355f528).
+      that have been heard by the mesh by <a href="node_{{ config['server']['node_id'] }}.html">{{ config['server']['node_id'] }}</a> ({{ config['server']['node_id'] }}).
     </p>
 
     <table class="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50">

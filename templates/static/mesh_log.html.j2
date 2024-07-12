@@ -5,7 +5,8 @@
 {% block content %}
   <h1>Mesh Messages</h1>
   <p>
-    All messages from the mesh as seen by <b>KE-R</b> (!4355f528). Only the messages received
+    All messages from the mesh as seen by
+    <a href="node_{{ config['server']['node_id'] }}.html">{{ config['server']['node_id'] }}</a> ({{ config['server']['node_id'] }}). Only the messages received
     since this server was last restarted are shown.
   </p>
   <p>Last updated: {{ timestamp.astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</p>

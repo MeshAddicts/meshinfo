@@ -5,7 +5,7 @@
 {% block content %}
     <h1>Routes</h1>
     <p>
-      Route paths of the mesh as seen by <b>KE-R</b> (!4355f528).
+      Route paths of the mesh as seen by <a href="node_{{ config['server']['node_id'] }}.html">{{ config['server']['node_id'] }}</a> ({{ config['server']['node_id'] }}).
     </p>
     <p>Last updated: {{ timestamp.astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</p>
 {% endblock %}

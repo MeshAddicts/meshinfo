@@ -7,7 +7,8 @@
     <h1 class="mb-2 text-xl">Nodes</h1>
     <p class="mb-2">
       There are <b>{{ active_nodes|count }}</b> active out of a total of <b>{{ nodes|count }}</b> seen nodes
-      that have been heard by the mesh by <b>{{ config['server']['node_id'] }}</b> ({{ config['server']['node_id'] }}).
+      that have been heard by the mesh by
+      <a href="node_{{ config['server']['node_id'] }}.html">{{ config['server']['node_id'] }}</a> ({{ config['server']['node_id'] }}).
     </p>
     <table class="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50">
       <thead>
