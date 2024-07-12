@@ -30,7 +30,7 @@
         {% set node_to = nodes[message.to] if message.to in nodes else None %}
         {% set distance_from_sender = utils.calculate_distance_between_nodes(node_from, node_sender) if node_from and node_sender else None %}
         <tr>
-            <td class="p-1 border border-gray-400">{{ datetime.fromtimestamp(message.timestamp).astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</td>
+            <td class="p-1 border border-gray-400 text-nowrap">{{ datetime.fromtimestamp(message.timestamp).astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</td>
             <td class="p-1 text-center border border-gray-400">
               <a href="node_{{ node_from.id }}.html" title="{{ message.from + " / " + nodes[message.from].longname if message.from in nodes else (message.from + ' / Unknown') }}">
                 {{ nodes[message.from].shortname if message.from in nodes else 'UNK' }}
