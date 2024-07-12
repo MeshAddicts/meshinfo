@@ -40,7 +40,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Gather Version Info to JSON File
         run: |
-          echo '{{ toJSON(github) }}' > version-info.json
+          echo '${{ toJSON(github) }}' > version-info.json
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
