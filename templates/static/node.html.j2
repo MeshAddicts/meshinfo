@@ -98,9 +98,8 @@
               {% if node.hardware %}
                 {% if meshtastic_support.HardwareModel(node.hardware) and meshtastic_support.HardwareModel(node.hardware) in meshtastic_support.HARDWARE_PHOTOS %}
                 <img src="images/hardware/{{ meshtastic_support.HARDWARE_PHOTOS[meshtastic_support.HardwareModel(node.hardware)] }}" alt="{{ meshtastic_support.HardwareModel(node.hardware).name }}" class="w-16 h-16 mb-1 object-cover">
-                {% else %}
-                {{ meshtastic_support.HardwareModel(node.hardware).name }}
                 {% endif %}
+                {{ meshtastic_support.HardwareModel(node.hardware).name }}
               {% else %}
                 Unknown
               {% endif %}
