@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from jinja2 import Environment, FileSystemLoader
 
 import geo
-import _meshtastic
+import meshtastic_support
 import utils
 
 class StaticHTMLRenderer:
@@ -139,7 +139,7 @@ class StaticHTMLRenderer:
       config=self.config,
       nodes=self.data.nodes,
       active_nodes=active_nodes,
-      hardware=_meshtastic.HardwareModel,
+      hardware=meshtastic_support.HardwareModel,
       datetime=datetime.datetime,
       zoneinfo=ZoneInfo(self.config['server']['timezone']),
       timestamp=datetime.datetime.now(ZoneInfo(self.config['server']['timezone']))
@@ -153,7 +153,8 @@ class StaticHTMLRenderer:
         config=self.config,
         node=node,
         nodes=self.data.nodes,
-        hardware=_meshtastic.HardwareModel,
+        hardware=meshtastic_support.HardwareModel,
+        meshtastic_support=meshtastic_support,
         utils=utils,
         datetime=datetime.datetime,
         zoneinfo=ZoneInfo(self.config['server']['timezone']),

@@ -73,3 +73,27 @@ class HardwareModel(Enum):
   RADIOMASTER_900_BANDIT_NANO = 64
   HELTEC_CAPSULE_SENSOR_V3 = 65
   PRIVATE_HW = 255
+
+HARDWARE_PHOTOS = {
+  HardwareModel.HELTEC_HT62: "HELTEC_HT62.png",
+  HardwareModel.HELTEC_V2_0: "HELTEC_V2_0.png",
+  HardwareModel.HELTEC_V2_1: "HELTEC_V2_1.png",
+  HardwareModel.HELTEC_V3: "HELTEC_V3.png",
+  HardwareModel.HELTEC_WIRELESS_PAPER: "HELTEC_WIRELESS_PAPER.png",
+  HardwareModel.HELTEC_WIRELESS_PAPER_V1_0: "HELTEC_WIRELESS_PAPER_V1_0.png",
+  HardwareModel.HELTEC_WIRELESS_TRACKER: "HELTEC_WIRELESS_TRACKER.png",
+  HardwareModel.HELTEC_WIRELESS_TRACKER_V1_0: "HELTEC_WIRELESS_TRACKER_V1_0.png",
+  HardwareModel.HELTEC_WSL_V3: "HELTEC_WSL_V3.png",
+  HardwareModel.LILYGO_TBEAM_S3_CORE: "LILYGO_TBEAM_S3_CORE.png",
+  HardwareModel.NANO_G1_EXPLORER: "NANO_G1_EXPLORER.png",
+  HardwareModel.NANO_G2_ULTRA: "NANO_G2_ULTRA.png",
+  HardwareModel.RAK4631: "RAK4631.png",
+  HardwareModel.RP2040_LORA: "RP2040_LORA.png",
+  HardwareModel.RPI_PICO: "RPI_PICO.png",
+  HardwareModel.TBEAM: "TBEAM.png",
+  HardwareModel.TLORA_T3_S3: "TLORA_T3_S3.png",
+  HardwareModel.TLORA_V2_1_1P6: "TLORA_V2_1_1P6.png",
+  HardwareModel.T_DECK: "T_DECK.png",
+  HardwareModel.T_ECHO: "T_ECHO.png",
+  HardwareModel.T_WATCH_S3: "T_WATCH_S3.png",
+}
