@@ -14,7 +14,7 @@
         <tr>
           <th class="border border-gray-500 bg-gray-400" colspan=2>ID</th>
           <th class="border border-gray-500 bg-gray-400" colspan=2>Name</th>
-          <th class="hidden sm:table-cell border border-gray-500 bg-gray-400">Hardware</th>
+          <th class="hidden sm:table-cell border border-gray-500 bg-gray-400">HW</th>
           <th class="hidden xl:table-cell border border-gray-500 bg-gray-400" colspan=4>Last Position</th>
           <th class="hidden md:table-cell border border-gray-500 bg-gray-400">Neighbors</th>
           <th class="hidden 2xl:table-cell border border-gray-500 bg-gray-400" colspan=4>Telemetry</th>
@@ -71,9 +71,11 @@
           <td class="p-1 border border-gray-400 text-nowrap truncate" style="color: #{{ '777' if node.shortname == 'UNK' else '000' }}">
             {{ node.longname }}
           </td>
-          <td class="hidden sm:table-cell p-1 border border-gray-400 text-nowrap truncate">
+          <td class="hidden sm:table-cell w-8 min-w-8 max-w-8 h-8 min-h-8 max-h-8 p-0 box-border border-gray-400 text-center text-nowrap truncate">
             {% if node.hardware %}
-            {{ hardware(node.hardware).name }}
+              {% if meshtastic_support.HardwareModel(node.hardware) and meshtastic_support.HardwareModel(node.hardware) in meshtastic_support.HARDWARE_PHOTOS %}
+              <img src="images/hardware/{{ meshtastic_support.HARDWARE_PHOTOS[meshtastic_support.HardwareModel(node.hardware)] }}" alt="{{ meshtastic_support.HardwareModel(node.hardware).name }}" title="{{ meshtastic_support.HardwareModel(node.hardware).name }}" class="w-8 h-8 object-cover">
+              {% endif %}
             {% endif %}
           </td>
           {% if node.position %}

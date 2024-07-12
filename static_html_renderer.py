@@ -140,6 +140,7 @@ class StaticHTMLRenderer:
       nodes=self.data.nodes,
       active_nodes=active_nodes,
       hardware=meshtastic_support.HardwareModel,
+      meshtastic_support=meshtastic_support,
       datetime=datetime.datetime,
       zoneinfo=ZoneInfo(self.config['server']['timezone']),
       timestamp=datetime.datetime.now(ZoneInfo(self.config['server']['timezone']))
