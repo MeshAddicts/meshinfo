@@ -19,6 +19,7 @@ class StaticHTMLRenderer:
   def render(self):
     self.render_index()
     self.render_chat()
+    self.render_graph()
     self.render_map()
     self.render_mesh_log()
     self.render_mqtt_log()
@@ -57,6 +58,18 @@ class StaticHTMLRenderer:
       config=self.config,
       nodes=self.data.nodes,
       chat=self.data.chat,
+      utils=utils,
+      datetime=datetime.datetime,
+      zoneinfo=ZoneInfo(self.config['server']['timezone']),
+      timestamp=datetime.datetime.now(ZoneInfo(self.config['server']['timezone']))
+    )
+
+  def render_graph(self):
+    self.render_html_and_save(
+      'graph.html',
+      config=self.config,
+      nodes=self.data.nodes,
+      graph=self.data.graph,
       utils=utils,
       datetime=datetime.datetime,
       zoneinfo=ZoneInfo(self.config['server']['timezone']),
