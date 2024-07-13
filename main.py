@@ -36,7 +36,6 @@ async def main():
         api_server = api.API(config, data)
         tg.create_task(api_server.serve(loop))
         if config['broker']['enabled'] is True:
-            print("Connecting to MQTT broker")
             mqtt = MQTT(config, data)
             tg.create_task(mqtt.connect())
         # tg.create_task(discord.start_bot())

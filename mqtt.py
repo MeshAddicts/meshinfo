@@ -35,6 +35,7 @@ class MQTT:
     ### actions
 
     async def connect(self):
+        print(f"Connecting to MQTT broker at {self.config['broker']['host']}:{self.config['broker']['port']}")
         while True:
             try:
                 async with aiomqtt.Client(
@@ -64,7 +65,7 @@ class MQTT:
                         msg.timestamp = time.monotonic() # type: ignore
                         await self.process_mqtt_msg(client, msg)
             except aiomqtt.MqttError as err:
-                print("Disconnected from MQTT broker: %s", err)
+                print(f"Disconnected from MQTT broker: %s", err)
                 print("Reconnecting...")
                 await asyncio.sleep(5)
 

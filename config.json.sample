@@ -3,13 +3,28 @@
     "enabled": true,
     "host": "mqtt.meshtastic.org",
     "port": 1883,
+    "username": "meshdev",
+    "password": "large4cats",
     "client_id_prefix": "meshinfo-dev",
     "topics": [
       "msh/US/CA/SacValley/#",
       "msh/US/CA/sacvalley/#"
     ],
-    "username": "meshdev",
-    "password": "large4cats"
+    "decoders": {
+      "protobuf": {
+        "enabled": true
+      },
+      "json": {
+        "enabled": true
+      }
+    },
+    "channels": {
+      "encryption": [
+        {
+          "key": "AQ==", "key_hash": "1PG7OiApB1nwvP+rz05pAQ=="
+        },
+      ]
+    }
   },
   "paths": {
     "data": "output/data",
@@ -20,7 +35,6 @@
     "node_id": "4355f528",
     "node_activity_prune_threshold": 7200,
     "timezone": "America/Los_Angeles",
-    "start_time": null,
     "intervals": {
       "data_save": 300,
       "render": 5
