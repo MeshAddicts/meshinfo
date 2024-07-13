@@ -5,7 +5,8 @@
     "port": 1883,
     "client_id_prefix": "meshinfo-dev",
     "topics": [
-      "msh/US/CA/+/2/json/#"
+      "msh/US/CA/SacValley/#",
+      "msh/US/CA/sacvalley/#"
     ],
     "username": "meshdev",
     "password": "large4cats"
@@ -21,9 +22,16 @@
     "timezone": "America/Los_Angeles",
     "start_time": null,
     "intervals": {
-      "enrich": 900,
       "data_save": 300,
       "render": 5
+    },
+    "enrich": {
+      "enabled": false,
+      "interval": 900
+    },
+    "graph": {
+      "enabled": true,
+      "max_depth": 10
     }
   },
   "mesh": {
