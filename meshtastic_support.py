@@ -87,6 +87,8 @@ HARDWARE_PHOTOS = {
   HardwareModel.LILYGO_TBEAM_S3_CORE: "LILYGO_TBEAM_S3_CORE.png",
   HardwareModel.NANO_G1_EXPLORER: "NANO_G1_EXPLORER.png",
   HardwareModel.NANO_G2_ULTRA: "NANO_G2_ULTRA.png",
+  HardwareModel.NRF52_PROMICRO_DIY: "NRF52_PROMICRO_DIY.png",
+  HardwareModel.RAK11310: "RAK11310.png",
   HardwareModel.RAK4631: "RAK4631.png",
   HardwareModel.RP2040_LORA: "RP2040_LORA.png",
   HardwareModel.RPI_PICO: "RPI_PICO.png",
@@ -96,4 +98,5 @@ HARDWARE_PHOTOS = {
   HardwareModel.T_DECK: "T_DECK.png",
   HardwareModel.T_ECHO: "T_ECHO.png",
   HardwareModel.T_WATCH_S3: "T_WATCH_S3.png",
+  HardwareModel.PRIVATE_HW: "PRIVATE_HW.png",
 }
