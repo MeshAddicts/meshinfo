@@ -49,10 +49,10 @@
       longitude: -121.4944,
     };
     var server_position = null;
-    {% if 'position' in server_node and server_node.position and 'latitude_i' in server_node.position and 'longitude_i' in server_node.position %}
+    {% if 'latitude' in config['mesh'] and 'longitude'in config['mesh'] %}
       server_position = {
-        latitude: {{ server_node.position.latitude_i / 10000000 }},
-        longitude: {{ server_node.position.longitude_i / 10000000 }},
+        latitude: {{ config['mesh']['latitude'] }},
+        longitude: {{ config['mesh']['longitude'] }}
       };
     {% else %}
       server_position = default_position;
