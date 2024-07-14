@@ -243,11 +243,11 @@ class MQTT:
     ### message handlers
 
     async def handle_log(self, msg):
-        print(f"MQTT >> {msg.topic} -- {msg.payload.decode("utf-8")}")
+        print(f"MQTT >> {msg.topic} -- {msg.payload.decode('utf-8')}")
         self.data.messages.append(msg.payload.decode("utf-8"))
         self.data.mqtt_messages.append(msg)
         with open(f'{self.config["paths"]["data"]}/message-log.jsonl', 'a', encoding='utf-8') as f:
-            f.write(f"{msg.payload.decode("utf-8")}\n")
+            f.write(f"{msg.payload.decode('utf-8')}\n")
 
     async def handle_neighborinfo(self, msg):
         msg['from'] = f'{msg["from"]:x}'

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 
+import copy
 from datetime import datetime, timedelta
 import json
 import os
 from zoneinfo import ZoneInfo
-import requests
+from fastapi.encoders import jsonable_encoder
+import aiohttp
 
 from data_renderer import DataRenderer
 from encoders import _JSONDecoder
@@ -30,9 +32,6 @@ class MemoryDataStore:
     self.telemetry_by_node: dict = {}
     self.traceroutes: list = []
     self.traceroutes_by_node: dict = {}
-
-    self.data_renderer = DataRenderer(config, self)
-    self.static_html_renderer = StaticHTMLRenderer(config, self)
 
   def update(self, key, value):
     self.__dict__[key] = value
@@ -153,54 +152,57 @@ class MemoryDataStore:
     print(f"Save (since last): data: {since_last_data} (threshhold: {self.config['server']['intervals']['data_save']}), render: {since_last_render} (threshhold: {self.config['server']['intervals']['render']}), backfill: {since_last_backfill} (threshhold: {self.config['server']['intervals']['enrich']})")
 
     if since_last_backfill >= self.config['server']['intervals']['enrich']:
-        self.backfill_node_infos()
+        await self.backfill_node_infos()
         end = datetime.now(ZoneInfo(self.config['server']['timezone']))
         print(f"Enriched in {round(end.timestamp() - save_start.timestamp(), 2)} seconds")
         self.config['server']['last_backfill'] = end
 
     if since_last_data >= self.config['server']['intervals']['data_save']:
-        self.data_renderer.render()
+        data_renderer = DataRenderer(self.config, copy.deepcopy(self))
+        await data_renderer.render()
         end = datetime.now(ZoneInfo(self.config['server']['timezone']))
         print(f"Saved json data in {round(end.timestamp() - save_start.timestamp(), 2)} seconds")
         self.config['server']['last_data_save'] = end
 
     if since_last_render >= self.config['server']['intervals']['render']:
-        self.static_html_renderer.render()
+        static_html_renderer = StaticHTMLRenderer(self.config, copy.deepcopy(self))
+        await static_html_renderer.render()
         end = datetime.now(ZoneInfo(self.config['server']['timezone']))
         print(f"Rendered in {round(end.timestamp() - save_start.timestamp(), 2)} seconds")
         self.config['server']['last_render'] = end
 
   ### helpers
 
-  def backfill_node_infos(self):
+  async def backfill_node_infos(self):
     nodes_needing_enrichment = {}
     for id, node in self.nodes.items():
       if 'shortname' not in node or 'longname' not in node or node['shortname'] == 'UNK' or node['longname'] == 'Unknown':
         nodes_needing_enrichment[id] = node
     print(f"Nodes needing enrichment: {len(nodes_needing_enrichment)}")
     if len(nodes_needing_enrichment) > 0:
-      self.enrich_nodes(nodes_needing_enrichment)
+      await self.enrich_nodes(nodes_needing_enrichment)
 
-  def enrich_nodes(self, node_to_enrich):
-    node_ids = list(node_to_enrich.keys())
-    print(f"Enriching nodes: {','.join(node_ids)}")
-    for node_id in node_ids:
-      print(f"Enriching {node_id}")
-      url = f"https://data.bayme.sh/api/node/infos?ids={node_id}"
-      response = requests.get(url)
-      # print(f"Response code: {response.status_code}")
-      if response.status_code == 200:
-        data = response.json()
-        for node_id, node_info in data.items():
-          print(f"Got info for {node_id}")
-          if node_id in self.nodes:
-            print(f"Enriched {node_id}")
-            node = self.nodes[node_id]
-            node['shortname'] = node_info['shortName']
-            node['longname'] = node_info['longName']
-            self.nodes[node_id] = node
-      else:
-          print(f"Failed to get info for {node_id}")
+  async def enrich_nodes(self, node_to_enrich):
+    async with aiohttp.ClientSession() as session:
+        node_ids = list(node_to_enrich.keys())
+        print(f"Enriching nodes: {','.join(node_ids)}")
+        for node_id in node_ids:
+          print(f"Enriching {node_id}")
+          url = f"https://data.bayme.sh/api/node/infos?ids={node_id}"
+          async with session.get(url) as response:
+              # print(f"Response code: {response.status_code}")
+              if response.status == 200:
+                data = await response.json()
+                for node_id, node_info in data.items():
+                  print(f"Got info for {node_id}")
+                  if node_id in self.nodes:
+                    print(f"Enriched {node_id}")
+                    node = self.nodes[node_id]
+                    node['shortname'] = node_info['shortName']
+                    node['longname'] = node_info['longName']
+                    self.nodes[node_id] = node
+              else:
+                  print(f"Failed to get info for {node_id}")
 
   def find_node_by_int_id(self, id: int):
     return self.nodes.get(utils.convert_node_id_from_int_to_hex(id), None)

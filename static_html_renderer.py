@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import asyncio
+import copy
 import datetime
 import json
 from zoneinfo import ZoneInfo
@@ -16,7 +18,10 @@ class StaticHTMLRenderer:
     self.output_path = self.config['paths']['output']
     self.template_path = f"{self.config['paths']['templates']}/static"
 
-  def render(self):
+  async def render(self):
+      await asyncio.to_thread(self._render)
+
+  def _render(self):
     self.render_index()
     self.render_chat()
     self.render_map()
