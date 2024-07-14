@@ -22,6 +22,9 @@
         {
           "key": "AQ==", "key_hash": "1PG7OiApB1nwvP+rz05pAQ=="
         }
+      ],
+      "display": [
+        "0"
       ]
     }
   },
@@ -38,10 +41,7 @@
       "enrich": 900,
       "data_save": 300,
       "render": 5
-    },
-    "chat_channels": [
-      "0"
-    ]
+    }
   },
   "mesh": {
     "name": "Sac Valley Mesh",
