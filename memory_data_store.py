@@ -6,10 +6,14 @@ import json
 import os
 from zoneinfo import ZoneInfo
 from fastapi.encoders import jsonable_encoder
+<<<<<<< HEAD
 import aiohttp
+=======
+import requests
+>>>>>>> main
 
 from data_renderer import DataRenderer
-from encoders import _JSONDecoder
+from encoders import _JSONDecoder, _JSONEncoder
 from models.node import Node
 from static_html_renderer import StaticHTMLRenderer
 import utils
@@ -24,6 +28,7 @@ class MemoryDataStore:
             'messages': []
         }
     }
+    self.graph: dict|None = {}
     self.messages: list = []
     self.mqtt_messages: list = []
     self.mqtt_connect_time: datetime = self.config['server']['start_time']
@@ -149,9 +154,9 @@ class MemoryDataStore:
     since_last_render = (save_start - last_render).total_seconds()
     last_backfill = self.config['server']['last_backfill'] if 'last_backfill' in self.config['server'] else self.config['server']['start_time']
     since_last_backfill = (save_start - last_backfill).total_seconds()
-    print(f"Save (since last): data: {since_last_data} (threshhold: {self.config['server']['intervals']['data_save']}), render: {since_last_render} (threshhold: {self.config['server']['intervals']['render']}), backfill: {since_last_backfill} (threshhold: {self.config['server']['intervals']['enrich']})")
+    print(f"Save (since last): data: {since_last_data} (threshhold: {self.config['server']['intervals']['data_save']}), render: {since_last_render} (threshhold: {self.config['server']['intervals']['render']}), backfill: {since_last_backfill} (threshhold: {self.config['server']['enrich']['interval']})")
 
-    if since_last_backfill >= self.config['server']['intervals']['enrich']:
+    if self.config['server']['enrich']['enabled'] and since_last_backfill >= self.config['server']['enrich']['interval']:
         await self.backfill_node_infos()
         end = datetime.now(ZoneInfo(self.config['server']['timezone']))
         print(f"Enriched in {round(end.timestamp() - save_start.timestamp(), 2)} seconds")
@@ -163,6 +168,7 @@ class MemoryDataStore:
         end = datetime.now(ZoneInfo(self.config['server']['timezone']))
         print(f"Saved json data in {round(end.timestamp() - save_start.timestamp(), 2)} seconds")
         self.config['server']['last_data_save'] = end
+        self.graph = self.graph_node(self.config['server']['node_id'])
 
     if since_last_render >= self.config['server']['intervals']['render']:
         static_html_renderer = StaticHTMLRenderer(self.config, copy.deepcopy(self))
@@ -207,8 +213,32 @@ class MemoryDataStore:
   def find_node_by_int_id(self, id: int):
     return self.nodes.get(utils.convert_node_id_from_int_to_hex(id), None)
 
-  def find_node_by_hex_id(self, id: str):
-    return self.nodes.get(id, None)
+  def find_node_by_hex_id(self, id: str, include_neighbors: bool = False):
+    n = self.nodes.get(id, None)
+    if n is None:
+      return None
+
+    node = n.copy()
+
+    if include_neighbors:
+      neighbors_heard = []
+      if 'neighborinfo' in node and node['neighborinfo'] is not None and  'neighbors' in node['neighborinfo'] and len(node['neighborinfo']['neighbors']) > 0:
+        for neighbor in node['neighborinfo']['neighbors']:
+          nn = self.find_node_by_hex_id(utils.convert_node_id_from_int_to_hex(neighbor["node_id"]), include_neighbors=False)
+          if nn is not None:
+            neighbors_heard.append(nn.copy())
+
+      neighbors_heard_by = []
+      for nid, n in self.nodes.items():
+        if 'neighborinfo' in n and n['neighborinfo'] is not None and 'neighbors' in n['neighborinfo'] and len(n['neighborinfo']['neighbors']) > 0:
+          if id in n['neighborinfo']['neighbors']:
+            nn = self.find_node_by_hex_id(utils.convert_node_id_from_int_to_hex(nid), include_neighbors=False)
+            if nn is not None:
+              neighbors_heard_by.append(nn.copy())
+
+      node['neighbors_heard'] = neighbors_heard
+      node['neighbors_heard_by'] = neighbors_heard_by
+    return node
 
   def find_node_by_short_name(self, sn: str):
     for _id, node in self.nodes.items():
@@ -221,3 +251,42 @@ class MemoryDataStore:
       if node['longname'] == ln:
         return node
     return None
+
+  def graph_node(self, node_id: str) -> dict|None:
+    if self.config['debug']:
+        print(f"Graphing node: {node_id}")
+
+    visited = set()  # Set to keep track of visited nodes
+
+    def recursive_graph_node(node_id, start_id="", level=0) -> dict|None:
+        node = self.find_node_by_hex_id(node_id, include_neighbors=True)
+        if node is None:
+            return None
+
+        if level > 1 and node_id in visited:
+            return node  # Return the node if it has already been visited
+
+        if self.config['debug']:
+          print(f"%s - %s" % ("  " * level, node_id))
+
+        visited.add(node_id)  # Mark the node as visited
+
+        neighbors_heard = []
+        neighbors_heard_by = []
+
+        if node['neighborinfo'] and node['neighborinfo']['neighbors']:
+            # print(f"Node {node_id} has {len(node['neighborinfo']['neighbors'])} neighbors")
+            for neighbor in node['neighborinfo']['neighbors']:
+                nid = utils.convert_node_id_from_int_to_hex(neighbor["node_id"])
+                if start_id is not None and start_id == nid or (self.config['server']['graph']['max_depth'] is not None and level >= self.config['server']['graph']['max_depth']):
+                    continue
+                nn = recursive_graph_node(nid, start_id=start_id, level=level+1)
+                if nn is not None:
+                    neighbors_heard.append(nn.copy())
+
+        node['neighbors_heard'] = neighbors_heard
+        node['neighbors_heard_by'] = neighbors_heard_by
+
+        return node
+
+    return recursive_graph_node(node_id, start_id=node_id)
