@@ -5,15 +5,10 @@ from datetime import datetime, timedelta
 import json
 import os
 from zoneinfo import ZoneInfo
-from fastapi.encoders import jsonable_encoder
-<<<<<<< HEAD
 import aiohttp
-=======
-import requests
->>>>>>> main
 
 from data_renderer import DataRenderer
-from encoders import _JSONDecoder, _JSONEncoder
+from encoders import _JSONDecoder
 from models.node import Node
 from static_html_renderer import StaticHTMLRenderer
 import utils
