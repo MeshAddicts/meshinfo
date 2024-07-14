@@ -2,8 +2,8 @@ services:
   caddy:
     image: caddy:latest
     ports:
-      - 80:80
-      - 443:443
+      - 8000:80
+      - 8443:443
     volumes:
       - ./caddy/data:/data/caddy
       - ./Caddyfile.dev:/etc/caddy/Caddyfile
