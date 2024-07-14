@@ -1,4 +1,5 @@
 aiomqtt
+aiohttp
 jinja2
 scipy
 python-dotenv

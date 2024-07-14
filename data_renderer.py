@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import asyncio
 import json
 
 from encoders import _JSONEncoder
@@ -9,7 +10,10 @@ class DataRenderer:
     self.config = config
     self.data = data
 
-  def render(self):
+  async def render(self):
+      await asyncio.to_thread(self._render)
+
+  def _render(self):
     self.save_file("chat.json", self.data.chat)
     print(f"Saved {len(self.data.chat['channels']['0']['messages'])} chat messages to file ({self.config['paths']['data']}/chat.json)")
 
