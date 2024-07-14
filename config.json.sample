@@ -24,7 +24,10 @@
       "enrich": 900,
       "data_save": 300,
       "render": 5
-    }
+    },
+    "chat_channels": [
+      "0"
+    ]
   },
   "mesh": {
     "name": "Sac Valley Mesh",
