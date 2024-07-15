@@ -2,11 +2,11 @@
 	debug
 }
 
-svm.meshinfo.network, svm1.meshinfo.network {
+YOUR_FQDN_OR_HOSTNAME {
 	root * /srv
 	encode gzip
 	file_server
-	tls kevin@airframes.io
+	tls YOUR_EMAIL_ADDRESS
 	log {
 		output file /var/log/caddy.log
 	}
