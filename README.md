@@ -16,7 +16,10 @@ See an example instance running on the [Sacramento Valley Mesh](https://svm1.mes
 
 ## Screenshots
 
-TODO: Capture screenshots and make a row of clickable screenshot thumbnails here.
+[<img src="meshinfo1.png" alt="MeshInfo Screenshot 1" width="200" />](meshinfo1.png)
+[<img src="meshinfo2.png" alt="MeshInfo Screenshot 2" width="200" />](meshinfo2.png)
+[<img src="meshinfo3.png" alt="MeshInfo Screenshot 3" width="200" />](meshinfo3.png)
+[<img src="meshinfo4.png" alt="MeshInfo Screenshot 3" width="200" />](meshinfo4.png)
 
 ## Supported Meshtastic Message Types
 
