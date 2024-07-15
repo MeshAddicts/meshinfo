@@ -169,7 +169,7 @@ class MemoryDataStore:
     since_last_backup = (save_start - last_backup).total_seconds()
     print(f"Save (since last): data: {since_last_data} (threshhold: {self.config['server']['intervals']['data_save']}), render: {since_last_render} (threshhold: {self.config['server']['intervals']['render']}), enrich: {since_last_backfill} (threshhold: {self.config['server']['enrich']['interval']}), backup: {since_last_backup} (threshhold: {self.config['server']['backups']['interval']})")
 
-    if self.config['server']['enrich']['enabled']:
+    if 'enrich' in self.config['server'] and self.config['server']['enrich']['enabled']:
       if since_last_backfill >= self.config['server']['enrich']['interval']:
         await self.backfill_node_infos()
         end = datetime.now(ZoneInfo(self.config['server']['timezone']))
