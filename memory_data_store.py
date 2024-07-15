@@ -4,6 +4,7 @@ import copy
 from datetime import datetime, timedelta
 import json
 import os
+import shutil
 from zoneinfo import ZoneInfo
 import aiohttp
 
@@ -164,7 +165,9 @@ class MemoryDataStore:
     since_last_render = (save_start - last_render).total_seconds()
     last_backfill = self.config['server']['last_backfill'] if 'last_backfill' in self.config['server'] else self.config['server']['start_time']
     since_last_backfill = (save_start - last_backfill).total_seconds()
-    print(f"Save (since last): data: {since_last_data} (threshhold: {self.config['server']['intervals']['data_save']}), render: {since_last_render} (threshhold: {self.config['server']['intervals']['render']}), enrich: {since_last_backfill} (threshhold: {self.config['server']['enrich']['interval']})")
+    last_backup = self.config['server']['last_backup'] if 'last_backup' in self.config['server'] else self.config['server']['start_time']
+    since_last_backup = (save_start - last_backup).total_seconds()
+    print(f"Save (since last): data: {since_last_data} (threshhold: {self.config['server']['intervals']['data_save']}), render: {since_last_render} (threshhold: {self.config['server']['intervals']['render']}), enrich: {since_last_backfill} (threshhold: {self.config['server']['enrich']['interval']}), backup: {since_last_backup} (threshhold: {self.config['server']['backup']['interval']})")
 
     if self.config['server']['enrich']['enabled'] and since_last_backfill >= self.config['server']['enrich']['interval']:
         await self.backfill_node_infos()
@@ -187,7 +190,31 @@ class MemoryDataStore:
         print(f"Rendered in {round(end.timestamp() - save_start.timestamp(), 2)} seconds")
         self.config['server']['last_render'] = end
 
+    if since_last_backup >= self.config['server']['backup']['interval']:
+        await self.backup()
+        end = datetime.now(ZoneInfo(self.config['server']['timezone']))
+        print(f"Backed up in {round(end.timestamp() - save_start.timestamp(), 2)} seconds")
+        self.config['server']['last_backup'] = end
+
   ### helpers
+
+  async def backup(self):
+    now = f"{datetime.now(ZoneInfo(self.config['server']['timezone'])).strftime('%Y%m%d-%H%M%S')}"
+    base_name = f"{self.config['paths']['backups']}/backup-{now}"
+    tmp_path = f"/tmp/meshinfo/backup-{now}"
+    os.makedirs(tmp_path, exist_ok=True)
+    shutil.copytree("output/data", f"{tmp_path}/data")
+    shutil.copytree("output/static-html", f"{tmp_path}/static-html")
+    shutil.copyfile("config.json", f"{tmp_path}/config.json")
+
+    shutil.make_archive(
+      base_name,
+      'bztar',
+      root_dir=tmp_path,
+      base_dir=".",
+      verbose=True)
+    print(f"Backed up to {base_name}.tar.bz2")
+    shutil.rmtree(tmp_path)
 
   async def backfill_node_infos(self):
     nodes_needing_enrichment = {}
