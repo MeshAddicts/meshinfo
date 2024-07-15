@@ -137,6 +137,8 @@ class MQTT:
             elif mp.decoded.portnum == portnums_pb2.NODEINFO_APP:
                 info = mesh_pb2.User().FromString(mp.decoded.payload)
                 out = json.loads(MessageToJson(info, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
+                if isinstance(out['id'], int):
+                    out["id"] = utils.convert_node_id_from_int_to_hex(out['id'])
                 out["id"] = out['id'].replace('!', '')
                 outs["type"] = "nodeinfo"
                 outs["payload"] = out
