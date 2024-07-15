@@ -80,6 +80,21 @@ class MemoryDataStore:
     self.nodes['ffffffff'] = Node.default_node('ffffffff')
 
     try:
+      nodes_overrides: dict|None = self.load_json_file(f"{self.config['paths']['data']}/nodes-overrides.json")
+      if nodes_overrides is not None:
+        for id, node_override in nodes_overrides.items():
+          if id in self.nodes:
+            print(f"Overriding node {id}")
+            node = self.nodes[id]
+            if 'position' in node_override:
+              print(f"Overriding node position")
+              node['position'] = node_override['position']
+            self.nodes[id] = node
+        print(f"Loaded {len(nodes_overrides.keys())} nodes overrides from file ({self.config['paths']['data']}/nodes-overrides.json)")
+    except FileNotFoundError:
+      pass
+
+    try:
       chat = self.load_json_file(f"{self.config['paths']['data']}/chat.json")
       if chat is not None:
         self.chat = chat
