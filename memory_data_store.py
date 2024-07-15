@@ -189,8 +189,25 @@ class MemoryDataStore:
         print(f"Enriching nodes: {','.join(node_ids)}")
         for node_id in node_ids:
           print(f"Enriching {node_id}")
-          url = f"https://data.bayme.sh/api/node/infos?ids={node_id}"
-          async with session.get(url) as response:
+          if self.config['server']['enrich']['provider'] == 'bayme':
+            url = f"https://data.bayme.sh/api/node/infos?ids={node_id}"
+            async with session.get(url) as response:
+              # print(f"Response code: {response.status_code}")
+              if response.status == 200:
+                data = await response.json()
+                for node_id, node_info in data.items():
+                  print(f"Got info for {node_id}")
+                  if node_id in self.nodes:
+                    print(f"Enriched {node_id}")
+                    node = self.nodes[node_id]
+                    node['shortname'] = node_info['shortName']
+                    node['longname'] = node_info['longName']
+                    self.nodes[node_id] = node
+              else:
+                  print(f"Failed to get info for {node_id}")
+          elif self.config['server']['enrich']['provider'] == 'world.meshinfo.network':
+            url = f"https://world.meshinfo.network/api/v1/nodes?ids={node_id}"
+            async with session.get(url) as response:
               # print(f"Response code: {response.status_code}")
               if response.status == 200:
                 data = await response.json()

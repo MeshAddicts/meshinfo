@@ -45,6 +45,7 @@
     "enrich": {
       "enabled": false,
       "interval": 900
+      "provider": "world.meshinfo.network"
     },
     "graph": {
       "enabled": true,
