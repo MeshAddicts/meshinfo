@@ -55,9 +55,18 @@ If you're using this and have questions, or perhaps you want to join in on the d
 
 #### Setup
 
+##### Clone the repo
+
 ```sh
 git clone https://github.com/MeshAddicts/meshinfo.git
+cd meshinfo
 ```
+
+##### Edit Configuration
+
+1. Copy and then edit the `config.json.sample` to `config.json`.
+2. Edit the `Caddyfile` and be sure it is setup for your hostname (FQDN if requiring Let's Encrypt cert to be generated) and your email address for the TLS line. If you only wish to use a self-signed certificate (and are OK with the browser warnings about this), then change it from your email address to `tls internal`.
+3. Edit the `docker-compose.yml` (or `docker-compose-dev.yml` if you are going to use that one) and adjust any port mappings for caddy if you wish to have it run on anything other than 80/443. Keep in mind that if you are not using a FQDN and ports 80/443, Caddy will fail to provision a Let's Encrypt certificate. This is because Let's Encrypt requires 80/443 to be accessible and this is not a limitation of Caddy nor MeshInfo.
 
 #### To Run
 
