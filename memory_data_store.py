@@ -167,9 +167,10 @@ class MemoryDataStore:
     since_last_backfill = (save_start - last_backfill).total_seconds()
     last_backup = self.config['server']['last_backup'] if 'last_backup' in self.config['server'] else self.config['server']['start_time']
     since_last_backup = (save_start - last_backup).total_seconds()
-    print(f"Save (since last): data: {since_last_data} (threshhold: {self.config['server']['intervals']['data_save']}), render: {since_last_render} (threshhold: {self.config['server']['intervals']['render']}), enrich: {since_last_backfill} (threshhold: {self.config['server']['enrich']['interval']}), backup: {since_last_backup} (threshhold: {self.config['server']['backup']['interval']})")
+    print(f"Save (since last): data: {since_last_data} (threshhold: {self.config['server']['intervals']['data_save']}), render: {since_last_render} (threshhold: {self.config['server']['intervals']['render']}), enrich: {since_last_backfill} (threshhold: {self.config['server']['enrich']['interval']}), backup: {since_last_backup} (threshhold: {self.config['server']['backups']['interval']})")
 
-    if self.config['server']['enrich']['enabled'] and since_last_backfill >= self.config['server']['enrich']['interval']:
+    if self.config['server']['enrich']['enabled']:
+      if since_last_backfill >= self.config['server']['enrich']['interval']:
         await self.backfill_node_infos()
         end = datetime.now(ZoneInfo(self.config['server']['timezone']))
         print(f"Enriched in {round(end.timestamp() - save_start.timestamp(), 2)} seconds")
@@ -190,7 +191,8 @@ class MemoryDataStore:
         print(f"Rendered in {round(end.timestamp() - save_start.timestamp(), 2)} seconds")
         self.config['server']['last_render'] = end
 
-    if since_last_backup >= self.config['server']['backup']['interval']:
+    if 'backups' in self.config['server'] and self.config['server']['backups']['enabled']:
+      if since_last_backup >= self.config['server']['backup']['interval']:
         await self.backup()
         end = datetime.now(ZoneInfo(self.config['server']['timezone']))
         print(f"Backed up in {round(end.timestamp() - save_start.timestamp(), 2)} seconds")

@@ -30,7 +30,7 @@
     }
   },
   "paths": {
-    "backup": "output/backup",
+    "backups": "output/backups",
     "data": "output/data",
     "output": "output/static-html",
     "templates": "templates"
@@ -43,7 +43,7 @@
       "data_save": 300,
       "render": 5
     },
-    "backup": {
+    "backups": {
       "enabled": true,
       "interval": 86400
     },
