@@ -87,21 +87,25 @@ class MQTT:
                 pass
 
             if mp.HasField("encrypted") and not mp.HasField("decoded"):
-                try:
-                    nonce_packet_id = getattr(mp, "id").to_bytes(8, "little")
-                    nonce_from_node = getattr(mp, "from").to_bytes(8, "little")
-                    nonce = nonce_packet_id + nonce_from_node
-                    cipher = Cipher(algorithms.AES(key_bytes), modes.CTR(nonce), backend=default_backend())
-                    decryptor = cipher.decryptor()
-                    decrypted_bytes = decryptor.update(getattr(mp, "encrypted")) + decryptor.finalize()
-                    data = mesh_pb2.Data()
-                    data.ParseFromString(decrypted_bytes)
-                    mp.decoded.CopyFrom(data)
-                    outs = json.loads(MessageToJson(mp, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
-                except Exception as e:
-                    print(f"*** Decryption failed: {str(e)}")
-                    return
                 is_encrypted = True
+                for key_item in self.config['broker']['channels']['encryption']:
+                    key_bytes = base64.b64decode(key_item['key'].encode('ascii'))
+                    try:
+                        print(f"Attempting decryption with key: {key}")
+                        nonce_packet_id = getattr(mp, "id").to_bytes(8, "little")
+                        nonce_from_node = getattr(mp, "from").to_bytes(8, "little")
+                        nonce = nonce_packet_id + nonce_from_node
+                        cipher = Cipher(algorithms.AES(key_bytes), modes.CTR(nonce), backend=default_backend())
+                        decryptor = cipher.decryptor()
+                        decrypted_bytes = decryptor.update(getattr(mp, "encrypted")) + decryptor.finalize()
+                        data = mesh_pb2.Data()
+                        data.ParseFromString(decrypted_bytes)
+                        mp.decoded.CopyFrom(data)
+                        outs = json.loads(MessageToJson(mp, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
+                        break
+                    except Exception as e:
+                        print(f"*** Decryption failed: {str(e)}")
+                        continue
 
             outs['rssi'] = mp.rx_rssi
             outs['snr'] = mp.rx_snr
