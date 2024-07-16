@@ -192,7 +192,7 @@ class MemoryDataStore:
         self.config['server']['last_render'] = end
 
     if 'backups' in self.config['server'] and self.config['server']['backups']['enabled']:
-      if since_last_backup >= self.config['server']['backup']['interval']:
+      if since_last_backup >= self.config['server']['backups']['interval']:
         await self.backup()
         end = datetime.now(ZoneInfo(self.config['server']['timezone']))
         print(f"Backed up in {round(end.timestamp() - save_start.timestamp(), 2)} seconds")
