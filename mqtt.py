@@ -65,7 +65,7 @@ class MQTT:
                         msg.timestamp = time.monotonic() # type: ignore
                         await self.process_mqtt_msg(client, msg)
             except aiomqtt.MqttError as err:
-                print(f"Disconnected from MQTT broker: %s", err)
+                print(f"Disconnected from MQTT broker: {err}")
                 print("Reconnecting...")
                 await asyncio.sleep(5)
 
