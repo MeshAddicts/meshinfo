@@ -20,9 +20,7 @@
     },
     "channels": {
       "encryption": [
-        {
-          "key": "AQ==", "key_hash": "1PG7OiApB1nwvP+rz05pAQ=="
-        }
+        { "key": "1PG7OiApB1nwvP+rz05pAQ==", "key_name": "Default" }
       ],
       "display": [
         "0"
