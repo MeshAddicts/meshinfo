@@ -116,10 +116,10 @@
           {% endif %}
         </td>
         <td class="hidden lg:table-cell p-1 border border-gray-400 text-nowrap" align=right>
-          {% if item.payload.current is defined %}
+          {% if 'current' in item.payload %}
           {{ item.payload.current | round(2) }} mA
           {% endif %}
-          {% if item.payload.current_ch1 is defined and item.payload.current_ch2 is defined and item.payload.current_ch3 is defined %}
+          {% if 'current_ch1' in item.payload and 'current_ch2' in item.payload and 'current_ch3' in item.payload is defined %}
           <table>
           <tr>
             <td>
