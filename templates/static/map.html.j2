@@ -311,7 +311,7 @@
                 Math.pow(node.position[0] - nnode.position[0], 2) +
                 Math.pow(node.position[1] - nnode.position[1], 2)
               ) * 111.32;
-              return '<tr><td align=left><a href="' + nnode.id + '">' + nnode.shortname + '</a></td><td align=center>' + neighbor.snr + '</td><td align=right>' + distance.toFixed(2) + ' km</td></tr>';
+              return '<tr><td align=left><a href="node_' + nnode.id + '.html">' + nnode.shortname + '</a></td><td align=center>' + neighbor.snr + '</td><td align=right>' + distance.toFixed(2) + ' km</td></tr>';
             }).join('');
             panel += "</table>";
 
