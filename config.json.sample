@@ -11,20 +11,14 @@
       "msh/US/CA/sacvalley/#"
     ],
     "decoders": {
-      "protobuf": {
-        "enabled": true
-      },
-      "json": {
-        "enabled": true
-      }
+      "protobuf": { "enabled": true },
+      "json": { "enabled": true }
     },
     "channels": {
       "encryption": [
         { "key": "1PG7OiApB1nwvP+rz05pAQ==", "key_name": "Default" }
       ],
-      "display": [
-        "0"
-      ]
+      "display": [ "0" ]
     }
   },
   "paths": {
@@ -46,7 +40,7 @@
       "interval": 86400
     },
     "enrich": {
-      "enabled": false,
+      "enabled": true,
       "interval": 900,
       "provider": "world.meshinfo.network"
     },
