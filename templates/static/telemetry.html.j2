@@ -116,7 +116,7 @@
           {% endif %}
         </td>
         <td class="hidden lg:table-cell p-1 border border-gray-400 text-nowrap" align=right>
-          {% if 'current' in item.payload and isinstance(item.payload.current, str) %}
+          {% if 'current' in item.payload and item.payload.current is string %}
           {{ item.payload.current }}
           {% elif 'current' in item.payload %}
           {{ item.payload.current | round(2) }} mA
