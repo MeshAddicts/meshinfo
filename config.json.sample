@@ -70,15 +70,14 @@
   "integrations": {
     "discord": {
       "enabled": true,
-      "token": "token",
-      "channel": "1247618108810596392",
-      "webhook": "webhook"
+      "token": "REPLACE_WITH_TOKEN",
+      "guild": "REPLACE_WITH_GUILD_ID"
     },
     "geocoding": {
       "enabled": false,
       "provider": "geocode.maps.co",
       "geocode.maps.co": {
-        "api_key": "XXXXXXXXXXXXXXXX"
+        "api_key": "REPLACE_WITH_API_KEY"
       }
     }
   },
