@@ -88,7 +88,7 @@ class MemoryDataStore:
             print(f"Overriding node {id}")
             node = self.nodes[id]
             if 'position' in node_override:
-              print(f"Overriding node position")
+              print("Overriding node position")
               node['position'] = node_override['position']
             self.nodes[id] = node
         print(f"Loaded {len(nodes_overrides.keys())} nodes overrides from file ({self.config['paths']['data']}/nodes-overrides.json)")
@@ -322,7 +322,7 @@ class MemoryDataStore:
             return node  # Return the node if it has already been visited
 
         if self.config['debug']:
-          print(f"%s - %s" % ("  " * level, node_id))
+          print("%s - %s" % ("  " * level, node_id))
 
         visited.add(node_id)  # Mark the node as visited
 

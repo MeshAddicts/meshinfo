@@ -1,3 +1,5 @@
+import datetime
+from zoneinfo import ZoneInfo
 from discord.ext import commands
 import discord
 
@@ -53,7 +55,39 @@ class MainCommands(commands.Cog):
         embed.add_field(name="Status", value=("Online" if node['active'] else "Offline"), inline=False)
         await ctx.send(embed=embed)
 
+    @commands.hybrid_command(name="mesh", description="Information about the mesh")
+    async def mesh_info(self, ctx):
+        print(f"Discord: /mesh: Mesh info requested by {ctx.author}")
+        embed = discord.Embed(
+            title=f"Information about {self.config['mesh']['name']}",
+            url="https://svm1.meshinfo.network",
+            color=discord.Color.blue())
+        embed.add_field(name="Name", value=self.config['mesh']['name'], inline=False)
+        embed.add_field(name="Shortname", value=self.config['mesh']['shortname'], inline=False)
+        embed.add_field(name="Description", value=self.config['mesh']['description'], inline=False)
+        embed.add_field(name="Official Website", value=self.config['mesh']['url'], inline=False)
+        location = f"{self.config['mesh']['metro']}, {self.config['mesh']['region']}, {self.config['mesh']['country']}"
+        embed.add_field(name="Location", value=location, inline=False)
+        embed.add_field(name="Timezone", value=self.config['server']['timezone'], inline=False)
+        embed.add_field(name="Known Nodes", value=len(self.data.nodes), inline=True)
+        embed.add_field(name="Online Nodes", value=len([n for n in self.data.nodes.values() if n['active']]), inline=True)
+        uptime = datetime.datetime.now().astimezone(ZoneInfo(self.config['server']['timezone'])) - self.config['server']['start_time']
+        embed.add_field(name="Server Uptime", value=f"{uptime.days}d {uptime.seconds // 3600}h {uptime.seconds // 60}m {uptime.seconds % 60}s", inline=False)
+        embed.add_field(name="Messages Since Start", value=len(self.data.messages), inline=True)
+        await ctx.send(embed=embed)
+
     @commands.hybrid_command(name="ping", description="Ping the bot")
     async def ping(self, ctx):
         print(f"Discord: /ping: Pinged by {ctx.author}")
         await ctx.send(f'Pong! {round(self.bot.latency * 1000)}ms')
+
+    @commands.hybrid_command(name="uptime", description="Uptime of MeshInfo instance")
+    async def uptime(self, ctx):
+        print(f"Discord: /uptime: Uptime requested by {ctx.author}")
+        now = datetime.datetime.now().astimezone(ZoneInfo(self.config['server']['timezone']))
+        print(now)
+        print(self.config['server']['start_time'])
+        uptime = now - self.config['server']['start_time']
+        print(uptime)
+        print(f"{uptime.days}d {uptime.seconds // 3600}h {uptime.seconds // 60}m {uptime.seconds % 60}s")
+        await ctx.send(f'MeshInfo uptime: {uptime.days}d {uptime.seconds // 3600}h {uptime.seconds // 60}m {uptime.seconds % 60}s')
