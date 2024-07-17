@@ -1,4 +1,22 @@
 {
+  "mesh": {
+    "name": "Sac Valley Mesh",
+    "shortname": "SVM",
+    "description": "Serving Meshtastic to the Sacramento Valley and surrounding areas.",
+    "url": "https://sacvalleymesh.com",
+    "contact": "https://sacvalleymesh.com",
+    "country": "US",
+    "region": "California",
+    "metro": "Sacramento",
+    "latitude": 38.58,
+    "longitude": -121.49,
+    "altitude": 0,
+    "timezone": "America/Los_Angeles",
+    "announce": {
+      "enabled": true,
+      "interval": 60
+    }
+  },
   "broker": {
     "enabled": true,
     "host": "mqtt.meshtastic.org",
@@ -49,27 +67,9 @@
       "max_depth": 10
     }
   },
-  "mesh": {
-    "name": "Sac Valley Mesh",
-    "shortname": "SVM",
-    "description": "Serving Meshtastic to the Sacramento Valley and surrounding areas.",
-    "url": "https://sacvalleymesh.com",
-    "contact": "https://sacvalleymesh.com",
-    "country": "US",
-    "region": "California",
-    "metro": "Sacramento",
-    "latitude": 38.58,
-    "longitude": -121.49,
-    "altitude": 0,
-    "timezone": "America/Los_Angeles",
-    "announce": {
-      "enabled": true,
-      "interval": 60
-    }
-  },
   "integrations": {
     "discord": {
-      "enabled": true,
+      "enabled": false,
       "token": "REPLACE_WITH_TOKEN",
       "guild": "REPLACE_WITH_GUILD_ID"
     },
