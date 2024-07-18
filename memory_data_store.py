@@ -269,6 +269,9 @@ class MemoryDataStore:
     return self.nodes.get(utils.convert_node_id_from_int_to_hex(id), None)
 
   def find_node_by_hex_id(self, id: str, include_neighbors: bool = False):
+    if not isinstance(id, str) or len(id) != 8:
+      return None
+
     n = self.nodes.get(id, None)
     if n is None:
       return None
