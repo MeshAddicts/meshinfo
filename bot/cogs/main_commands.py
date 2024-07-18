@@ -6,7 +6,7 @@ import discord
 import utils
 
 class LookupFlags(commands.FlagConverter):
-    node_id: str = commands.flag(description='Node ID')
+    node: str = commands.flag(description='Node')
 
 class MainCommands(commands.Cog):
     def __init__(self, bot, config, data):
@@ -20,16 +20,16 @@ class MainCommands(commands.Cog):
 
     @commands.hybrid_command(name="lookup", description="Look up a node by ID (int or hex) or short name")
     async def lookup_node(self, ctx, *, flags: LookupFlags):
-        print(f"Discord: /lookup: Looking up {flags.node_id}")
+        print(f"Discord: /lookup: Looking up {flags.node}")
         try:
-            id_int = int(flags.node_id, 10)
+            id_int = int(flags.node, 10)
             id_hex = utils.convert_node_id_from_int_to_hex(id_int)
         except ValueError:
-            id_hex = flags.node_id
+            id_hex = flags.node
 
         if id_hex not in self.data.nodes:
             for node_id, node in self.data.nodes.items():
-                if node['shortname'] == flags.node_id:
+                if node['shortname'] == flags.node:
                     id_hex = node_id
                     break
 
