@@ -73,7 +73,7 @@ class MainCommands(commands.Cog):
         embed.add_field(name="Online Nodes", value=len([n for n in self.data.nodes.values() if n['active']]), inline=True)
         uptime = datetime.datetime.now().astimezone(ZoneInfo(self.config['server']['timezone'])) - self.config['server']['start_time']
         embed.add_field(name="Server Uptime", value=f"{uptime.days}d {uptime.seconds // 3600}h {uptime.seconds // 60}m {uptime.seconds % 60}s", inline=False)
-        embed.add_field(name="Messages Since Start", value=len(self.data.messages), inline=True)
+        embed.add_field(name="Messages Since Server Startup", value=len(self.data.messages), inline=True)
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="ping", description="Ping the bot")
