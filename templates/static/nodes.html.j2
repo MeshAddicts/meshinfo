@@ -16,6 +16,7 @@
           <th class="border border-gray-500 bg-gray-400" colspan=2>ID</th>
           <th class="border border-gray-500 bg-gray-400" colspan=2>Name</th>
           <th class="hidden sm:table-cell border border-gray-500 bg-gray-400">HW</th>
+          <th class="border border-gray-500 bg-gray-400">Role</th>
           <th class="hidden xl:table-cell border border-gray-500 bg-gray-400" colspan=4>Last Position</th>
           <th class="hidden md:table-cell border border-gray-500 bg-gray-400">Neighbors</th>
           <th class="hidden 2xl:table-cell border border-gray-500 bg-gray-400" colspan=4>Telemetry</th>
@@ -27,6 +28,7 @@
           <th class="border border-gray-500 bg-gray-400">Short</th>
           <th class="border border-gray-500 bg-gray-400">Long</th>
           <th class="hidden sm:table-cell border border-gray-500 bg-gray-400"></th>
+          <th class="border border-gray-500 bg-gray-400"></th>
           <th class="hidden xl:table-cell border border-gray-500 bg-gray-400">Altitude</th>
           <th class="hidden xl:table-cell border border-gray-500 bg-gray-400">Latitude</th>
           <th class="hidden xl:table-cell border border-gray-500 bg-gray-400">Longitude</th>
@@ -77,6 +79,33 @@
               {% if meshtastic_support.HardwareModel(node.hardware) and meshtastic_support.HardwareModel(node.hardware) in meshtastic_support.HARDWARE_PHOTOS %}
               <img src="images/hardware/{{ meshtastic_support.HARDWARE_PHOTOS[meshtastic_support.HardwareModel(node.hardware)] }}" alt="{{ meshtastic_support.HardwareModel(node.hardware).name }}" title="{{ meshtastic_support.HardwareModel(node.hardware).name }}" class="w-8 h-8 object-cover">
               {% endif %}
+            {% endif %}
+          </td>
+          <td class="p-1 border border-gray-400 text-nowrap" align=center>
+            {% if node.role is not none %}
+            {% if node.role == 0 %}
+            <span title="Client">C</span>
+            {% elif node.role == 1 %}
+            <span title="Client Mute">CM</span>
+            {% elif node.role == 2 %}
+            <span title="Router">R</span>
+            {% elif node.role == 3 %}
+            <span title="Router Client">RC</span>
+            {% elif node.role == 4 %}
+            <span title="Repeater">RE</span>
+            {% elif node.role == 5 %}
+            <span title="Tracker">T</span>
+            {% elif node.role == 6 %}
+            <span title="Sensor">S</span>
+            {% elif node.role == 7 %}
+            <span title="ATAK">A</span>
+            {% elif node.role == 8 %}
+            <span title="Client Hidden">CH</span>
+            {% elif node.role == 9 %}
+            <span title="Lost and Found">LF</span>
+            {% elif node.role == 10 %}
+            <span title="ATAK Tracker">AT</span>
+            {% endif %}
             {% endif %}
           </td>
           {% if node.position %}

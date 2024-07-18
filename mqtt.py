@@ -82,7 +82,7 @@ class MQTT:
                 mp = se.packet
                 outs = json.loads(MessageToJson(mp, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
                 print(f"Decoded protobuf message: {outs}")
-            except Exception as e:
+            except Exception as _:
                 # print(f"*** ParseFromString: {str(e)}")
                 pass
 
