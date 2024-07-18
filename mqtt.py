@@ -424,6 +424,12 @@ class MQTT:
         if 'sender' in msg:
             chat['sender'] = msg['sender']
         self.data.chat['channels'][str(msg['channel'])]['messages'].insert(0, chat)
+
+        node = self.data.find_node_by_hex_id(msg['from'])
+        if node and chat['text'].contains('TC2 BBS') and chat['text'].contains('Available commands'):
+            node['tc2_bbs'] = True
+            self.data.update_node(node['id'], node)
+
         await self.data.save()
 
     async def handle_traceroute(self, msg):
