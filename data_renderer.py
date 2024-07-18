@@ -20,12 +20,12 @@ class DataRenderer:
     nodes = {}
     for id, node in self.data.nodes.items():
         if id.startswith('!'):
-            id = id.replace('!', '')
+          id = id.replace('!', '')
         if len(id) != 8: # 8 hex chars required, if not, we abandon it
-           continue
+          continue
         nodes[id] = node
 
-    self.save_file("nodes.json", self.data.nodes)
+    self.save_file("nodes.json", nodes)
     print(f"Saved {len(nodes)} nodes to file ({self.config['paths']['data']}/nodes.json)")
 
     self.save_file("telemetry.json", self.data.telemetry)
