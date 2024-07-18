@@ -82,7 +82,7 @@ class MQTT:
                 mp = se.packet
                 outs = json.loads(MessageToJson(mp, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
                 print(f"Decoded protobuf message: {outs}")
-            except Exception as e:
+            except Exception as _:
                 # print(f"*** ParseFromString: {str(e)}")
                 pass
 
@@ -282,6 +282,7 @@ class MQTT:
         if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
             msg['sender'] = msg['sender'].replace('!', '')
 
+        # TODO: Reduce the replicated code here
         id = msg['payload']['id']
         if id in self.data.nodes:
             node = self.data.nodes[id]
@@ -289,14 +290,20 @@ class MQTT:
                 node['hardware'] = msg['payload']['hardware']
             elif 'hw_model' in msg['payload']:
                 node['hardware'] = msg['payload']['hw_model']
+
             if 'longname' in msg['payload']:
                 node['longname'] = msg['payload']['longname']
             elif 'long_name' in msg['payload']:
                 node['longname'] = msg['payload']['long_name']
+
             if 'shortname' in msg['payload']:
                 node['shortname'] = msg['payload']['shortname']
             elif 'short_name' in msg['payload']:
                 node['shortname'] = msg['payload']['short_name']
+
+            if 'role' in msg['payload']:
+                node['role'] = msg['payload']['role']
+
             self.data.update_node(id, node)
             print(f"Node {id} updated")
         else:
@@ -305,14 +312,20 @@ class MQTT:
                 node['hardware'] = msg['payload']['hardware']
             elif 'hw_model' in msg['payload']:
                 node['hardware'] = msg['payload']['hw_model']
+
             if 'longname' in msg['payload']:
                 node['longname'] = msg['payload']['longname']
             elif 'long_name' in msg['payload']:
                 node['longname'] = msg['payload']['long_name']
+
             if 'shortname' in msg['payload']:
                 node['shortname'] = msg['payload']['shortname']
             elif 'short_name' in msg['payload']:
                 node['shortname'] = msg['payload']['short_name']
+
+            if 'role' in msg['payload']:
+                node['role'] = msg['payload']['role']
+
             self.data.update_node(id, node)
             print(f"Node {id} added")
         self.sort_nodes_by_shortname()

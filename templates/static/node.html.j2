@@ -111,6 +111,39 @@
               </td>
             </tr>
             <tr>
+              <th class="p-1" align=left>Role</th>
+              <td class="p-1">
+              {% if node.role is not none %}
+                {% if node.role == 0 %}
+                Client
+                {% elif node.role == 1 %}
+                Client Mute
+                {% elif node.role == 2 %}
+                Router
+                {% elif node.role == 3 %}
+                Router Client
+                {% elif node.role == 4 %}
+                Repeater
+                {% elif node.role == 5 %}
+                Tracker
+                {% elif node.role == 6 %}
+                Sensor
+                {% elif node.role == 7 %}
+                ATAK
+                {% elif node.role == 8 %}
+                Client Hidden
+                {% elif node.role == 9 %}
+                Lost and Found
+                {% elif node.role == 10 %}
+                ATAK Tracker
+                {% else %}
+                Unknown
+                {% endif %}
+              {% else %}
+                Unknown
+              {% endif %}
+            </tr>
+            <tr>
               <th class="p-1" align=left>Position</th>
               <td class="p-1">
               {% if node.position and node.position.latitude_i and node.position.longitude_i %}
