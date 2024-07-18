@@ -71,7 +71,8 @@ class MQTT:
 
     async def process_mqtt_msg(self, client, msg):
         if '/2/e/' in msg.topic.value or '/2/map/' in msg.topic.value:
-            print(f"Received a protobuf message: {msg.topic} {msg.payload}")
+            if self.config['debug']:
+                print(f"Received a protobuf message: {msg.topic} {msg.payload}")
             is_encrypted = False
             mp = mesh_pb2.MeshPacket()
             outs = {}
@@ -81,7 +82,8 @@ class MQTT:
                 se.ParseFromString(msg.payload)
                 mp = se.packet
                 outs = json.loads(MessageToJson(mp, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
-                print(f"Decoded protobuf message: {outs}")
+                if self.config['debug']:
+                    print(f"Decoded protobuf message: {outs}")
             except Exception as _:
                 # print(f"*** ParseFromString: {str(e)}")
                 pass
@@ -91,7 +93,8 @@ class MQTT:
                 for key_item in self.config['broker']['channels']['encryption']:
                     key_bytes = base64.b64decode(key_item['key'].encode('ascii'))
                     try:
-                        print(f"Attempting decryption with key: {key}")
+                        if self.config['debug']:
+                            print(f"Attempting decryption with key: {key}")
                         nonce_packet_id = getattr(mp, "id").to_bytes(8, "little")
                         nonce_from_node = getattr(mp, "from").to_bytes(8, "little")
                         nonce = nonce_packet_id + nonce_from_node
@@ -104,7 +107,8 @@ class MQTT:
                         outs = json.loads(MessageToJson(mp, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
                         break
                     except Exception as e:
-                        print(f"*** Decryption failed: {str(e)}")
+                        if self.config['debug']:
+                            print(f"*** Decryption failed: {str(e)}")
                         continue
 
             outs['rssi'] = mp.rx_rssi
@@ -119,7 +123,8 @@ class MQTT:
                 payload = { "text": text }
                 outs["type"] = "text"
                 outs["payload"] = payload
-                print(f"Decoded protobuf message: text: {outs}")
+                if self.config['debug']:
+                    print(f"Decoded protobuf message: text: {outs}")
                 await self.handle_text(outs)
 
             elif mp.decoded.portnum == portnums_pb2.MAP_REPORT_APP:
@@ -127,7 +132,8 @@ class MQTT:
                 out = json.loads(MessageToJson(report, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
                 outs["type"] = "mapreport"
                 outs["payload"] = out
-                print(f"Decoded protobuf message: mapreport: {outs}")
+                if self.config['debug']:
+                    print(f"Decoded protobuf message: mapreport: {outs}")
                 # self.handle_mapreport(outs)
 
             elif mp.decoded.portnum == portnums_pb2.NEIGHBORINFO_APP:
@@ -135,7 +141,8 @@ class MQTT:
                 out = json.loads(MessageToJson(info, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
                 outs["type"] = "neighborinfo"
                 outs["payload"] = out
-                print(f"Decoded protobuf message: neighborinfo: {outs}")
+                if self.config['debug']:
+                    print(f"Decoded protobuf message: neighborinfo: {outs}")
                 await self.handle_neighborinfo(outs)
 
             elif mp.decoded.portnum == portnums_pb2.NODEINFO_APP:
@@ -146,7 +153,8 @@ class MQTT:
                 out["id"] = out['id'].replace('!', '')
                 outs["type"] = "nodeinfo"
                 outs["payload"] = out
-                print(f"Decoded protobuf message: nodeinfo: {outs}")
+                if self.config['debug']:
+                    print(f"Decoded protobuf message: nodeinfo: {outs}")
                 await self.handle_nodeinfo(outs)
 
             elif mp.decoded.portnum == portnums_pb2.ROUTING_APP:
@@ -154,7 +162,8 @@ class MQTT:
                 out = json.loads(MessageToJson(data, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
                 outs["type"] = "routing"
                 outs["payload"] = out
-                print(f"Decoded protobuf message: routing: {outs}")
+                if self.config['debug']:
+                    print(f"Decoded protobuf message: routing: {outs}")
                 # self.handle_routing(outs)
 
             elif mp.decoded.portnum == portnums_pb2.TRACEROUTE_APP:
@@ -168,7 +177,8 @@ class MQTT:
                     outs["route"] = route
                 outs["type"] = "traceroute"
                 outs["payload"] = out
-                print(f"Decoded protobuf message: traceroute: {outs}")
+                if self.config['debug']:
+                    print(f"Decoded protobuf message: traceroute: {outs}")
                 await self.handle_traceroute(outs)
 
             elif mp.decoded.portnum == portnums_pb2.POSITION_APP:
@@ -176,7 +186,8 @@ class MQTT:
                 out = json.loads(MessageToJson(pos, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
                 outs["type"] = "position"
                 outs["payload"] = out
-                print(f"Decoded protobuf message: position: {outs}")
+                if self.config['debug']:
+                    print(f"Decoded protobuf message: position: {outs}")
                 await self.handle_position(outs)
 
             elif mp.decoded.portnum == portnums_pb2.TELEMETRY_APP:
@@ -189,14 +200,17 @@ class MQTT:
                     outs["payload"] = out['device_metrics']
                 if 'environment_metrics' in out:
                     outs["payload"] = out['environment_metrics']
-                print(f"Decoded protobuf message: telemetry: {outs}")
+                if self.config['debug']:
+                    print(f"Decoded protobuf message: telemetry: {outs}")
                 await self.handle_telemetry(outs)
 
             else:
-                print(f"Received an unknown protobuf message: {mp}")
+                if self.config['debug']:
+                    print(f"Received an unknown protobuf message: {mp}")
 
         elif '/2/json/' in msg.topic.value:
-            print(f"Received a JSON message: {msg.topic} {msg.payload}")
+            if self.config['debug']:
+                print(f"Received a JSON message: {msg.topic} {msg.payload}")
             try:
                 decoded = msg.payload.decode("utf-8")
                 j = json.loads(decoded, cls=_JSONDecoder)
@@ -233,7 +247,6 @@ class MQTT:
         status = result[0]
         if status == 0:
             print(f"Send `{msg}` to topic `{topic}`")
-            print("Done!")
             return True
         else:
             print(f"Failed to send message to topic {topic}")
@@ -249,7 +262,8 @@ class MQTT:
     ### message handlers
 
     async def handle_log(self, msg):
-        print(f"MQTT >> {msg.topic} -- {msg.payload.decode('utf-8')}")
+        if self.config['debug']:
+            print(f"MQTT >> {msg.topic} -- {msg.payload.decode('utf-8')}")
         self.data.messages.append(msg.payload.decode("utf-8"))
         self.data.mqtt_messages.append(msg)
         with open(f'{self.config["paths"]["data"]}/message-log.jsonl', 'a', encoding='utf-8') as f:
