@@ -18,7 +18,7 @@ class MainCommands(commands.Cog):
     async def on_ready(self):
         print('Discord: Logged in')
 
-    @commands.hybrid_command(name="lookup", description="Look up a node by ID")
+    @commands.hybrid_command(name="lookup", description="Look up a node by ID (int or hex) or short name")
     async def lookup_node(self, ctx, *, flags: LookupFlags):
         print(f"Discord: /lookup: Looking up {flags.node_id}")
         try:
