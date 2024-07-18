@@ -65,6 +65,8 @@ class MemoryDataStore:
         for id, node in nodes.items():
           if id.startswith('!'):
             id = id.replace('!', '')
+          if len(id) != 8: # 8 hex chars required, if not, we abandon it
+             continue
           if node['active'] is None:
             node['active'] = False
           if 'last_seen' not in node:
@@ -88,7 +90,7 @@ class MemoryDataStore:
             print(f"Overriding node {id}")
             node = self.nodes[id]
             if 'position' in node_override:
-              print(f"Overriding node position")
+              print("Overriding node position")
               node['position'] = node_override['position']
             self.nodes[id] = node
         print(f"Loaded {len(nodes_overrides.keys())} nodes overrides from file ({self.config['paths']['data']}/nodes-overrides.json)")
@@ -269,6 +271,9 @@ class MemoryDataStore:
     return self.nodes.get(utils.convert_node_id_from_int_to_hex(id), None)
 
   def find_node_by_hex_id(self, id: str, include_neighbors: bool = False):
+    if not isinstance(id, str) or len(id) != 8:
+      return None
+
     n = self.nodes.get(id, None)
     if n is None:
       return None
@@ -322,7 +327,7 @@ class MemoryDataStore:
             return node  # Return the node if it has already been visited
 
         if self.config['debug']:
-          print(f"%s - %s" % ("  " * level, node_id))
+          print("%s - %s" % ("  " * level, node_id))
 
         visited.add(node_id)  # Mark the node as visited
 
