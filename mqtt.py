@@ -256,9 +256,9 @@ class MQTT:
             f.write(f"{msg.payload.decode('utf-8')}\n")
 
     async def handle_neighborinfo(self, msg):
-        msg['from'] = f'{msg["from"]:x}'
+        msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
         if 'to' in msg:
-            msg['to'] = f'{msg["to"]:x}'
+            msg['to'] = utils.convert_node_id_from_int_to_hex(msg["to"])
         if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
             msg['sender'] = msg['sender'].replace('!', '')
 
@@ -276,9 +276,9 @@ class MQTT:
         await self.data.save()
 
     async def handle_nodeinfo(self, msg):
-        msg['from'] = f'{msg["from"]:x}'
+        msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
         if 'to' in msg:
-            msg['to'] = f'{msg["to"]:x}'
+            msg['to'] = utils.convert_node_id_from_int_to_hex(msg["to"])
         if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
             msg['sender'] = msg['sender'].replace('!', '')
 
@@ -319,9 +319,9 @@ class MQTT:
         await self.data.save()
 
     async def handle_position(self, msg):
-        msg['from'] = f'{msg["from"]:x}'
+        msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
         if 'to' in msg:
-            msg['to'] = f'{msg["to"]:x}'
+            msg['to'] = utils.convert_node_id_from_int_to_hex(msg["to"])
         if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
             msg['sender'] = msg['sender'].replace('!', '')
 
@@ -339,9 +339,9 @@ class MQTT:
         await self.data.save()
 
     async def handle_telemetry(self, msg):
-        msg['from'] = f'{msg["from"]:x}'
+        msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
         if 'to' in msg:
-            msg['to'] = f'{msg["to"]:x}'
+            msg['to'] = utils.convert_node_id_from_int_to_hex(msg["to"])
         if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
             msg['sender'] = msg['sender'].replace('!', '')
 
@@ -367,9 +367,9 @@ class MQTT:
         await self.data.save()
 
     async def handle_text(self, msg):
-        msg['from'] = f'{msg["from"]:x}'
+        msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
         if 'to' in msg:
-            msg['to'] = f'{msg["to"]:x}'
+            msg['to'] = utils.convert_node_id_from_int_to_hex(msg["to"])
         if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
             msg['sender'] = msg['sender'].replace('!', '')
         if 'channel' not in msg:
@@ -398,9 +398,9 @@ class MQTT:
         await self.data.save()
 
     async def handle_traceroute(self, msg):
-        msg['from'] = f'{msg["from"]:x}'
+        msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
         if 'to' in msg:
-            msg['to'] = f'{msg["to"]:x}'
+            msg['to'] = utils.convert_node_id_from_int_to_hex(msg["to"])
         if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
             msg['sender'] = msg['sender'].replace('!', '')
         msg['route'] = msg['payload']['route']
