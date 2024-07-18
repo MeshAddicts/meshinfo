@@ -18,7 +18,8 @@ def calculate_distance_between_nodes(node1, node2):
   ), 2)
 
 def convert_node_id_from_int_to_hex(id: int):
-  return f'{id:x}'
+  id_hex = f'{id:08x}'
+  return id_hex
 
 def convert_node_id_from_hex_to_int(id: str):
   if id.startswith('!'):
