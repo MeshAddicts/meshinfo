@@ -250,6 +250,7 @@ class StaticHTMLRenderer:
         "shortname": node["shortname"],
         "longname": node["longname"],
         "hardware": node["hardware"],
+        "role": node["role"] if "role" in node else None,
         "position": self._serialize_position(node["position"]) if node["position"] else None,
         "neighborinfo": self._serialize_neighborinfo(node) if node['neighborinfo'] else None,
         "telemetry": node["telemetry"],
