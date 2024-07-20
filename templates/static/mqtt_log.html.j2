@@ -19,7 +19,7 @@
     </tr>
     {% for message in messages[::-1] %}
     <tr>
-      <td class="p-1 border border-gray-400 text-nowrap">{{ datetime.fromtimestamp(message.timestamp).astimezone(ZoneInfo(zoneinfo)) }}</td>
+      <td class="p-1 border border-gray-400 text-nowrap">{{ datetime.fromtimestamp(message.timestamp).astimezone(zoneinfo) }}</td>
       <td class="p-1 border border-gray-400 text-nowrap">{{ message.topic }}</td>
       <td class="p-1 border border-gray-400">{{ json.dumps(message, indent=2, cls=JSONEncoder) }}</td>
     </tr>
