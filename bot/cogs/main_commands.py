@@ -60,7 +60,7 @@ class MainCommands(commands.Cog):
         print(f"Discord: /mesh: Mesh info requested by {ctx.author}")
         embed = discord.Embed(
             title=f"Information about {self.config['mesh']['name']}",
-            url=self.config['server']['url'].strip('/'),
+            url=self.config['server']['base_url'].strip('/'),
             color=discord.Color.blue())
         embed.add_field(name="Name", value=self.config['mesh']['name'], inline=False)
         embed.add_field(name="Shortname", value=self.config['mesh']['shortname'], inline=False)
