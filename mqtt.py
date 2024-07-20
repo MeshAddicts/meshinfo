@@ -115,9 +115,7 @@ class MQTT:
                 outs['rssi'] = mp.rx_rssi
                 outs['snr'] = mp.rx_snr
                 outs['timestamp'] = mp.rx_time
-
-                # TODO: Need to handle this
-                # self.handle_log(mp.decoded)
+                outs['topic'] = msg.topic.value
 
                 if mp.decoded.portnum == portnums_pb2.TEXT_MESSAGE_APP:
                     text = mp.decoded.payload.decode("utf-8")
@@ -206,17 +204,23 @@ class MQTT:
                     await self.handle_telemetry(outs)
 
                 else:
+                    outs["type"] = "unknown"
+                    outs["payload"] = mp.decoded.payload.decode("utf-8")
                     if self.config['debug']:
                         print(f"Received an unknown protobuf message: {mp}")
+
+                print(outs)
+                await self.handle_log(outs)
 
         elif self.config['broker']['decoders']['json']['enabled']:
             if '/2/json/' in msg.topic.value:
                 if self.config['debug']:
                     print(f"Received a JSON message: {msg.topic} {msg.payload}")
                 try:
+                    await self.handle_log(msg)
                     decoded = msg.payload.decode("utf-8")
                     j = json.loads(decoded, cls=_JSONDecoder)
-                    await self.handle_log(msg)
+                    j['topic'] = msg.topic.value
                     if j['type'] == "neighborinfo":
                         await self.handle_neighborinfo(j)
                     if j['type'] == "nodeinfo":
@@ -264,12 +268,18 @@ class MQTT:
     ### message handlers
 
     async def handle_log(self, msg):
+        topic = msg['topic'] if 'topic' in msg else 'unknown'
         if self.config['debug']:
-            print(f"MQTT >> {msg.topic} -- {msg.payload.decode('utf-8')}")
-        self.data.messages.append(msg.payload.decode("utf-8"))
+            print(f"MQTT >> {topic} -- {msg}")
         self.data.mqtt_messages.append(msg)
+        clean_msg = msg.copy()
+        if 'decoded' in clean_msg:
+            del clean_msg['decoded']
+        if 'encrypted' in clean_msg:
+            del clean_msg['encrypted']
+        self.data.messages.append(clean_msg)
         with open(f'{self.config["paths"]["data"]}/message-log.jsonl', 'a', encoding='utf-8') as f:
-            f.write(f"{msg.payload.decode('utf-8')}\n")
+            f.write(f"{msg}\n")
 
     async def handle_neighborinfo(self, msg):
         msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])

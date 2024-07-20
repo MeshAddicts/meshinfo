@@ -38,25 +38,26 @@ class MemoryDataStore:
     self.__dict__[key] = value
 
   def update_node(self, id: str, node):
-    if node['position'] is None:
-      node['position'] = {}
+    n = node.copy()
+    if n['position'] is None:
+      n['position'] = {}
 
     if self.config['integrations']['geocoding']['enabled']:
-      if 'geocoded' not in node['position']:
-        node['position']['geocoded'] = None
-      if 'latitude_i' in node['position'] and 'longitude_i' in node['position'] and node['position']['latitude_i'] is not None and node['position']['longitude_i'] is not None:
-        if node['position']['geocoded'] is None or node['position']['last_geocoding'] is None or node['position']['last_geocoding'] < datetime.now().astimezone(ZoneInfo(self.config['server']['timezone'])) - timedelta(minutes=60):
-          geocoded = utils.geocode_position(self.config['integrations']['geocoding']['geocode.maps.co']['api_key'], node['position']['latitude_i'] / 10000000, node['position']['longitude_i'] / 10000000)
+      if 'geocoded' not in n['position']:
+        n['position']['geocoded'] = None
+      if 'latitude_i' in n['position'] and 'longitude_i' in n['position'] and n['position']['latitude_i'] is not None and n['position']['longitude_i'] is not None:
+        if n['position']['geocoded'] is None or n['position']['last_geocoding'] is None or n['position']['last_geocoding'] < datetime.now().astimezone(ZoneInfo(self.config['server']['timezone'])) - timedelta(minutes=60):
+          geocoded = utils.geocode_position(self.config['integrations']['geocoding']['geocode.maps.co']['api_key'], n['position']['latitude_i'] / 10000000, n['position']['longitude_i'] / 10000000)
           if geocoded is not None:
-            node['position']['geocoded'] = geocoded
-            node['position']['last_geocoding'] = datetime.now().astimezone(ZoneInfo(self.config['server']['timezone']))
+            n['position']['geocoded'] = geocoded
+            n['position']['last_geocoding'] = datetime.now().astimezone(ZoneInfo(self.config['server']['timezone']))
 
-    node['active'] = True
-    if 'last_seen' in node and node['last_seen'] is not None and isinstance(node['last_seen'], str):
-      node['last_seen'] = datetime.fromisoformat(node['last_seen']).astimezone(ZoneInfo(self.config['server']['timezone']))
-    node['since'] = datetime.now().astimezone(ZoneInfo(self.config['server']['timezone'])) - node['last_seen']
-    node['last_seen'] = datetime.now().astimezone(ZoneInfo(self.config['server']['timezone']))
-    self.nodes[id] = node
+    n['active'] = True
+    if 'last_seen' in n and n['last_seen'] is not None and isinstance(n['last_seen'], str):
+      n['last_seen'] = datetime.fromisoformat(n['last_seen']).astimezone(ZoneInfo(self.config['server']['timezone']))
+    n['since'] = datetime.now().astimezone(ZoneInfo(self.config['server']['timezone'])) - n['last_seen']
+    n['last_seen'] = datetime.now().astimezone(ZoneInfo(self.config['server']['timezone']))
+    self.nodes[id] = n
 
   def load(self):
     try:

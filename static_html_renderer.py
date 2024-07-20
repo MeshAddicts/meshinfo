@@ -7,6 +7,7 @@ import json
 from zoneinfo import ZoneInfo
 from jinja2 import Environment, FileSystemLoader
 
+import encoders
 import geo
 import meshtastic_support
 import utils
@@ -112,6 +113,7 @@ class StaticHTMLRenderer:
       messages=self.data.messages,
       json=json,
       datetime=datetime.datetime,
+      JSONEncoder=encoders._JSONEncoder,
       zoneinfo=ZoneInfo(self.config['server']['timezone']),
       timestamp=datetime.datetime.now(ZoneInfo(self.config['server']['timezone']))
     )
@@ -124,6 +126,7 @@ class StaticHTMLRenderer:
       mqtt_connect_time=self.data.mqtt_connect_time,
       json=json,
       datetime=datetime.datetime,
+      JSONEncoder=encoders._JSONEncoder,
       zoneinfo=ZoneInfo(self.config['server']['timezone']),
       timestamp=datetime.datetime.now(ZoneInfo(self.config['server']['timezone']))
     )

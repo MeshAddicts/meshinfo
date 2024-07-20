@@ -3,23 +3,27 @@
 {% block title %}Mesh Messages{% endblock %}
 
 {% block content %}
-  <h1>Mesh Messages</h1>
-  <p>
+  <h5 class="mb-2 text-gray-500">Mesh Messages</h5>
+  <h1 class="mb-2 text-xl">Mesh Messages</h1>
+  <p class="mb-2">
     All messages from the mesh as seen by
     <a href="node_{{ config['server']['node_id'] }}.html">{{ config['server']['node_id'] }}</a> ({{ config['server']['node_id'] }}). Only the messages received
     since this server was last restarted are shown.
   </p>
-  <p>Last updated: {{ timestamp.astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</p>
 
-  <table border=1 cellpadding=4>
+  <table class="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50">
     <tr>
-      <th>Timestamp</th>
-      <th>Message</th>
+      <th class="border border-gray-500 bg-gray-400">Timestamp</th>
+      <th class="border border-gray-500 bg-gray-400">Message</th>
     </tr>
     {% for message in messages[::-1] %}
     <tr>
-      <td style="white-space:nowrap">{{ datetime.fromtimestamp(json.loads(message).timestamp) }}</td>
-      <td>{{ json.dumps(json.loads(message), indent=2) }}</td>
+      <td class="p-1 border border-gray-400 text-nowrap">
+        {% if message.timestamp %}
+        {{ datetime.fromtimestamp(message.timestamp) }}
+        {% endif %}
+      </td>
+      <td class="p-1 border border-gray-400">{{ json.dumps(message, indent=2, cls=JSONEncoder) }}</td>
     </tr>
     {% endfor %}
   </table>
