@@ -29,7 +29,7 @@ class MainCommands(commands.Cog):
 
         if id_hex not in self.data.nodes:
             for node_id, node in self.data.nodes.items():
-                if node['shortname'] == flags.node:
+                if str(node['shortname']).lower() == flags.node.lower():
                     id_hex = node_id
                     break
 
