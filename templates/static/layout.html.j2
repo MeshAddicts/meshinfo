@@ -99,24 +99,16 @@
           </div>
         </nav>
 
-        <nav class="flex flex-col flex-1">
-          <h3 class="font-bold">Tools</h3>
-          <div class="mb-1">
-            <a href="https://meshview.armooo.net" target="_blank">Armooo's MeshView</a>
-          </div>
-          <div class="mb-1">
-            <a href="https://meshtastic.liamcottle.net" target="_blank">Liam's Meshtastic Web</a>
-          </div>
-          <div class="mb-1">
-            <a href="https://meshmap.net" target="_blank">MeshMap</a>
-          </div>
-          <div class="mb-1">
-            <a href="https://app.bayme.sh" target="_blank">Bay Mesh Explorer</a>
-          </div>
-          <div>
-            <a href="https://heywhatsthat.com/profiler.html" target="_blank">HWT Path Profiler</a>
-          </div>
-        </nav>
+        {% if config.mesh.tools|count > 0 %}
+          <nav class="flex flex-col flex-1">
+            <h3 class="font-bold">Tools</h3>
+            {% for tool in config.mesh.tools %}
+              <div class="mb-1">
+                <a href="{{ tool.url }}" target="_blank">{{ tool.name }}</a>
+              </div>
+            {% endfor %}
+          </nav>
+        {% endif %}
 
         <nav class="flex flex-col flex-1">
           <h3 class="font-bold">Meshtastic Addons</h3>

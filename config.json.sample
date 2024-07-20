@@ -15,7 +15,14 @@
     "announce": {
       "enabled": true,
       "interval": 60
-    }
+    },
+    "tools": [
+      { "name": "Armooo's MeshView", "url": "https://meshview.armooo.net" },
+      { "name": "Liam's Meshtastic Map", "url": "https://meshtastic.liamcottle.net"},
+      { "name": "MeshMap", "url": "https://meshmap.net" },
+      { "name": "Bay Mesh Explorer", "url": "https://app.bayme.sh" },
+      { "name": "HWT Path Profiler", "url": "https://heywhatsthat.com/profiler.html"}
+    ]
   },
   "broker": {
     "enabled": true,
