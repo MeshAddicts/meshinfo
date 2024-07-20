@@ -402,7 +402,7 @@ class MQTT:
         if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
             msg['sender'] = msg['sender'].replace('!', '')
         if 'channel' not in msg:
-            msg['channel'] = 0
+            msg['channel'] = "0"
 
         if str(msg['channel']) not in self.data.chat['channels']:
             self.data.chat['channels'][str(msg['channel'])] = {
@@ -426,7 +426,8 @@ class MQTT:
         self.data.chat['channels'][str(msg['channel'])]['messages'].insert(0, chat)
 
         node = self.data.find_node_by_hex_id(msg['from'])
-        if node and chat['text'].contains('TC2 BBS') and chat['text'].contains('Available commands'):
+        # TODO: Replace with something more configurable
+        if node and 'TC' in chat['text'] and 'BBS' in chat['text'] and 'Commands' in chat['text']:
             node['tc2_bbs'] = True
             self.data.update_node(node['id'], node)
 
