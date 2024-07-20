@@ -44,7 +44,7 @@ class MainCommands(commands.Cog):
 
         embed = discord.Embed(
             title=f"Node {node['shortname']}: {node['longname']}",
-            url=f"https://svm1.meshinfo.network/node_{node['id']}.html",
+            url=f"{self.config['server']['url']}/node_{node['id']}.html",
             color=discord.Color.blue())
         embed.set_thumbnail(url=f"https://api.dicebear.com/9.x/bottts-neutral/svg?seed={node['id']}")
         embed.add_field(name="ID (hex)", value=id_hex, inline=True)
@@ -60,7 +60,7 @@ class MainCommands(commands.Cog):
         print(f"Discord: /mesh: Mesh info requested by {ctx.author}")
         embed = discord.Embed(
             title=f"Information about {self.config['mesh']['name']}",
-            url="https://svm1.meshinfo.network",
+            url=self.config['server']['url'],
             color=discord.Color.blue())
         embed.add_field(name="Name", value=self.config['mesh']['name'], inline=False)
         embed.add_field(name="Shortname", value=self.config['mesh']['shortname'], inline=False)

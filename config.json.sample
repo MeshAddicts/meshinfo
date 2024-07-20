@@ -47,6 +47,7 @@
   },
   "server": {
     "node_id": "4355f528",
+    "base_url": "REPLACE_WITH_THE_URL_OF_THIS_SERVER_WITHOUT_TRAILING_SLASH",
     "node_activity_prune_threshold": 7200,
     "timezone": "America/Los_Angeles",
     "intervals": {
