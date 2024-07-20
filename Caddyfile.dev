@@ -9,4 +9,7 @@ localhost {
 	log {
 		output file /var/log/caddy.log
 	}
+	handle_path /api/* {
+		reverse_proxy meshinfo:9000
+	}
 }
