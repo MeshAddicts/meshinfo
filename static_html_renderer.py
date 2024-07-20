@@ -114,6 +114,7 @@ class StaticHTMLRenderer:
       json=json,
       datetime=datetime.datetime,
       JSONEncoder=encoders._JSONEncoder,
+      ZoneInfo=ZoneInfo,
       zoneinfo=ZoneInfo(self.config['server']['timezone']),
       timestamp=datetime.datetime.now(ZoneInfo(self.config['server']['timezone']))
     )
@@ -126,6 +127,7 @@ class StaticHTMLRenderer:
       mqtt_connect_time=self.data.mqtt_connect_time,
       json=json,
       datetime=datetime.datetime,
+      ZoneInfo=ZoneInfo,
       JSONEncoder=encoders._JSONEncoder,
       zoneinfo=ZoneInfo(self.config['server']['timezone']),
       timestamp=datetime.datetime.now(ZoneInfo(self.config['server']['timezone']))
