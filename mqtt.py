@@ -211,6 +211,7 @@ class MQTT:
 
                 print(outs)
                 await self.handle_log(outs)
+                await self.prune_expired_nodes()
 
         elif self.config['broker']['decoders']['json']['enabled']:
             if '/2/json/' in msg.topic.value:
