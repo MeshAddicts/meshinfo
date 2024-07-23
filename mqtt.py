@@ -437,9 +437,10 @@ class MQTT:
 
         node = self.data.find_node_by_hex_id(msg['from'])
         # TODO: Replace with something more configurable
-        if node and 'TC' in chat['text'] and 'BBS' in chat['text'] and 'Commands' in chat['text']:
-            node['tc2_bbs'] = True
-        self.data.update_node(node['id'], node)
+        if node:
+            if 'TC' in chat['text'] and 'BBS' in chat['text'] and 'Commands' in chat['text']:
+                node['tc2_bbs'] = True
+            self.data.update_node(node['id'], node)
 
         await self.data.save()
 
