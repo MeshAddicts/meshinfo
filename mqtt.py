@@ -205,7 +205,10 @@ class MQTT:
 
                 else:
                     outs["type"] = "unknown"
-                    outs["payload"] = mp.decoded.payload.decode("utf-8")
+                    if mp.decoded.payload is not None:
+                        outs["payload"] = mp.decoded.payload.decode("utf-8")
+                    else:
+                        outs["payload"] = {}
                     if self.config['debug']:
                         print(f"Received an unknown protobuf message: {mp}")
 
