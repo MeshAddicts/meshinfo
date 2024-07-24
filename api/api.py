@@ -101,8 +101,8 @@ class API:
             except ValueError:
                 node_id = id
 
-            if node_id in self.data.telemetry:
-                return jsonable_encoder({ "telemetry": self.data.telemetry[node_id] })
+            if node_id in self.data.telemetry_by_node:
+                return jsonable_encoder({ "telemetry": self.data.telemetry_by_node[node_id] })
             else:
                 return JSONResponse(status_code=404, content={"error": "telemetry not found"})
 
