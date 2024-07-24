@@ -204,13 +204,16 @@ class MQTT:
                     await self.handle_telemetry(outs)
 
                 else:
-                    outs["type"] = "unknown"
-                    if mp.decoded.payload is not None:
-                        outs["payload"] = mp.decoded.payload.decode("utf-8")
-                    else:
-                        outs["payload"] = {}
                     if self.config['debug']:
                         print(f"Received an unknown protobuf message: {mp}")
+                    outs["type"] = "unknown"
+                    if mp.decoded.payload is not None:
+                        try:
+                            outs["payload"] = mp.decoded.payload.decode("utf-8")
+                        except UnicodeDecodeError:
+                            outs["payload"] = {}
+                    else:
+                        outs["payload"] = {}
 
                 print(outs)
                 await self.handle_log(outs)
