@@ -260,7 +260,7 @@ class MemoryDataStore:
               print(f"Failed to get info for {node_id}")
               print(e)
         elif self.config['server']['enrich']['provider'] == 'world.meshinfo.network':
-          url = f"https://world.meshinfo.network/api/v1/nodes?ids={node_ids}"
+          url = f"https://world.meshinfo.network/api/v1/nodes?ids={','.join(node_ids)}"
           try:
             async with session.get(url) as response:
               if response.status == 200:
