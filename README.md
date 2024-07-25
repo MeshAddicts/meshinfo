@@ -14,6 +14,8 @@ If you use MeshInfo and have a publicly accessible instance, we'd like to know! 
 
 See an example instance running on the [Sacramento Valley Mesh](https://svm1.meshinfo.network/nodes.html).
 
+If you are running a high elevation node, preferrably a `Router` or `Repeater` node, you might be interested in getting on the notification list for a [cavity filter](https://shop.airframes.io/products/lora-915mhz-filter) that Kevin and Trevor are having made.
+
 If you're interested in aeronautical (ADS-B/ACARS/VDL/HFDL/SATCOM) or ship tracking (AIS), please take a look at sister project [Airframes](https://airframes.io) / [Airframes Github](https://github.com/airframesio).
 
 ## Screenshots
