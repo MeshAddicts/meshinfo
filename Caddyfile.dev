@@ -12,4 +12,7 @@ localhost {
 	handle_path /api/* {
 		reverse_proxy meshinfo:9000
 	}
+	handle /next/* {
+		try_files {path} /index.html
+	}
 }
