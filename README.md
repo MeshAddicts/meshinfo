@@ -14,6 +14,8 @@ If you use MeshInfo and have a publicly accessible instance, we'd like to know! 
 
 See an example instance running on the [Sacramento Valley Mesh](https://svm1.meshinfo.network/nodes.html).
 
+If you're interested in aeronautical (ADS-B/ACARS/VDL/HFDL/SATCOM) or ship tracking (AIS), please take a look at sister project [Airframes](https://airframes.io) / [Airframes Github](https://github.com/airframesio).
+
 ## Screenshots
 
 [<img src="meshinfo1.png" alt="MeshInfo Screenshot 1" width="200" />](meshinfo1.png)
