@@ -3,13 +3,17 @@
 }
 
 localhost {
-	root * /srv
 	encode gzip
-	file_server
-	log {
-		output file /var/log/caddy.log
-	}
 	handle_path /api/* {
 		reverse_proxy meshinfo:9000
+	}
+	handle_path /next/* {
+		root * /srv/next
+		try_files {path} /index.html
+		file_server
+	}
+	handle /* {
+		root * /srv
+		file_server
 	}
 }

@@ -6,8 +6,8 @@ import { Map } from "./pages/Map";
 import { Nodes } from "./pages/Nodes";
 
 export const router = createBrowserRouter([
-  { path: "/", element: <Home /> },
-  { path: "/chat", element: <Chat /> },
-  { path: "/map", element: <Map /> },
-  { path: "/nodes", element: <Nodes /> },
+  { path: "/next", element: <Home /> },
+  { path: "/next/chat", element: <Chat /> },
+  { path: "/next/map", element: <Map /> },
+  { path: "/next/nodes", element: <Nodes /> },
 ]);

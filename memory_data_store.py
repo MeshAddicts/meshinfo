@@ -47,10 +47,13 @@ class MemoryDataStore:
         n['position']['geocoded'] = None
       if 'latitude_i' in n['position'] and 'longitude_i' in n['position'] and n['position']['latitude_i'] is not None and n['position']['longitude_i'] is not None:
         if n['position']['geocoded'] is None or n['position']['last_geocoding'] is None or n['position']['last_geocoding'] < datetime.now().astimezone(ZoneInfo(self.config['server']['timezone'])) - timedelta(minutes=60):
-          geocoded = utils.geocode_position(self.config['integrations']['geocoding']['geocode.maps.co']['api_key'], n['position']['latitude_i'] / 10000000, n['position']['longitude_i'] / 10000000)
-          if geocoded is not None:
-            n['position']['geocoded'] = geocoded
-            n['position']['last_geocoding'] = datetime.now().astimezone(ZoneInfo(self.config['server']['timezone']))
+          try:
+            geocoded = utils.geocode_position(self.config['integrations']['geocoding']['geocode.maps.co']['api_key'], n['position']['latitude_i'] / 10000000, n['position']['longitude_i'] / 10000000)
+            if geocoded is not None:
+              n['position']['geocoded'] = geocoded
+              n['position']['last_geocoding'] = datetime.now().astimezone(ZoneInfo(self.config['server']['timezone']))
+          except Exception as e:
+            print(f"Failed to geocode position: {e}")
 
     n['active'] = True
     if 'last_seen' in n and n['last_seen'] is not None and isinstance(n['last_seen'], str):

@@ -5,7 +5,7 @@ import { IChatResponse, INodesResponse } from "../types";
 export const apiSlice = createApi({
   reducerPath: "api",
   tagTypes: ["Chat", "Node"],
-  baseQuery: fetchBaseQuery({ baseUrl: "/api/data" }),
+  baseQuery: fetchBaseQuery({ baseUrl: "/api/v1" }),
   endpoints: (builder) => ({
     getChats: builder.query<IChatResponse, void>({
       query: () => "chat.json",
@@ -41,10 +41,10 @@ export const apiSlice = createApi({
       providesTags: [{ type: "Chat", id: "LIST" }],
     }),
     getNodes: builder.query<INodesResponse, void>({
-      query: () => "nodes.json",
+      query: () => "nodes",
       transformResponse: (response: INodesResponse) =>
         Object.fromEntries(
-          Object.entries(response).map(([id, node]) => [
+          Object.entries(response.nodes).map(([id, node]) => [
             id,
             {
               ...node,

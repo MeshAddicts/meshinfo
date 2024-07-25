@@ -1,3 +1,13 @@
+FROM node:20.11.1 as frontend
+
+COPY . .
+
+WORKDIR /frontend
+
+RUN corepack enable
+RUN yarn
+RUN yarn build --base=/next
+
 FROM python:3.12-slim
 
 LABEL org.opencontainers.image.source https://github.com/MeshAddicts/meshinfo
@@ -24,6 +34,9 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 CMD pytho
 
 # Copy the project code
 COPY . .
+RUN chmod +x run.sh
+
+COPY --from=frontend /frontend/dist /app/dist
 
 # Set the command to run the application
-CMD ["python", "main.py"]
+CMD ["./run.sh"]
