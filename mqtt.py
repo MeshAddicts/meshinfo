@@ -190,18 +190,21 @@ class MQTT:
                     await self.handle_position(outs)
 
                 elif mp.decoded.portnum == portnums_pb2.TELEMETRY_APP:
-                    env = telemetry_pb2.Telemetry().FromString(mp.decoded.payload)
-                    out = json.loads(MessageToJson(env, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
-                    if 'rx_time' in outs:
-                        out['timestamp'] = datetime.datetime.fromtimestamp(outs['rx_time'] / 1000).astimezone(ZoneInfo(self.config['server']['timezone']))
-                    outs["type"] = "telemetry"
-                    if 'device_metrics' in out:
-                        outs["payload"] = out['device_metrics']
-                    if 'environment_metrics' in out:
-                        outs["payload"] = out['environment_metrics']
-                    if self.config['debug']:
-                        print(f"Decoded protobuf message: telemetry: {outs}")
-                    await self.handle_telemetry(outs)
+                    try:
+                        env = telemetry_pb2.Telemetry().FromString(mp.decoded.payload)
+                        out = json.loads(MessageToJson(env, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
+                        if 'rx_time' in outs:
+                            out['timestamp'] = datetime.datetime.fromtimestamp(outs['rx_time'] / 1000).astimezone(ZoneInfo(self.config['server']['timezone']))
+                        outs["type"] = "telemetry"
+                        if 'device_metrics' in out:
+                            outs["payload"] = out['device_metrics']
+                        if 'environment_metrics' in out:
+                            outs["payload"] = out['environment_metrics']
+                        if self.config['debug']:
+                            print(f"Decoded protobuf message: telemetry: {outs}")
+                        await self.handle_telemetry(outs)
+                    except Exception as e:
+                        print(e)
 
                 else:
                     if self.config['debug']:
