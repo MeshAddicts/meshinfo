@@ -8,7 +8,7 @@ services:
       - ./caddy/data:/data/caddy
       - ./Caddyfile:/etc/caddy/Caddyfile
       - ./output/static-html:/srv
-      - ./frontend/dist:/srv/next
+      - ./spa:/srv/next
       - ./public/images:/srv/images
     environment:
       - CADDY_AGREE=true
