@@ -118,13 +118,16 @@ class MQTT:
                 outs['topic'] = msg.topic.value
 
                 if mp.decoded.portnum == portnums_pb2.TEXT_MESSAGE_APP:
-                    text = mp.decoded.payload.decode("utf-8")
-                    payload = { "text": text }
-                    outs["type"] = "text"
-                    outs["payload"] = payload
-                    if self.config['debug']:
-                        print(f"Decoded protobuf message: text: {outs}")
-                    await self.handle_text(outs)
+                    try:
+                        text = mp.decoded.payload.decode("utf-8")
+                        payload = { "text": text }
+                        outs["type"] = "text"
+                        outs["payload"] = payload
+                        if self.config['debug']:
+                            print(f"Decoded protobuf message: text: {outs}")
+                        await self.handle_text(outs)
+                    except UnicodeDecodeError as e:
+                        print(f"*** Decoding error: text: {str(e)}")
 
                 elif mp.decoded.portnum == portnums_pb2.MAP_REPORT_APP:
                     report = mesh_pb2.Position().FromString(mp.decoded.payload)
