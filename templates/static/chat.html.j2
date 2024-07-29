@@ -12,61 +12,91 @@
     </p>
     {% endfor %}
 
+    <div>
+      <div class="sm:hidden">
+        <label for="tabs" class="sr-only">Select a tab</label>
+        <!-- Use an "onChange" listener to redirect the user to the selected tab URL. -->
+        <select id="tabs" name="tabs" class="block w-full rounded-md border-gray-300 py-2 pl-3 pr-10 text-base focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm">
+          {% for channel in chat['channels'] if channel in config['broker']['channels']['display'] %}
+          <option>Channel {{ channel }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="hidden sm:block">
+        <div class="border-b border-gray-200">
+          <nav class="-mb-px flex space-x-8" aria-label="Tabs">
+            <!-- Current: "border-indigo-500 text-indigo-600", Default: "border-transparent text-gray-500 hover:border-gray-200 hover:text-gray-700" -->
+            {% for channel in chat['channels'] if channel in config['broker']['channels']['display'] %}
+            <a href="#"
+                class="flex whitespace-nowrap border-b-2 border-transparent px-1 py-4 text-sm font-medium text-gray-500 hover:border-gray-200 hover:text-gray-700"
+                onChange=""
+                >
+              Channel {{ channel }}
+              <!-- Current: "bg-indigo-100 text-indigo-600", Default: "bg-gray-100 text-gray-900" -->
+              <span class="ml-3 hidden rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-900 md:inline-block">{{ chat['channels'][channel]['messages']|count }}</span>
+            </a>
+            {% endfor %}
+          </nav>
+        </div>
+      </div>
+    </div>
+
     {% for channel in chat['channels'] if channel in config['broker']['channels']['display'] %}
-    <h2 class="text-lg font-bold" id="channel-{{ channel }}">Channel {{ channel }}</h2>
-    <table class="w-full max-w-full table-fixed border-collapse border border-gray-500 bg-gray-50">
-      <thead>
-        <tr>
-            <th class="border border-gray-500 bg-gray-400">Time</th>
-            <th class="w-12 max-w-12 border border-gray-500 bg-gray-400">From</th>
-            <th class="w-12 max-w-12 border border-gray-500 bg-gray-400">Via</th>
-            <th class="w-12 max-w-12 border border-gray-500 bg-gray-400">To</th>
-            <th class="w-12 max-w-12 border border-gray-500 bg-gray-400">Hops</th>
-            <th class="w-20 max-w-20 border border-gray-500 bg-gray-400">DX</th>
-            <th class="p-1 text-wrap border border-gray-500 bg-gray-400">Message</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for message in chat['channels'][channel]['messages'] %}
-        {% set node_from = nodes[message.from] if message.from in nodes else None %}
-        {% set node_sender = nodes[message.sender] if message.sender in nodes else None %}
-        {% set node_to = nodes[message.to] if message.to in nodes else None %}
-        {% set distance_from_sender = utils.calculate_distance_between_nodes(node_from, node_sender) if node_from and node_sender else None %}
-        <tr>
-            <td class="p-1 border border-gray-400 text-nowrap">{{ datetime.fromtimestamp(message.timestamp).astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</td>
-            <td class="p-1 text-center border border-gray-400">
-              <a href="node_{{ node_from.id }}.html" title="{{ message.from + " / " + nodes[message.from].longname if message.from in nodes else (message.from + ' / Unknown') }}">
-                {{ nodes[message.from].shortname if message.from in nodes else 'UNK' }}
-              </a>
-            </td>
-            <td class="p-1 text-center border border-gray-400">
-              {% if node_sender %}
-              <a href="node_{{ node_sender.id }}.html" title="{{ message.sender + " / " + nodes[message.sender].longname if message.sender in nodes else (message.sender + ' / Unknown') }}">
-                {{ nodes[message.sender].shortname if message.sender in nodes else 'UNK' }}
-              </a>
-              {% endif %}
-            </td>
-            <td class="p-1 text-center border border-gray-400">
-              {% if node_to and node_to.id != 'ffffffff' %}
-              <a href="node_{{ node_to.id }}.html" title="{{ message.to + " / " + nodes[message.to].longname if message.to in nodes else (message.to + ' / Unknown') }}">
-                {{ nodes[message.to].shortname if message.to in nodes else 'UNK' }}
-              </a>
-              {% else %}
-              <span class="text-gray-500">ALL</span>
-              {% endif %}
-            </td>
-            <td class="p-1 border border-gray-400" align=center>{{ message.hops_away }}</td>
-            <td class="p-1 text-nowrap border border-gray-400" align=right>
-              {% if distance_from_sender %}
-              {{ distance_from_sender }} km
-              {% endif %}
-            </td>
-            <td class="p-1 text-wrap border border-gray-400">
-              {{ message.text }}
-            </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <div id="tab-channel-{{ channel }}" class="mt-4" role="tabpanel" aria-labelledby="tab-{{ channel }}">
+      <table class="w-full max-w-full table-fixed border-collapse border border-gray-500 bg-gray-50">
+        <thead>
+          <tr>
+              <th class="w-48 max-w-48 border border-gray-500 bg-gray-400">Time</th>
+              <th class="w-12 max-w-12 border border-gray-500 bg-gray-400">From</th>
+              <th class="w-12 max-w-12 border border-gray-500 bg-gray-400">Via</th>
+              <th class="w-12 max-w-12 border border-gray-500 bg-gray-400">To</th>
+              <th class="w-12 max-w-12 border border-gray-500 bg-gray-400">Hops</th>
+              <th class="w-20 max-w-20 border border-gray-500 bg-gray-400">DX</th>
+              <th class="p-1 text-wrap border border-gray-500 bg-gray-400">Message</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for message in chat['channels'][channel]['messages'] %}
+          {% set node_from = nodes[message.from] if message.from in nodes else None %}
+          {% set node_sender = nodes[message.sender] if message.sender in nodes else None %}
+          {% set node_to = nodes[message.to] if message.to in nodes else None %}
+          {% set distance_from_sender = utils.calculate_distance_between_nodes(node_from, node_sender) if node_from and node_sender else None %}
+          <tr>
+              <td class="p-1 border border-gray-400 text-nowrap">{{ datetime.fromtimestamp(message.timestamp).astimezone(zoneinfo).strftime('%Y-%m-%d %H:%M:%S %z') }}</td>
+              <td class="p-1 text-center border border-gray-400">
+                <a href="node_{{ node_from.id }}.html" title="{{ message.from + " / " + nodes[message.from].longname if message.from in nodes else (message.from + ' / Unknown') }}">
+                  {{ nodes[message.from].shortname if message.from in nodes else 'UNK' }}
+                </a>
+              </td>
+              <td class="p-1 text-center border border-gray-400">
+                {% if node_sender %}
+                <a href="node_{{ node_sender.id }}.html" title="{{ message.sender + " / " + nodes[message.sender].longname if message.sender in nodes else (message.sender + ' / Unknown') }}">
+                  {{ nodes[message.sender].shortname if message.sender in nodes else 'UNK' }}
+                </a>
+                {% endif %}
+              </td>
+              <td class="p-1 text-center border border-gray-400">
+                {% if node_to and node_to.id != 'ffffffff' %}
+                <a href="node_{{ node_to.id }}.html" title="{{ message.to + " / " + nodes[message.to].longname if message.to in nodes else (message.to + ' / Unknown') }}">
+                  {{ nodes[message.to].shortname if message.to in nodes else 'UNK' }}
+                </a>
+                {% else %}
+                <span class="text-gray-500">ALL</span>
+                {% endif %}
+              </td>
+              <td class="p-1 border border-gray-400" align=center>{{ message.hops_away }}</td>
+              <td class="p-1 text-nowrap border border-gray-400" align=right>
+                {% if distance_from_sender %}
+                {{ distance_from_sender }} km
+                {% endif %}
+              </td>
+              <td class="p-1 text-wrap border border-gray-400">
+                {{ message.text }}
+              </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
     {% endfor %}
 {% endblock %}
