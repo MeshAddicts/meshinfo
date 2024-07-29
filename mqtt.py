@@ -466,10 +466,10 @@ class MQTT:
         msg['route'] = msg['payload']['route']
         msg['route_ids'] = []
         for r in msg['route']:
+            if isinstance(r, int):
+                r = utils.convert_node_id_from_int_to_hex(r)
             if isinstance(r, str):
                 node = self.data.find_node_by_longname(r)
-            elif isinstance(r, int):
-                node = self.data.find_node_by_hex_id(r)
             else:
                 node = None
 
