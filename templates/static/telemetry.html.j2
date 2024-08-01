@@ -89,6 +89,7 @@
           {% else %}
           {{ item.payload.voltage | round(2) }} V
           {% endif %}
+          {% endif %}
           {% if item.payload.voltage_ch1 is defined and item.payload.voltage_ch2 is defined and item.payload.voltage_ch3 is defined %}
           <table>
           <tr>
