@@ -84,6 +84,9 @@
         </td>
         <td class="p-1 border border-gray-400 text-nowrap" align=right>
           {% if item.payload.voltage is defined %}
+          {% if item.payload.voltage is string %}
+          {{ item.payload.voltage }}
+          {% else %}
           {{ item.payload.voltage | round(2) }} V
           {% endif %}
           {% if item.payload.voltage_ch1 is defined and item.payload.voltage_ch2 is defined and item.payload.voltage_ch3 is defined %}
