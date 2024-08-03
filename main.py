@@ -23,6 +23,10 @@ async def main():
     global config
     global data
 
+    # output app banner from file banner
+    banner = open('banner', 'r').read()
+    print(banner)
+
     if not os.path.exists(config['paths']['output']):
         os.makedirs(config['paths']['output'])
     if not os.path.exists(config['paths']['data']):
