@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 import aiomqtt
 from meshtastic import mesh_pb2, mqtt_pb2, portnums_pb2, telemetry_pb2
 from google.protobuf.json_format import MessageToJson
+from google.protobuf.message import DecodeError
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 
@@ -127,70 +128,102 @@ class MQTT:
                             print(f"Decoded protobuf message: text: {outs}")
                         await self.handle_text(outs)
                     except UnicodeDecodeError as e:
-                        print(f"*** Decoding error: text: {str(e)}")
+                        print(f"*** Unicode decoding error: text: {str(e)}")
+                    except DecodeError as e:
+                        print(f"*** Protobuf decode error: text: {str(e)}")
 
                 elif mp.decoded.portnum == portnums_pb2.MAP_REPORT_APP:
-                    report = mesh_pb2.Position().FromString(mp.decoded.payload)
-                    out = json.loads(MessageToJson(report, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
-                    outs["type"] = "mapreport"
-                    outs["payload"] = out
-                    if self.config['debug']:
-                        print(f"Decoded protobuf message: mapreport: {outs}")
-                    # self.handle_mapreport(outs)
+                    try:
+                        report = mesh_pb2.Position().FromString(mp.decoded.payload)
+                        out = json.loads(MessageToJson(report, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
+                        outs["type"] = "mapreport"
+                        outs["payload"] = out
+                        if self.config['debug']:
+                            print(f"Decoded protobuf message: mapreport: {outs}")
+                        # self.handle_mapreport(outs)
+                    except UnicodeDecodeError as e:
+                        print(f"*** Unicode decoding error: text: {str(e)}")
+                    except DecodeError as e:
+                        print(f"*** Protobuf decode error: text: {str(e)}")
 
                 elif mp.decoded.portnum == portnums_pb2.NEIGHBORINFO_APP:
-                    info = mesh_pb2.NeighborInfo().FromString(mp.decoded.payload)
-                    out = json.loads(MessageToJson(info, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
-                    outs["type"] = "neighborinfo"
-                    outs["payload"] = out
-                    if self.config['debug']:
-                        print(f"Decoded protobuf message: neighborinfo: {outs}")
-                    await self.handle_neighborinfo(outs)
+                    try:
+                        info = mesh_pb2.NeighborInfo().FromString(mp.decoded.payload)
+                        out = json.loads(MessageToJson(info, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
+                        outs["type"] = "neighborinfo"
+                        outs["payload"] = out
+                        if self.config['debug']:
+                            print(f"Decoded protobuf message: neighborinfo: {outs}")
+                        await self.handle_neighborinfo(outs)
+                    except UnicodeDecodeError as e:
+                        print(f"*** Unicode decoding error: text: {str(e)}")
+                    except DecodeError as e:
+                        print(f"*** Protobuf decode error: text: {str(e)}")
 
                 elif mp.decoded.portnum == portnums_pb2.NODEINFO_APP:
-                    info = mesh_pb2.User().FromString(mp.decoded.payload)
-                    out = json.loads(MessageToJson(info, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
-                    if isinstance(out['id'], int):
-                        out["id"] = utils.convert_node_id_from_int_to_hex(out['id'])
-                    out["id"] = out['id'].replace('!', '')
-                    outs["type"] = "nodeinfo"
-                    outs["payload"] = out
-                    if self.config['debug']:
-                        print(f"Decoded protobuf message: nodeinfo: {outs}")
-                    await self.handle_nodeinfo(outs)
+                    try:
+                        info = mesh_pb2.User().FromString(mp.decoded.payload)
+                        out = json.loads(MessageToJson(info, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
+                        if isinstance(out['id'], int):
+                            out["id"] = utils.convert_node_id_from_int_to_hex(out['id'])
+                        out["id"] = out['id'].replace('!', '')
+                        outs["type"] = "nodeinfo"
+                        outs["payload"] = out
+                        if self.config['debug']:
+                            print(f"Decoded protobuf message: nodeinfo: {outs}")
+                        await self.handle_nodeinfo(outs)
+                    except UnicodeDecodeError as e:
+                        print(f"*** Unicode decoding error: text: {str(e)}")
+                    except DecodeError as e:
+                        print(f"*** Protobuf decode error: text: {str(e)}")
 
                 elif mp.decoded.portnum == portnums_pb2.ROUTING_APP:
-                    data = mesh_pb2.Routing().FromString(mp.decoded.payload)
-                    out = json.loads(MessageToJson(data, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
-                    outs["type"] = "routing"
-                    outs["payload"] = out
-                    if self.config['debug']:
-                        print(f"Decoded protobuf message: routing: {outs}")
-                    # self.handle_routing(outs)
+                    try:
+                        data = mesh_pb2.Routing().FromString(mp.decoded.payload)
+                        out = json.loads(MessageToJson(data, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
+                        outs["type"] = "routing"
+                        outs["payload"] = out
+                        if self.config['debug']:
+                            print(f"Decoded protobuf message: routing: {outs}")
+                        # self.handle_routing(outs)
+                    except UnicodeDecodeError as e:
+                        print(f"*** Unicode decoding error: text: {str(e)}")
+                    except DecodeError as e:
+                        print(f"*** Protobuf decode error: text: {str(e)}")
 
                 elif mp.decoded.portnum == portnums_pb2.TRACEROUTE_APP:
-                    route = mesh_pb2.RouteDiscovery().FromString(mp.decoded.payload)
-                    out = json.loads(MessageToJson(route, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
-                    if 'route' in out:
-                        route = []
-                        for r in out['route']:
-                            id = utils.convert_node_id_from_int_to_hex(int(r))
-                            route.append(id)
-                        outs["route"] = route
-                    outs["type"] = "traceroute"
-                    outs["payload"] = out
-                    if self.config['debug']:
-                        print(f"Decoded protobuf message: traceroute: {outs}")
-                    await self.handle_traceroute(outs)
+                    try:
+                        route = mesh_pb2.RouteDiscovery().FromString(mp.decoded.payload)
+                        out = json.loads(MessageToJson(route, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
+                        if 'route' in out:
+                            route = []
+                            for r in out['route']:
+                                id = utils.convert_node_id_from_int_to_hex(int(r))
+                                route.append(id)
+                            outs["route"] = route
+                        outs["type"] = "traceroute"
+                        outs["payload"] = out
+                        if self.config['debug']:
+                            print(f"Decoded protobuf message: traceroute: {outs}")
+                        await self.handle_traceroute(outs)
+                    except UnicodeDecodeError as e:
+                        print(f"*** Unicode decoding error: text: {str(e)}")
+                    except DecodeError as e:
+                        print(f"*** Protobuf decode error: text: {str(e)}")
 
                 elif mp.decoded.portnum == portnums_pb2.POSITION_APP:
-                    pos = mesh_pb2.Position().FromString(mp.decoded.payload)
-                    out = json.loads(MessageToJson(pos, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
-                    outs["type"] = "position"
-                    outs["payload"] = out
-                    if self.config['debug']:
-                        print(f"Decoded protobuf message: position: {outs}")
-                    await self.handle_position(outs)
+                    try:
+                        pos = mesh_pb2.Position().FromString(mp.decoded.payload)
+                        out = json.loads(MessageToJson(pos, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
+                        outs["type"] = "position"
+                        outs["payload"] = out
+                        if self.config['debug']:
+                            print(f"Decoded protobuf message: position: {outs}")
+                        await self.handle_position(outs)
+                    except UnicodeDecodeError as e:
+                        print(f"*** Unicode decoding error: text: {str(e)}")
+                    except DecodeError as e:
+                        print(f"*** Protobuf decode error: text: {str(e)}")
 
                 elif mp.decoded.portnum == portnums_pb2.TELEMETRY_APP:
                     try:
@@ -206,6 +239,10 @@ class MQTT:
                         if self.config['debug']:
                             print(f"Decoded protobuf message: telemetry: {outs}")
                         await self.handle_telemetry(outs)
+                    except UnicodeDecodeError as e:
+                        print(f"*** Unicode decoding error: text: {str(e)}")
+                    except DecodeError as e:
+                        print(f"*** Protobuf decode error: text: {str(e)}")
                     except Exception as e:
                         print(e)
 
@@ -217,6 +254,10 @@ class MQTT:
                         try:
                             outs["payload"] = mp.decoded.payload.decode("utf-8")
                         except UnicodeDecodeError:
+                            print(f"*** Unicode decoding error: text: {str(e)}")
+                            outs["payload"] = {}
+                        except DecodeError as e:
+                            print(f"*** Protobuf decode error: text: {str(e)}")
                             outs["payload"] = {}
                     else:
                         outs["payload"] = {}

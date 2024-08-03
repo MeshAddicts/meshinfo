@@ -8,3 +8,4 @@ discord.py
 requests
 meshtastic
 cryptography
+protobuf
