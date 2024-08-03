@@ -2,6 +2,7 @@
 
 import asyncio
 import datetime
+import json
 from zoneinfo import ZoneInfo
 import os
 import discord
@@ -26,6 +27,10 @@ async def main():
     # output app banner from file banner
     banner = open('banner', 'r').read()
     print(banner)
+
+    version = json.loads(open('version.json', 'r').read())
+    print(f"Version: {version['version']} (git sha: {version['git_sha']})")
+    print()
 
     if not os.path.exists(config['paths']['output']):
         os.makedirs(config['paths']['output'])
