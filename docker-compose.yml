@@ -35,7 +35,7 @@ services:
   meshinfo:
     image: ghcr.io/meshaddicts/meshinfo:latest
     volumes:
-      - ./config.json:/app/config.json
+      - ./config.yaml:/app/config.yaml
       - ./output:/app/output
     environment:
       - PYTHONUNBUFFERED=1
