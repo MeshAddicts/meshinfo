@@ -15,4 +15,5 @@ output/*
 mosquitto/data/*
 postgres/data/*
 config.json
+config.yaml
 spa

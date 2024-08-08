@@ -37,7 +37,7 @@ services:
       context: .
       dockerfile: Dockerfile
     volumes:
-      - ./config.json:/app/config.json
+      - ./config.yaml:/app/config.yaml
       - ./output:/app/output
       - ./templates:/app/templates
       - ./spa:/app/spa
