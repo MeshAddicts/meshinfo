@@ -52,7 +52,11 @@
         {% if node.telemetry.voltage %}
           <span class="mr-4 align-middle" title="Voltage">
             <img src="images/icons/voltage.svg" alt="Voltage" class="w-4 h-4 inline-block align-middle">
-            {{ node.telemetry.voltage | round(1) }}V
+            {% if node.telemetry.voltage is number %}
+              {{ node.telemetry.voltage | round(1) }}V
+            {% else %}
+              {{ node.telemetry.voltage }}
+            {% endif %}
           </span>
         {% endif %}
       {% endif %}
