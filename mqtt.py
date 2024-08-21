@@ -253,7 +253,7 @@ class MQTT:
                     if mp.decoded.payload is not None:
                         try:
                             outs["payload"] = mp.decoded.payload.decode("utf-8")
-                        except UnicodeDecodeError:
+                        except UnicodeDecodeError as e:
                             print(f"*** Unicode decoding error: text: {str(e)}")
                             outs["payload"] = {}
                         except DecodeError as e:
