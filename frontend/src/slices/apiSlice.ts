@@ -1,14 +1,21 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 
 import { IChatResponse, INodesResponse } from "../types";
+import { IConfigResponse } from "../types/config";
 
 export const apiSlice = createApi({
   reducerPath: "api",
-  tagTypes: ["Chat", "Node"],
+  tagTypes: ["Chat", "Node", "Config"],
   baseQuery: fetchBaseQuery({ baseUrl: "/api/v1" }),
   endpoints: (builder) => ({
+    getConfig: builder.query<IConfigResponse, void>({
+      query: () => "server/config",
+      transformResponse: (response: { config: IConfigResponse }) =>
+        response.config,
+      providesTags: [{ type: "Config", id: "LIST" }],
+    }),
     getChats: builder.query<IChatResponse, void>({
-      query: () => "chat.json",
+      query: () => "chat",
       transformResponse: (response: IChatResponse) => {
         const channels = Object.fromEntries(
           Object.entries(response.channels).map(([id, channel]) => [
@@ -63,4 +70,5 @@ export const apiSlice = createApi({
   }),
 });
 
-export const { useGetChatsQuery, useGetNodesQuery } = apiSlice;
+export const { useGetChatsQuery, useGetNodesQuery, useGetConfigQuery } =
+  apiSlice;
