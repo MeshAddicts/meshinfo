@@ -510,7 +510,7 @@ class MQTT:
             if isinstance(r, str):
                 node = self.data.find_node_by_longname(r)
             elif isinstance(r, int):
-                node = self.data.find_node_by_hex_id(r)
+                node = self.data.find_node_by_hex_id(utils.convert_node_id_from_int_to_hex(r))
             else:
                 node = None
 
