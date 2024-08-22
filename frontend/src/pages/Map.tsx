@@ -121,6 +121,11 @@ export function Map() {
       }
     });
 
+    map.on("pointermove", (evt) => {
+      const hit = map.hasFeatureAtPixel(evt.pixel);
+      map.getTargetElement().style.cursor = hit ? "pointer" : "";
+    });
+
     const defaultStyle = new Style({
       image: new Circle({
         radius: 6,
