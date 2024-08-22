@@ -75,7 +75,7 @@
             {{ node.longname }}
           </td>
           <td class="hidden sm:table-cell w-8 min-w-8 max-w-8 h-8 min-h-8 max-h-8 p-0 box-border border-gray-400 text-center text-nowrap truncate">
-            {% if node.hardware %}
+            {% if node.hardware and node.hardware in meshtastic_support.HardwareModel %}
               {% if meshtastic_support.HardwareModel(node.hardware) and meshtastic_support.HardwareModel(node.hardware) in meshtastic_support.HARDWARE_PHOTOS %}
               <img src="images/hardware/{{ meshtastic_support.HARDWARE_PHOTOS[meshtastic_support.HardwareModel(node.hardware)] }}" alt="{{ meshtastic_support.HardwareModel(node.hardware).name }}" title="{{ meshtastic_support.HardwareModel(node.hardware).name }}" class="w-8 h-8 object-cover">
               {% endif %}
