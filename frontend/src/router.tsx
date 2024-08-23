@@ -5,6 +5,7 @@ import { Chat } from "./pages/Chat";
 import { Home } from "./pages/Home";
 import { Map } from "./pages/Map";
 import { Nodes } from "./pages/Nodes";
+import { Map2 } from "./pages/Map2";
 
 export const router = createBrowserRouter(
   [
