@@ -10,7 +10,4 @@ YOUR_FQDN_OR_HOSTNAME {
 	log {
 		output file /var/log/caddy.log
 	}
-	handle_path /api/* {
-		reverse_proxy meshinfo:9000
-	}
 }

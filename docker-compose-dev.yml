@@ -1,19 +1,12 @@
 services:
-  caddy:
-    image: caddy:latest
+  nginx:
+    image: nginx:1-alpine
     ports:
-      - 8000:80
-      - 8443:443
+      - 80:80
     volumes:
-      - ./caddy/data:/data/caddy
-      - ./Caddyfile.dev:/etc/caddy/Caddyfile
-      - ./output/static-html:/srv
-      - ./spa:/srv/next
-      - ./public/images:/srv/images
-    environment:
-      - CADDY_AGREE=true
-    restart: always
-
+      - ./output/static-html:/usr/share/nginx/html
+      - ./spa:/usr/share/nginx/html/next
+      - ./public/images:/usr/share/nginx/html/images
   postgres:
     image: postgres:latest
     volumes:
@@ -49,6 +42,6 @@ services:
       - MQTT_PASSWORD=m3sht4st1c
     restart: always
     depends_on:
-      - caddy
+      - nginx
       - postgres
       - mqtt
