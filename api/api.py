@@ -135,12 +135,14 @@ class API:
                     traceroutes.append(traceroute)
             return jsonable_encoder({ "traceroutes": traceroutes })
 
+        @app.get("/v1/chat")
+        async def chat(request: Request) -> JSONResponse:
+            return jsonable_encoder(self.data.chat)
+
         @app.get("/v1/server/config")
         async def server_config(request: Request) -> JSONResponse:
             # TODO: Sanitize config (i.e. username, password, api_key, etc)
             return jsonable_encoder({ "config": self.config })
-
-
 
         conf = uvicorn.Config(app=app, host="0.0.0.0", port=9000, loop=loop)
         server = uvicorn.Server(conf)
