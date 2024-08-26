@@ -1,13 +1,12 @@
+import { formatDuration, formatISO, intervalToDuration } from "date-fns";
 import { useMemo } from "react";
 
 import { HeardBy } from "../components/HeardBy";
-import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";
+import { useGetNodesQuery } from "../slices/apiSlice";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { calculateDistanceBetweenNodes } from "../utils/getDistanceBetweenTwoNodes";
-import { formatDuration, formatISO, intervalToDuration } from "date-fns";
 
 export const Neighbors = () => {
-  const { data: config } = useGetConfigQuery();
   const { data: nodes } = useGetNodesQuery();
   const activeNodesWithNeighbors = useMemo(
     () =>
@@ -82,7 +81,6 @@ export const Neighbors = () => {
                       alt="Avatar"
                       className="w-16 h-16 mb-1 object-cover"
                     />
-                    {sanitizedId}
                   </a>
                 </td>
                 <td

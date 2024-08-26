@@ -1,0 +1,30 @@
+name: Continuous Integration Build
+
+on:
+  push:
+    branches:
+      - "main"
+      - "develop"
+  pull_request:
+    branches:
+      - "main"
+      - "develop"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: "20.11.1"
+      - name: Enable yarn
+        run: corepack enable
+      - name: Install dependencies
+        run: yarn
+      - name: Run build
+        run: yarn build
