@@ -73,7 +73,7 @@ cd meshinfo
 ##### Edit Configuration
 
 1. Copy and then edit the `config.json.sample` to `config.json`. 
-2. Edit the `Caddyfile` and be sure it is setup for your hostname (FQDN if requiring Let's Encrypt cert to be generated) and your email address for the TLS line.
+2. Copy `Caddyfile.sample` to `Caddyfile` then edit the `Caddyfile` and be sure it is setup for your hostname (FQDN if requiring Let's Encrypt cert to be generated) and your email address for the TLS line.
 
  - Caddy will request a cert of the FQDN, be sure to specify any subdomain. For example: `https://meshinfo.domain.com`.  
 
