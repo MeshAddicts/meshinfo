@@ -36,3 +36,25 @@ def geocode_position(api_key: str, latitude: float, longitude: float):
     return None
   print(f"Geocoded {latitude}, {longitude} to {response.json()}")
   return response.json()
+
+def filter_dict(d, whitelist):
+    """
+    Recursively filter a dictionary to only include whitelisted keys.
+    
+    :param d: The original dictionary or list.
+    :param whitelist: A dictionary that mirrors the structure of `d` with the keys you want to keep.
+                      Nested dictionaries and lists should be specified with the keys you want to retain.
+    :return: A new dictionary or list containing only the whitelisted keys.
+    """
+    if isinstance(d, dict):
+        return {
+            key: filter_dict(d[key], whitelist[key]) if isinstance(d[key], (dict, list)) else d[key]
+            for key in whitelist if key in d
+        }
+    elif isinstance(d, list):
+        return [
+            filter_dict(item, whitelist) if isinstance(item, dict) else item
+            for item in d
+        ]
+    else:
+        return d  # Return the value if it's neither a dict nor a list

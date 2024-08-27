@@ -174,8 +174,100 @@ class API:
 
         @app.get("/v1/server/config")
         async def server_config(request: Request) -> JSONResponse:
-            # TODO: Sanitize config (i.e. username, password, api_key, etc)
-            return jsonable_encoder({ "config": self.config })
+            # # TODO: Sanitize config (i.e. username, password, api_key, etc)
+            # sanitized_config = self.config
+            # del sanitized_config['broker']['host']
+            # del sanitized_config['broker']['port']
+            # del sanitized_config['broker']['username']
+            # del sanitized_config['broker']['password']
+            
+            # del sanitized_config['channels']['encryption_key']
+
+            # del sanitized_config['paths']
+
+            # sanitized_config['integrations']['discord'] = {
+            #     'enabled': self.config['integrations']['discord']['enabled'],
+            # }
+            # sanitized_config['integrations']['geocoding'] = {
+            #     'enabled': self.config['integrations']['geocoding']['enabled'],
+            #     'provider': self.config['integrations']['geocoding']['provider'],
+            # }
+            
+            whitelist = {
+                "config": {
+                    "mesh": {
+                        "name": {},
+                        "shortname": {},
+                        "description": {},
+                        "url": {},
+                        "contact": {},
+                        "country": {},
+                        "region": {},
+                        "metro": {},
+                        "latitude": {},
+                        "longitude": {},
+                        "altitude": {},
+                        "timezone": {},
+                        "announce": {
+                            "enabled": {},
+                            "interval": {},
+                        },
+                        "tools": {
+                            "name": {},
+                            "url": {},
+                        },
+                    },
+                    "broker": {
+                        "enabled": {},
+                        "host": {},
+                        "client_id_prefix": {},
+                        "topics": {},
+                        "decoders": {
+                            "protobuf": {
+                                "enabled": {},
+                            },
+                            "json": {
+                                "enabled": {},
+                            }
+                        },
+                        
+                    },
+                    "channels": {
+                        "display": {}
+                    },
+                    "server": {
+                        "node_id": {},
+                        "base_url": {},
+                        "node_activity_prune_threshold": {},
+                        "timezone": {},
+                        "intervals": {
+                            "data_save": {},
+                            "render": {},
+                        },
+                        "enrich": {
+                            "enabled": {},
+                            "interval": {},
+                            "provider": {}
+                        },
+                        "graph": {
+                            "enabled": {},
+                            "max_depth": {},
+                        },
+                        "start_time": {}
+                    },
+                    "integrations": {
+                        "discord": {
+                            "enabled": {}
+                        },
+                        "geocoding": {
+                            "enabled": {},
+                            "provider": {}
+                        }
+                    }
+                }
+            }
+            
+            return jsonable_encoder(utils.filter_dict({'config': self.config}, whitelist))
 
         conf = uvicorn.Config(app=app, host="0.0.0.0", port=9000, loop=loop)
         server = uvicorn.Server(conf)
