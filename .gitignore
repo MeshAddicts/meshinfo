@@ -11,6 +11,7 @@ node_modules/
 
 backups/*
 caddy
+Caddyfile
 output/*
 mosquitto/data/*
 postgres/data/*
