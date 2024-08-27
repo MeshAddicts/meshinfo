@@ -73,10 +73,14 @@ cd meshinfo
 ##### Edit Configuration
 
 1. Copy and then edit the `config.json.sample` to `config.json`. 
-2. Edit the `Caddyfile` and be sure it is setup for your hostname (FQDN if requiring Let's Encrypt cert to be generated) and your email address for the TLS line. 
+2. Edit the `Caddyfile` and be sure it is setup for your hostname (FQDN if requiring Let's Encrypt cert to be generated) and your email address for the TLS line.
+    
    A. Caddyfile can be customized a few different ways. If you are using a reverse proxy other than Caddy, you can upstream Caddy by changing the `FQDN` to `:80`.
+
    B. If you only wish to use a self-signed certificate such as in the situation above, and are OK with the browser warnings about this, change TLS line from your email address to `tls internal`.
-   C. Caddy will request a cert of the FQDN, be sure to specify any subdomain. For example: `https://meshinfo.domain.com`.   
+   
+   C. Caddy will request a cert of the FQDN, be sure to specify any subdomain. For example: `https://meshinfo.domain.com`.
+      
 3. Edit the `docker-compose.yml` (or `docker-compose-dev.yml` if you are going to use that one) and adjust any port mappings for caddy if you wish to have it run on anything other than 80/443. Keep in mind that if you are not using a FQDN and ports 80/443, Caddy will fail to provision a Let's Encrypt certificate. This is because Let's Encrypt requires 80/443 to be accessible and this is not a limitation of Caddy nor MeshInfo.
 
 #### To Run
