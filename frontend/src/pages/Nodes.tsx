@@ -87,7 +87,7 @@ export const Nodes = () => {
             </th>
             <th className="hidden 2xl:table-cell border border-gray-500 bg-gray-400">
               <img
-                src="/images/icons/battery.svg"
+                src="/next/images/icons/battery.svg"
                 className="w-4 h-4 inline-block"
                 alt="Battery"
                 title="Battery"
@@ -95,7 +95,7 @@ export const Nodes = () => {
             </th>
             <th className="hidden 2xl:table-cell border border-gray-500 bg-gray-400">
               <img
-                src="/images/icons/voltage.svg"
+                src="/next/images/icons/voltage.svg"
                 className="w-4 h-4 inline-block"
                 alt="Voltage"
                 title="Voltage"
@@ -103,7 +103,7 @@ export const Nodes = () => {
             </th>
             <th className="hidden 2xl:table-cell border border-gray-500 bg-gray-400">
               <img
-                src="/images/icons/up.svg"
+                src="/next/images/icons/up.svg"
                 alt="Air Util TX"
                 className="w-4 h-4 inline-block"
                 title="Air Util TX"
@@ -111,7 +111,7 @@ export const Nodes = () => {
             </th>
             <th className="hidden 2xl:table-cell border border-gray-500 bg-gray-400">
               <img
-                src="/images/icons/down.svg"
+                src="/next/images/icons/down.svg"
                 className="w-4 h-4 inline-block"
                 alt="Channel Util"
                 title="Channel Util"
