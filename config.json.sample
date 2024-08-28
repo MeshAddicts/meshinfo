@@ -10,6 +10,7 @@
     "metro": "Sacramento",
     "latitude": 38.58,
     "longitude": -121.49,
+    "zoom": 9.5,
     "altitude": 0,
     "timezone": "America/Los_Angeles",
     "announce": {
