@@ -1,11 +1,28 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 
-import { IChatResponse, INodesResponse } from "../types";
+import {
+  IChatResponse,
+  IMessagesResponse,
+  IMqttMessagesResponse,
+  INodesResponse,
+  IStatsResponse,
+  ITelemetryResponse,
+  ITraceroutesResponse,
+} from "../types";
 import { IConfigResponse } from "../types/config";
 
 export const apiSlice = createApi({
   reducerPath: "api",
-  tagTypes: ["Chat", "Node", "Config"],
+  tagTypes: [
+    "Chat",
+    "Node",
+    "Config",
+    "Stats",
+    "Telemetry",
+    "Traceroutes",
+    "Messages",
+    "MqttMessages",
+  ],
   baseQuery: fetchBaseQuery({ baseUrl: "/api/v1" }),
   endpoints: (builder) => ({
     getConfig: builder.query<IConfigResponse, void>({
@@ -67,8 +84,38 @@ export const apiSlice = createApi({
         ),
       providesTags: [{ type: "Node", id: "LIST" }],
     }),
+    getStats: builder.query<IStatsResponse, void>({
+      query: () => "stats",
+      transformResponse: (response: { stats: IStatsResponse }) =>
+        response.stats,
+      providesTags: [{ type: "Stats", id: "LIST" }],
+    }),
+    getTelemetry: builder.query<ITelemetryResponse[], void>({
+      query: () => "telemetry",
+      providesTags: [{ type: "Telemetry", id: "LIST" }],
+    }),
+    getTraceroutes: builder.query<ITraceroutesResponse[], void>({
+      query: () => "traceroutes",
+      providesTags: [{ type: "Traceroutes", id: "LIST" }],
+    }),
+    getMessages: builder.query<IMessagesResponse[], void>({
+      query: () => "messages",
+      providesTags: [{ type: "Messages", id: "LIST" }],
+    }),
+    getMqttMessages: builder.query<IMqttMessagesResponse[], void>({
+      query: () => "mqtt_messages",
+      providesTags: [{ type: "MqttMessages", id: "LIST" }],
+    }),
   }),
 });
 
-export const { useGetChatsQuery, useGetNodesQuery, useGetConfigQuery } =
-  apiSlice;
+export const {
+  useGetChatsQuery,
+  useGetNodesQuery,
+  useGetConfigQuery,
+  useGetStatsQuery,
+  useGetTelemetryQuery,
+  useGetTraceroutesQuery,
+  useGetMessagesQuery,
+  useGetMqttMessagesQuery,
+} = apiSlice;

@@ -1,7 +1,10 @@
 import { Link, useLocation } from "react-router-dom";
 
+import { useGetConfigQuery } from "../slices/apiSlice";
+
 export const Layout = ({ children }: { children: React.ReactNode }) => {
   const { pathname } = useLocation();
+  const { data: config } = useGetConfigQuery();
 
   return (
     <>
@@ -21,10 +24,10 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
             </div>
           </div>
 
-          <div>%VITE_MESH_DESCRIPTION%</div>
+          <div>{config?.mesh.description}</div>
 
           <div>
-            <a href="%VITE_MESH_URL%" className="text-xs text-gray-900">
+            <a href={config?.mesh.url} className="text-xs text-gray-900">
               Website
             </a>
           </div>
@@ -34,7 +37,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
             <div className="mb-1">
               <Link to="chat" relative="path">
                 <img
-                  src="/images/icons/chat.svg"
+                  src="/next/images/icons/chat.svg"
                   width="20"
                   height="20"
                   className="inline-block"
@@ -44,10 +47,10 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
                 Chat
               </Link>
             </div>
-            <div className="mb-1">
-              <a href="graph.html">
+            {/* TODO <div className="mb-1">
+              <Link to="graph" relative="path">
                 <img
-                  src="/images/icons/map.svg"
+                  src="/next/images/icons/map.svg"
                   width="20"
                   height="20"
                   className="inline-block"
@@ -55,12 +58,12 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
                   style={{ verticalAlign: "middle" }}
                 />
                 Graph
-              </a>
-            </div>
+              </Link>
+            </div> */}
             <div className="mb-1">
               <Link to="map">
                 <img
-                  src="/images/icons/map.svg"
+                  src="/next/images/icons/map.svg"
                   width="20"
                   height="20"
                   className="inline-block"
@@ -73,7 +76,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
             <div className="mb-1">
               <Link to="nodes">
                 <img
-                  src="/images/icons/node.svg"
+                  src="/next/images/icons/node.svg"
                   width="20"
                   height="20"
                   className="inline-block"
@@ -84,9 +87,9 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
               </Link>
             </div>
             <div className="mb-1">
-              <a href="neighbors.html">
+              <Link to="neighbors" relative="path">
                 <img
-                  src="/images/icons/neighbors.svg"
+                  src="/next/images/icons/neighbors.svg"
                   width="20"
                   height="20"
                   className="inline-block"
@@ -94,12 +97,12 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
                   style={{ verticalAlign: "middle" }}
                 />
                 Node Neighbors
-              </a>
+              </Link>
             </div>
             <div className="mb-1">
-              <a href="stats.html">
+              <Link to="stats" relative="path">
                 <img
-                  src="/images/icons/stats.svg"
+                  src="/next/images/icons/stats.svg"
                   width="20"
                   height="20"
                   className="inline-block"
@@ -107,12 +110,12 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
                   style={{ verticalAlign: "middle" }}
                 />
                 Stats
-              </a>
+              </Link>
             </div>
             <div className="mb-1">
-              <a href="telemetry.html">
+              <Link to="telemetry" relative="path">
                 <img
-                  src="/images/icons/telemetry.svg"
+                  src="/next/images/icons/telemetry.svg"
                   width="20"
                   height="20"
                   className="inline-block"
@@ -120,12 +123,12 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
                   style={{ verticalAlign: "middle" }}
                 />
                 Telemetry
-              </a>
+              </Link>
             </div>
             <div className="mb-1">
-              <a href="traceroutes.html">
+              <Link to="traceroutes">
                 <img
-                  src="/images/icons/route2.svg"
+                  src="/next/images/icons/route2.svg"
                   width="20"
                   height="20"
                   className="inline-block"
@@ -133,28 +136,30 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
                   style={{ verticalAlign: "middle" }}
                 />
                 Traceroutes
-              </a>
+              </Link>
             </div>
           </nav>
 
           <nav className="flex flex-col flex-1">
             <h3 className="font-bold">Logs</h3>
             <div className="mb-1">
-              <a href="mesh_log.html">Mesh Messages</a>
+              <Link to="mesh-log">Mesh Messages</Link>
             </div>
             <div className="mb-1">
-              <a href="mqtt_log.html">MQTT Messages</a>
+              <Link to="mqtt-log">MQTT Messages</Link>
             </div>
           </nav>
 
           <nav className="flex flex-col flex-1">
             <h3 className="font-bold">Tools</h3>
-
-            <div className="mb-1">
-              <a href="{{ tool.url }}" target="_blank">
-                tool.name
-              </a>
-            </div>
+            {config?.mesh.tools.map((tool, index) => (
+              // eslint-disable-next-line react/no-array-index-key
+              <div key={`tools-${index}`} className="mb-1">
+                <a href={tool.url} target="_blank" rel="noopener noreferrer">
+                  {tool.name}
+                </a>
+              </div>
+            ))}
           </nav>
 
           <nav className="flex flex-col flex-1">
@@ -181,19 +186,20 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
 
           <div className="flex-grow" />
 
-          <div className="flex flex-col">
+          {/*
+          TODO <div className="flex flex-col">
             <div className="font-bold">Data Updated</div>
-            <div>now?</div>
-          </div>
+            <div></div>
+          </div> */}
 
           <div className="flex-grow" />
 
           <div className="flex flex-col">
             <h5 className="mb-2">
               Powered by MeshInfo{" "}
-              <span className="text-xs text-gray-500">
-                config.server.version_info.ref_name
-              </span>
+              {/* TODO <span className="text-xs text-gray-500">
+                {config?.server.version_info.ref_name}
+              </span> */}
             </h5>
             <a
               href="https://github.com/MeshAddicts/meshinfo"
