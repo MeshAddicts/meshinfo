@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@reduxjs/toolkit": "^2.2.5",
+    "@types/node": "^22.5.1",
     "autoprefixer": "^10.4.19",
     "date-fns": "^3.6.0",
     "ol": "^9.2.4",
