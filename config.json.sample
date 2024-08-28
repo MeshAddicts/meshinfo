@@ -64,7 +64,8 @@
     },
     "backups": {
       "enabled": true,
-      "interval": 86400
+      "interval": 86400,
+      "max_backups": 7
     },
     "enrich": {
       "enabled": true,
