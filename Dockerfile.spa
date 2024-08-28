@@ -6,7 +6,7 @@ LABEL org.opencontainers.image.description="Realtime web UI to run against a Mes
 
 COPY . .
 
-WORKDIR /app
+WORKDIR /frontend
 
 RUN corepack enable
 RUN yarn
