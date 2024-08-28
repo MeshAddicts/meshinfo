@@ -61,7 +61,7 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: |
-            ghcr.io/MeshAddicts/meshinfo
+            ghcr.io/MeshAddicts/meshinfo-spa
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
