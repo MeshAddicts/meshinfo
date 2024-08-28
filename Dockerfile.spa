@@ -1,7 +1,7 @@
 # trunk-ignore-all(checkov/CKV_DOCKER_3)
 FROM node:20.11.1-alpine AS build
 
-LABEL org.opencontainers.image.source=https://github.com/MeshAddicts/meshinfo
+LABEL org.opencontainers.image.source="https://github.com/MeshAddicts/meshinfo"
 LABEL org.opencontainers.image.description="Realtime web UI to run against a Meshtastic regional or private mesh network."
 
 COPY . .
@@ -11,9 +11,10 @@ WORKDIR /frontend
 RUN corepack enable
 RUN yarn
 RUN yarn build --base=/next
-RUN npm install -g serve
 
 FROM node:20.11.1-alpine
+
+RUN npm install -g serve
 
 HEALTHCHECK NONE
 

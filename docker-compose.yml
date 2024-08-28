@@ -35,7 +35,7 @@ services:
       - postgres
       - mqtt
 
-  meshinfo-spa:
+  frontend:
     image: ghcr.io/meshaddicts/meshinfo-spa:latest
     ports:
       - 8000:8000
