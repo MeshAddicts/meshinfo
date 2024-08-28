@@ -38,20 +38,19 @@ services:
   frontend:
     image: ghcr.io/meshaddicts/meshinfo-spa:latest
     ports:
-      - 8000:3000
+      - 8000:80
     environment:
       - NODE_ENV=production
-      - API_BASE_URL=https://svm1.meshinfo.network/api
     restart: always
 
   caddy:
     image: caddy:latest
     ports:
       - 80:80
-      - 443:443
+      - 8443:443
     volumes:
       - ./caddy/data:/data/caddy
-      - ./Caddyfile:/etc/caddy/Caddyfile
+      - ./Caddyfile.dev:/etc/caddy/Caddyfile
       - ./output/static-html:/srv
       - ./public/images:/srv/images
     environment:

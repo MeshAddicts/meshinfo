@@ -43,7 +43,7 @@ export const Node = () => {
                 {node.telemetry.air_util_tx && (
                   <span className="mr-4 align-middle" title="Air Util TX">
                     <img
-                      src="/images/icons/up.svg"
+                      src={`${import.meta.env.BASE_URL}images/icons/up.svg`}
                       alt="Air Util TX"
                       className="w-4 h-4 inline-block align-middle"
                     />
@@ -53,7 +53,7 @@ export const Node = () => {
                 {node.telemetry.channel_utilization && (
                   <span className="mr-4 align-middle" title="Channel Util">
                     <img
-                      src="/images/icons/down.svg"
+                      src={`${import.meta.env.BASE_URL}images/icons/down.svg`}
                       alt="Channel Util"
                       className="w-4 h-4 inline-block align-middle"
                     />
@@ -63,7 +63,7 @@ export const Node = () => {
                 {node.telemetry.battery_level && (
                   <span className="mr-4 align-middle" title="Battery Level">
                     <img
-                      src="/images/icons/battery.svg"
+                      src={`${import.meta.env.BASE_URL}images/icons/battery.svg`}
                       alt="Battery"
                       className="w-4 h-4 inline-block align-middle"
                     />
@@ -73,7 +73,7 @@ export const Node = () => {
                 {node.telemetry.temperature && (
                   <span className="mr-4 align-middle" title="Temperature">
                     <img
-                      src="/images/icons/temperature.svg"
+                      src={`${import.meta.env.BASE_URL}images/icons/temperature.svg`}
                       alt="Temperature"
                       className="w-4 h-4 inline-block align-middle"
                     />
@@ -83,7 +83,7 @@ export const Node = () => {
                 {node.telemetry.humidity && (
                   <span className="mr-4 align-middle" title="Humidity">
                     <img
-                      src="/images/icons/humidity.svg"
+                      src={`${import.meta.env.BASE_URL}images/icons/humidity.svg`}
                       alt="Humidity"
                       className="w-4 h-4 inline-block align-middle"
                     />
@@ -93,7 +93,7 @@ export const Node = () => {
                 {node.telemetry.voltage && (
                   <span className="mr-4 align-middle" title="Voltage">
                     <img
-                      src="/images/icons/voltage.svg"
+                      src={`${import.meta.env.BASE_URL}images/icons/voltage.svg`}
                       alt="Voltage"
                       className="w-4 h-4 inline-block align-middle"
                     />

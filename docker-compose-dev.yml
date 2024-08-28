@@ -2,7 +2,7 @@ services:
   caddy:
     image: caddy:latest
     ports:
-      - 8000:80
+      - 8001:80
       - 8443:443
     volumes:
       - ./caddy/data:/data/caddy
@@ -30,6 +30,18 @@ services:
     volumes:
       - ./mosquitto/data:/mosquitto/data:rw
       - ./mosquitto/config:/mosquitto/config:rw
+    restart: always
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.spa
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html/next
+    ports:
+      - 8000:80
+    environment:
+      - NODE_ENV=production
     restart: always
 
   meshinfo:

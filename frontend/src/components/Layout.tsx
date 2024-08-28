@@ -37,7 +37,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
             <div className="mb-1">
               <Link to="chat" relative="path">
                 <img
-                  src="/images/icons/chat.svg"
+                  src={`${import.meta.env.BASE_URL}images/icons/chat.svg`}
                   width="20"
                   height="20"
                   className="inline-block"
@@ -50,7 +50,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
             {/* TODO <div className="mb-1">
               <Link to="graph" relative="path">
                 <img
-                  src="/images/icons/map.svg"
+                  src={`${import.meta.env.BASE_URL}images/icons/map.svg`}
                   width="20"
                   height="20"
                   className="inline-block"
@@ -63,7 +63,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
             <div className="mb-1">
               <Link to="map">
                 <img
-                  src="/images/icons/map.svg"
+                  src={`${import.meta.env.BASE_URL}images/icons/map.svg`}
                   width="20"
                   height="20"
                   className="inline-block"
@@ -76,7 +76,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
             <div className="mb-1">
               <Link to="nodes">
                 <img
-                  src="/images/icons/node.svg"
+                  src={`${import.meta.env.BASE_URL}images/icons/node.svg`}
                   width="20"
                   height="20"
                   className="inline-block"
@@ -89,7 +89,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
             <div className="mb-1">
               <Link to="neighbors" relative="path">
                 <img
-                  src="/images/icons/neighbors.svg"
+                  src={`${import.meta.env.BASE_URL}images/icons/neighbors.svg`}
                   width="20"
                   height="20"
                   className="inline-block"
@@ -102,7 +102,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
             <div className="mb-1">
               <Link to="stats" relative="path">
                 <img
-                  src="/images/icons/stats.svg"
+                  src={`${import.meta.env.BASE_URL}images/icons/stats.svg`}
                   width="20"
                   height="20"
                   className="inline-block"
@@ -115,7 +115,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
             <div className="mb-1">
               <Link to="telemetry" relative="path">
                 <img
-                  src="/images/icons/telemetry.svg"
+                  src={`${import.meta.env.BASE_URL}images/icons/telemetry.svg`}
                   width="20"
                   height="20"
                   className="inline-block"
@@ -128,7 +128,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
             <div className="mb-1">
               <Link to="traceroutes">
                 <img
-                  src="/images/icons/route2.svg"
+                  src={`${import.meta.env.BASE_URL}images/icons/route2.svg`}
                   width="20"
                   height="20"
                   className="inline-block"
