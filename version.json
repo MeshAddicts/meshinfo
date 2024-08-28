@@ -1,8 +1,8 @@
 {
-  "version": "0.0.304",
+  "version": "0.0.305",
   "major": 0,
   "minor": 0,
-  "patch": 304,
-  "build_date_iso_8601": "2024-08-22T23:48:06Z",
-  "git_sha": "1d37ffe"
+  "patch": 305,
+  "build_date_iso_8601": "2024-08-28T06:34:44Z",
+  "git_sha": "95e1641"
 }
