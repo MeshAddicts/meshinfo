@@ -1,8 +1,8 @@
 {
-  "version": "0.0.318",
+  "version": "0.0.319",
   "major": 0,
   "minor": 0,
-  "patch": 318,
-  "build_date_iso_8601": "2024-08-28T09:01:42Z",
-  "git_sha": "d4f5ce1"
+  "patch": 319,
+  "build_date_iso_8601": "2024-08-28T09:19:38Z",
+  "git_sha": "2efac57"
 }
