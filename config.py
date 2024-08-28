@@ -3,6 +3,8 @@ import datetime
 import json
 import uuid
 
+import utils
+
 class Config:
   @classmethod
   def load(cls):
@@ -24,3 +26,35 @@ class Config:
   def load_from_file(cls, path):
     with open(path, 'r') as f:
       return json.load(f)
+
+  @classmethod
+  def cleanse(cls, config):
+    config_clean = config.deepcopy()
+    blacklist = {
+        "config": {
+            "broker": {
+                "password": {},
+                "username": {},
+            },
+            "integrations": {
+                "discord": {
+                    "token": {},
+                },
+                "geocoding": {
+                    "geocode.maps.co": {
+                        "api_key": {},
+                    }
+                }
+            }
+        }
+    }
+
+    def recursive_filter_dict(d, blacklist):
+        for key, value in list(d.items()):
+            if key in blacklist:
+                del d[key]
+            elif isinstance(value, dict):
+                recursive_filter_dict(value, blacklist[key] if key in blacklist else {})
+
+    recursive_filter_dict(config_clean, blacklist)
+    return config_clean
