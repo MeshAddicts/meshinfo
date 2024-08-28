@@ -56,4 +56,4 @@ services:
     restart: always
     depends_on:
       - meshinfo
-      - meshinfo-spa
+      - frontend
