@@ -58,6 +58,13 @@
       server_position = default_position;
     {% endif %}
 
+    var server_zoom = null;
+    {% if 'zoom' in config['mesh'] %}
+      server_zoom = {{ config['mesh']['zoom'] }};
+    {% else %}
+      server_zoom = 9.5;
+    {% endif %}
+
     const map = new ol.Map({
       layers: [
         new ol.layer.Tile({
@@ -67,7 +74,7 @@
       target: 'map',
       view: new ol.View({
         center: ol.proj.fromLonLat([server_position.longitude, server_position.latitude]),
-        zoom: 9.5,
+        zoom: server_zoom,
       }),
     });
 
