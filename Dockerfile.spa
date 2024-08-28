@@ -13,11 +13,13 @@ RUN yarn
 RUN yarn build --base=/next
 RUN npm install -g serve
 
+FROM node:20.11.1-alpine
+
 HEALTHCHECK NONE
 
 WORKDIR /app
 
-COPY --from=frontend /frontend/dist /app/dist
+COPY --from=build /frontend/dist /app/dist
 
 EXPOSE 8000
 
