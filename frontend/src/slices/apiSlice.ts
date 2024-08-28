@@ -11,6 +11,8 @@ import {
 } from "../types";
 import { IConfigResponse } from "../types/config";
 
+const apiBaseURI = process.env.API_BASE_URI || "http://localhost:9000";
+
 export const apiSlice = createApi({
   reducerPath: "api",
   tagTypes: [
@@ -23,7 +25,7 @@ export const apiSlice = createApi({
     "Messages",
     "MqttMessages",
   ],
-  baseQuery: fetchBaseQuery({ baseUrl: `${window.location.origin}/api/v1` }),
+  baseQuery: fetchBaseQuery({ baseUrl: `${apiBaseURI}/api/v1` }),
   endpoints: (builder) => ({
     getConfig: builder.query<IConfigResponse, void>({
       query: () => "server/config",
