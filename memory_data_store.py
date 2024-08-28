@@ -211,6 +211,8 @@ class MemoryDataStore:
     now = f"{datetime.now(ZoneInfo(self.config['server']['timezone'])).strftime('%Y%m%d-%H%M%S')}"
     base_name = f"{self.config['paths']['backups']}/backup-{now}"
     tmp_path = f"/tmp/meshinfo/backup-{now}"
+
+    print(f"Backing up to {base_name}.tar.bz2")
     os.makedirs(tmp_path, exist_ok=True)
     shutil.copytree("output/data", f"{tmp_path}/data")
     shutil.copytree("output/static-html", f"{tmp_path}/static-html")
