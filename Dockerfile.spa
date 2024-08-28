@@ -10,7 +10,7 @@ WORKDIR /frontend
 
 RUN corepack enable
 RUN yarn
-RUN yarn build --base=/next
+RUN yarn build
 
 FROM node:20.11.1-alpine
 
