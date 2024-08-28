@@ -38,7 +38,7 @@ services:
   frontend:
     image: ghcr.io/meshaddicts/meshinfo-spa:latest
     ports:
-      - 8000:8000
+      - 8000:3000
     restart: always
 
   caddy:
