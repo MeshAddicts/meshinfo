@@ -39,6 +39,9 @@ services:
     image: ghcr.io/meshaddicts/meshinfo-spa:latest
     ports:
       - 8000:3000
+    environment:
+      - NODE_ENV=production
+      - API_BASE_URL=https://svm1.meshinfo.network/api
     restart: always
 
   caddy:
