@@ -7,178 +7,7 @@
     <title>MeshInfo</title>
   </head>
   <body>
-    <div class="w-full h-full">
-      <!-- Static sidebar for desktop -->
-      <div
-        class="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-60 lg:flex-col"
-      >
-        <!-- Sidebar component, swap this element with another sidebar if you like -->
-        <div
-          class="flex flex-col px-6 pb-4 overflow-y-auto bg-gray-300 border-r-2 grow gap-y-5 border-r-cyan-600"
-        >
-          <div class="flex items-center h-24 mt-4 shrink-0">
-            <div class="text-2xl">
-              <div class="p-0 m-0">
-                S<span class="text-gray-500">ACRAMENTO</span>
-              </div>
-              <div class="p-0 m-0">
-                V<span class="text-gray-500">ALLEY</span>
-              </div>
-              <div class="p-0 m-0">M<span class="text-gray-500">ESH</span></div>
-            </div>
-          </div>
-
-          <div>%VITE_MESH_DESCRIPTION%</div>
-
-          <div>
-            <a href="%VITE_MESH_DESCRIPTION%" class="text-xs text-gray-900"
-              >Website</a
-            >
-          </div>
-
-          <nav class="flex flex-col flex-1">
-            <h3>Mesh</h3>
-            <div class="mb-2">
-              <a href="chat">
-                <img
-                  src="images/icons/chat.svg"
-                  width="20"
-                  height="20"
-                  align="middle"
-                  style="vertical-align: middle"
-                />
-                Chat
-              </a>
-            </div>
-            <div class="mb-2">
-              <a href="map">
-                <img
-                  src="images/icons/map.svg"
-                  width="20"
-                  height="20"
-                  align="middle"
-                  style="vertical-align: middle"
-                />
-                Map
-              </a>
-            </div>
-            <div class="mb-2">
-              <a href="nodes">
-                <img
-                  src="images/icons/node.svg"
-                  width="20"
-                  height="20"
-                  align="middle"
-                  style="vertical-align: middle"
-                />
-                Nodes
-              </a>
-            </div>
-            <div class="mb-2">
-              <a href="neighbors.html">
-                <img
-                  src="images/icons/neighbors.svg"
-                  width="20"
-                  height="20"
-                  align="middle"
-                  style="vertical-align: middle"
-                />
-                Node Neighbors
-              </a>
-            </div>
-            <div class="mb-2">
-              <a href="stats.html">
-                <img
-                  src="images/icons/stats.svg"
-                  width="20"
-                  height="20"
-                  align="middle"
-                  style="vertical-align: middle"
-                />
-                Stats
-              </a>
-            </div>
-            <div class="mb-2">
-              <a href="telemetry.html">
-                <img
-                  src="images/icons/telemetry.svg"
-                  width="20"
-                  height="20"
-                  align="middle"
-                  style="vertical-align: middle"
-                />
-                Telemetry
-              </a>
-            </div>
-            <div class="mb-2">
-              <a href="traceroutes.html">
-                <img
-                  src="images/icons/route2.svg"
-                  width="20"
-                  height="20"
-                  align="middle"
-                  style="vertical-align: middle"
-                />
-                Traceroutes
-              </a>
-            </div>
-          </nav>
-
-          <nav class="flex flex-col flex-1">
-            <h3>Logs</h3>
-            <div class="mb-2">
-              <a href="mesh_log.html">Mesh Messages</a>
-            </div>
-            <div class="mb-2">
-              <a href="mqtt_log.html">MQTT Messages</a>
-            </div>
-          </nav>
-
-          <nav class="flex flex-col flex-1">
-            <h3>Other Tools</h3>
-            <div class="mb-2">
-              <a href="https://meshview.armooo.net" target="_blank"
-                >Armooo's MeshView</a
-              >
-            </div>
-            <div class="mb-2">
-              <a href="https://meshtastic.liamcottle.net" target="_blank"
-                >Liam's Meshtastic Web</a
-              >
-            </div>
-            <div class="mb-2">
-              <a href="https://meshmap.net" target="_blank">MeshMap</a>
-            </div>
-            <div class="mb-2">
-              <a href="https://app.bayme.sh" target="_blank"
-                >Bay Mesh Explorer</a
-              >
-            </div>
-            <div class="mb-2">
-              <a href="https://heywhatsthat.com/profiler.html" target="_blank"
-                >HWT Path Profiler</a
-              >
-            </div>
-          </nav>
-
-          <div class="flex-grow"></div>
-          <div class="flex flex-col">
-            <h5 class="mb-2">Powered by MeshInfo</h5>
-            <a
-              href="https://github.com/MeshAddicts/meshinfo"
-              class="text-xs text-gray-500"
-            >
-              <img
-                src="https://img.shields.io/github/stars/MeshAddicts/meshinfo?style=social"
-                alt="GitHub Stars"
-              />
-            </a>
-          </div>
-        </div>
-      </div>
-
-      <div id="root" class="lg:pl-60 h-full"></div>
-    </div>
+    <div class="w-full h-full" id="root"></div>
 
     <style>
       body {
@@ -186,8 +15,6 @@
         font-size: 12px;
         margin: 0;
         padding: 0;
-        height: 100vh;
-        width: 100vw;
       }
       a {
         text-decoration: none;
@@ -200,7 +27,6 @@
         color: #000;
       }
     </style>
-
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -3,6 +3,7 @@
 }
 
 localhost {
+	tls internal
 	encode gzip
 	handle_path /api/* {
 		reverse_proxy meshinfo:9000

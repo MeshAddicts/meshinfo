@@ -8,15 +8,14 @@ import Point from "ol/geom/Point";
 import Select from "ol/interaction/Select";
 import TileLayer from "ol/layer/Tile";
 import VectorLayer from "ol/layer/Vector";
-import Overlay from "ol/Overlay";
 import { fromLonLat, transform } from "ol/proj";
 import { Vector } from "ol/source";
 import OSM from "ol/source/OSM";
 import VectorSource from "ol/source/Vector";
 import { Circle, Fill, Stroke, Style } from "ol/style";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { useGetNodesQuery } from "../slices/apiSlice";
+import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";
 import { INode } from "../types";
 
 type IMapNode = INode & {
@@ -29,9 +28,52 @@ type IMapNode = INode & {
   }[];
 };
 
+const defaultStyle = new Style({
+  image: new Circle({
+    radius: 6,
+    fill: new Fill({
+      color: "rgba(0, 0, 240, 1)",
+    }),
+    stroke: new Stroke({
+      color: "white",
+      width: 2,
+    }),
+  }),
+});
+
+const offlineStyle = new Style({
+  image: new Circle({
+    radius: 6,
+    fill: new Fill({
+      color: "rgba(0, 0, 0, 0.50)",
+    }),
+    stroke: new Stroke({
+      color: "white",
+      width: 2,
+    }),
+  }),
+});
+
+const onlineStyle = new Style({
+  image: new Circle({
+    radius: 6,
+    fill: new Fill({
+      color: "rgba(50, 240, 50, 1)",
+    }),
+    stroke: new Stroke({
+      color: "white",
+      width: 2,
+    }),
+  }),
+});
+
 export function Map() {
   const mapRef = useRef<HTMLDivElement>(null);
+  const [olMap, setMap] = useState<OlMap>();
+
   const { data: rawNodes = {} } = useGetNodesQuery();
+  const { data: config } = useGetConfigQuery();
+
   const nodes = useMemo(() => {
     const now = new Date();
     return Object.fromEntries(
@@ -56,7 +98,10 @@ export function Map() {
     );
   }, [rawNodes]);
 
-  const serverNode = useMemo(() => nodes["4355f528"], [nodes]);
+  const serverNode = useMemo(
+    () => nodes[config?.server.node_id ?? ""],
+    [config?.server.node_id, nodes]
+  );
 
   const reverseGeocode = async (
     lon: string,
@@ -77,6 +122,7 @@ export function Map() {
     ).json();
 
   useEffect(() => {
+    if (olMap) return;
     if (!serverNode || !nodes || !mapRef) {
       return;
     }
@@ -108,6 +154,7 @@ export function Map() {
         zoom: initialZoom,
       }),
     });
+    setMap(map);
 
     map.on("moveend", () => {
       const center = map.getView().getCenter();
@@ -121,43 +168,9 @@ export function Map() {
       }
     });
 
-    const defaultStyle = new Style({
-      image: new Circle({
-        radius: 6,
-        fill: new Fill({
-          color: "rgba(0, 0, 240, 1)",
-        }),
-        stroke: new Stroke({
-          color: "white",
-          width: 2,
-        }),
-      }),
-    });
-
-    const offlineStyle = new Style({
-      image: new Circle({
-        radius: 6,
-        fill: new Fill({
-          color: "rgba(0, 0, 0, 0.50)",
-        }),
-        stroke: new Stroke({
-          color: "white",
-          width: 2,
-        }),
-      }),
-    });
-
-    const onlineStyle = new Style({
-      image: new Circle({
-        radius: 6,
-        fill: new Fill({
-          color: "rgba(50, 240, 50, 1)",
-        }),
-        stroke: new Stroke({
-          color: "white",
-          width: 2,
-        }),
-      }),
+    map.on("pointermove", (evt) => {
+      const hit = map.hasFeatureAtPixel(evt.pixel);
+      map.getTargetElement().style.cursor = hit ? "pointer" : "";
     });
 
     const neighborLayers: VectorLayer<Feature<Geometry>>[] = [];
@@ -195,31 +208,13 @@ export function Map() {
 
     map.addLayer(vectorLayer);
 
-    const overlayContainer = document.getElementById("nodeDetail");
-    const overlayContent = document.getElementById("popup-content");
-    const overlayCloser = document.getElementById("popup-closer");
-
     const nodeTitle = document.getElementById("details-title");
     const nodeSubtitle = document.getElementById("details-subtitle");
     const nodeContent = document.getElementById("details-content");
 
-    if (
-      !overlayContainer ||
-      !overlayContent ||
-      !overlayCloser ||
-      !nodeTitle ||
-      !nodeSubtitle ||
-      !nodeContent
-    ) {
+    if (!nodeTitle || !nodeSubtitle || !nodeContent) {
       return;
     }
-
-    const initialOverlay = new Overlay({
-      element: overlayContainer,
-      autoPan: true,
-    });
-
-    map.addOverlay(initialOverlay);
 
     const selectedStyle = new Style({
       image: new Circle({
@@ -239,26 +234,6 @@ export function Map() {
       style: selectedStyle,
     });
     map.addInteraction(select);
-
-    overlayCloser.onclick = () => {
-      select.getFeatures().clear();
-      neighborLayers.forEach((layer) => {
-        map.removeLayer(layer);
-      });
-      neighborLayers.length = 0;
-      initialOverlay.setPosition(undefined);
-      // initialOverlay.blur();
-      if (nodeTitle) {
-        nodeTitle.innerHTML = "";
-      }
-      if (nodeSubtitle) {
-        nodeSubtitle.innerHTML = "";
-      }
-      if (nodeContent) {
-        nodeContent.innerHTML = "";
-      }
-      return false;
-    };
 
     map.on("singleclick", async (event) => {
       neighborLayers.forEach((layer) => {
@@ -463,9 +438,6 @@ export function Map() {
             nodeId
           }" target="_blank">MeshMap</a><br/>`;
 
-          // content.innerHTML = panel;
-          // overlay.setPosition(ol.proj.fromLonLat(node.position));
-
           if (nodeTitle) {
             nodeTitle.innerHTML = node.longname;
           }
@@ -490,8 +462,6 @@ export function Map() {
           }
         }
       } else {
-        // overlay.setPosition(undefined);
-
         if (nodeTitle) {
           nodeTitle.innerHTML = "";
         }
@@ -501,20 +471,17 @@ export function Map() {
         if (nodeContent) {
           nodeContent.innerHTML = "";
         }
-        overlayCloser.blur();
       }
     });
+
+    // don't need to watch olMap
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, serverNode]);
 
   return (
-    <>
+    <div className="h-screen">
       <div id="map" className="map" ref={mapRef} />
-      <div id="nodeDetail" className="ol-popup">
-        {/* eslint-disable-next-line jsx-a11y/control-has-associated-label, jsx-a11y/anchor-has-content, jsx-a11y/anchor-is-valid */}
-        <a href="#" id="popup-closer" className="ol-popup-closer" />
-        <div id="popup-content" />
-      </div>
-      <div id="details" className="p-4 bg-white">
+      <div id="details" className="p-4 bg-white hidden">
         <div className="flex items-center w-full justify-items-stretch">
           <div id="details-title" className="flex-auto text-lg text-start">
             NODE NAME
@@ -604,6 +571,6 @@ export function Map() {
           }
       `}
       </style>
-    </>
+    </div>
   );
 }
