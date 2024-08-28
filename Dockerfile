@@ -1,13 +1,4 @@
-FROM node:20.11.1 as frontend
-
-COPY . .
-
-WORKDIR /frontend
-
-RUN corepack enable
-RUN yarn
-# RUN yarn build --base=/next
-
+# trunk-ignore-all(checkov/CKV_DOCKER_3)
 FROM python:3.12-slim
 
 LABEL org.opencontainers.image.source https://github.com/MeshAddicts/meshinfo
@@ -20,23 +11,12 @@ ENV PYTHONUNBUFFERED=1
 RUN mkdir /app
 WORKDIR /app
 
-# Copy the requirements file
-COPY requirements.txt .
-
-# Update pip
+COPY . .
 RUN pip install --upgrade pip
-
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Add a HEALTHCHECK instruction
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 CMD python -c "import socket; s = socket.socket(socket.AF_INET, socket.SOCK_STREAM); result = s.connect_ex(('localhost', 8000)); s.close(); exit(result)"
+HEALTHCHECK NONE
 
-# Copy the project code
-COPY . .
 RUN chmod +x run.sh
 
-# COPY --from=frontend /frontend/dist /app/dist
-
-# Set the command to run the application
 CMD ["./run.sh"]
