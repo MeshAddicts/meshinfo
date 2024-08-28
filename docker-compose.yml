@@ -1,19 +1,4 @@
 services:
-  caddy:
-    image: caddy:latest
-    ports:
-      - 80:80
-      - 443:443
-    volumes:
-      - ./caddy/data:/data/caddy
-      - ./Caddyfile:/etc/caddy/Caddyfile
-      - ./output/static-html:/srv
-      - ./spa:/srv/next
-      - ./public/images:/srv/images
-    environment:
-      - CADDY_AGREE=true
-    restart: always
-
   postgres:
     image: postgres:latest
     volumes:
@@ -43,8 +28,32 @@ services:
       - MQTT_PORT=1883
       - MQTT_USERNAME=meshinfo
       - MQTT_PASSWORD=m3sht4st1c
+    ports:
+      - 9000:9000
     restart: always
     depends_on:
-      - caddy
       - postgres
       - mqtt
+
+  meshinfo-spa:
+    image: ghcr.io/meshaddicts/meshinfo-spa:latest
+    ports:
+      - 8000:8000
+    restart: always
+
+  caddy:
+    image: caddy:latest
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - ./caddy/data:/data/caddy
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - ./output/static-html:/srv
+      - ./public/images:/srv/images
+    environment:
+      - CADDY_AGREE=true
+    restart: always
+    depends_on:
+      - meshinfo
+      - meshinfo-spa
