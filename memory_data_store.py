@@ -2,6 +2,7 @@
 
 import copy
 from datetime import datetime, timedelta
+import glob
 import json
 import os
 import shutil
@@ -223,6 +224,14 @@ class MemoryDataStore:
       verbose=True)
     print(f"Backed up to {base_name}.tar.bz2")
     shutil.rmtree(tmp_path)
+
+    if 'max_backups' in self.config['server']['backups'] and self.config['server']['backups']['max_backups'] > 0:
+      files = glob.glob(f"{self.config['paths']['backups']}/*")
+      files.sort(key=os.path.getmtime)
+      print(f"Deleting old backups (max {self.config['server']['backups']['max_backups']}, found {len(files)})")
+      for file in files[:-self.config['server']['backups']['max_backups']]:
+        print(f"Deleting old backup: {file}")
+        os.remove(file)
 
   async def backfill_node_infos(self):
     nodes_needing_enrichment = {}
