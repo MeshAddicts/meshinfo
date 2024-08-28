@@ -3,8 +3,6 @@ import datetime
 import json
 import uuid
 
-import utils
-
 class Config:
   @classmethod
   def load(cls):

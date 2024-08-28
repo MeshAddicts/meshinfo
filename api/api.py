@@ -1,10 +1,10 @@
-import json
 from fastapi.encoders import jsonable_encoder
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
+from config import Config
 import utils
 
 templates = Jinja2Templates(directory="./templates/api")
@@ -68,13 +68,13 @@ class API:
                     if status == "online":
                         nodes_to_keep = []
                         for id in nodes:
-                            if nodes[id]["active"] == True:
+                            if nodes[id]["active"]:
                                 nodes_to_keep.append(id)
                         nodes = { k: v for k, v in nodes.items() if k in nodes_to_keep }
                     elif status == "offline":
                         nodes_to_keep = []
                         for id in nodes:
-                            if nodes[id]["active"] == False:
+                            if nodes[id]["active"]:
                                 nodes_to_keep.append(id)
                         nodes = { k: v for k, v in nodes.items() if k in nodes_to_keep }
 
@@ -142,7 +142,7 @@ class API:
         @app.get("/v1/telemetry")
         async def telemetry(request: Request) -> JSONResponse:
             return jsonable_encoder(self.data.telemetry[:1000])
-        
+
         @app.get("/v1/traceroutes")
         async def traceroutes(request: Request) -> JSONResponse:
             return jsonable_encoder(self.data.traceroutes[:1000])
@@ -150,11 +150,11 @@ class API:
         @app.get("/v1/messages")
         async def messages(request: Request) -> JSONResponse:
             return jsonable_encoder(self.data.messages[:1000])
-        
+
         @app.get("/v1/mqtt_messages")
         async def mqtt_messages(request: Request) -> JSONResponse:
             return jsonable_encoder(self.data.mqtt_messages[:1000])
-        
+
         @app.get("/v1/stats")
         async def stats(request: Request) -> JSONResponse:
             stats = {
@@ -169,105 +169,12 @@ class API:
             for _, node in self.data.nodes.items():
                 if 'active' in node and node['active']:
                     stats['active_nodes'] += 1
-        
-            return jsonable_encoder({"stats": stats})        
+
+            return jsonable_encoder({"stats": stats})
 
         @app.get("/v1/server/config")
         async def server_config(request: Request) -> JSONResponse:
-            # # TODO: Sanitize config (i.e. username, password, api_key, etc)
-            # sanitized_config = self.config
-            # del sanitized_config['broker']['host']
-            # del sanitized_config['broker']['port']
-            # del sanitized_config['broker']['username']
-            # del sanitized_config['broker']['password']
-            
-            # del sanitized_config['channels']['encryption_key']
-
-            # del sanitized_config['paths']
-
-            # sanitized_config['integrations']['discord'] = {
-            #     'enabled': self.config['integrations']['discord']['enabled'],
-            # }
-            # sanitized_config['integrations']['geocoding'] = {
-            #     'enabled': self.config['integrations']['geocoding']['enabled'],
-            #     'provider': self.config['integrations']['geocoding']['provider'],
-            # }
-            
-            whitelist = {
-                "config": {
-                    "mesh": {
-                        "name": {},
-                        "shortname": {},
-                        "description": {},
-                        "url": {},
-                        "contact": {},
-                        "country": {},
-                        "region": {},
-                        "metro": {},
-                        "latitude": {},
-                        "longitude": {},
-                        "altitude": {},
-                        "timezone": {},
-                        "announce": {
-                            "enabled": {},
-                            "interval": {},
-                        },
-                        "tools": {
-                            "name": {},
-                            "url": {},
-                        },
-                    },
-                    "broker": {
-                        "enabled": {},
-                        "host": {},
-                        "client_id_prefix": {},
-                        "topics": {},
-                        "decoders": {
-                            "protobuf": {
-                                "enabled": {},
-                            },
-                            "json": {
-                                "enabled": {},
-                            }
-                        },
-                        
-                    },
-                    "channels": {
-                        "display": {}
-                    },
-                    "server": {
-                        "node_id": {},
-                        "base_url": {},
-                        "node_activity_prune_threshold": {},
-                        "timezone": {},
-                        "intervals": {
-                            "data_save": {},
-                            "render": {},
-                        },
-                        "enrich": {
-                            "enabled": {},
-                            "interval": {},
-                            "provider": {}
-                        },
-                        "graph": {
-                            "enabled": {},
-                            "max_depth": {},
-                        },
-                        "start_time": {}
-                    },
-                    "integrations": {
-                        "discord": {
-                            "enabled": {}
-                        },
-                        "geocoding": {
-                            "enabled": {},
-                            "provider": {}
-                        }
-                    }
-                }
-            }
-            
-            return jsonable_encoder(utils.filter_dict({'config': self.config}, whitelist))
+            return jsonable_encoder({'config': Config.cleanse(self.config)})
 
         conf = uvicorn.Config(app=app, host="0.0.0.0", port=9000, loop=loop)
         server = uvicorn.Server(conf)
