@@ -11,9 +11,10 @@ WORKDIR /frontend
 RUN corepack enable
 RUN yarn
 RUN yarn build --base=/next
-RUN npm install -g serve
 
 FROM node:20.11.1-alpine
+
+RUN npm install -g serve
 
 HEALTHCHECK NONE
 
