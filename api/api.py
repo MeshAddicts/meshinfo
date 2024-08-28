@@ -1,10 +1,10 @@
-import json
 from fastapi.encoders import jsonable_encoder
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
+from config import Config
 import utils
 
 templates = Jinja2Templates(directory="./templates/api")
@@ -68,13 +68,13 @@ class API:
                     if status == "online":
                         nodes_to_keep = []
                         for id in nodes:
-                            if nodes[id]["active"] == True:
+                            if nodes[id]["active"]:
                                 nodes_to_keep.append(id)
                         nodes = { k: v for k, v in nodes.items() if k in nodes_to_keep }
                     elif status == "offline":
                         nodes_to_keep = []
                         for id in nodes:
-                            if nodes[id]["active"] == False:
+                            if nodes[id]["active"]:
                                 nodes_to_keep.append(id)
                         nodes = { k: v for k, v in nodes.items() if k in nodes_to_keep }
 
@@ -139,10 +139,42 @@ class API:
         async def chat(request: Request) -> JSONResponse:
             return jsonable_encoder(self.data.chat)
 
+        @app.get("/v1/telemetry")
+        async def telemetry(request: Request) -> JSONResponse:
+            return jsonable_encoder(self.data.telemetry[:1000])
+
+        @app.get("/v1/traceroutes")
+        async def traceroutes(request: Request) -> JSONResponse:
+            return jsonable_encoder(self.data.traceroutes[:1000])
+
+        @app.get("/v1/messages")
+        async def messages(request: Request) -> JSONResponse:
+            return jsonable_encoder(self.data.messages[:1000])
+
+        @app.get("/v1/mqtt_messages")
+        async def mqtt_messages(request: Request) -> JSONResponse:
+            return jsonable_encoder(self.data.mqtt_messages[:1000])
+
+        @app.get("/v1/stats")
+        async def stats(request: Request) -> JSONResponse:
+            stats = {
+                'active_nodes': 0,
+                'total_chat': len(self.data.chat['channels']['0']['messages']),
+                'total_nodes': len(self.data.nodes),
+                'total_messages': len(self.data.messages),
+                'total_mqtt_messages': len(self.data.mqtt_messages),
+                'total_telemetry': len(self.data.telemetry),
+                'total_traceroutes': len(self.data.traceroutes),
+            }
+            for _, node in self.data.nodes.items():
+                if 'active' in node and node['active']:
+                    stats['active_nodes'] += 1
+
+            return jsonable_encoder({"stats": stats})
+
         @app.get("/v1/server/config")
         async def server_config(request: Request) -> JSONResponse:
-            # TODO: Sanitize config (i.e. username, password, api_key, etc)
-            return jsonable_encoder({ "config": self.config })
+            return jsonable_encoder({'config': Config.cleanse(self.config)})
 
         conf = uvicorn.Config(app=app, host="0.0.0.0", port=9000, loop=loop)
         server = uvicorn.Server(conf)

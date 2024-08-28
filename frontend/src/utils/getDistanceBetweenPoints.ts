@@ -4,7 +4,6 @@ export const getDistanceBetweenTwoPoints = (
   coord1: Coordinate,
   coord2: Coordinate
 ) => {
-  console.log(coord1, coord2);
   const R = 6371; // Radius of the earth in km
   const dLat = ((coord1[1] - coord2[1]) * Math.PI) / 180;
   const dLon = ((coord1[0] - coord2[1]) * Math.PI) / 180;

@@ -7,6 +7,6 @@ export default {
   },
   plugins: [],
   corePlugins: {
-    preflight: false,
+    preflight: true,
   },
 } satisfies Config;
