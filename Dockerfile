@@ -36,7 +36,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 CMD pytho
 COPY . .
 RUN chmod +x run.sh
 
-COPY --from=frontend /frontend/dist /app/dist
+# COPY --from=frontend /frontend/dist /app/dist
 
 # Set the command to run the application
 CMD ["./run.sh"]
