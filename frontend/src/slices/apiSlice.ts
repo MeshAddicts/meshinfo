@@ -23,7 +23,7 @@ export const apiSlice = createApi({
     "Messages",
     "MqttMessages",
   ],
-  baseQuery: fetchBaseQuery({ baseUrl: "/api/v1" }),
+  baseQuery: fetchBaseQuery({ baseUrl: "http://meshinfo:9000/api/v1" }),
   endpoints: (builder) => ({
     getConfig: builder.query<IConfigResponse, void>({
       query: () => "server/config",
