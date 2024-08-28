@@ -6,7 +6,7 @@ WORKDIR /frontend
 
 RUN corepack enable
 RUN yarn
-RUN yarn build --base=/next
+# RUN yarn build --base=/next
 
 FROM python:3.12-slim
 
