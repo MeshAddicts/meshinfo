@@ -14,6 +14,6 @@ YOUR_FQDN_OR_HOSTNAME {
 		reverse_proxy meshinfo:9000
 	}
 	handle_path /next/* {
-		reverse_proxy meshinfo-spa:8000
+		reverse_proxy frontend:80
 	}
 }

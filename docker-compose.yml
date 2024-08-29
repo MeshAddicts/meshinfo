@@ -50,7 +50,7 @@ services:
       - 8443:443
     volumes:
       - ./caddy/data:/data/caddy
-      - ./Caddyfile.dev:/etc/caddy/Caddyfile
+      - ./Caddyfile:/etc/caddy/Caddyfile
       - ./output/static-html:/srv
       - ./public/images:/srv/images
     environment:
