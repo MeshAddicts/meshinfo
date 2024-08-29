@@ -1,8 +1,10 @@
+import os
 from fastapi.encoders import jsonable_encoder
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
 
 from config import Config
 import utils
@@ -175,6 +177,18 @@ class API:
         @app.get("/v1/server/config")
         async def server_config(request: Request) -> JSONResponse:
             return jsonable_encoder({'config': Config.cleanse(self.config)})
+
+
+        allow_origins = os.getenv("ALLOW_ORIGINS", "").split(",")
+        print(f"Allowed origins: {allow_origins} {len(allow_origins)}")
+
+        if(len(allow_origins) > 0):
+            app.add_middleware(
+                CORSMiddleware,
+                allow_origins=allow_origins,
+                allow_methods=["*"],
+                allow_headers=["*"]
+            )
 
         conf = uvicorn.Config(app=app, host="0.0.0.0", port=9000, loop=loop)
         server = uvicorn.Server(conf)

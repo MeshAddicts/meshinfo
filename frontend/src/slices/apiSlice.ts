@@ -24,7 +24,7 @@ export const apiSlice = createApi({
     "MqttMessages",
   ],
   baseQuery: fetchBaseQuery({
-    baseUrl: `${window.location.origin}/api/v1`,
+    baseUrl: `${import.meta.env.VITE_API_BASE_URL ?? window.location.origin}/v1`,
   }),
   endpoints: (builder) => ({
     getConfig: builder.query<IConfigResponse, void>({
