@@ -35,7 +35,7 @@ export const Telemetry = () => {
               align="center"
             >
               <img
-                src="/images/icons/up.svg"
+                src={`${import.meta.env.BASE_URL}images/icons/up.svg`}
                 alt="Air Util TX"
                 className="w-4 h-4 inline-block"
                 title="Air Util TX"
@@ -46,7 +46,7 @@ export const Telemetry = () => {
               align="center"
             >
               <img
-                src="/images/icons/down.svg"
+                src={`${import.meta.env.BASE_URL}images/icons/down.svg`}
                 className="w-4 h-4 inline-block"
                 alt="Channel Util"
                 title="Channel Util"
@@ -57,7 +57,7 @@ export const Telemetry = () => {
               align="center"
             >
               <img
-                src="/images/icons/battery.svg"
+                src={`${import.meta.env.BASE_URL}images/icons/battery.svg`}
                 className="w-6 h-6 inline-block"
                 alt="Battery"
                 title="Battery"
@@ -74,7 +74,7 @@ export const Telemetry = () => {
               align="center"
             >
               <img
-                src="/images/icons/voltage.svg"
+                src={`${import.meta.env.BASE_URL}images/icons/voltage.svg`}
                 className="w-4 h-4 inline-block"
                 alt="Voltage"
                 title="Voltage"
@@ -85,7 +85,7 @@ export const Telemetry = () => {
               align="center"
             >
               <img
-                src="/images/icons/current.svg"
+                src={`${import.meta.env.BASE_URL}images/icons/current.svg`}
                 className="w-5 h-5 inline-block"
                 alt="Current"
                 title="Current"
@@ -96,7 +96,7 @@ export const Telemetry = () => {
               align="center"
             >
               <img
-                src="/images/icons/pressure.svg"
+                src={`${import.meta.env.BASE_URL}images/icons/pressure.svg`}
                 className="w-4 h-4 inline-block"
                 alt="Barometric Pressure"
                 title="Barometric Pressure"
@@ -107,7 +107,7 @@ export const Telemetry = () => {
               align="center"
             >
               <img
-                src="/images/icons/relative-humidity.svg"
+                src={`${import.meta.env.BASE_URL}images/icons/relative-humidity.svg`}
                 className="w-4 h-4 inline-block"
                 alt="Relative Humidity"
                 title="Relative Humidity"
@@ -118,7 +118,7 @@ export const Telemetry = () => {
               align="center"
             >
               <img
-                src="/images/icons/temperature.svg"
+                src={`${import.meta.env.BASE_URL}images/icons/temperature.svg`}
                 className="w-4 h-4 inline-block"
                 alt="Temperature"
                 title="Temperature"
@@ -129,7 +129,7 @@ export const Telemetry = () => {
               align="center"
             >
               <img
-                src="/images/icons/resistance.svg"
+                src={`${import.meta.env.BASE_URL}images/icons/resistance.svg`}
                 className="w-5 h-5 inline-block"
                 alt="Gas Resistance"
                 title="Gas Resistance"

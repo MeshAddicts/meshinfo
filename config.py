@@ -27,7 +27,7 @@ class Config:
 
   @classmethod
   def cleanse(cls, config):
-    config_clean = config.deepcopy()
+    config_clean = config.copy()
     blacklist = {
         "config": {
             "broker": {

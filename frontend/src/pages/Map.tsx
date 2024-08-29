@@ -208,11 +208,12 @@ export function Map() {
 
     map.addLayer(vectorLayer);
 
+    const nodePanel = document.getElementById("details");
     const nodeTitle = document.getElementById("details-title");
     const nodeSubtitle = document.getElementById("details-subtitle");
     const nodeContent = document.getElementById("details-content");
 
-    if (!nodeTitle || !nodeSubtitle || !nodeContent) {
+    if (!nodePanel || !nodeTitle || !nodeSubtitle || !nodeContent) {
       return;
     }
 
@@ -438,28 +439,18 @@ export function Map() {
             nodeId
           }" target="_blank">MeshMap</a><br/>`;
 
-          if (nodeTitle) {
-            nodeTitle.innerHTML = node.longname;
-          }
-          if (nodeSubtitle) {
-            nodeSubtitle.innerHTML = node.shortname;
-          }
-          if (nodeContent) {
-            nodeContent.innerHTML = panel;
-          }
+          nodeTitle.innerHTML = node.longname;
+          nodeSubtitle.innerHTML = node.shortname;
+          nodeContent.innerHTML = panel;
+          nodePanel.classList.remove("hidden");
         } else {
           // content.innerHTML = '<b>Unknown</b>';
           // overlay.setPosition(coordinate);
 
-          if (nodeTitle) {
-            nodeTitle.innerHTML = "Unknown";
-          }
-          if (nodeSubtitle) {
-            nodeSubtitle.innerHTML = "UNK";
-          }
-          if (nodeContent) {
-            nodeContent.innerHTML = "";
-          }
+          nodeTitle.innerHTML = "Unknown";
+          nodeSubtitle.innerHTML = "UNK";
+          nodeContent.innerHTML = "";
+          nodePanel.classList.remove("hidden");
         }
       } else {
         if (nodeTitle) {

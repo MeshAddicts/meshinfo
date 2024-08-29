@@ -1,5 +1,6 @@
-import { format } from "date-fns";
+import { format } from "date-fns-tz";
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { HeardBy } from "../components/HeardBy";
 import {
@@ -7,24 +8,7 @@ import {
   useGetConfigQuery,
   useGetNodesQuery,
 } from "../slices/apiSlice";
-import { INode } from "../types";
-import { getDistanceBetweenTwoPoints } from "../utils/getDistanceBetweenPoints";
-
-// eslint-disable-next-line react/require-default-props
-const Distance = ({ node1, node2 }: { node1?: INode; node2?: INode }) => {
-  if (node1 && node2 && node1.position && node2.position) {
-    return (
-      <>
-        {getDistanceBetweenTwoPoints(
-          [node1?.position?.longitude, node1?.position?.latitude],
-          [node2?.position?.longitude, node2?.position?.latitude]
-        )}
-      </>
-    );
-  }
-
-  return <span />;
-};
+import { calculateDistanceBetweenNodes } from "../utils/getDistanceBetweenTwoNodes";
 
 export const Chat = () => {
   const { data: chat } = useGetChatsQuery();
@@ -51,8 +35,10 @@ export const Chat = () => {
   }, [channels]);
 
   return (
-    <div className="pl-8">
-      <h1>Chat</h1>
+    <div>
+      <h5 className="mb-2 text-gray-500">Chat</h5>
+      <h1 className="mb-2 text-xl">Chat</h1>
+
       {channels.map(([id, channel]) => (
         <p className="mb-2" key={id}>
           There are <b>{channel.totalMessages}</b> messages on channel {id}
@@ -105,67 +91,116 @@ export const Chat = () => {
       </div>
 
       <h2>Channel {selectedChannel}</h2>
-      <table border={1} cellPadding={4}>
-        <tbody>
+      <table className="w-full max-w-full table-fixed border-collapse border border-gray-500 bg-gray-50">
+        <thead>
           <tr>
-            <th>Time</th>
-            <th>From</th>
-            <th>Via</th>
-            <th>To</th>
-            <th>Hops</th>
-            <th>DX</th>
-            <th style={{ width: "60%" }}>Message</th>
+            <th className="w-48 max-w-48 border border-gray-500 bg-gray-400">
+              Time
+            </th>
+            <th className="w-12 max-w-12 border border-gray-500 bg-gray-400">
+              From
+            </th>
+            <th className="w-12 max-w-12 border border-gray-500 bg-gray-400">
+              Via
+            </th>
+            <th className="w-12 max-w-12 border border-gray-500 bg-gray-400">
+              To
+            </th>
+            <th className="w-12 max-w-12 border border-gray-500 bg-gray-400">
+              Hops
+            </th>
+            <th className="w-20 max-w-20 border border-gray-500 bg-gray-400">
+              DX
+            </th>
+            <th className="p-1 text-wrap border border-gray-500 bg-gray-400">
+              Message
+            </th>
           </tr>
+        </thead>
+        <tbody>
           {selectedChannel
-            ? chat?.channels[selectedChannel].messages.map((message, i) => (
-                // eslint-disable-next-line react/no-array-index-key
-                <tr key={`chat-message-${message.id}-${i}`}>
-                  <td>
-                    {format(
-                      new Date(message.timestamp * 1000),
-                      "yyyy-MM-dd HH:MM:SS xx"
-                    )}
-                  </td>
-                  <td>
-                    {/* {{ message.from + " / " + nodes[message.from].longname if message.from in nodes else (message.from + ' / Unknown') }} */}
-                    <span
-                      title={`${message.from}/${
-                        nodes[message.from]?.longname ?? "Unknown"
-                      }`}
-                    >
-                      {nodes[message.from]?.shortname ?? "UNK"}
-                    </span>
-                  </td>
-                  <td>
-                    {message.sender.map((sender, x) => (
-                      <span
-                        title={`${sender}/${nodes[sender]?.longname ?? "Unknown"}`}
+            ? chat?.channels[selectedChannel].messages.map((message, i) => {
+                const nodeFrom = nodes[message.from] || null;
+                const nodeSender = nodes[message.sender] || null;
+                const nodeTo = nodes[message.to] || null;
+                const distanceFromSender =
+                  nodeFrom && nodeSender
+                    ? calculateDistanceBetweenNodes(nodeFrom, nodeSender)
+                    : null;
+
+                return (
+                  // eslint-disable-next-line react/no-array-index-key
+                  <tr key={`chat-message-${message.id}-${i}`}>
+                    <td className="p-1 border border-gray-400 text-nowrap">
+                      {format(
+                        new Date(message.timestamp * 1000),
+                        "yyyy-MM-dd HH:MM:SS xx",
+                        { timeZone: config?.server.timezone }
+                      )}
+                    </td>
+                    <td className="p-1 text-center border border-gray-400">
+                      <Link
+                        to={`/nodes/${nodeFrom?.id}`}
+                        title={
+                          message.from in nodes
+                            ? `${message.from} / ${nodes[message.from].longname}`
+                            : `${message.from} / Unknown`
+                        }
                       >
-                        {nodes[sender]?.shortname ?? "UNK"}
-                        {x < message.sender.length - 1 ? "/" : ""}
-                      </span>
-                    ))}
-                  </td>
-                  <td>
-                    <span
-                      title={`${message.to}/${
-                        nodes[message.to]?.longname ?? "Unknown"
-                      }`}
+                        {nodes[message.from]
+                          ? nodes[message.from].shortname
+                          : "UNK"}
+                      </Link>
+                    </td>
+                    <td className="p-1 text-center border border-gray-400">
+                      {nodeSender && (
+                        <Link
+                          to={`/nodes/${nodeSender.id}`}
+                          title={
+                            message.sender in nodes
+                              ? `${message.sender} / ${nodes[message.sender].longname}`
+                              : `${message.sender} / Unknown`
+                          }
+                        >
+                          {nodes[message.sender]
+                            ? nodes[message.sender].shortname
+                            : "UNK"}
+                        </Link>
+                      )}
+                    </td>
+                    <td className="p-1 text-center border border-gray-400">
+                      {nodeTo && nodeTo.id !== "ffffffff" ? (
+                        <Link
+                          to={`/nodes/${nodeTo.id}`}
+                          title={
+                            message.to in nodes
+                              ? `${message.to} / ${nodes[message.to].longname}`
+                              : `${message.to} / Unknown`
+                          }
+                        >
+                          {nodes[message.to]
+                            ? nodes[message.to].shortname
+                            : "UNK"}
+                        </Link>
+                      ) : (
+                        <span className="text-gray-500">ALL</span>
+                      )}
+                    </td>
+                    <td className="p-1 border border-gray-400" align="center">
+                      {message.hops_away}
+                    </td>
+                    <td
+                      className="p-1 text-nowrap border border-gray-400"
+                      align="right"
                     >
-                      {nodes[message.to]?.shortname ?? "UNK"}
-                    </span>
-                  </td>
-                  <td align="center">{message.hops_away}</td>
-                  {/* eslint-disable-next-line jsx-a11y/control-has-associated-label */}
-                  <td align="right">
-                    <Distance
-                      node1={nodes[message.from]}
-                      node2={nodes[message.to]}
-                    />
-                  </td>
-                  <td>{message.text}</td>
-                </tr>
-              ))
+                      {distanceFromSender && `${distanceFromSender} km`}
+                    </td>
+                    <td className="p-1 text-wrap border border-gray-400">
+                      {message.text}
+                    </td>
+                  </tr>
+                );
+              })
             : ""}
         </tbody>
       </table>
