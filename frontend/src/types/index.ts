@@ -110,7 +110,7 @@ export interface IMessage {
   id: number;
   to: string;
   from: string;
-  sender: string[];
+  sender: string;
   hops_away: number;
   timestamp: number;
   message: string;
