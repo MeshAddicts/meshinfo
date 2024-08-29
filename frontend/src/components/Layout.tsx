@@ -12,15 +12,13 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
         <div className="flex flex-col px-6 pb-4 overflow-y-auto bg-gray-300 border-r-2 grow gap-y-5 border-r-cyan-600">
           <div className="flex items-center h-24 mt-4 shrink-0">
             <div className="text-2xl">
-              <div className="p-0 m-0">
-                S<span className="text-gray-500">ACRAMENTO</span>
-              </div>
-              <div className="p-0 m-0">
-                V<span className="text-gray-500">ALLEY</span>
-              </div>
-              <div className="p-0 m-0">
-                M<span className="text-gray-500">ESH</span>
-              </div>
+              {config?.mesh.name.split(" ").map((word, index) => (
+                // eslint-disable-next-line react/no-array-index-key
+                <div className="p-0 m-0" key={`meshname-${index}`}>
+                  {word[0]}
+                  <span className="text-gray-500">{word.slice(1)}</span>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -197,9 +195,9 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
           <div className="flex flex-col">
             <h5 className="mb-2">
               Powered by MeshInfo{" "}
-              {/* TODO <span className="text-xs text-gray-500">
-                {config?.server.version_info.ref_name}
-              </span> */}
+              <span className="text-xs text-gray-500">
+                {config?.server.version_info?.refName}
+              </span>
             </h5>
             <a
               href="https://github.com/MeshAddicts/meshinfo"
