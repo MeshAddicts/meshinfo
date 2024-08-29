@@ -104,6 +104,11 @@ export interface Server {
   enrich: Enrich;
   graph: Graph;
   start_time: Date;
+  version_info?: VersionInfo;
+}
+
+export interface VersionInfo {
+  refName: string;
 }
 
 export interface Enrich {
