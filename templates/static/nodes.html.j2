@@ -131,22 +131,34 @@
           {% if node.telemetry %}
           <td class="hidden 2xl:table-cell p-1 border border-gray-400" align=right>
             {% if 'battery_level' in node.telemetry %}
-            {{ node.telemetry.battery_level }}%
+              {{ node.telemetry.battery_level }}%
             {% endif %}
           </td>
           <td class="hidden 2xl:table-cell p-1 border border-gray-400" align=right>
             {% if 'voltage' in node.telemetry %}
-            {{ node.telemetry.voltage|round(2) }}V
+              {% if node.telemetry.voltage is number %}
+                {{ node.telemetry.voltage|round(2) }}V
+              {% else %}
+                {{ node.telemetry.voltage }}
+              {% endif %}
             {% endif %}
           </td>
           <td class="hidden 2xl:table-cell p-1 border border-gray-400" align=right>
             {% if 'air_util_tx' in node.telemetry %}
-            {{ node.telemetry.air_util_tx|round(1) }}%
+              {% if node.telemetry.air_util_tx is number %}
+                {{ node.telemetry.air_util_tx|round(1) }}%
+              {% else %}
+                {{ node.telemetry.air_util_tx }}
+              {% endif %}
             {% endif %}
           </td>
           <td class="hidden 2xl:table-cell p-1 border border-gray-400" align=right>
             {% if 'channel_utilization' in node.telemetry %}
-            {{ node.telemetry.channel_utilization|round(1) }}%
+              {% if node.telemetry.channel_utilitization is number %}
+                {{ node.telemetry.channel_utilization|round(1) }}%
+              {% else %}
+                {{ node.telemetry.channel_utilitization }}
+              {% endif %}
             {% endif %}
           </td>
           {% else %}
