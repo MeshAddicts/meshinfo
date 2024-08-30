@@ -8,6 +8,7 @@
 node_modules/
 .github_pat
 .env
+.venv
 
 backups/*
 caddy
@@ -17,3 +18,11 @@ mosquitto/data/*
 postgres/data/*
 config.json
 spa
+
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions

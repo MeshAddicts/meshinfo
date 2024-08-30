@@ -1,5 +1,5 @@
 # trunk-ignore-all(checkov/CKV_DOCKER_3)
-FROM node:20.11.1-alpine
+FROM node:20.11.1-alpine AS build
 
 LABEL org.opencontainers.image.source="https://github.com/MeshAddicts/meshinfo"
 LABEL org.opencontainers.image.description="Realtime web UI to run against a Meshtastic regional or private mesh network."
@@ -10,12 +10,14 @@ WORKDIR /frontend
 
 RUN corepack enable
 RUN yarn
-RUN yarn build
+RUN yarn build --base=/next/
 
-ENV API_BASE_URI="http://localhost:9000"
+FROM nginx:alpine
 
-HEALTHCHECK NONE
+COPY --from=build /frontend/dist /usr/share/nginx/html/next
 
-EXPOSE 8000
+COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 
-CMD ["yarn", "run", "start"]
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]

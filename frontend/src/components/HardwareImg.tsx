@@ -15,7 +15,7 @@ export const HardwareImg = ({ model }: { model: number }) => {
 
   return (
     <img
-      src={`/images/hardware/${image}`}
+      src={`${import.meta.env.BASE_URL}images/hardware/${image}`}
       alt={modelName}
       title={modelName}
       className="w-8 h-8 object-cover"
