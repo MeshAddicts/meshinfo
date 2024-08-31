@@ -9,6 +9,7 @@ localhost {
 		reverse_proxy meshinfo:9000
 	}
 	handle_path /next/* {
+		rewrite * /next{uri}
 		reverse_proxy frontend:80
 	}
 	handle /* {
