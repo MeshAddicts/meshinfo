@@ -18,9 +18,9 @@ export const Chat = () => {
   const channels = useMemo(
     () =>
       Object.entries(chat?.channels ?? {}).filter(([id]) =>
-        config?.broker.channels.display.includes(id)
+        config?.broker?.channels?.display?.includes(id)
       ),
-    [chat?.channels, config?.broker.channels.display]
+    [chat?.channels, config?.broker?.channels?.display]
   );
 
   const [selectedChannel, setSelectedChannel] = useState<string>();
@@ -135,7 +135,7 @@ export const Chat = () => {
                       {format(
                         new Date(message.timestamp * 1000),
                         "yyyy-MM-dd HH:MM:SS xx",
-                        { timeZone: config?.server.timezone }
+                        { timeZone: config?.server?.timezone }
                       )}
                     </td>
                     <td className="p-1 text-center border border-gray-400">
