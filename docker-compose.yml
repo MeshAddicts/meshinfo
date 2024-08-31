@@ -40,6 +40,7 @@ services:
     ports:
       - 8000:80
     environment:
+      - VITE_API_BASE_URL=/api
       - NODE_ENV=production
     restart: always
 
@@ -47,7 +48,7 @@ services:
     image: caddy:latest
     ports:
       - 80:80
-      - 8443:443
+      - 443:443
     volumes:
       - ./caddy/data:/data/caddy
       - ./Caddyfile:/etc/caddy/Caddyfile
