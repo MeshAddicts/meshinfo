@@ -22,4 +22,13 @@ If you're using VSCode, make sure you install the recommended extensions. More i
 
 ## Notes
 
-The production portion of the frontend runs with an Express server to serve the static files so that you can switch out the api url as needed without rebuilding the container. You can change this by passing `VITE_BASE_API_URL` to the frontend container.
+The production portion of the frontend runs with an Express server to serve the static files so that you can switch out the api url as needed without rebuilding the container. You can change this by passing `VITE_BASE_API_URL` to the frontend container:
+
+```yml
+frontend:
+image: ghcr.io/meshaddicts/meshinfo-spa:latest
+ports:
+  - 8000:80
+environment:
+  - VITE_API_BASE_URL=/api
+```
