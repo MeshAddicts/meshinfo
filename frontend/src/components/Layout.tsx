@@ -2,6 +2,14 @@ import { Link, useLocation } from "react-router-dom";
 
 import { useGetConfigQuery } from "../slices/apiSlice";
 
+const defaultTools = [
+  { name: "Armooo's MeshView", url: "https://meshview.armooo.net" },
+  { name: "Liam's Meshtastic Map", url: "https://meshtastic.liamcottle.net" },
+  { name: "MeshMap", url: "https://meshmap.net" },
+  { name: "Bay Mesh Explorer", url: "https://app.bayme.sh" },
+  { name: "HWT Path Profiler", url: "https://heywhatsthat.com/profiler.html" },
+];
+
 export const Layout = ({ children }: { children: React.ReactNode }) => {
   const { pathname } = useLocation();
   const { data: config } = useGetConfigQuery();
@@ -12,7 +20,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
         <div className="flex flex-col px-6 pb-4 overflow-y-auto bg-gray-300 border-r-2 grow gap-y-5 border-r-cyan-600">
           <div className="flex items-center h-24 mt-4 shrink-0">
             <div className="text-2xl">
-              {config?.mesh.name.split(" ").map((word, index) => (
+              {config?.mesh?.name?.split(" ").map((word, index) => (
                 // eslint-disable-next-line react/no-array-index-key
                 <div className="p-0 m-0" key={`meshname-${index}`}>
                   {word[0]}
@@ -22,10 +30,10 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
             </div>
           </div>
 
-          <div>{config?.mesh.description}</div>
+          <div>{config?.mesh?.description}</div>
 
           <div>
-            <a href={config?.mesh.url} className="text-xs text-gray-900">
+            <a href={config?.mesh?.url} className="text-xs text-gray-900">
               Website
             </a>
           </div>
@@ -150,7 +158,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
 
           <nav className="flex flex-col flex-1">
             <h3 className="font-bold">Tools</h3>
-            {config?.mesh.tools.map((tool, index) => (
+            {(config?.mesh?.tools ?? defaultTools).map((tool, index) => (
               // eslint-disable-next-line react/no-array-index-key
               <div key={`tools-${index}`} className="mb-1">
                 <a href={tool.url} target="_blank" rel="noopener noreferrer">
@@ -196,7 +204,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
             <h5 className="mb-2">
               Powered by MeshInfo{" "}
               <span className="text-xs text-gray-500">
-                {config?.server.version_info?.refName}
+                {config?.server?.version_info?.refName}
               </span>
             </h5>
             <a

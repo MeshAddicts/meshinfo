@@ -99,8 +99,8 @@ export function Map() {
   }, [rawNodes]);
 
   const serverNode = useMemo(
-    () => nodes[config?.server.node_id ?? ""],
-    [config?.server.node_id, nodes]
+    () => nodes[config?.server?.node_id ?? ""],
+    [config?.server?.node_id, nodes]
   );
 
   const reverseGeocode = async (

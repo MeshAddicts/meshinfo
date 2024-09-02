@@ -36,11 +36,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.spa
-    volumes:
-      - ./frontend/dist:/usr/share/nginx/html/next
     ports:
       - 8000:80
     environment:
+      - VITE_API_BASE_URL=/api
       - NODE_ENV=production
     restart: always
 

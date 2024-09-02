@@ -262,14 +262,14 @@ export const Node = () => {
                     align="left"
                   >
                     Distance from{" "}
-                    {nodes[config?.server.node_id ?? ""].shortname}
+                    {nodes[config?.server?.node_id ?? ""].shortname}
                   </th>
                   <td className="p-1">
                     {calculateDistanceBetweenNodes(
-                      nodes[config?.server.node_id ?? ""],
+                      nodes[config?.server?.node_id ?? ""],
                       node
                     ) !== null
-                      ? `${calculateDistanceBetweenNodes(nodes[config?.server.node_id ?? ""], node)} km`
+                      ? `${calculateDistanceBetweenNodes(nodes[config?.server?.node_id ?? ""], node)} km`
                       : "Unknown"}
                   </td>
                 </tr>
