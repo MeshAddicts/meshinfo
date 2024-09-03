@@ -28,13 +28,30 @@ class DataRenderer:
     self.save_file("nodes.json", nodes)
     print(f"Saved {len(nodes)} nodes to file ({self.config['paths']['data']}/nodes.json)")
 
-    self.save_file("telemetry.json", self.data.telemetry)
-    print(f"Saved {len(self.data.telemetry)} telemetry to file ({self.config['paths']['data']}/telemetry.json)")
+    self.save_file("telemetry.json", self.data.telemetry, 'telemetry')
 
-    self.save_file("traceroutes.json", self.data.traceroutes)
-    print(f"Saved {len(self.data.traceroutes)} traceroutes to file ({self.config['paths']['data']}/traceroutes.json)")
+    self.save_file("traceroutes.json", self.data.traceroutes, 'traceroutes')
 
-  def save_file(self, filename, data):
+  def save_file(self, filename, data, settings_key=None):
+
+    data_to_save = data
+
+    # check settings to see if we should store this data and (if it's a list) up to how many items
+    if settings_key:
+      history_settings = self.config.get('history', {}).get(settings_key, {})
+
+      if history_settings.get('store', True):
+        limit = history_settings.get('storage_limit', 0)
+        if isinstance(data, list) and limit > 0:
+          data_to_save = data[:limit]
+      else:
+        print(f"Not configured to save {settings_key}")
+        return
+
     print(f"Saving {filename}")
+
     with open(f"{self.config['paths']['data']}/{filename}", "w", encoding='utf-8') as f:
-      json.dump(data, f, indent=2, sort_keys=True, cls=_JSONEncoder)
+      json.dump(data_to_save, f, indent=2, sort_keys=True, cls=_JSONEncoder)
+
+    if settings_key:
+      print(f"Saved {len(data_to_save)} {settings_key} to file ({self.config['paths']['data']}/{filename}.json)")

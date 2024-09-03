@@ -492,12 +492,16 @@ class MQTT:
                                    telemetry=msg['payload'] if 'payload' in msg else None
                                   )
 
-        if id not in self.data.telemetry_by_node:
-            self.data.telemetry_by_node[id] = []
+        # only hold onto data about telemetry if our config has us saving it (store) and/or keeping it in memory (retain)
+        history_settings = self.config.get('history', {}).get('telemetry', {})
+        if history_settings.get('store', True) or history_settings.get('retain', True):
 
-        if 'payload' in msg:
-            self.data.telemetry.insert(0, msg)
-            self.data.telemetry_by_node[id].insert(0, msg)
+            if id not in self.data.telemetry_by_node:
+                self.data.telemetry_by_node[id] = []
+
+            if 'payload' in msg:
+                self.data.telemetry.insert(0, msg)
+                self.data.telemetry_by_node[id].insert(0, msg)
 
         await self.data.save()
 
@@ -561,11 +565,13 @@ class MQTT:
 
             msg['route_ids'].append(node_id)
 
-        if id in self.data.traceroutes_by_node:
-            self.data.traceroutes_by_node[id].insert(0, msg)
-        else:
-            self.data.traceroutes_by_node[id] = [msg]
-        self.data.traceroutes.insert(0, msg)
+        history_settings = self.config.get('history', {}).get('traceroutes', {})
+        if history_settings.get('store', True) or history_settings.get('retain', True):
+            if id in self.data.traceroutes_by_node:
+                self.data.traceroutes_by_node[id].insert(0, msg)
+            else:
+                self.data.traceroutes_by_node[id] = [msg]
+            self.data.traceroutes.insert(0, msg)
         await self.data.save()
 
     ### helpers
