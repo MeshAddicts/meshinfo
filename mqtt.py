@@ -79,11 +79,18 @@ class MQTT:
                 mp = mesh_pb2.MeshPacket()
                 outs = {}
 
+                common_MTJ_kwargs = {'preserving_proto_field_name': True,
+                                     'ensure_ascii': False,
+                                     'indent': 2,
+                                     'sort_keys': True,
+                                     'use_integers_for_enums': True,
+                                    }
+
                 try:
                     se = mqtt_pb2.ServiceEnvelope()
                     se.ParseFromString(msg.payload)
                     mp = se.packet
-                    outs = json.loads(MessageToJson(mp, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
+                    outs = json.loads(MessageToJson(mp, **common_MTJ_kwargs))
                     if self.config['debug']:
                         print(f"Decoded protobuf message: {outs}")
                 except Exception as _:
@@ -106,7 +113,7 @@ class MQTT:
                             data = mesh_pb2.Data()
                             data.ParseFromString(decrypted_bytes)
                             mp.decoded.CopyFrom(data)
-                            outs = json.loads(MessageToJson(mp, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
+                            outs = json.loads(MessageToJson(mp, **common_MTJ_kwargs))
                             break
                         except Exception as e:
                             if self.config['debug']:
@@ -135,12 +142,13 @@ class MQTT:
                 elif mp.decoded.portnum == portnums_pb2.MAP_REPORT_APP:
                     try:
                         report = mesh_pb2.Position().FromString(mp.decoded.payload)
-                        out = json.loads(MessageToJson(report, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
+                        out = json.loads(MessageToJson(report, always_print_fields_with_no_presence=True, **common_MTJ_kwargs))
                         outs["type"] = "mapreport"
                         outs["payload"] = out
                         if self.config['debug']:
                             print(f"Decoded protobuf message: mapreport: {outs}")
                         # self.handle_mapreport(outs)
+                        await self.handle_default(outs)
                     except UnicodeDecodeError as e:
                         print(f"*** Unicode decoding error: text: {str(e)}")
                     except DecodeError as e:
@@ -149,7 +157,7 @@ class MQTT:
                 elif mp.decoded.portnum == portnums_pb2.NEIGHBORINFO_APP:
                     try:
                         info = mesh_pb2.NeighborInfo().FromString(mp.decoded.payload)
-                        out = json.loads(MessageToJson(info, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
+                        out = json.loads(MessageToJson(info, always_print_fields_with_no_presence=True, **common_MTJ_kwargs))
                         outs["type"] = "neighborinfo"
                         outs["payload"] = out
                         if self.config['debug']:
@@ -163,7 +171,7 @@ class MQTT:
                 elif mp.decoded.portnum == portnums_pb2.NODEINFO_APP:
                     try:
                         info = mesh_pb2.User().FromString(mp.decoded.payload)
-                        out = json.loads(MessageToJson(info, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
+                        out = json.loads(MessageToJson(info, **common_MTJ_kwargs))
                         if isinstance(out['id'], int):
                             out["id"] = utils.convert_node_id_from_int_to_hex(out['id'])
                         out["id"] = out['id'].replace('!', '')
@@ -180,12 +188,13 @@ class MQTT:
                 elif mp.decoded.portnum == portnums_pb2.ROUTING_APP:
                     try:
                         data = mesh_pb2.Routing().FromString(mp.decoded.payload)
-                        out = json.loads(MessageToJson(data, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
+                        out = json.loads(MessageToJson(data, **common_MTJ_kwargs))
                         outs["type"] = "routing"
                         outs["payload"] = out
                         if self.config['debug']:
                             print(f"Decoded protobuf message: routing: {outs}")
                         # self.handle_routing(outs)
+                        await self.handle_default(outs)
                     except UnicodeDecodeError as e:
                         print(f"*** Unicode decoding error: text: {str(e)}")
                     except DecodeError as e:
@@ -194,7 +203,7 @@ class MQTT:
                 elif mp.decoded.portnum == portnums_pb2.TRACEROUTE_APP:
                     try:
                         route = mesh_pb2.RouteDiscovery().FromString(mp.decoded.payload)
-                        out = json.loads(MessageToJson(route, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
+                        out = json.loads(MessageToJson(route, always_print_fields_with_no_presence=True, **common_MTJ_kwargs))
                         if 'route' in out:
                             route = []
                             for r in out['route']:
@@ -214,7 +223,7 @@ class MQTT:
                 elif mp.decoded.portnum == portnums_pb2.POSITION_APP:
                     try:
                         pos = mesh_pb2.Position().FromString(mp.decoded.payload)
-                        out = json.loads(MessageToJson(pos, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
+                        out = json.loads(MessageToJson(pos, **common_MTJ_kwargs))
                         outs["type"] = "position"
                         outs["payload"] = out
                         if self.config['debug']:
@@ -228,7 +237,7 @@ class MQTT:
                 elif mp.decoded.portnum == portnums_pb2.TELEMETRY_APP:
                     try:
                         env = telemetry_pb2.Telemetry().FromString(mp.decoded.payload)
-                        out = json.loads(MessageToJson(env, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
+                        out = json.loads(MessageToJson(env, **common_MTJ_kwargs))
                         if 'rx_time' in outs:
                             out['timestamp'] = datetime.datetime.fromtimestamp(outs['rx_time'] / 1000).astimezone(ZoneInfo(self.config['server']['timezone']))
                         outs["type"] = "telemetry"
@@ -261,6 +270,7 @@ class MQTT:
                             outs["payload"] = {}
                     else:
                         outs["payload"] = {}
+                    await self.handle_default(outs)
 
                 print(outs)
                 await self.handle_log(outs)
@@ -319,7 +329,83 @@ class MQTT:
     async def unsubscribe(self, client, topic):
         client.unsubscribe(topic)
 
+    def node_create_or_update(self, node_id, msg,
+                              sort_nodes=None,
+                              create_string="Node {node_id} added",
+                              update_string="Node {node_id} updated",
+                              **updates):
+        """
+        Helper to create or update nodes
+        :param node_id: The id for the node, in hex format
+        :param msg: Dict object containing the message
+        :param sort_nodes: Whether to sort our stored node data afterwards, defaults to yes
+        :param create_string: String template to print when new node added
+        :param update_string: String template to print when node is updated
+        :param updates: Keyword arguments that will be set for the node's data (is not validated)
+        """
+
+        info_string = update_string  # default to using the update_string, unless we create a new node
+
+        if node_id in self.data.nodes:
+            node = self.data.nodes[node_id]
+        else:
+            node = Node.default_node(node_id)
+            info_string = create_string
+
+        # update node with keyword arguments
+        if updates:
+            node.update(updates)
+
+        # record time first seen if not already there
+        if 'first_seen' not in node:
+            node['first_seen'] = datetime.datetime.now().astimezone(ZoneInfo(self.config['server']['timezone']))
+
+        # store the changed node
+        self.data.update_node(node_id, node)
+
+        print(info_string.format(node_id=node_id))
+
+        if sort_nodes is not False:
+            self.sort_nodes_by_shortname()
+
+
     ### message handlers
+
+    def handle_common(self, msg, id_from_payload=None):
+        """
+        Helper that handles common tasks for incoming messages
+        :param msg: Dict object containing the message
+        :param id_from_payload: Whether to use the id from the payload as the node id, defaults to trying to use it.
+        :return: Tuple containing the node id and an adjusted message dict
+        """
+
+        if 'from' in msg:
+            msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
+
+        if 'to' in msg:
+            msg['to'] = utils.convert_node_id_from_int_to_hex(msg["to"])
+
+        if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
+            msg['sender'] = msg['sender'].replace('!', '')
+
+        node_id = msg.get('from', None)
+        if id_from_payload is not False:
+            try:
+                if isinstance(msg['payload'], dict):
+                    node_id = msg['payload']['id']
+                    # revert back to any 'from' address if the payload provides nothing
+                    if node_id is None:
+                        node_id = msg.get('from', None)
+            except KeyError:
+                pass
+
+        return node_id, msg
+
+    async def handle_default(self, msg):
+        id, msg = self.handle_common(msg)
+
+        self.node_create_or_update(id, msg=msg)
+        await self.data.save()
 
     async def handle_log(self, msg):
         topic = msg['topic'] if 'topic' in msg else 'unknown'
@@ -336,119 +422,69 @@ class MQTT:
             f.write(f"{msg}\n")
 
     async def handle_neighborinfo(self, msg):
-        msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
-        if 'to' in msg:
-            msg['to'] = utils.convert_node_id_from_int_to_hex(msg["to"])
-        if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
-            msg['sender'] = msg['sender'].replace('!', '')
+        id, msg = self.handle_common(msg, id_from_payload=False)
 
-        id = msg['from']
-        if id in self.data.nodes:
-            node = self.data.nodes[id]
-            node['neighborinfo'] = msg['payload']
-            self.data.update_node(id, node)
-            print(f"Node {id} updated with neighborinfo")
-        else:
-            node = Node.default_node(id)
-            node['neighborinfo'] = msg['payload']
-            self.data.update_node(id, node)
-            print(f"Node {id} skeleton added with neighborinfo")
+        self.node_create_or_update(id, msg,
+                                   sort_nodes=False,
+                                   create_string="Node {node_id} skeleton added with neighborinfo",
+                                   update_string="Node {node_id} updated with neighborinfo",
+                                   neighborinfo=msg['payload'],
+                                  )
         await self.data.save()
 
     async def handle_nodeinfo(self, msg):
-        msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
-        if 'to' in msg:
-            msg['to'] = utils.convert_node_id_from_int_to_hex(msg["to"])
-        if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
-            msg['sender'] = msg['sender'].replace('!', '')
+        id, msg = self.handle_common(msg, id_from_payload=True)
+        node = self.data.nodes.get(id, None)
 
-        # TODO: Reduce the replicated code here
-        id = msg['payload']['id']
-        if id in self.data.nodes:
-            node = self.data.nodes[id]
-            if 'hardware' in msg['payload']:
-                node['hardware'] = msg['payload']['hardware']
-            elif 'hw_model' in msg['payload']:
-                node['hardware'] = msg['payload']['hw_model']
+        update_dict = {}
 
-            if 'longname' in msg['payload']:
-                node['longname'] = msg['payload']['longname']
-            elif 'long_name' in msg['payload']:
-                node['longname'] = msg['payload']['long_name']
+        if 'hardware' in msg['payload']:
+            update_dict['hardware'] = msg['payload']['hardware']
+        elif 'hw_model' in msg['payload']:
+            update_dict['hardware'] = msg['payload']['hw_model']
 
-            if 'shortname' in msg['payload']:
-                node['shortname'] = msg['payload']['shortname']
-            elif 'short_name' in msg['payload']:
-                node['shortname'] = msg['payload']['short_name']
+        if 'longname' in msg['payload']:
+            update_dict['longname'] = msg['payload']['longname']
+        elif 'long_name' in msg['payload']:
+            update_dict['longname'] = msg['payload']['long_name']
 
-            if 'role' in msg['payload']:
-                node['role'] = msg['payload']['role']
+        if 'shortname' in msg['payload']:
+            update_dict['shortname'] = msg['payload']['shortname']
+        elif 'short_name' in msg['payload']:
+            update_dict['shortname'] = msg['payload']['short_name']
 
-            self.data.update_node(id, node)
-            print(f"Node {id} updated")
-        else:
-            node = Node.default_node(id)
-            if 'hardware' in msg['payload']:
-                node['hardware'] = msg['payload']['hardware']
-            elif 'hw_model' in msg['payload']:
-                node['hardware'] = msg['payload']['hw_model']
+        if 'role' in msg['payload']:
+            update_dict['role'] = msg['payload']['role']
 
-            if 'longname' in msg['payload']:
-                node['longname'] = msg['payload']['longname']
-            elif 'long_name' in msg['payload']:
-                node['longname'] = msg['payload']['long_name']
-
-            if 'shortname' in msg['payload']:
-                node['shortname'] = msg['payload']['shortname']
-            elif 'short_name' in msg['payload']:
-                node['shortname'] = msg['payload']['short_name']
-
-            if 'role' in msg['payload']:
-                node['role'] = msg['payload']['role']
-
-            self.data.update_node(id, node)
-            print(f"Node {id} added")
-        self.sort_nodes_by_shortname()
+        self.node_create_or_update(id, msg,
+                                   create_string="Node {node_id} added",
+                                   update_string="Node {node_id} updated",
+                                   **update_dict,
+                                  )
         await self.data.save()
 
     async def handle_position(self, msg):
-        msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
-        if 'to' in msg:
-            msg['to'] = utils.convert_node_id_from_int_to_hex(msg["to"])
-        if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
-            msg['sender'] = msg['sender'].replace('!', '')
+        id, msg = self.handle_common(msg, id_from_payload=False)
+        position=msg['payload'] if 'payload' in msg else None
 
-        id = msg['from']
-        if id in self.data.nodes:
-            node = self.data.nodes[id]
-            node['position'] = msg['payload'] if 'payload' in msg else None
-            self.data.update_node(id, node)
-            print(f"Node {id} updated with position")
-        else:
-            node = Node.default_node(id)
-            node['position'] = msg['payload'] if 'payload' in msg else None
-            self.data.update_node(id, node)
-            print(f"Node {id} skeleton added with position")
+        self.node_create_or_update(id, msg,
+                                   sort_nodes=False,
+                                   create_string="Node {node_id} skeleton added with position",
+                                   update_string="Node {node_id} updated with position",
+                                   position=position,
+                                   last_position_update=datetime.datetime.fromtimestamp(msg['timestamp']).astimezone(ZoneInfo(self.config['server']['timezone'])),
+                                  )
         await self.data.save()
 
     async def handle_telemetry(self, msg):
-        msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
-        if 'to' in msg:
-            msg['to'] = utils.convert_node_id_from_int_to_hex(msg["to"])
-        if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
-            msg['sender'] = msg['sender'].replace('!', '')
+        id, msg = self.handle_common(msg, id_from_payload=False)
 
-        id = msg['from']
-        if id in self.data.nodes:
-            node = self.data.nodes[id]
-            node['telemetry'] = msg['payload'] if 'payload' in msg else None
-            self.data.update_node(id, node)
-            print(f"Node {id} updated with telemetry")
-        else:
-            node = Node.default_node(id)
-            node['telemetry'] = msg['payload'] if 'payload' in msg else None
-            self.data.update_node(id, node)
-            print(f"Node {id} skeleton added with telemetry")
+        self.node_create_or_update(id, msg,
+                                   sort_nodes=False,
+                                   create_string="Node {node_id} skeleton added with telemetry",
+                                   update_string="Node {node_id} updated with telemetry",
+                                   telemetry=msg['payload'] if 'payload' in msg else None
+                                  )
 
         if id not in self.data.telemetry_by_node:
             self.data.telemetry_by_node[id] = []
@@ -460,11 +496,7 @@ class MQTT:
         await self.data.save()
 
     async def handle_text(self, msg):
-        msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
-        if 'to' in msg:
-            msg['to'] = utils.convert_node_id_from_int_to_hex(msg["to"])
-        if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
-            msg['sender'] = msg['sender'].replace('!', '')
+        id, msg = self.handle_common(msg, id_from_payload=False)
         if 'channel' not in msg:
             msg['channel'] = "0"
 
@@ -475,7 +507,7 @@ class MQTT:
             }
 
         chat = {
-            'id': msg['id'],
+            'id': id,
             'from': msg['from'],
             'to': msg['to'],
             'channel': str(msg['channel']),
@@ -489,21 +521,29 @@ class MQTT:
             chat['sender'] = msg['sender']
         self.data.chat['channels'][str(msg['channel'])]['messages'].insert(0, chat)
 
-        node = self.data.find_node_by_hex_id(msg['from'])
         # TODO: Replace with something more configurable
-        if node:
-            if 'TC' in chat['text'] and 'BBS' in chat['text'] and 'Commands' in chat['text']:
-                node['tc2_bbs'] = True
-            self.data.update_node(node['id'], node)
+        update_dict = {'tc2_bbs': True} if 'TC' in chat['text'] and 'BBS' in chat['text'] and 'Commands' in chat['text'] else {}
+
+        self.node_create_or_update(id, msg,
+                                   sort_nodes=False,
+                                   create_string="Node {node_id} skeleton added with text",
+                                   update_string="Node {node_id} updated with text",
+                                   **update_dict,
+                                  )
 
         await self.data.save()
 
     async def handle_traceroute(self, msg):
-        msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
-        if 'to' in msg:
-            msg['to'] = utils.convert_node_id_from_int_to_hex(msg["to"])
-        if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
-            msg['sender'] = msg['sender'].replace('!', '')
+
+        id, msg = self.handle_common(msg, id_from_payload=False)
+
+        # creating/doing empty update of the node first, in case needed for route lookup
+        self.node_create_or_update(id, msg,
+                                   sort_nodes=False,
+                                   create_string="Node {node_id} skeleton added with traceroute",
+                                   update_string="Node {node_id} updated with traceroute",
+                                  )
+
         msg['route'] = msg['payload']['route']
         msg['route_ids'] = []
         for r in msg['route']:
