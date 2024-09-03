@@ -167,7 +167,7 @@
           <td class="hidden 2xl:table-cell p-1 border border-gray-400"></td>
           <td class="hidden 2xl:table-cell p-1 border border-gray-400"></td>
           {% endif %}
-          <td class="p-1 border border-gray-400 text-nowrap" align=right title="{{ node.last_seen_human }}">{{ node.since.seconds }} secs</td>
+          <td class="p-1 border border-gray-400 text-nowrap" align=right title="{{ node.last_seen_human }}">{{ node.since.total_seconds()|int }} secs</td>
         </tr>
         {% endfor %}
       </tbody>
