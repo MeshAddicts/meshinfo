@@ -281,7 +281,6 @@ class MQTT:
                 if self.config['debug']:
                     print(f"Received a JSON message: {msg.topic} {msg.payload}")
                 try:
-                    await self.handle_log(msg)
                     decoded = msg.payload.decode("utf-8")
                     j = json.loads(decoded, cls=_JSONDecoder)
                     j['topic'] = msg.topic.value
@@ -307,6 +306,7 @@ class MQTT:
                                 route.append(id)
                             j['route'] = route
                         await self.handle_traceroute(j)
+                    await self.handle_log(j)
                     await self.prune_expired_nodes()
                 except Exception as e:
                     print(e)
