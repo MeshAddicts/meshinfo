@@ -5,7 +5,7 @@
 {% block content %}
     <h5 class="mb-2 text-gray-500">Chat</h5>
     <h1 class="mb-2 text-xl">Chat</h1>
-    {% for channel in chat['channels'] if channel in config['broker']['channels']['display'] %}
+    {% for channel in chat['channels'] if 'all' in config['broker']['channels']['display'] or channel in config['broker']['channels']['display']%}
     <p class="mb-2">
       There are <b>{{ chat['channels'][channel]['messages']|count }}</b> messages on <a href="#channel-{{ channel }}">channel {{ channel }}</a> that have
       been heard by the mesh by <a href="node_{{ config['server']['node_id'] }}.html">{{ config['server']['node_id'] }}</a> ({{ config['server']['node_id'] }}).
@@ -17,7 +17,7 @@
         <label for="tabs" class="sr-only">Select a tab</label>
         <!-- Use an "onChange" listener to redirect the user to the selected tab URL. -->
         <select id="tabs" name="tabs" class="block w-full rounded-md border-gray-300 py-2 pl-3 pr-10 text-base focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm">
-          {% for channel in chat['channels'] if channel in config['broker']['channels']['display'] %}
+          {% for channel in chat['channels'] if 'all' in config['broker']['channels']['display'] or channel in config['broker']['channels']['display'] %}
           <option>Channel {{ channel }}</option>
           {% endfor %}
         </select>
@@ -26,7 +26,7 @@
         <div class="border-b border-gray-200">
           <nav class="-mb-px flex space-x-8" aria-label="Tabs">
             <!-- Current: "border-indigo-500 text-indigo-600", Default: "border-transparent text-gray-500 hover:border-gray-200 hover:text-gray-700" -->
-            {% for channel in chat['channels'] if channel in config['broker']['channels']['display'] %}
+            {% for channel in chat['channels'] if 'all' in config['broker']['channels']['display'] or channel in config['broker']['channels']['display'] %}
             <a href="#"
                 class="flex whitespace-nowrap border-b-2 border-transparent px-1 py-4 text-sm font-medium text-gray-500 hover:border-gray-200 hover:text-gray-700"
                 onChange=""
@@ -41,7 +41,7 @@
       </div>
     </div>
 
-    {% for channel in chat['channels'] if channel in config['broker']['channels']['display'] %}
+    {% for channel in chat['channels'] if 'all' in config['broker']['channels']['display'] or channel in config['broker']['channels']['display'] %}
     <div id="tab-channel-{{ channel }}" class="mt-4" role="tabpanel" aria-labelledby="tab-{{ channel }}">
       <table class="w-full max-w-full table-fixed border-collapse border border-gray-500 bg-gray-50">
         <thead>
