@@ -352,9 +352,19 @@ class MQTT:
             node = Node.default_node(node_id)
             info_string = create_string
 
+        # obtain node override data and purge if need be
+        overrides = self.data.nodes_overrides.get(id, {})
+        if overrides.get("purge", False):
+            if id in self.data.nodes:
+                self.data.nodes.pop(id)
+            return
+
+        # may want to ignore some keys for some nodes, including any keys overriden at startup
+        ignored_keys = overrides.get('ignore_update_keys', list(overrides.keys()))
+
         # update node with keyword arguments
         if updates:
-            node.update(updates)
+            node.update({k:v for k,v in updates.items() if k not in ignored_keys})
 
         # record time first seen if not already there
         if 'first_seen' not in node:

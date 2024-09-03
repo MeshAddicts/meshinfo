@@ -30,6 +30,7 @@ class MemoryDataStore:
     self.mqtt_messages: list = []
     self.mqtt_connect_time: datetime = self.config['server']['start_time']
     self.nodes: dict = {}
+    self.nodes_overrides: dict = {}
     self.telemetry: list = []
     self.telemetry_by_node: dict = {}
     self.traceroutes: list = []
@@ -94,10 +95,19 @@ class MemoryDataStore:
           if id in self.nodes:
             print(f"Overriding node {id}")
             node = self.nodes[id]
-            if 'position' in node_override:
-              print("Overriding node position")
-              node['position'] = node_override['position']
+            for k, v in nodes_overrides[id].items():
+              # ignore this key, which can be used to store lists of what keys to ignore when updating a node
+              if k =='ignore_update_keys':
+                pass
+              # If the override for this node has 'purge': True, then remove the node from the data
+              elif k == 'purge' and v:
+                print(f"Purging node {id} completely")
+                self.nodes.pop[id]
+              else:
+                print(f"Overriding node {id} {k} with {v}")
+                node[k] = v
             self.nodes[id] = node
+        self.nodes_overrides = nodes_overrides
         print(f"Loaded {len(nodes_overrides.keys())} nodes overrides from file ({self.config['paths']['data']}/nodes-overrides.json)")
     except FileNotFoundError:
       pass
