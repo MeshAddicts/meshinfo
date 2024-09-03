@@ -72,7 +72,7 @@ class MQTT:
 
     async def process_mqtt_msg(self, client, msg):
         if self.config['broker']['decoders']['protobuf']['enabled']:
-            if'/2/e/' in msg.topic.value or '/2/map/' in msg.topic.value:
+            if '/2/e/' in msg.topic.value or '/2/map/' in msg.topic.value:
                 if self.config['debug']:
                     print(f"Received a protobuf message: {msg.topic} {msg.payload}")
                 is_encrypted = False
@@ -120,6 +120,11 @@ class MQTT:
                                 print(f"*** Decryption failed: {str(e)}")
                             continue
 
+                if hasattr(mp, 'hops_away'):
+                    outs['hops_away'] = mp.hops_away
+
+                outs['hop_limit'] = mp.hop_limit
+                outs['hop_start'] = mp.hop_start
                 outs['rssi'] = mp.rx_rssi
                 outs['snr'] = mp.rx_snr
                 outs['timestamp'] = mp.rx_time
@@ -395,6 +400,10 @@ class MQTT:
         if 'to' in msg:
             msg['to'] = utils.convert_node_id_from_int_to_hex(msg["to"])
 
+        # store last part of mqtt topic as sender if missing from message
+        if 'sender' not in msg:
+            msg['sender'] = msg['topic'].rpartition('/!')[2]
+
         if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
             msg['sender'] = msg['sender'].replace('!', '')
 
@@ -408,6 +417,10 @@ class MQTT:
                         node_id = msg.get('from', None)
             except KeyError:
                 pass
+
+        # calculate hops_away if missing and we have enough info
+        if msg.get('hops_away', None) is None and msg.get('hop_start', 0) != 0:
+            msg['hops_away'] = msg['hop_start'] - msg['hop_limit']
 
         return node_id, msg
 
