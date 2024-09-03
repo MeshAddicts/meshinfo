@@ -208,15 +208,8 @@ class MQTT:
                 elif mp.decoded.portnum == portnums_pb2.TRACEROUTE_APP:
                     try:
                         route = mesh_pb2.RouteDiscovery().FromString(mp.decoded.payload)
-                        out = json.loads(MessageToJson(route, always_print_fields_with_no_presence=True, **common_MTJ_kwargs))
-                        if 'route' in out:
-                            route = []
-                            for r in out['route']:
-                                id = utils.convert_node_id_from_int_to_hex(int(r))
-                                route.append(id)
-                            outs["route"] = route
+                        outs["payload"] = json.loads(MessageToJson(route, always_print_fields_with_no_presence=True, **common_MTJ_kwargs))
                         outs["type"] = "traceroute"
-                        outs["payload"] = out
                         if self.config['debug']:
                             print(f"Decoded protobuf message: traceroute: {outs}")
                         await self.handle_traceroute(outs)
@@ -291,25 +284,15 @@ class MQTT:
                     j['topic'] = msg.topic.value
                     if j['type'] == "neighborinfo":
                         await self.handle_neighborinfo(j)
-                    if j['type'] == "nodeinfo":
+                    elif j['type'] == "nodeinfo":
                         await self.handle_nodeinfo(j)
-                    if j['type'] == "position":
+                    elif j['type'] == "position":
                         await self.handle_position(j)
-                    if j['type'] == "telemetry":
+                    elif j['type'] == "telemetry":
                         await self.handle_telemetry(j)
-                    if j['type'] == "text":
+                    elif j['type'] == "text":
                         await self.handle_text(j)
-                    if j['type'] == "traceroute":
-                        if 'route' in j['payload']:
-                            route = []
-                            for r in j['payload']['route']:
-                                node = self.data.find_node_by_longname(r)
-                                if node is not None:
-                                    id = node['id']
-                                else:
-                                    id = None
-                                route.append(id)
-                            j['route'] = route
+                    elif j['type'] == "traceroute":
                         await self.handle_traceroute(j)
                     await self.handle_log(j)
                     await self.prune_expired_nodes()
@@ -567,20 +550,16 @@ class MQTT:
                                    update_string="Node {node_id} updated with traceroute",
                                   )
 
-        msg['route'] = msg['payload']['route']
         msg['route_ids'] = []
-        for r in msg['route']:
+        for r in msg['payload']['route']:
             if isinstance(r, str):
-                node = self.data.find_node_by_longname(r)
+                node_id = r
             elif isinstance(r, int):
-                node = self.data.find_node_by_hex_id(utils.convert_node_id_from_int_to_hex(r))
+                node_id = utils.convert_node_id_from_int_to_hex(r)
             else:
-                node = None
+                node_id = None
 
-            if node:
-                msg['route_ids'].append(node['id'])
-            else:
-                msg['route_ids'].append(r)
+            msg['route_ids'].append(node_id)
 
         if id in self.data.traceroutes_by_node:
             self.data.traceroutes_by_node[id].insert(0, msg)
