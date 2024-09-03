@@ -586,7 +586,7 @@ class MQTT:
                 continue
             last_seen = datetime.datetime.fromisoformat(node['last_seen']).astimezone() if isinstance(node['last_seen'], str) else node['last_seen']
             try:
-                since = (now - last_seen).seconds
+                since = (now - last_seen).total_seconds()
             except Exception:
                 print(f"Node {id} has invalid last_seen: {node['last_seen']}")
                 self.data.nodes[id]['last_seen'] = None
