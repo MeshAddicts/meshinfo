@@ -46,7 +46,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
                   src={`${import.meta.env.BASE_URL}images/icons/chat.svg`}
                   width="20"
                   height="20"
-                  className="inline-block"
+                  className="inline-block mr-2"
                   alt="chat icon"
                   style={{ verticalAlign: "middle" }}
                 />
@@ -59,7 +59,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
                   src={`${import.meta.env.BASE_URL}images/icons/map.svg`}
                   width="20"
                   height="20"
-                  className="inline-block"
+                  className="inline-block mr-2"
                   alt="graph icon"
                   style={{ verticalAlign: "middle" }}
                 />
@@ -72,7 +72,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
                   src={`${import.meta.env.BASE_URL}images/icons/map.svg`}
                   width="20"
                   height="20"
-                  className="inline-block"
+                  className="inline-block mr-2"
                   alt="map icon"
                   style={{ verticalAlign: "middle" }}
                 />
@@ -85,7 +85,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
                   src={`${import.meta.env.BASE_URL}images/icons/node.svg`}
                   width="20"
                   height="20"
-                  className="inline-block"
+                  className="inline-block mr-2"
                   alt="node icon"
                   style={{ verticalAlign: "middle" }}
                 />
@@ -98,7 +98,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
                   src={`${import.meta.env.BASE_URL}images/icons/neighbors.svg`}
                   width="20"
                   height="20"
-                  className="inline-block"
+                  className="inline-block mr-2"
                   alt="neighbors icon"
                   style={{ verticalAlign: "middle" }}
                 />
@@ -111,7 +111,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
                   src={`${import.meta.env.BASE_URL}images/icons/stats.svg`}
                   width="20"
                   height="20"
-                  className="inline-block"
+                  className="inline-block mr-2"
                   alt="stats icon"
                   style={{ verticalAlign: "middle" }}
                 />
@@ -124,7 +124,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
                   src={`${import.meta.env.BASE_URL}images/icons/telemetry.svg`}
                   width="20"
                   height="20"
-                  className="inline-block"
+                  className="inline-block mr-2"
                   alt="telemetry icon"
                   style={{ verticalAlign: "middle" }}
                 />
@@ -137,7 +137,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
                   src={`${import.meta.env.BASE_URL}images/icons/route2.svg`}
                   width="20"
                   height="20"
-                  className="inline-block"
+                  className="inline-block mr-2"
                   alt="traceroutes icon"
                   style={{ verticalAlign: "middle" }}
                 />
