@@ -2,8 +2,7 @@ services:
   caddy:
     image: caddy:latest
     ports:
-      - 8001:80
-      - 8443:443
+      - 8000:80
     volumes:
       - ./caddy/data:/data/caddy
       - ./Caddyfile.dev:/etc/caddy/Caddyfile
@@ -35,12 +34,12 @@ services:
   frontend:
     build:
       context: .
-      dockerfile: Dockerfile.spa
+      dockerfile: Dockerfile.spa.dev
     ports:
-      - 8000:80
+      - 5173:5173
     environment:
-      - VITE_API_BASE_URL=/api
-      - NODE_ENV=production
+      - VITE_API_BASE_URL=http://localhost:9000
+      - NODE_ENV=dev
     restart: always
 
   meshinfo:
@@ -52,12 +51,11 @@ services:
       - ./output:/app/output
       - ./templates:/app/templates
       - ./spa:/app/spa
+    ports:
+      - 9000:9000
     environment:
       - PYTHONUNBUFFERED=1
-      - MQTT_HOST=mqtt
-      - MQTT_PORT=1883
-      - MQTT_USERNAME=meshinfo
-      - MQTT_PASSWORD=m3sht4st1c
+      - ALLOW_ORIGINS=*
     restart: always
     depends_on:
       - caddy
