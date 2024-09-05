@@ -2,15 +2,14 @@
 	debug
 }
 
-localhost {
-	tls internal
+http://localhost {
 	encode gzip
 	handle_path /api/* {
 		reverse_proxy meshinfo:9000
 	}
 	handle_path /next/* {
 		rewrite * /next{uri}
-		reverse_proxy frontend:80
+		reverse_proxy frontend:5173
 	}
 	handle /* {
 		root * /srv

@@ -1,5 +1,5 @@
 # trunk-ignore-all(checkov/CKV_DOCKER_3)
-FROM node:20.11.1-alpine AS build
+FROM node:20.11.1-alpine
 
 LABEL org.opencontainers.image.source="https://github.com/MeshAddicts/meshinfo"
 LABEL org.opencontainers.image.description="Realtime web UI to run against a Meshtastic regional or private mesh network."
@@ -8,13 +8,11 @@ COPY . .
 
 WORKDIR /frontend
 
-ARG env=production
-ENV NODE_ENV=$env
+ENV NODE_ENV=dev
 
 RUN corepack enable
 RUN yarn
-RUN yarn build --base=/next/
 
-EXPOSE 80
+EXPOSE 5173
 
 CMD ["/frontend/scripts/run-frontend.sh"]
