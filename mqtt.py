@@ -405,6 +405,8 @@ class MQTT:
 
             if 'role' in msg['payload']:
                 node['role'] = msg['payload']['role']
+            else:
+                node['role'] = 0
 
             self.data.update_node(id, node)
             print(f"Node {id} added")
