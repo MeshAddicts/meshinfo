@@ -24,10 +24,6 @@ services:
       - ./output:/app/output
     environment:
       - PYTHONUNBUFFERED=1
-      - MQTT_HOST=mqtt
-      - MQTT_PORT=1883
-      - MQTT_USERNAME=meshinfo
-      - MQTT_PASSWORD=m3sht4st1c
     ports:
       - 9000:9000
     restart: always
