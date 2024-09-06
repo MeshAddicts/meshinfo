@@ -15,7 +15,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Set up Node.js
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v4
         with:
           node-version: "20.11.1"
       - name: Enable yarn
@@ -33,7 +33,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Set up Node.js
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v4
         with:
           node-version: "20.11.1"
       - name: Enable yarn
