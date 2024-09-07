@@ -218,7 +218,7 @@ export const Node = () => {
                               return "Unknown";
                           }
                         })()
-                      : "Unknown"}
+                      : "Client"}
                   </td>
                 </tr>
                 <tr>
@@ -301,7 +301,8 @@ export const Node = () => {
             <h3 className="mb-2 font-bold text-gray-600">Heard (zero hop)</h3>
             <table className="table-auto min-w-full border border-gray-200 bg-gray-50">
               <tbody className="divide-y divide-dashed divide-gray-200">
-                {node.neighborinfo?.neighbors?.map((neighbor, index) => {
+                {node.neighborinfo ? (
+                  node.neighborinfo?.neighbors?.map((neighbor, index) => {
                   const nid = convertNodeIdFromIntToHex(neighbor.node_id);
                   const nnode = nodes[nid] || null;
                   return (
@@ -309,9 +310,7 @@ export const Node = () => {
                     <tr key={`neighbors-${index}`}>
                       <td className="w-1/3 p-1 text-nowrap">
                         {nnode ? (
-                          <a href={`node_${nnode.id}.html`}>
-                            {nnode.shortname}
-                          </a>
+                          <Link to={`/nodes/${nid}`}>{nnode.shortname}</Link>
                         ) : (
                           <span className="text-gray-500">UNK</span>
                         )}
@@ -324,7 +323,12 @@ export const Node = () => {
                       </td>
                     </tr>
                   );
-                })}
+                })
+              ) : (
+                <tr>
+                  <td className="p-1" colSpan={3}>No neighbors detected. Does this node publish Neighbor Info?</td>
+                </tr>
+              )}
               </tbody>
             </table>
           </div>
@@ -347,9 +351,7 @@ export const Node = () => {
                           <tr key={`neighbors-heard-by-${index}-${subIndex}`}>
                             <td className="w-1/3 p-1 text-nowrap">
                               {iid in nodes ? (
-                                <a href={`node_${iid}.html`}>
-                                  {nodes[iid].shortname}
-                                </a>
+                                <Link to={`/nodes/${iid}`}>{nodes[iid].shortname}</Link>
                               ) : (
                                 <span className="text-gray-500">UNK</span>
                               )}
