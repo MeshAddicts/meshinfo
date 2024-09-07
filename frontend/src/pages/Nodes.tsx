@@ -121,7 +121,7 @@ export const Nodes = () => {
             <th className="border border-gray-500 bg-gray-400">Role</th>
             <th
               className="hidden xl:table-cell border border-gray-500 bg-gray-400"
-              colSpan={4}
+              colSpan={3}
             >
               Last Position
             </th>
@@ -159,10 +159,7 @@ export const Nodes = () => {
               </button>
             </th>
             <th className="hidden xl:table-cell border border-gray-500 bg-gray-400">
-              Latitude
-            </th>
-            <th className="hidden xl:table-cell border border-gray-500 bg-gray-400">
-              Longitude
+              Coordinates
             </th>
             <th className="hidden xl:table-cell border border-gray-500 bg-gray-400">
               DX
@@ -260,17 +257,21 @@ export const Nodes = () => {
                   <td className="hidden xl:table-cell p-1 border border-gray-400">
                     {node.position.altitude || ""}
                   </td>
-                  <td className="hidden xl:table-cell p-1 border border-gray-400">
-                    {node.position.latitude || ""}
-                  </td>
-                  <td className="hidden xl:table-cell p-1 border border-gray-400">
-                    {node.position.longitude || ""}
+                  <td className="hidden xl:table-cell p-1 border border-gray-400 text-center">
+                    {node.position && node.position.latitude && node.position.longitude ? (
+                      <span title={`${node.position.latitude  }, ${  node.position.longitude}`}>Yes</span>
+                    ) : (
+                      <>
+                      </>
+                    )}
                   </td>
                   <td
                     className="hidden xl:table-cell p-1 border border-gray-400 text-nowrap"
                     align="right"
                   >
-                    {serverNode?.position &&
+                    {serverNode?.position && serverNode.position.latitude && serverNode.position.longitude &&
+                      node.position && node.position.latitude && node.position.latitude !== 0 &&
+                      node.position.longitude && node.position.longitude !== 0 &&
                       getDistanceBetweenTwoPoints(
                         [node.position.longitude, node.position.latitude],
                         [
