@@ -41,7 +41,7 @@ async def main():
 
     data.load()
     await data.save()
-    await data.backup()
+    # await data.backup()
 
     async with asyncio.TaskGroup() as tg:
         loop = asyncio.get_event_loop()
