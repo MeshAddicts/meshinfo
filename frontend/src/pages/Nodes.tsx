@@ -214,7 +214,7 @@ export const Nodes = () => {
                 align="center"
                 valign="middle"
               >
-                <Avatar id={id} size={8} className="mb-1" />
+                <Avatar id={id} size={8} className="" />
               </td>
               <td className="p-1 border border-gray-400">
                 {id ? (
