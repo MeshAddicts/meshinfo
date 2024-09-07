@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
 
+import { Avatar } from "../components/Avatar";
 import { HardwareImg } from "../components/HardwareImg";
 import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";
 import {
@@ -29,11 +30,7 @@ export const Node = () => {
 
       <div className="mb-4 flex flex-row">
         <div className="mr-2">
-          <img
-            src={`https://api.dicebear.com/9.x/bottts-neutral/svg?seed=${id}`}
-            alt={node.shortname}
-            className="w-16 h-16 mb-1 object-cover"
-          />
+          <Avatar id={node.id} size={16} />
         </div>
         <div>
           <h1 className="mb-2 text-xl">{`${node.shortname} - ${node.longname}`}</h1>

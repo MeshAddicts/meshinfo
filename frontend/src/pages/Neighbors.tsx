@@ -1,6 +1,7 @@
 import { formatDuration, formatISO, intervalToDuration } from "date-fns";
 import { useMemo } from "react";
 
+import { Avatar } from "../components/Avatar";
 import { HeardBy } from "../components/HeardBy";
 import { useGetNodesQuery } from "../slices/apiSlice";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
@@ -76,11 +77,7 @@ export const Neighbors = () => {
                   valign="middle"
                 >
                   <a href={`node_${sanitizedId}.html`}>
-                    <img
-                      src={`https://api.dicebear.com/9.x/bottts-neutral/svg?seed=${sanitizedId}`}
-                      alt="Avatar"
-                      className="w-16 h-16 mb-1 object-cover"
-                    />
+                    <Avatar id={sanitizedId} size={16} className="mb-1" />
                   </a>
                 </td>
                 <td
