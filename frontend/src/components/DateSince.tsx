@@ -1,4 +1,3 @@
-import { intervalToDuration } from "date-fns";
 import { useMemo } from "react";
 
 export const DateToSince = ({
@@ -8,22 +7,14 @@ export const DateToSince = ({
   date: string | Date;
   currentDate?: Date;
 }) => {
-  const duration = useMemo(
+  const interval = useMemo(
     () =>
-      intervalToDuration({
-        start: new Date(date).getTime(),
-        end: currentDate.getTime(),
-      }),
+      currentDate.getTime() - new Date(date).getTime(),
     [currentDate, date]
   );
   return (
     <span title={`${date}`}>
-      {duration.years ? `${duration.years}yrs` : ""}
-      {duration.months ? `${duration.months}mo` : ""}
-      {duration.days ? `${duration.days}d` : ""}
-      {duration.hours ? `${duration.hours}h` : ""}
-      {duration.minutes ? `${duration.minutes}m` : ""}
-      {duration.seconds ? `${duration.seconds}s` : ""} ago
+      {Math.round(interval / 1000)} secs
     </span>
   );
 };

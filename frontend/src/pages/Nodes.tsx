@@ -39,9 +39,9 @@ export const Nodes = () => {
       Object.values(activeNodes ?? []).sort((a: INode, b: INode) => {
         let order = [];
         if (sort.dir === "asc") {
-          order = [1, -1];
-        } else {
           order = [-1, 1];
+        } else {
+          order = [1, -1];
         }
 
         if (sort.by === "altitude" && a.position && b.position) {
