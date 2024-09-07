@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { Avatar } from "../components/Avatar";
 import { DateToSince } from "../components/DateSince";
 import { HardwareImg } from "../components/HardwareImg";
 import { HeardBy } from "../components/HeardBy";
@@ -138,7 +139,7 @@ export const Nodes = () => {
             </th>
           </tr>
           <tr>
-            <th className="w-8 min-w-8 max-w-8 h-8 min-h-8 max-h-8 border border-gray-500 bg-gray-400"></th>
+            <th className="w-8 min-w-8 max-w-8 h-8 min-h-8 max-h-8 border border-gray-500 bg-gray-400" />
             <th className="border border-gray-500 bg-gray-400">Hex</th>
             <th className="border border-gray-500 bg-gray-400">
               <button type="button" onClick={() => clickSort("shortname")}>
@@ -151,7 +152,7 @@ export const Nodes = () => {
               </button>
             </th>
             <th className="hidden sm:table-cell border border-gray-500 bg-gray-400" />
-            <th className="border border-gray-500 bg-gray-400"></th>
+            <th className="border border-gray-500 bg-gray-400" />
             <th className="hidden xl:table-cell border border-gray-500 bg-gray-400">
               <button type="button" onClick={() => clickSort("altitude")}>
                 Altitude
@@ -216,11 +217,7 @@ export const Nodes = () => {
                 align="center"
                 valign="middle"
               >
-                <img
-                  src={`https://api.dicebear.com/9.x/bottts-neutral/svg?seed=$${id}`}
-                  alt="Avatar"
-                  className="w-8 h-8 object-cover"
-                />
+                <Avatar id={id} size={8} className="mb-1" />
               </td>
               <td className="p-1 border border-gray-400">
                 {id ? (
