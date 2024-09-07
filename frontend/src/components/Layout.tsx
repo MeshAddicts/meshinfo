@@ -220,8 +220,8 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
         </div>
       </div>
 
-      <div className={`lg:pl-60 ${pathname === "/map" ? "h-screen" : ""} `}>
-        <main className={`py-1 ${pathname === "/map" ? "h-screen" : ""} `}>
+      <div className={`lg:pl-60 ${pathname === "/map" ? "h-screen" : ""}`}>
+        <main className={`${pathname === "/map" ? "h-screen" : "py-1 "}`}>
           <div
             className={`w-full ${pathname === "/map" ? "h-screen" : "px-4 py-2 sm:px-6 sm:py-2 lg:px-6 lg:py-2"}`}
           >

@@ -467,7 +467,7 @@ export function Map() {
 
     // don't need to watch olMap
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, serverNode]);
+  }, [nodes, serverNode, mapRef]);
 
   return (
     <div className="h-screen">

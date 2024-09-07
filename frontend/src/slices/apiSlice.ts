@@ -66,7 +66,7 @@ export const apiSlice = createApi({
       },
       providesTags: [{ type: "Chat", id: "LIST" }],
     }),
-    getNodes: builder.query<INodesResponse, void>({
+    getNodes: builder.query<INodesResponse, { status: "online" }>({
       query: () => "nodes",
       transformResponse: (response: INodesResponse) =>
         Object.fromEntries(
