@@ -1,7 +1,7 @@
-import { formatDuration, intervalToDuration } from "date-fns";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { DateToSince } from "../components/DateSince";
 import { HardwareImg } from "../components/HardwareImg";
 import { HeardBy } from "../components/HeardBy";
 import { Role } from "../components/Role";
@@ -10,12 +10,24 @@ import { HardwareModel, INode } from "../types";
 import { getDistanceBetweenTwoPoints } from "../utils/getDistanceBetweenPoints";
 
 export const Nodes = () => {
-  const { data: nodes } = useGetNodesQuery({ status: "online" }, {
-    pollingInterval: 3000,
-    skipPollingIfUnfocused: true,
-  });
+  const { data: nodes } = useGetNodesQuery(
+    { status: "online" },
+    {
+      pollingInterval: 3000,
+      skipPollingIfUnfocused: true,
+    }
+  );
 
   const [sort, setSort] = useState({ by: "last_seen", dir: "asc" });
+
+  const [currentDate, setCurrentDate] = useState(new Date());
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentDate(new Date());
+    }, 3000);
+    return () => clearInterval(interval);
+  }, []);
 
   const activeNodes = useMemo(
     () => Object.values(nodes ?? [])?.filter((n) => n.active),
@@ -23,50 +35,63 @@ export const Nodes = () => {
   );
 
   const sortedNodes = useMemo(
-    () => Object.values(activeNodes ?? []).sort((a: INode, b: INode) => {
-      let order = [];
-      if (sort.dir === 'asc') {
-        order = [1, -1];
-      } else {
-        order = [-1, 1];
-      }
+    () =>
+      Object.values(activeNodes ?? []).sort((a: INode, b: INode) => {
+        let order = [];
+        if (sort.dir === "asc") {
+          order = [1, -1];
+        } else {
+          order = [-1, 1];
+        }
 
-      if (sort.by === 'altitude' && a.position && b.position) {
-        return (a.position.altitude || -1) > (b.position.altitude || -1) ? order[0] : order[1];
-      }
-      if (sort.by === 'shortname') {
-        return a.shortname > b.shortname ? order[0] : order[1];
-      }
-      if (sort.by === 'last_seen') {
-        const dateA = a.last_seen != null ? new Date(a.last_seen).getTime() : 0;
-        const dateB = b.last_seen != null ? new Date(b.last_seen).getTime() : 0;
-        console.log("dateA / dateB = %s / %s", dateA, dateB);
-        return dateA > dateB ? order[0] : order[1];
-      }
-      if (sort.by === 'longname') {
-        return a.longname > b.longname ? order[0] : order[1];
-      }
+        if (sort.by === "altitude" && a.position && b.position) {
+          return (a.position.altitude || -1) > (b.position.altitude || -1)
+            ? order[0]
+            : order[1];
+        }
+        if (sort.by === "shortname") {
+          return a.shortname > b.shortname ? order[0] : order[1];
+        }
+        if (sort.by === "last_seen") {
+          // sort by last seen
+          return (new Date(a.last_seen).getTime() ?? 0) >
+            (new Date(b.last_seen).getTime() ?? 0)
+            ? order[0]
+            : order[1];
 
-      return 0;
-    }),
+          // const dateA =
+          //   a.last_seen != null ? new Date(a.last_seen).getTime() : 0;
+          // const dateB =
+          //   b.last_seen != null ? new Date(b.last_seen).getTime() : 0;
+          // console.log("dateA / dateB = %s / %s", dateA, dateB);
+          // return dateA > dateB ? order[0] : order[1];
+        }
+        if (sort.by === "longname") {
+          return a.longname > b.longname ? order[0] : order[1];
+        }
+
+        return 0;
+      }),
     [activeNodes, sort]
   );
 
   const serverNode = useMemo(() => nodes && nodes["4355f528"], [nodes]);
 
-
   if (!nodes || !activeNodes) return <div>Loading...</div>;
 
   function invertSortDir() {
-    if (sort.dir === "asc") { setSort({...sort, dir: "desc" }); }
-    else { setSort({...sort, dir: "asc" }); }
+    if (sort.dir === "asc") {
+      setSort({ ...sort, dir: "desc" });
+    } else {
+      setSort({ ...sort, dir: "asc" });
+    }
   }
 
   function clickSort(column: string) {
     if (sort.by === column) {
       invertSortDir();
     } else {
-      setSort({by: column, dir: "asc" });
+      setSort({ by: column, dir: "asc" });
     }
     console.log("Sorting by %s %s", sort.by, sort.dir);
   }
@@ -116,15 +141,21 @@ export const Nodes = () => {
             <th className="w-8 min-w-8 max-w-8 h-8 min-h-8 max-h-8 border border-gray-500 bg-gray-400"></th>
             <th className="border border-gray-500 bg-gray-400">Hex</th>
             <th className="border border-gray-500 bg-gray-400">
-              <button type="button" onClick={() => clickSort('shortname')}>Short</button>
+              <button type="button" onClick={() => clickSort("shortname")}>
+                Short
+              </button>
             </th>
             <th className="border border-gray-500 bg-gray-400">
-              <button type="button" onClick={() => clickSort('longname')}>Long</button>
+              <button type="button" onClick={() => clickSort("longname")}>
+                Long
+              </button>
             </th>
             <th className="hidden sm:table-cell border border-gray-500 bg-gray-400" />
             <th className="border border-gray-500 bg-gray-400"></th>
             <th className="hidden xl:table-cell border border-gray-500 bg-gray-400">
-              <button type="button" onClick={() => clickSort('altitude')}>Altitude</button>
+              <button type="button" onClick={() => clickSort("altitude")}>
+                Altitude
+              </button>
             </th>
             <th className="hidden xl:table-cell border border-gray-500 bg-gray-400">
               Latitude
@@ -171,7 +202,9 @@ export const Nodes = () => {
               />
             </th>
             <th className="border border-gray-500 bg-gray-400">
-              <button type="button" onClick={() => clickSort('last_seen')}>Since</button>
+              <button type="button" onClick={() => clickSort("last_seen")}>
+                Since
+              </button>
             </th>
           </tr>
         </thead>
@@ -312,15 +345,7 @@ export const Nodes = () => {
                 className="p-1 border border-gray-400 text-nowrap"
                 align="right"
               >
-                {formatDuration(
-                  intervalToDuration({
-                    start: new Date(node.last_seen),
-                    end: new Date(),
-                  }),
-                  {
-                    format: ["seconds"],
-                  }
-                )}
+                <DateToSince date={node.last_seen} currentDate={currentDate} />
               </td>
             </tr>
           ))}

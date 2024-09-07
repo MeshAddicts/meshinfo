@@ -33,5 +33,6 @@ module.exports = {
     "@typescript-eslint/quotes": "off",
     "react/function-component-definition": "off",
     "simple-import-sort/imports": "error",
+    "react/require-default-props": "off",
   },
 };
