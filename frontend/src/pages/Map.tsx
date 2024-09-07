@@ -82,12 +82,15 @@ export function Map() {
         {
           ...node,
           online: new Date(node.last_seen) > new Date(now.getTime() - 7200),
-          position: node.position
-            ? [
-                (node.position?.longitude_i ?? 0) / 10000000,
-                (node.position?.latitude_i ?? 0) / 10000000,
-              ]
-            : undefined,
+          position:
+            node.position &&
+            node.position.latitude_i &&
+            node.position.longitude_i
+              ? [
+                  (node.position?.longitude_i ?? 0) / 10000000,
+                  (node.position?.latitude_i ?? 0) / 10000000,
+                ]
+              : undefined,
           neighbors: node.neighborinfo?.neighbors?.map((neighbor) => ({
             id: neighbor.node_id.toString(16),
             snr: neighbor.snr,
@@ -137,8 +140,8 @@ export function Map() {
 
     const savedCenter = JSON.parse(localStorage.getItem("savedCenter") ?? "[]");
     const initialCenter = fromLonLat([
-      savedCenter[0] ?? serverPosition.longitude,
-      savedCenter[1] ?? serverPosition.latitude,
+      savedCenter[0] ?? serverPosition.latitude,
+      savedCenter[1] ?? serverPosition.longitude,
     ]);
     const initialZoom = JSON.parse(localStorage.getItem("savedZoom") ?? "9.5");
 
@@ -161,7 +164,9 @@ export function Map() {
       const zoom = map.getView().getZoom();
       if (center) {
         const [lon, lat] = transform(center, "EPSG:3857", "EPSG:4326");
-        localStorage.setItem("savedCenter", JSON.stringify([lon, lat]));
+        if (lon && lat) {
+          localStorage.setItem("savedCenter", JSON.stringify([lon, lat]));
+        }
       }
       if (zoom) {
         localStorage.setItem("savedZoom", zoom.toString());

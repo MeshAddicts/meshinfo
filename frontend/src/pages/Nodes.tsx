@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { Avatar } from "../components/Avatar";
 import { DateToSince } from "../components/DateSince";
 import { HardwareImg } from "../components/HardwareImg";
 import { HeardBy } from "../components/HeardBy";
@@ -120,7 +121,7 @@ export const Nodes = () => {
             <th className="border border-gray-500 bg-gray-400">Role</th>
             <th
               className="hidden xl:table-cell border border-gray-500 bg-gray-400"
-              colSpan={4}
+              colSpan={3}
             >
               Last Position
             </th>
@@ -138,7 +139,7 @@ export const Nodes = () => {
             </th>
           </tr>
           <tr>
-            <th className="w-8 min-w-8 max-w-8 h-8 min-h-8 max-h-8 border border-gray-500 bg-gray-400"></th>
+            <th className="w-8 min-w-8 max-w-8 h-8 min-h-8 max-h-8 border border-gray-500 bg-gray-400" />
             <th className="border border-gray-500 bg-gray-400">Hex</th>
             <th className="border border-gray-500 bg-gray-400">
               <button type="button" onClick={() => clickSort("shortname")}>
@@ -151,17 +152,14 @@ export const Nodes = () => {
               </button>
             </th>
             <th className="hidden sm:table-cell border border-gray-500 bg-gray-400" />
-            <th className="border border-gray-500 bg-gray-400"></th>
+            <th className="border border-gray-500 bg-gray-400" />
             <th className="hidden xl:table-cell border border-gray-500 bg-gray-400">
               <button type="button" onClick={() => clickSort("altitude")}>
                 Altitude
               </button>
             </th>
             <th className="hidden xl:table-cell border border-gray-500 bg-gray-400">
-              Latitude
-            </th>
-            <th className="hidden xl:table-cell border border-gray-500 bg-gray-400">
-              Longitude
+              Coordinates
             </th>
             <th className="hidden xl:table-cell border border-gray-500 bg-gray-400">
               DX
@@ -216,11 +214,7 @@ export const Nodes = () => {
                 align="center"
                 valign="middle"
               >
-                <img
-                  src={`https://api.dicebear.com/9.x/bottts-neutral/svg?seed=$${id}`}
-                  alt="Avatar"
-                  className="w-8 h-8 object-cover"
-                />
+                <Avatar id={id} size={8} className="mb-1" />
               </td>
               <td className="p-1 border border-gray-400">
                 {id ? (
@@ -263,17 +257,21 @@ export const Nodes = () => {
                   <td className="hidden xl:table-cell p-1 border border-gray-400">
                     {node.position.altitude || ""}
                   </td>
-                  <td className="hidden xl:table-cell p-1 border border-gray-400">
-                    {node.position.latitude || ""}
-                  </td>
-                  <td className="hidden xl:table-cell p-1 border border-gray-400">
-                    {node.position.longitude || ""}
+                  <td className="hidden xl:table-cell p-1 border border-gray-400 text-center">
+                    {node.position && node.position.latitude && node.position.longitude ? (
+                      <span title={`${node.position.latitude  }, ${  node.position.longitude}`}>Yes</span>
+                    ) : (
+                      <>
+                      </>
+                    )}
                   </td>
                   <td
                     className="hidden xl:table-cell p-1 border border-gray-400 text-nowrap"
                     align="right"
                   >
-                    {serverNode?.position &&
+                    {serverNode?.position && serverNode.position.latitude && serverNode.position.longitude &&
+                      node.position && node.position.latitude && node.position.latitude !== 0 &&
+                      node.position.longitude && node.position.longitude !== 0 &&
                       getDistanceBetweenTwoPoints(
                         [node.position.longitude, node.position.latitude],
                         [
