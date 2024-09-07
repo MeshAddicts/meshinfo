@@ -4,7 +4,6 @@ import {
   IChatResponse,
   IMessagesResponse,
   IMqttMessagesResponse,
-  INode,
   INodesResponse,
   IStatsResponse,
   ITelemetryResponse,
