@@ -1,5 +1,5 @@
 # trunk-ignore-all(checkov/CKV_DOCKER_3)
-FROM node:20.11.1-alpine
+FROM node:22.6.0-alpine
 
 LABEL org.opencontainers.image.source="https://github.com/MeshAddicts/meshinfo"
 LABEL org.opencontainers.image.description="Realtime web UI to run against a Meshtastic regional or private mesh network."
