@@ -1,7 +1,9 @@
-import { formatDuration, formatISO, intervalToDuration } from "date-fns";
-import { useMemo } from "react";
+import { formatISO } from "date-fns";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { Avatar } from "../components/Avatar";
+import { DateToSince } from "../components/DateSince";
 import { HeardBy } from "../components/HeardBy";
 import { useGetNodesQuery } from "../slices/apiSlice";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
@@ -16,6 +18,15 @@ export const Neighbors = () => {
       ),
     [nodes]
   );
+
+  const [currentDate, setCurrentDate] = useState(new Date());
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentDate(new Date());
+    }, 3000);
+    return () => clearInterval(interval);
+  }, []);
 
   if (!nodes) {
     return <div>Loading...</div>;
@@ -67,25 +78,25 @@ export const Neighbors = () => {
           </tr>
         </thead>
         <tbody>
-          {Object.entries(activeNodesWithNeighbors).map(([id, node]) => {
-            const sanitizedId = id.replace("!", "");
+          {activeNodesWithNeighbors.map((node) => {
+            const id = node.id.replace("!", "");
             return (
-              <tr key={id}>
+              <tr key={`neighbors-${id}`}>
                 <td
                   className="p-1 border border-gray-400"
                   align="center"
                   valign="middle"
                 >
-                  <a href={`node_${sanitizedId}.html`}>
-                    <Avatar id={sanitizedId} size={16} className="mb-1" />
-                  </a>
+                  <Link to={`/nodes/${id}`}>
+                    <Avatar id={id} size={16} className="mb-1" />
+                  </Link>
                 </td>
                 <td
                   className="p-1 border border-gray-400"
                   style={{ color: node.shortname === "UNK" ? "#777" : "#000" }}
                   align="center"
                 >
-                  <a href={`node_${sanitizedId}.html`}>{node.shortname}</a>
+                  <Link to={`/nodes/${id}`}>{node.shortname}</Link>
                 </td>
                 <td
                   className="p-1 border border-gray-400"
@@ -98,17 +109,17 @@ export const Neighbors = () => {
                     <td className="p-0 border border-gray-400" valign="top">
                       <table className="table-auto min-w-full">
                         <tbody className="divide-y divide-dashed divide-gray-400">
-                          {node.neighborinfo?.neighbors?.map(
-                            (neighbor, index) => (
-                              // eslint-disable-next-line react/no-array-index-key
-                              <tr key={`neighbors-${index}`}>
+                          {node.neighborinfo?.neighbors?.map((neighbor) => {
+                            const neighborIdHex = convertNodeIdFromIntToHex(
+                              neighbor.node_id
+                            );
+                            return (
+                              <tr key={`neighbors-${node.id}-${neighborIdHex}`}>
                                 <td className="w-1/3 p-1 text-nowrap">
-                                  {nodes[neighbor.node_id] ? (
-                                    <a
-                                      href={`node_${nodes[neighbor.node_id].id}.html`}
-                                    >
-                                      {nodes[neighbor.node_id].shortname}
-                                    </a>
+                                  {nodes[neighborIdHex] ? (
+                                    <Link to={`/nodes/${id}`}>
+                                      {nodes[neighborIdHex].shortname}
+                                    </Link>
                                   ) : (
                                     <span className="text-gray-500">UNK</span>
                                   )}
@@ -121,8 +132,8 @@ export const Neighbors = () => {
                                     `${neighbor.distance} km`}
                                 </td>
                               </tr>
-                            )
-                          )}
+                            );
+                          })}
                         </tbody>
                       </table>
                     </td>
@@ -175,16 +186,10 @@ export const Neighbors = () => {
                   className="hidden xl:table-cell p-1 text-nowrap border border-gray-400"
                   align="right"
                 >
-                  {formatDuration(
-                    intervalToDuration({
-                      start: new Date(node.last_seen),
-                      end: new Date(),
-                    }),
-                    {
-                      format: ["seconds"],
-                    }
-                  )}
-                  secs
+                  <DateToSince
+                    date={node.last_seen}
+                    currentDate={currentDate}
+                  />
                 </td>
               </tr>
             );
