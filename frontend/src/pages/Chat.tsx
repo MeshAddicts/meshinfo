@@ -60,7 +60,7 @@ export const Chat = () => {
             className="block w-full rounded-md border-gray-300 py-2 pl-3 pr-10 text-base focus:border-indigo-500 focus:outline-none focus:ring-indigo-500 sm:text-sm"
           >
             {channels.map(([id]) => (
-              <option>Channel {id}</option>
+              <option key={`channel-${id}`}>Channel {id}</option>
             ))}
           </select>
         </div>
@@ -78,6 +78,7 @@ export const Chat = () => {
                   onClick={() => setSelectedChannel(id)}
                   role="button"
                   tabIndex={0}
+                  key={`channel-selector-${id}`}
                 >
                   Channel {id}
                   <span className="ml-3 hidden rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-900 md:inline-block">
@@ -91,7 +92,7 @@ export const Chat = () => {
       </div>
 
       <h2>Channel {selectedChannel}</h2>
-      <table className="w-full max-w-full table-fixed border-collapse border border-gray-500 bg-gray-50">
+      <table className="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50">
         <thead>
           <tr>
             <th className="w-48 max-w-48 border border-gray-500 bg-gray-400">
@@ -100,9 +101,7 @@ export const Chat = () => {
             <th className="w-12 max-w-12 border border-gray-500 bg-gray-400">
               From
             </th>
-            <th className="w-12 max-w-12 border border-gray-500 bg-gray-400">
-              Via
-            </th>
+            <th className=" border border-gray-500 bg-gray-400">Via</th>
             <th className="w-12 max-w-12 border border-gray-500 bg-gray-400">
               To
             </th>
@@ -121,11 +120,16 @@ export const Chat = () => {
           {selectedChannel
             ? chat?.channels[selectedChannel].messages.map((message, i) => {
                 const nodeFrom = nodes[message.from] || null;
-                const nodeSender = nodes[message.sender] || null;
+                const senders = message.sender
+                  .map((s) => nodes[s])
+                  .filter(Boolean);
                 const nodeTo = nodes[message.to] || null;
                 const distanceFromSender =
-                  nodeFrom && nodeSender
-                    ? calculateDistanceBetweenNodes(nodeFrom, nodeSender)
+                  nodeFrom && senders.length
+                    ? senders
+                        .filter((s) => s.position)
+                        .map((s) => calculateDistanceBetweenNodes(nodeFrom, s))
+                        .filter(Boolean)
                     : null;
 
                 return (
@@ -153,19 +157,23 @@ export const Chat = () => {
                       </Link>
                     </td>
                     <td className="p-1 text-center border border-gray-400">
-                      {nodeSender && (
-                        <Link
-                          to={`/nodes/${nodeSender.id}`}
-                          title={
-                            message.sender in nodes
-                              ? `${message.sender} / ${nodes[message.sender].longname}`
-                              : `${message.sender} / Unknown`
-                          }
+                      {senders.length ? (
+                        senders.map((s, idx) => (
+                          <Link
+                            to={`/nodes/${s.id}`}
+                            title={`${message.sender} / ${s.longname}`}
+                          >
+                            {s.shortname ?? "UNK"}
+                            {idx < senders.length - 1 ? ", " : ""}
+                          </Link>
+                        ))
+                      ) : (
+                        <span
+                          className="text-gray-500"
+                          title={`${message.sender}`}
                         >
-                          {nodes[message.sender]
-                            ? nodes[message.sender].shortname
-                            : "UNK"}
-                        </Link>
+                          UNK
+                        </span>
                       )}
                     </td>
                     <td className="p-1 text-center border border-gray-400">
@@ -193,7 +201,9 @@ export const Chat = () => {
                       className="p-1 text-nowrap border border-gray-400"
                       align="right"
                     >
-                      {distanceFromSender && `${distanceFromSender} km`}
+                      {distanceFromSender?.length
+                        ? distanceFromSender.map((d) => `${d} km`).join(", ")
+                        : ""}
                     </td>
                     <td className="p-1 text-wrap border border-gray-400">
                       {message.text}
