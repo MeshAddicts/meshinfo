@@ -35,8 +35,8 @@ export const Chat = () => {
   }, [channels]);
 
   return (
-    <div>
-      <h5 className="mb-2 text-gray-500">Chat</h5>
+    <div className="">
+      <h5 className="mb-2 text-gray-500 dark:text-gray-400">Chat</h5>
       <h1 className="mb-2 text-xl">Chat</h1>
 
       {channels.map(([id, channel]) => (
@@ -92,26 +92,28 @@ export const Chat = () => {
       </div>
 
       <h2>Channel {selectedChannel}</h2>
-      <table className="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50">
+      <table className="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50 dark:bg-gray-800">
         <thead>
           <tr>
-            <th className="w-48 max-w-48 border border-gray-500 bg-gray-400">
+            <th className="w-48 max-w-48 border border-gray-500 bg-gray-400 dark:bg-gray-900">
               Time
             </th>
-            <th className="w-12 max-w-12 border border-gray-500 bg-gray-400">
+            <th className="w-12 max-w-12 border border-gray-500 bg-gray-400 dark:bg-gray-900">
               From
             </th>
-            <th className=" border border-gray-500 bg-gray-400">Via</th>
-            <th className="w-12 max-w-12 border border-gray-500 bg-gray-400">
+            <th className=" border border-gray-500 bg-gray-400 dark:bg-gray-900">
+              Via
+            </th>
+            <th className="w-12 max-w-12 border border-gray-500 bg-gray-400 dark:bg-gray-900">
               To
             </th>
-            <th className="w-12 max-w-12 border border-gray-500 bg-gray-400">
+            <th className="w-12 max-w-12 border border-gray-500 bg-gray-400 dark:bg-gray-900">
               Hops
             </th>
-            <th className="w-20 max-w-20 border border-gray-500 bg-gray-400">
+            <th className="w-20 max-w-20 border border-gray-500 bg-gray-400 dark:bg-gray-900">
               DX
             </th>
-            <th className="p-1 text-wrap border border-gray-500 bg-gray-400">
+            <th className="p-1 text-wrap border border-gray-500 bg-gray-400 dark:bg-gray-900">
               Message
             </th>
           </tr>
@@ -133,8 +135,10 @@ export const Chat = () => {
                     : null;
 
                 return (
-                  // eslint-disable-next-line react/no-array-index-key
-                  <tr key={`chat-message-${message.id}-${i}`}>
+                  <tr
+                    // eslint-disable-next-line react/no-array-index-key
+                    key={`chat-message-${message.id}-${i}`}
+                  >
                     <td className="p-1 border border-gray-400 text-nowrap">
                       {format(
                         new Date(message.timestamp * 1000),
@@ -145,6 +149,7 @@ export const Chat = () => {
                     <td className="p-1 text-center border border-gray-400">
                       <Link
                         to={`/nodes/${nodeFrom?.id}`}
+                        className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
                         title={
                           message.from in nodes
                             ? `${message.from} / ${nodes[message.from].longname}`
@@ -162,6 +167,7 @@ export const Chat = () => {
                           <Link
                             to={`/nodes/${s.id}`}
                             title={`${message.sender} / ${s.longname}`}
+                            className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
                           >
                             {s.shortname ?? "UNK"}
                             {idx < senders.length - 1 ? ", " : ""}
@@ -185,6 +191,7 @@ export const Chat = () => {
                               ? `${message.to} / ${nodes[message.to].longname}`
                               : `${message.to} / Unknown`
                           }
+                          className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
                         >
                           {nodes[message.to]
                             ? nodes[message.to].shortname

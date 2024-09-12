@@ -94,7 +94,6 @@ export const Nodes = () => {
     } else {
       setSort({ by: column, dir: "asc" });
     }
-    console.log("Sorting by %s %s", sort.by, sort.dir);
   }
 
   return (
@@ -106,100 +105,113 @@ export const Nodes = () => {
         of <b>{Object.entries(nodes).length}</b> seen nodes <HeardBy />
       </div>
 
-      <table className="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50">
+      <table className="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50 dark:bg-gray-800">
         <thead>
           <tr>
-            <th className="border border-gray-500 bg-gray-400" colSpan={2}>
+            <th
+              className="border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              colSpan={2}
+            >
               ID
             </th>
-            <th className="border border-gray-500 bg-gray-400" colSpan={2}>
+            <th
+              className="border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              colSpan={2}
+            >
               Name
             </th>
-            <th className="hidden sm:table-cell border border-gray-500 bg-gray-400">
+            <th className="hidden sm:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900">
               HW
             </th>
-            <th className="border border-gray-500 bg-gray-400">Role</th>
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-900">
+              Role
+            </th>
             <th
-              className="hidden xl:table-cell border border-gray-500 bg-gray-400"
+              className="hidden xl:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900"
               colSpan={3}
             >
               Last Position
             </th>
-            <th className="hidden md:table-cell border border-gray-500 bg-gray-400">
+            <th className="hidden md:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900">
               Neighbors
             </th>
             <th
-              className="hidden 2xl:table-cell border border-gray-500 bg-gray-400"
+              className="hidden 2xl:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900"
               colSpan={4}
             >
               Telemetry
             </th>
-            <th className="border border-gray-500 bg-gray-400" colSpan={1}>
+            <th
+              className="border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              colSpan={1}
+            >
               Seen
             </th>
           </tr>
           <tr>
-            <th className="w-8 min-w-8 max-w-8 h-8 min-h-8 max-h-8 border border-gray-500 bg-gray-400" />
-            <th className="border border-gray-500 bg-gray-400">Hex</th>
-            <th className="border border-gray-500 bg-gray-400">
+            <th className="w-8 min-w-8 max-w-8 h-8 min-h-8 max-h-8 border border-gray-500 bg-gray-400 dark:bg-gray-900" />
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-900">
+              Hex
+            </th>
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-900">
               <button type="button" onClick={() => clickSort("shortname")}>
                 Short
               </button>
             </th>
-            <th className="border border-gray-500 bg-gray-400">
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-900">
               <button type="button" onClick={() => clickSort("longname")}>
                 Long
               </button>
             </th>
-            <th className="hidden sm:table-cell border border-gray-500 bg-gray-400" />
-            <th className="border border-gray-500 bg-gray-400" />
-            <th className="hidden xl:table-cell border border-gray-500 bg-gray-400">
+            <th className="hidden sm:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900" />
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-900" />
+            <th className="hidden xl:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900">
               <button type="button" onClick={() => clickSort("altitude")}>
                 Altitude
               </button>
             </th>
-            <th className="hidden xl:table-cell border border-gray-500 bg-gray-400">
+            <th className="hidden xl:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900">
               Coordinates
             </th>
-            <th className="hidden xl:table-cell border border-gray-500 bg-gray-400">
+            <th className="hidden xl:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900">
               DX
             </th>
-            <th className="hidden md:table-cell border border-gray-500 bg-gray-400">
+            <th className="hidden md:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900">
               Count
             </th>
-            <th className="hidden 2xl:table-cell border border-gray-500 bg-gray-400">
+            <th className="hidden 2xl:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900">
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/battery.svg`}
-                className="w-4 h-4 inline-block"
+                className="w-4 h-4 inline-block dark:invert"
                 alt="Battery"
                 title="Battery"
               />
             </th>
-            <th className="hidden 2xl:table-cell border border-gray-500 bg-gray-400">
+            <th className="hidden 2xl:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900">
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/voltage.svg`}
-                className="w-4 h-4 inline-block"
+                className="w-4 h-4 inline-block dark:invert"
                 alt="Voltage"
                 title="Voltage"
               />
             </th>
-            <th className="hidden 2xl:table-cell border border-gray-500 bg-gray-400">
+            <th className="hidden 2xl:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900">
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/up.svg`}
                 alt="Air Util TX"
-                className="w-4 h-4 inline-block"
+                className="w-4 h-4 inline-block dark:invert"
                 title="Air Util TX"
               />
             </th>
-            <th className="hidden 2xl:table-cell border border-gray-500 bg-gray-400">
+            <th className="hidden 2xl:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900">
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/down.svg`}
-                className="w-4 h-4 inline-block"
+                className="w-4 h-4 inline-block dark:invert"
                 alt="Channel Util"
                 title="Channel Util"
               />
             </th>
-            <th className="border border-gray-500 bg-gray-400">
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-900">
               <button type="button" onClick={() => clickSort("last_seen")}>
                 Since
               </button>
@@ -214,11 +226,16 @@ export const Nodes = () => {
                 align="center"
                 valign="middle"
               >
-                <Avatar id={id} size={8} className="" />
+                <Avatar id={id} size={8} />
               </td>
               <td className="p-1 border border-gray-400">
                 {id ? (
-                  <Link to={id.replace("!", "")}>{id.replace("!", "")}</Link>
+                  <Link
+                    to={id.replace("!", "")}
+                    className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+                  >
+                    {id.replace("!", "")}
+                  </Link>
                 ) : (
                   id
                 )}
@@ -228,14 +245,18 @@ export const Nodes = () => {
                 style={{ color: node.shortname === "UNK" ? "#777" : "#000" }}
               >
                 {id ? (
-                  <Link to={id.replace("!", "")}>{node.shortname}</Link>
+                  <Link
+                    to={id.replace("!", "")}
+                    className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+                  >
+                    {node.shortname}
+                  </Link>
                 ) : (
                   node.shortname
                 )}
               </td>
               <td
-                className="p-1 border border-gray-400 text-nowrap truncate"
-                style={{ color: node.shortname === "UNK" ? "#777" : "#000" }}
+                className={`p-1 border border-gray-400 text-nowrap truncate ${node.shortname === "UNK" && "text-neutral-700 dark:text-neutral-500"}`}
               >
                 {node.longname}
               </td>
@@ -258,20 +279,30 @@ export const Nodes = () => {
                     {node.position.altitude || ""}
                   </td>
                   <td className="hidden xl:table-cell p-1 border border-gray-400 text-center">
-                    {node.position && node.position.latitude && node.position.longitude ? (
-                      <span title={`${node.position.latitude  }, ${  node.position.longitude}`}>Yes</span>
+                    {node.position &&
+                    node.position.latitude &&
+                    node.position.longitude ? (
+                      <span
+                        title={`${node.position.latitude}, ${node.position.longitude}`}
+                      >
+                        Yes
+                      </span>
                     ) : (
-                      <>
-                      </>
+                      <></>
                     )}
                   </td>
                   <td
                     className="hidden xl:table-cell p-1 border border-gray-400 text-nowrap"
                     align="right"
                   >
-                    {serverNode?.position && serverNode.position.latitude && serverNode.position.longitude &&
-                      node.position && node.position.latitude && node.position.latitude !== 0 &&
-                      node.position.longitude && node.position.longitude !== 0 &&
+                    {serverNode?.position &&
+                      serverNode.position.latitude &&
+                      serverNode.position.longitude &&
+                      node.position &&
+                      node.position.latitude &&
+                      node.position.latitude !== 0 &&
+                      node.position.longitude &&
+                      node.position.longitude !== 0 &&
                       getDistanceBetweenTwoPoints(
                         [node.position.longitude, node.position.latitude],
                         [
@@ -351,7 +382,12 @@ export const Nodes = () => {
       </table>
       <br />
       <br />
-      <a href="nodes.json">Download JSON</a>
+      <a
+        href="nodes.json"
+        className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+      >
+        Download JSON
+      </a>
     </div>
   );
 };

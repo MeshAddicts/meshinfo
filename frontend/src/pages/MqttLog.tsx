@@ -19,12 +19,18 @@ export const MqttLog = () => {
         are shown.
       </p>
 
-      <table className="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50">
+      <table className="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50 dark:bg-gray-300">
         <thead>
           <tr>
-            <th className="border border-gray-500 bg-gray-400">Timestamp</th>
-            <th className="border border-gray-500 bg-gray-400">Topic</th>
-            <th className="border border-gray-500 bg-gray-400">Message</th>
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-900 ">
+              Timestamp
+            </th>
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-900">
+              Topic
+            </th>
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-900">
+              Message
+            </th>
           </tr>
         </thead>
         <tbody>

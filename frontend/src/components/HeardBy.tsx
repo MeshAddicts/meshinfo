@@ -9,7 +9,10 @@ export const HeardBy = () => {
     <>
       {" "}
       that have been heard by the mesh by{" "}
-      <Link to={`/nodes/${config?.server?.node_id}`}>
+      <Link
+        to={`/nodes/${config?.server?.node_id}`}
+        className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+      >
         {config?.server?.node_id}
       </Link>{" "}
       ({config?.server?.node_id})

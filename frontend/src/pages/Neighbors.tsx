@@ -44,35 +44,49 @@ export const Neighbors = () => {
       <table className="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50">
         <thead>
           <tr>
-            <th className="w-20 max-w-20 border border-gray-500 bg-gray-400">
+            <th className="w-20 max-w-20 border border-gray-500 bg-gray-400 dark:bg-gray-900">
               ID
             </th>
-            <th className="border border-gray-500 bg-gray-400" colSpan={2}>
+            <th
+              className="border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              colSpan={2}
+            >
               Name
             </th>
-            <th className="border border-gray-500 bg-gray-400" colSpan={3}>
+            <th
+              className="border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              colSpan={3}
+            >
               Neighbors
             </th>
             <th
-              className="hidden xl:table-cell border border-gray-500 bg-gray-400"
+              className="hidden xl:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900"
               colSpan={2}
             >
               Seen
             </th>
           </tr>
           <tr>
-            <th className="w-12 max-w-12 border border-gray-500 bg-gray-400" />
-            <th className="w-12 max-w-12 border border-gray-500 bg-gray-400">
+            <th className="w-12 max-w-12 border border-gray-500 bg-gray-400 dark:bg-gray-900" />
+            <th className="w-12 max-w-12 border border-gray-500 bg-gray-400 dark:bg-gray-900">
               Short
             </th>
-            <th className="border border-gray-500 bg-gray-400">Long</th>
-            <th className="border border-gray-500 bg-gray-400">Heard</th>
-            <th className="border border-gray-500 bg-gray-400">Heard By</th>
-            <th className="border border-gray-500 bg-gray-400">Interval</th>
-            <th className="hidden xl:table-cell border border-gray-500 bg-gray-400">
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-900">
+              Long
+            </th>
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-900">
+              Heard
+            </th>
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-900">
+              Heard By
+            </th>
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-900">
+              Interval
+            </th>
+            <th className="hidden xl:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900">
               Last
             </th>
-            <th className="hidden xl:table-cell w-20 max-w-20 border border-gray-500 bg-gray-400">
+            <th className="hidden xl:table-cell w-20 max-w-20 border border-gray-500 bg-gray-400 dark:bg-gray-900">
               Since
             </th>
           </tr>
@@ -81,13 +95,16 @@ export const Neighbors = () => {
           {activeNodesWithNeighbors.map((node) => {
             const id = node.id.replace("!", "");
             return (
-              <tr key={`neighbors-${id}`}>
+              <tr key={`neighbors-${id}`} className="dark:bg-gray-800">
                 <td
                   className="p-1 border border-gray-400"
                   align="center"
                   valign="middle"
                 >
-                  <Link to={`/nodes/${id}`}>
+                  <Link
+                    to={`/nodes/${id}`}
+                    className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+                  >
                     <Avatar id={id} size={16} className="mb-1" />
                   </Link>
                 </td>
@@ -96,11 +113,15 @@ export const Neighbors = () => {
                   style={{ color: node.shortname === "UNK" ? "#777" : "#000" }}
                   align="center"
                 >
-                  <Link to={`/nodes/${id}`}>{node.shortname}</Link>
+                  <Link
+                    to={`/nodes/${id}`}
+                    className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+                  >
+                    {node.shortname}
+                  </Link>
                 </td>
                 <td
-                  className="p-1 border border-gray-400"
-                  style={{ color: node.shortname === "UNK" ? "#777" : "#000" }}
+                  className={`p-1 border border-gray-400 ${node.shortname === "UNK" && "text-neutral-700 dark:text-neutral-500"}`}
                 >
                   {node.longname}
                 </td>
@@ -117,7 +138,10 @@ export const Neighbors = () => {
                               <tr key={`neighbors-${node.id}-${neighborIdHex}`}>
                                 <td className="w-1/3 p-1 text-nowrap">
                                   {nodes[neighborIdHex] ? (
-                                    <Link to={`/nodes/${id}`}>
+                                    <Link
+                                      to={`/nodes/${id}`}
+                                      className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+                                    >
                                       {nodes[neighborIdHex].shortname}
                                     </Link>
                                   ) : (
@@ -148,9 +172,12 @@ export const Neighbors = () => {
                                   // eslint-disable-next-line react/no-array-index-key
                                   <tr key={`${nid}-${subIndex}`}>
                                     <td className="w-1/3 p-1 text-nowrap">
-                                      <a href={`node_${nid}.html`}>
+                                      <Link
+                                        to={`/nodes/${nid}`}
+                                        className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+                                      >
                                         {nnode.shortname}
-                                      </a>
+                                      </Link>
                                     </td>
                                     <td className="p-1 text-nowrap">
                                       SNR: {neighbor.snr}
@@ -200,7 +227,12 @@ export const Neighbors = () => {
       <br />
       <br />
       <br />
-      <a href="nodes.json">Download JSON</a>
+      <a
+        href="nodes.json"
+        className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+      >
+        Download JSON
+      </a>
     </div>
   );
 };

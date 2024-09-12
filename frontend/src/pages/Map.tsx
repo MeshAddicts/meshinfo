@@ -145,12 +145,31 @@ export function Map() {
     ]);
     const initialZoom = JSON.parse(localStorage.getItem("savedZoom") ?? "9.5");
 
+    const tileLayer = new TileLayer({
+      source: new OSM(),
+    });
+
+    if (
+      window.matchMedia &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches
+    ) {
+      tileLayer.on("prerender", (evt) => {
+        if (evt.context) {
+          const context = evt.context as CanvasRenderingContext2D;
+          context.filter = "grayscale(80%) invert(100%) ";
+          context.globalCompositeOperation = "source-over";
+        }
+      });
+      tileLayer.on("postrender", (evt) => {
+        if (evt.context) {
+          const context = evt.context as CanvasRenderingContext2D;
+          context.filter = "none";
+        }
+      });
+    }
+
     const map = new OlMap({
-      layers: [
-        new TileLayer({
-          source: new OSM(),
-        }),
-      ],
+      layers: [tileLayer],
       target: mapRef.current as HTMLElement,
       view: new View({
         center: initialCenter,
@@ -431,16 +450,16 @@ export function Map() {
 
           panel += "<b>Elsewhere</b><br/>";
           const nodeId = parseInt(node.id, 16);
-          panel += `<a href="https://meshview.armooo.net/packet_list/${
+          panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://meshview.armooo.net/packet_list/${
             nodeId
           }" target="_blank">Armooo's MeshView</a><br/>`;
-          panel += `<a href="https://app.bayme.sh/node/${
+          panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://app.bayme.sh/node/${
             node.id
           }" target="_blank">Bay Mesh Explorer</a><br/>`;
-          panel += `<a href="https://meshtastic.liamcottle.net/?node_id=${
+          panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://meshtastic.liamcottle.net/?node_id=${
             nodeId
           }" target="_blank">Liam's Map</a><br/>`;
-          panel += `<a href="https://meshmap.net/#${
+          panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://meshmap.net/#${
             nodeId
           }" target="_blank">MeshMap</a><br/>`;
 
@@ -477,7 +496,7 @@ export function Map() {
   return (
     <div className="h-screen">
       <div id="map" className="map" ref={mapRef} />
-      <div id="details" className="p-4 bg-white hidden">
+      <div id="details" className="p-4 bg-white dark:bg-black hidden">
         <div className="flex items-center w-full justify-items-stretch">
           <div id="details-title" className="flex-auto text-lg text-start">
             NODE NAME
@@ -491,7 +510,7 @@ export function Map() {
         </div>
         <div id="details-content" className="align-items-center" />
       </div>
-      <div id="legend" className="p-2 bg-white">
+      <div id="legend" className="p-2 bg-white dark:bg-black">
         <div className="text-lg">LEGEND</div>
         <div className="align-items-center">
           <div className="inline-block w-12 h-1 bg-green-400" /> Heard A
