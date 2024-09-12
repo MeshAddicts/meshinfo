@@ -22,11 +22,16 @@ export const Menu = ({
 
   const [showMenu, setShowMenu] = useState(false);
 
+  const handleDarkChange = (dark: boolean) => {
+    onDarkChange(dark);
+    localStorage.setItem("theme", dark ? "dark" : "light");
+  };
+
   return (
     <>
       <button
         type="button"
-        className={`fixed z-50 top-4 left-4 p-2 rounded-full hover:scale-110 transform transition-all duration-300 ${showMenu ? "bg-gray-100" : "bg-gray-300"}`}
+        className={`fixed z-50 top-4 left-4 p-2 rounded-full hover:scale-110 transform transition-all duration-300 ${showMenu ? "bg-gray-100 dark:bg-gray-700" : "bg-gray-300 dark:bg-gray-800"}`}
         onClick={() => setShowMenu(!showMenu)}
         aria-label="Show/Hide Menu"
       >
@@ -35,21 +40,23 @@ export const Menu = ({
             width="10"
             height="14"
             src={`${import.meta.env.BASE_URL}images/icons/close.svg`}
+            className="dark:invert"
             alt="Close"
           />
         ) : (
           <img
             width="14"
             src={`${import.meta.env.BASE_URL}images/icons/menu.svg`}
+            className="dark:invert"
             alt="Menu"
           />
         )}
       </button>
 
       <div
-        className={`lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-60 lg:flex-col ${showMenu ? "" : "hidden"} dark:text-gray-100 z-0`}
+        className={`w-full lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-60 lg:flex-col ${showMenu ? "" : "hidden"} dark:text-gray-100 z-0`}
       >
-        <div className="flex flex-col px-6 pb-4 overflow-y-auto bg-gray-300 dark:bg-gray-800 border-r-2 grow gap-y-5 border-r-cyan-600 sm:pt-14 md:pt-14 lg:pt-0">
+        <div className="flex flex-col px-6 pb-4 overflow-y-auto bg-gray-300 dark:bg-gray-800 border-r-2 grow gap-y-5 border-r-cyan-600 pt-14 lg:pt-0">
           <div className="flex items-center h-24 mt-4 shrink-0">
             <div className="text-2xl">
               {config?.mesh?.name?.split(" ").map((word, index) => (
@@ -308,8 +315,8 @@ export const Menu = ({
               {isDark ? (
                 <div
                   role="button"
-                  onClick={() => onDarkChange(false)}
-                  onKeyDown={() => onDarkChange(false)}
+                  onClick={() => handleDarkChange(false)}
+                  onKeyDown={() => handleDarkChange(false)}
                   tabIndex={0}
                 >
                   <img
@@ -324,8 +331,8 @@ export const Menu = ({
               ) : (
                 <div
                   role="button"
-                  onClick={() => onDarkChange(true)}
-                  onKeyDown={() => onDarkChange(true)}
+                  onClick={() => handleDarkChange(true)}
+                  onKeyDown={() => handleDarkChange(true)}
                   tabIndex={0}
                 >
                   <img

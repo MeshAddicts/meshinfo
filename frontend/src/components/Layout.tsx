@@ -50,7 +50,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
       <Menu isDark={isDark} onDarkChange={(dark) => setIsDark(dark)} />
 
       <div
-        className={`lg:pl-60 dark:bg-gray-950 dark:text-gray-100 ${pathname === "/map" ? "h-screen" : ""} sm:pt-14 md:pt-14 lg:pt-0`}
+        className={`lg:pl-60 dark:bg-gray-950 dark:text-gray-100 ${pathname === "/map" ? "h-screen" : ""} pt-14 lg:pt-0`}
       >
         <main className={`${pathname === "/map" ? "h-screen" : "py-1 "}`}>
           <div
