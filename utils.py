@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import datetime
 import requests
 from geo import distance_between_two_points
 
@@ -26,6 +27,14 @@ def convert_node_id_from_hex_to_int(id: str):
       id = id.replace('!', '')
   return int(id, 16)
 
+def days_since_datetime(dt: datetime.datetime):
+  # Returns the number of days since the given datetime using UTC
+  now = datetime.datetime.now(datetime.timezone.utc)
+  if isinstance(dt, str):
+    dt = datetime.datetime.fromisoformat(dt)
+  diff = now - dt
+  return diff.days
+
 def geocode_position(api_key: str, latitude: float, longitude: float):
   if latitude is None or longitude is None:
     return None
@@ -40,7 +49,7 @@ def geocode_position(api_key: str, latitude: float, longitude: float):
 def filter_dict(d, whitelist):
     """
     Recursively filter a dictionary to only include whitelisted keys.
-    
+
     :param d: The original dictionary or list.
     :param whitelist: A dictionary that mirrors the structure of `d` with the keys you want to keep.
                       Nested dictionaries and lists should be specified with the keys you want to retain.
