@@ -25,7 +25,13 @@ export const Node = () => {
   return (
     <>
       <h5 className="mb-4 text-gray-500">
-        <Link to="/nodes">Nodes</Link> &gt; {node.shortname}
+        <Link
+          to="/nodes"
+          className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+        >
+          Nodes
+        </Link>{" "}
+        &gt; {node.shortname}
       </h5>
 
       <div className="mb-4 flex flex-row">
@@ -122,6 +128,7 @@ export const Node = () => {
                 href={`https://meshview.armooo.net/packet_list/${convertNodeIdFromHexToInt(node.id)}`}
                 target="_blank"
                 rel="noreferrer"
+                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
               >
                 Armooo&apos;s MeshView
               </a>
@@ -130,6 +137,7 @@ export const Node = () => {
                 href={`https://app.bayme.sh/node/${node.id}`}
                 target="_blank"
                 rel="noreferrer"
+                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
               >
                 Bay Mesh Explorer
               </a>
@@ -138,6 +146,7 @@ export const Node = () => {
                 href={`https://meshtastic.liamcottle.net/?node_id=${convertNodeIdFromHexToInt(node.id)}`}
                 target="_blank"
                 rel="noreferrer"
+                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
               >
                 Liam&apos;s Map
               </a>
@@ -146,6 +155,7 @@ export const Node = () => {
                 href={`https://meshmap.net/#${convertNodeIdFromHexToInt(node.id)}`}
                 target="_blank"
                 rel="noreferrer"
+                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
               >
                 MeshMap
               </a>
@@ -156,7 +166,7 @@ export const Node = () => {
         <div className="w-auto md:w-96">
           <div className="mb-4">
             <h3 className="mb-2 font-bold text-gray-600">Details</h3>
-            <table className="table-auto min-w-full border border-gray-200 bg-gray-50">
+            <table className="table-auto min-w-full border border-gray-200 bg-gray-50 dark:bg-gray-800">
               <tbody className="divide-y divide-dashed divide-gray-200">
                 <tr>
                   <th className="p-1" align="left">
@@ -215,7 +225,9 @@ export const Node = () => {
                             case 10:
                               return "ATAK Tracker";
                             default:
-                              return "Unknown";
+                              return (
+                                <span style={{ color: "#777" }}>Unknown</span>
+                              );
                           }
                         })()
                       : "Client"}
@@ -228,9 +240,11 @@ export const Node = () => {
                   <td className="p-1">
                     {node.position &&
                     node.position.latitude_i &&
-                    node.position.longitude_i
-                      ? `${node.position.longitude_i / 1e7}, ${node.position.latitude_i / 1e7}`
-                      : "Unknown"}
+                    node.position.longitude_i ? (
+                      `${node.position.longitude_i / 1e7}, ${node.position.latitude_i / 1e7}`
+                    ) : (
+                      <span style={{ color: "#777" }}>Unknown</span>
+                    )}
                   </td>
                 </tr>
                 <tr>
@@ -238,9 +252,11 @@ export const Node = () => {
                     Location
                   </th>
                   <td className="p-1">
-                    {node.position && node.position.geocoded
-                      ? node.position.geocoded.display_name
-                      : "Unknown"}
+                    {node.position && node.position.geocoded ? (
+                      node.position.geocoded.display_name
+                    ) : (
+                      <span style={{ color: "#777" }}>Unknown</span>
+                    )}
                   </td>
                 </tr>
                 <tr>
@@ -248,9 +264,11 @@ export const Node = () => {
                     Altitude
                   </th>
                   <td className="p-1">
-                    {node.position && node.position.altitude
-                      ? `${node.position.altitude} m`
-                      : "Unknown"}
+                    {node.position && node.position.altitude ? (
+                      `${node.position.altitude} m`
+                    ) : (
+                      <span style={{ color: "#777" }}>Unknown</span>
+                    )}
                   </td>
                 </tr>
                 <tr>
@@ -265,9 +283,11 @@ export const Node = () => {
                     {calculateDistanceBetweenNodes(
                       nodes[config?.server?.node_id ?? ""],
                       node
-                    ) !== null
-                      ? `${calculateDistanceBetweenNodes(nodes[config?.server?.node_id ?? ""], node)} km`
-                      : "Unknown"}
+                    ) !== null ? (
+                      `${calculateDistanceBetweenNodes(nodes[config?.server?.node_id ?? ""], node)} km`
+                    ) : (
+                      <span style={{ color: "#777" }}>Unknown</span>
+                    )}
                   </td>
                 </tr>
                 <tr>
@@ -290,7 +310,9 @@ export const Node = () => {
                     className="p-1 text-nowrap"
                     title={node.last_seen || "Unknown"}
                   >
-                    {node.last_seen || "Unknown"}
+                    {node.last_seen || (
+                      <span style={{ color: "#777" }}>Unknown</span>
+                    )}
                   </td>
                 </tr>
               </tbody>
@@ -299,36 +321,44 @@ export const Node = () => {
 
           <div className="mb-4">
             <h3 className="mb-2 font-bold text-gray-600">Heard (zero hop)</h3>
-            <table className="table-auto min-w-full border border-gray-200 bg-gray-50">
+            <table className="table-auto min-w-full border border-gray-200 bg-gray-50 dark:bg-gray-800">
               <tbody className="divide-y divide-dashed divide-gray-200">
                 {node.neighborinfo ? (
                   node.neighborinfo?.neighbors?.map((neighbor, index) => {
-                  const nid = convertNodeIdFromIntToHex(neighbor.node_id);
-                  const nnode = nodes[nid] || null;
-                  return (
-                    // eslint-disable-next-line react/no-array-index-key
-                    <tr key={`neighbors-${index}`}>
-                      <td className="w-1/3 p-1 text-nowrap">
-                        {nnode ? (
-                          <Link to={`/nodes/${nid}`}>{nnode.shortname}</Link>
-                        ) : (
-                          <span className="text-gray-500">UNK</span>
-                        )}
-                      </td>
-                      <td className="p-1 text-nowrap">SNR: {neighbor.snr}</td>
-                      <td className="p-1 text-nowrap" align="right">
-                        {nnode && calculateDistanceBetweenNodes(nnode, node)
-                          ? `${calculateDistanceBetweenNodes(nnode, node)} km`
-                          : ""}
-                      </td>
-                    </tr>
-                  );
-                })
-              ) : (
-                <tr>
-                  <td className="p-1" colSpan={3}>No neighbors detected. Does this node publish Neighbor Info?</td>
-                </tr>
-              )}
+                    const nid = convertNodeIdFromIntToHex(neighbor.node_id);
+                    const nnode = nodes[nid] || null;
+                    return (
+                      // eslint-disable-next-line react/no-array-index-key
+                      <tr key={`neighbors-${index}`}>
+                        <td className="w-1/3 p-1 text-nowrap">
+                          {nnode ? (
+                            <Link
+                              to={`/nodes/${nid}`}
+                              className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+                            >
+                              {nnode.shortname}
+                            </Link>
+                          ) : (
+                            <span className="text-gray-500">UNK</span>
+                          )}
+                        </td>
+                        <td className="p-1 text-nowrap">SNR: {neighbor.snr}</td>
+                        <td className="p-1 text-nowrap" align="right">
+                          {nnode && calculateDistanceBetweenNodes(nnode, node)
+                            ? `${calculateDistanceBetweenNodes(nnode, node)} km`
+                            : ""}
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td className="p-1" colSpan={3}>
+                      No neighbors detected. Does this node publish Neighbor
+                      Info?
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -337,7 +367,7 @@ export const Node = () => {
             <h3 className="mb-2 font-bold text-gray-600">
               Heard By (zero hop)
             </h3>
-            <table className="table-auto min-w-full border border-gray-200 bg-gray-50">
+            <table className="table-auto min-w-full border border-gray-200 bg-gray-50 dark:bg-gray-800">
               <tbody className="divide-y divide-dashed divide-gray-200">
                 {Object.entries(nodes).map(
                   ([iid, nnode], index) =>
@@ -351,7 +381,12 @@ export const Node = () => {
                           <tr key={`neighbors-heard-by-${index}-${subIndex}`}>
                             <td className="w-1/3 p-1 text-nowrap">
                               {iid in nodes ? (
-                                <Link to={`/nodes/${iid}`}>{nodes[iid].shortname}</Link>
+                                <Link
+                                  to={`/nodes/${iid}`}
+                                  className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+                                >
+                                  {nodes[iid].shortname}
+                                </Link>
                               ) : (
                                 <span className="text-gray-500">UNK</span>
                               )}

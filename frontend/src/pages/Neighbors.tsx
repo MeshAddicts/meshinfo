@@ -1,7 +1,9 @@
-import { formatDuration, formatISO, intervalToDuration } from "date-fns";
-import { useMemo } from "react";
+import { formatISO } from "date-fns";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { Avatar } from "../components/Avatar";
+import { DateToSince } from "../components/DateSince";
 import { HeardBy } from "../components/HeardBy";
 import { useGetNodesQuery } from "../slices/apiSlice";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
@@ -16,6 +18,15 @@ export const Neighbors = () => {
       ),
     [nodes]
   );
+
+  const [currentDate, setCurrentDate] = useState(new Date());
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentDate(new Date());
+    }, 3000);
+    return () => clearInterval(interval);
+  }, []);
 
   if (!nodes) {
     return <div>Loading...</div>;
@@ -33,63 +44,84 @@ export const Neighbors = () => {
       <table className="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50">
         <thead>
           <tr>
-            <th className="w-20 max-w-20 border border-gray-500 bg-gray-400">
+            <th className="w-20 max-w-20 border border-gray-500 bg-gray-400 dark:bg-gray-900">
               ID
             </th>
-            <th className="border border-gray-500 bg-gray-400" colSpan={2}>
+            <th
+              className="border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              colSpan={2}
+            >
               Name
             </th>
-            <th className="border border-gray-500 bg-gray-400" colSpan={3}>
+            <th
+              className="border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              colSpan={3}
+            >
               Neighbors
             </th>
             <th
-              className="hidden xl:table-cell border border-gray-500 bg-gray-400"
+              className="hidden xl:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900"
               colSpan={2}
             >
               Seen
             </th>
           </tr>
           <tr>
-            <th className="w-12 max-w-12 border border-gray-500 bg-gray-400" />
-            <th className="w-12 max-w-12 border border-gray-500 bg-gray-400">
+            <th className="w-12 max-w-12 border border-gray-500 bg-gray-400 dark:bg-gray-900" />
+            <th className="w-12 max-w-12 border border-gray-500 bg-gray-400 dark:bg-gray-900">
               Short
             </th>
-            <th className="border border-gray-500 bg-gray-400">Long</th>
-            <th className="border border-gray-500 bg-gray-400">Heard</th>
-            <th className="border border-gray-500 bg-gray-400">Heard By</th>
-            <th className="border border-gray-500 bg-gray-400">Interval</th>
-            <th className="hidden xl:table-cell border border-gray-500 bg-gray-400">
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-900">
+              Long
+            </th>
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-900">
+              Heard
+            </th>
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-900">
+              Heard By
+            </th>
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-900">
+              Interval
+            </th>
+            <th className="hidden xl:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900">
               Last
             </th>
-            <th className="hidden xl:table-cell w-20 max-w-20 border border-gray-500 bg-gray-400">
+            <th className="hidden xl:table-cell w-20 max-w-20 border border-gray-500 bg-gray-400 dark:bg-gray-900">
               Since
             </th>
           </tr>
         </thead>
         <tbody>
-          {Object.entries(activeNodesWithNeighbors).map(([id, node]) => {
-            const sanitizedId = id.replace("!", "");
+          {activeNodesWithNeighbors.map((node) => {
+            const id = node.id.replace("!", "");
             return (
-              <tr key={id}>
+              <tr key={`neighbors-${id}`} className="dark:bg-gray-800">
                 <td
                   className="p-1 border border-gray-400"
                   align="center"
                   valign="middle"
                 >
-                  <a href={`node_${sanitizedId}.html`}>
-                    <Avatar id={sanitizedId} size={16} className="mb-1" />
-                  </a>
+                  <Link
+                    to={`/nodes/${id}`}
+                    className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+                  >
+                    <Avatar id={id} size={16} className="mb-1" />
+                  </Link>
                 </td>
                 <td
                   className="p-1 border border-gray-400"
                   style={{ color: node.shortname === "UNK" ? "#777" : "#000" }}
                   align="center"
                 >
-                  <a href={`node_${sanitizedId}.html`}>{node.shortname}</a>
+                  <Link
+                    to={`/nodes/${id}`}
+                    className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+                  >
+                    {node.shortname}
+                  </Link>
                 </td>
                 <td
-                  className="p-1 border border-gray-400"
-                  style={{ color: node.shortname === "UNK" ? "#777" : "#000" }}
+                  className={`p-1 border border-gray-400 ${node.shortname === "UNK" && "text-neutral-700 dark:text-neutral-500"}`}
                 >
                   {node.longname}
                 </td>
@@ -98,17 +130,20 @@ export const Neighbors = () => {
                     <td className="p-0 border border-gray-400" valign="top">
                       <table className="table-auto min-w-full">
                         <tbody className="divide-y divide-dashed divide-gray-400">
-                          {node.neighborinfo?.neighbors?.map(
-                            (neighbor, index) => (
-                              // eslint-disable-next-line react/no-array-index-key
-                              <tr key={`neighbors-${index}`}>
+                          {node.neighborinfo?.neighbors?.map((neighbor) => {
+                            const neighborIdHex = convertNodeIdFromIntToHex(
+                              neighbor.node_id
+                            );
+                            return (
+                              <tr key={`neighbors-${node.id}-${neighborIdHex}`}>
                                 <td className="w-1/3 p-1 text-nowrap">
-                                  {nodes[neighbor.node_id] ? (
-                                    <a
-                                      href={`node_${nodes[neighbor.node_id].id}.html`}
+                                  {nodes[neighborIdHex] ? (
+                                    <Link
+                                      to={`/nodes/${id}`}
+                                      className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
                                     >
-                                      {nodes[neighbor.node_id].shortname}
-                                    </a>
+                                      {nodes[neighborIdHex].shortname}
+                                    </Link>
                                   ) : (
                                     <span className="text-gray-500">UNK</span>
                                   )}
@@ -121,8 +156,8 @@ export const Neighbors = () => {
                                     `${neighbor.distance} km`}
                                 </td>
                               </tr>
-                            )
-                          )}
+                            );
+                          })}
                         </tbody>
                       </table>
                     </td>
@@ -137,9 +172,12 @@ export const Neighbors = () => {
                                   // eslint-disable-next-line react/no-array-index-key
                                   <tr key={`${nid}-${subIndex}`}>
                                     <td className="w-1/3 p-1 text-nowrap">
-                                      <a href={`node_${nid}.html`}>
+                                      <Link
+                                        to={`/nodes/${nid}`}
+                                        className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+                                      >
                                         {nnode.shortname}
-                                      </a>
+                                      </Link>
                                     </td>
                                     <td className="p-1 text-nowrap">
                                       SNR: {neighbor.snr}
@@ -175,16 +213,10 @@ export const Neighbors = () => {
                   className="hidden xl:table-cell p-1 text-nowrap border border-gray-400"
                   align="right"
                 >
-                  {formatDuration(
-                    intervalToDuration({
-                      start: new Date(node.last_seen),
-                      end: new Date(),
-                    }),
-                    {
-                      format: ["seconds"],
-                    }
-                  )}
-                  secs
+                  <DateToSince
+                    date={node.last_seen}
+                    currentDate={currentDate}
+                  />
                 </td>
               </tr>
             );
@@ -195,7 +227,12 @@ export const Neighbors = () => {
       <br />
       <br />
       <br />
-      <a href="nodes.json">Download JSON</a>
+      <a
+        href="nodes.json"
+        className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+      >
+        Download JSON
+      </a>
     </div>
   );
 };

@@ -9,4 +9,5 @@ export default {
   corePlugins: {
     preflight: true,
   },
+  darkMode: "class",
 } satisfies Config;
