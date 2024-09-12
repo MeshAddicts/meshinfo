@@ -33,7 +33,6 @@ def days_since_datetime(dt: datetime.datetime):
   if isinstance(dt, str):
     dt = datetime.datetime.fromisoformat(dt)
   diff = now - dt
-  print(diff.days, type(diff.days))
   return diff.days
 
 def geocode_position(api_key: str, latitude: float, longitude: float):
