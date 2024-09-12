@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom";
+
 import { HeardBy } from "../components/HeardBy";
 import { useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 
@@ -21,26 +23,41 @@ export const Traceroutes = () => {
         Traceroutes as <HeardBy />
       </p>
 
-      <table className="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50">
+      <table className="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50 dark:bg-gray-800">
         <thead>
           <tr>
-            <th className="p-1 border border-gray-500 bg-gray-400" align="left">
+            <th
+              className="p-1 border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              align="left"
+            >
               Timestamp
             </th>
-            <th className="p-1 border border-gray-500 bg-gray-400" align="left">
+            <th
+              className="p-1 border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              align="left"
+            >
               From
             </th>
-            <th className="p-1 border border-gray-500 bg-gray-400" align="left">
+            <th
+              className="p-1 border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              align="left"
+            >
               To
             </th>
-            <th className="p-1 border border-gray-500 bg-gray-400" align="left">
+            <th
+              className="p-1 border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              align="left"
+            >
               Hops
             </th>
-            <th className="p-1 border border-gray-500 bg-gray-400" align="left">
+            <th
+              className="p-1 border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              align="left"
+            >
               Route
             </th>
             <th
-              className="p-1 border border-gray-500 bg-gray-400 text-nowrap"
+              className="p-1 border border-gray-500 bg-gray-400 dark:bg-gray-900 text-nowrap"
               align="left"
             >
               Route Hops
@@ -60,14 +77,24 @@ export const Traceroutes = () => {
                 </td>
                 <td className="p-1 border border-gray-400">
                   {fnode ? (
-                    <a href={`node_${item.from}.html`}>{fnode.shortname}</a>
+                    <Link
+                      to={`/nodes/${item.from}`}
+                      className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+                    >
+                      {fnode.shortname}
+                    </Link>
                   ) : (
                     <span className="text-gray-500">UNK</span>
                   )}
                 </td>
                 <td className="p-1 border border-gray-400">
                   {tnode ? (
-                    <a href={`node_${item.to}.html`}>{tnode.shortname}</a>
+                    <Link
+                      to={`/nodes/${item.to}`}
+                      className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+                    >
+                      {tnode.shortname}
+                    </Link>
                   ) : (
                     <span className="text-gray-500">UNK</span>
                   )}
@@ -82,7 +109,12 @@ export const Traceroutes = () => {
                       // eslint-disable-next-line react/no-array-index-key
                       <span key={`hop-${hopIndex}`}>
                         {hnode ? (
-                          <a href={`node_${hop}.html`}>{hnode.shortname}</a>
+                          <Link
+                            to={`/nodes/${hop}`}
+                            className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+                          >
+                            {hnode.shortname}
+                          </Link>
                         ) : (
                           <span className="text-gray-500">UNK</span>
                         )}

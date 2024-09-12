@@ -17,11 +17,15 @@ export const MeshLog = () => {
         since this server was last restarted are shown.
       </p>
 
-      <table className="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50">
+      <table className="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50 dark:bg-gray-800">
         <thead>
           <tr>
-            <th className="border border-gray-500 bg-gray-400">Timestamp</th>
-            <th className="border border-gray-500 bg-gray-400">Message</th>
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-800">
+              Timestamp
+            </th>
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-800">
+              Message
+            </th>
           </tr>
         </thead>
         <tbody>

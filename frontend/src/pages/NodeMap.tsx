@@ -56,14 +56,32 @@ export const NodeMap = ({ node }: { node: INode }) => {
   useEffect(() => {
     if (olMap) return;
     if (!node.position || !mapRef) return;
-    console.log("mount");
+
+    const tileLayer = new TileLayer({
+      source: new OSM(),
+    });
+
+    if (
+      window.matchMedia &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches
+    ) {
+      tileLayer.on("prerender", (evt) => {
+        if (evt.context) {
+          const context = evt.context as CanvasRenderingContext2D;
+          context.filter = "grayscale(80%) invert(100%) ";
+          context.globalCompositeOperation = "source-over";
+        }
+      });
+      tileLayer.on("postrender", (evt) => {
+        if (evt.context) {
+          const context = evt.context as CanvasRenderingContext2D;
+          context.filter = "none";
+        }
+      });
+    }
 
     const map = new OlMap({
-      layers: [
-        new TileLayer({
-          source: new OSM(),
-        }),
-      ],
+      layers: [tileLayer],
       target: mapRef.current as HTMLElement,
       view: new View({
         center: fromLonLat([node.position.longitude, node.position.latitude]),
