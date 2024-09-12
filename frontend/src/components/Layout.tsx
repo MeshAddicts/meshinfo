@@ -7,6 +7,16 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
   const { pathname } = useLocation();
   const [isDark, setIsDark] = useState(false);
 
+  // make sure the root element is updated with the dark class
+  //  move this out eventually
+  useEffect(() => {
+    if (isDark) {
+      document.documentElement.classList.add("dark", "bg-gray-950");
+    } else {
+      document.documentElement.classList.remove("dark", "bg-gray-950");
+    }
+  }, [isDark]);
+
   useEffect(() => {
     // set the initial state of the theme based on the user's preference
     if (
@@ -46,7 +56,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   return (
-    <div className={isDark ? "dark" : ""}>
+    <div>
       <Menu isDark={isDark} onDarkChange={(dark) => setIsDark(dark)} />
 
       <div
