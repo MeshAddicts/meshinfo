@@ -11,7 +11,13 @@ const defaultTools = [
   { name: "HWT Path Profiler", url: "https://heywhatsthat.com/profiler.html" },
 ];
 
-export const Menu = () => {
+export const Menu = ({
+  isDark,
+  onDarkChange,
+}: {
+  isDark: boolean;
+  onDarkChange: (dark: boolean) => void;
+}) => {
   const { data: config } = useGetConfigQuery();
 
   const [showMenu, setShowMenu] = useState(false);
@@ -41,7 +47,7 @@ export const Menu = () => {
       </button>
 
       <div
-        className={`lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-60 lg:flex-col ${showMenu ? "" : "hidden"} dark:text-gray-100`}
+        className={`lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-60 lg:flex-col ${showMenu ? "" : "hidden"} dark:text-gray-100 z-0`}
       >
         <div className="flex flex-col px-6 pb-4 overflow-y-auto bg-gray-300 dark:bg-gray-800 border-r-2 grow gap-y-5 border-r-cyan-600 sm:pt-14 md:pt-14 lg:pt-0">
           <div className="flex items-center h-24 mt-4 shrink-0">
@@ -69,6 +75,15 @@ export const Menu = () => {
               className="text-xs text-gray-900 dark:text-gray-50"
             >
               Website
+            </a>
+          </div>
+
+          <div>
+            <a
+              href="/"
+              className="text-xs text-gray-900 dark:text-gray-50 dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+            >
+              Back to the old UI
             </a>
           </div>
 
@@ -280,15 +295,50 @@ export const Menu = () => {
                 {config?.server?.version_info?.refName}
               </span>
             </h5>
-            <a
-              href="https://github.com/MeshAddicts/meshinfo"
-              className="text-xs text-gray-500"
-            >
-              <img
-                src="https://img.shields.io/github/stars/MeshAddicts/meshinfo?style=social"
-                alt="GitHub Stars"
-              />
-            </a>
+            <div className="flex">
+              <a
+                href="https://github.com/MeshAddicts/meshinfo"
+                className="text-xs text-gray-500"
+              >
+                <img
+                  src="https://img.shields.io/github/stars/MeshAddicts/meshinfo?style=social"
+                  alt="GitHub Stars"
+                />
+              </a>
+              {isDark ? (
+                <div
+                  role="button"
+                  onClick={() => onDarkChange(false)}
+                  onKeyDown={() => onDarkChange(false)}
+                  tabIndex={0}
+                >
+                  <img
+                    src={`${import.meta.env.BASE_URL}images/icons/light-mode.svg`}
+                    width="20"
+                    height="20"
+                    className="inline-block ml-2 dark:invert cursor-pointer"
+                    alt="light mode icon"
+                    title="Switch to Light Mode"
+                  />
+                </div>
+              ) : (
+                <div
+                  role="button"
+                  onClick={() => onDarkChange(true)}
+                  onKeyDown={() => onDarkChange(true)}
+                  tabIndex={0}
+                >
+                  <img
+                    src={`${import.meta.env.BASE_URL}images/icons/dark-mode.svg`}
+                    width="20"
+                    height="20"
+                    className="inline-block ml-2 dark:invert cursor-pointer"
+                    alt="light mode icon"
+                    title="Switch to Dark Mode"
+                  />
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
