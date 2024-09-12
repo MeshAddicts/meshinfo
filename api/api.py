@@ -1,3 +1,4 @@
+import datetime
 import os
 from fastapi.encoders import jsonable_encoder
 import uvicorn
@@ -24,7 +25,18 @@ class API:
 
         @app.get("/v1/nodes")
         async def nodes(request: Request) -> JSONResponse:
-            nodes = self.data.nodes
+            # get nodes that have been updated within last X days
+            days_to_limit = 7
+            if "days" in request.query_params.keys():
+                days_param: str|None = request.query_params.get("days")
+                if days_param is not None:
+                    days_to_limit = int(days_param)
+            if days_to_limit < 1:
+                days_to_limit = 1
+
+            nodes = { k: v for k, v in self.data.nodes.items() if utils.days_since_datetime(v["last_seen"]) <= days_to_limit }
+
+            # filter nodes by query parameters
             if "ids" in request.query_params.keys():
                 ids: str|None = request.query_params.get("ids")
                 if ids is not None:
