@@ -95,194 +95,122 @@ export const Menu = ({
           </div>
 
           <nav className="flex flex-col flex-1">
-            <h3 className="font-bold">Mesh</h3>
-            <div className="mb-1">
-              <Link
-                to="chat"
-                relative="path"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                <img
-                  src={`${import.meta.env.BASE_URL}images/icons/chat.svg`}
-                  width="20"
-                  height="20"
-                  className="inline-block mr-2 dark:invert"
-                  alt="chat icon"
-                  style={{ verticalAlign: "middle" }}
-                />
-                Chat
-              </Link>
-            </div>
-            {/* TODO <div className="mb-1">
-              <Link to="graph" relative="path">
-                <img
-                  src={`${import.meta.env.BASE_URL}images/icons/map.svg`}
-                  width="20"
-                  height="20"
-                  className="inline-block mr-2 dark:invert"
-                  alt="graph icon"
-                  style={{ verticalAlign: "middle" }}
-                />
-                Graph
-              </Link>
-            </div> */}
-            <div className="mb-1">
-              <Link
-                to="map"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                <img
-                  src={`${import.meta.env.BASE_URL}images/icons/map.svg`}
-                  width="20"
-                  height="20"
-                  className="inline-block mr-2 dark:invert"
-                  alt="map icon"
-                  style={{ verticalAlign: "middle" }}
-                />
-                Map
-              </Link>
-            </div>
-            <div className="mb-1">
-              <Link
-                to="nodes"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                <img
-                  src={`${import.meta.env.BASE_URL}images/icons/node.svg`}
-                  width="20"
-                  height="20"
-                  className="inline-block mr-2 dark:invert"
-                  alt="node icon"
-                  style={{ verticalAlign: "middle" }}
-                />
-                Nodes
-              </Link>
-            </div>
-            <div className="mb-1">
-              <Link
-                to="neighbors"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                <img
-                  src={`${import.meta.env.BASE_URL}images/icons/neighbors.svg`}
-                  width="20"
-                  height="20"
-                  className="inline-block mr-2 dark:invert"
-                  alt="neighbors icon"
-                  style={{ verticalAlign: "middle" }}
-                />
-                Node Neighbors
-              </Link>
-            </div>
-            <div className="mb-1">
-              <Link
-                to="stats"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                <img
-                  src={`${import.meta.env.BASE_URL}images/icons/stats.svg`}
-                  width="20"
-                  height="20"
-                  className="inline-block mr-2 dark:invert"
-                  alt="stats icon"
-                  style={{ verticalAlign: "middle" }}
-                />
-                Stats
-              </Link>
-            </div>
-            <div className="mb-1">
-              <Link
-                to="telemetry"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                <img
-                  src={`${import.meta.env.BASE_URL}images/icons/telemetry.svg`}
-                  width="20"
-                  height="20"
-                  className="inline-block mr-2 dark:invert"
-                  alt="telemetry icon"
-                  style={{ verticalAlign: "middle" }}
-                />
-                Telemetry
-              </Link>
-            </div>
-            <div className="mb-1">
-              <Link
-                to="traceroutes"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                <img
-                  src={`${import.meta.env.BASE_URL}images/icons/route2.svg`}
-                  width="20"
-                  height="20"
-                  className="inline-block mr-2 dark:invert"
-                  alt="traceroutes icon"
-                  style={{ verticalAlign: "middle" }}
-                />
-                Traceroutes
-              </Link>
-            </div>
+            <h3 className="mb-1 font-bold">Mesh</h3>
+            <Link
+              to="chat"
+              relative="path"
+              className="mb-1 p-2 w-full hover:bg-indigo-100 dark:hover:bg-indigo-700 rounded overflow-hidden dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-300"
+            >
+              <img
+                src={`${import.meta.env.BASE_URL}images/icons/chat.svg`}
+                width="20"
+                height="20"
+                className="inline-block mr-2 dark:invert"
+                alt="chat icon"
+                style={{ verticalAlign: "middle" }}
+              />
+              Chat
+            </Link>
+            <Link
+              to="map"
+              className="mb-1 p-2 w-full hover:bg-indigo-100 dark:hover:bg-indigo-700 rounded overflow-hidden dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-300"
+            >
+              <img
+                src={`${import.meta.env.BASE_URL}images/icons/map.svg`}
+                width="20"
+                height="20"
+                className="inline-block mr-2 dark:invert"
+                alt="map icon"
+                style={{ verticalAlign: "middle" }}
+              />
+              Map
+            </Link>
+            <Link
+              to="nodes"
+              className="mb-1 p-2 w-full hover:bg-indigo-100 dark:hover:bg-indigo-700 rounded overflow-hidden dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-300"
+            >
+              <img
+                src={`${import.meta.env.BASE_URL}images/icons/node.svg`}
+                width="20"
+                height="20"
+                className="inline-block mr-2 dark:invert"
+                alt="node icon"
+                style={{ verticalAlign: "middle" }}
+              />
+              Nodes
+            </Link>
+            <Link
+              to="neighbors"
+              className="mb-1 p-2 w-full hover:bg-indigo-100 dark:hover:bg-indigo-700 rounded overflow-hidden dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-300"
+            >
+              <img
+                src={`${import.meta.env.BASE_URL}images/icons/neighbors.svg`}
+                width="20"
+                height="20"
+                className="inline-block mr-2 dark:invert"
+                alt="neighbors icon"
+                style={{ verticalAlign: "middle" }}
+              />
+              Node Neighbors
+            </Link>
+            <Link
+              to="stats"
+              className="mb-1 p-2 w-full hover:bg-indigo-100 dark:hover:bg-indigo-700 rounded overflow-hidden dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-300"
+            >
+              <img
+                src={`${import.meta.env.BASE_URL}images/icons/stats.svg`}
+                width="20"
+                height="20"
+                className="inline-block mr-2 dark:invert"
+                alt="stats icon"
+                style={{ verticalAlign: "middle" }}
+              />
+              Stats
+            </Link>
+            <Link
+              to="telemetry"
+              className="mb-1 p-2 w-full hover:bg-indigo-100 dark:hover:bg-indigo-700 rounded overflow-hidden dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-300"
+            >
+              <img
+                src={`${import.meta.env.BASE_URL}images/icons/telemetry.svg`}
+                width="20"
+                height="20"
+                className="inline-block mr-2 dark:invert"
+                alt="telemetry icon"
+                style={{ verticalAlign: "middle" }}
+              />
+              Telemetry
+            </Link>
+            <Link
+              to="traceroutes"
+              className="mb-1 p-2 w-full hover:bg-indigo-100 dark:hover:bg-indigo-700 rounded overflow-hidden dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-300"
+            >
+              <img
+                src={`${import.meta.env.BASE_URL}images/icons/route2.svg`}
+                width="20"
+                height="20"
+                className="inline-block mr-2 dark:invert"
+                alt="traceroutes icon"
+                style={{ verticalAlign: "middle" }}
+              />
+              Traceroutes
+            </Link>
           </nav>
 
           <nav className="flex flex-col flex-1">
-            <h3 className="font-bold">Logs</h3>
-            <div className="mb-1">
-              <Link
-                to="mesh-log"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                Mesh Messages
-              </Link>
-            </div>
-            <div className="mb-1">
-              <Link
-                to="mqtt-log"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                MQTT Messages
-              </Link>
-            </div>
-          </nav>
-
-          <nav className="flex flex-col flex-1">
-            <h3 className="font-bold">Tools</h3>
-            {(config?.mesh?.tools ?? defaultTools).map((tool, index) => (
-              // eslint-disable-next-line react/no-array-index-key
-              <div key={`tools-${index}`} className="mb-1">
-                <a
-                  href={tool.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-                >
-                  {tool.name}
-                </a>
-              </div>
-            ))}
-          </nav>
-
-          <nav className="flex flex-col flex-1">
-            <h3 className="font-bold">Meshtastic Addons</h3>
-            <div className="mb-1">
-              <a
-                href="https://github.com/armooo/meshtastic_dopewars"
-                target="_blank"
-                rel="noreferrer"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                DopeWars
-              </a>
-            </div>
-            <div className="mb-1">
-              <a
-                href="https://github.com/TheCommsChannel/TC2-BBS-mesh"
-                target="_blank"
-                rel="noreferrer"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                TheCommsChannel BBS
-              </a>
-            </div>
+            <h3 className="mb-1 font-bold">Logs</h3>
+            <Link
+              to="mesh-log"
+              className="mb-1 p-2 w-full hover:bg-indigo-100 dark:hover:bg-indigo-700 rounded overflow-hidden dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-300"
+            >
+              Mesh Messages
+            </Link>
+            <Link
+              to="mqtt-log"
+              className="mb-1 p-2 w-full hover:bg-indigo-100 dark:hover:bg-indigo-700 rounded overflow-hidden dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-300"
+            >
+              MQTT Messages
+            </Link>
           </nav>
 
           <div className="flex-grow" />
