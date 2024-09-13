@@ -2,8 +2,8 @@ import { INode } from "../types";
 import { getDistanceBetweenTwoPoints } from "./getDistanceBetweenPoints";
 
 export function calculateDistanceBetweenNodes(
-  node1: INode,
-  node2: INode
+  node1: Partial<INode>,
+  node2: Partial<INode>
 ): number | null {
   if (!node1 || !node2) {
     return null;

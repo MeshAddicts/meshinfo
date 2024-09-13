@@ -1,5 +1,32 @@
-export interface IChatResponse {
-  channels: Record<string, IChannel>;
+export interface IChannelResponse {
+  id: string;
+  totalMessages: number;
+}
+
+export interface IChatMessageResponse {
+  channel: string;
+  from: {
+    id: string;
+    shortName?: string;
+    longName?: string;
+  };
+  to: {
+    id: string;
+    shortName?: string;
+    longName?: string;
+  };
+  gater: {
+    id: string;
+    shortName?: string;
+    longName?: string;
+  } | null;
+  hops_away: null;
+  id: number;
+  rssi: number;
+  snr: number;
+  text: string;
+  timestamp: number;
+  chan: string;
 }
 
 export interface IStatsResponse {

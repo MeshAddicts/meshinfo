@@ -1,9 +1,8 @@
-import { useMemo } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { Avatar } from "../components/Avatar";
 import { HardwareImg } from "../components/HardwareImg";
-import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";
+import { useGetConfigQuery, useGetNodeQuery } from "../slices/apiSlice";
 import {
   convertNodeIdFromHexToInt,
   convertNodeIdFromIntToHex,
@@ -13,13 +12,16 @@ import { NodeMap } from "./NodeMap";
 
 export const Node = () => {
   const { id } = useParams<{ id: string }>();
-  const { data: nodes } = useGetNodesQuery();
+  const { data: node, isFetching } = useGetNodeQuery(id!);
   const { data: config } = useGetConfigQuery();
+  const { data: serverNode } = useGetNodeQuery(config?.server?.node_id ?? "", {
+    skip: !config?.server?.node_id,
+  });
 
-  const node = useMemo(() => (nodes ?? {})[id!], [nodes, id]);
+  if (isFetching) return <div>Loading...</div>;
 
-  if (!node || !nodes) {
-    return <div>Loading...</div>;
+  if (!node) {
+    return <div>Node not found</div>;
   }
 
   return (
@@ -276,15 +278,12 @@ export const Node = () => {
                     className="p-1 text-nowrap whitespace-nowrap"
                     align="left"
                   >
-                    Distance from{" "}
-                    {nodes[config?.server?.node_id ?? ""].shortname}
+                    Distance from {serverNode?.shortname}
                   </th>
                   <td className="p-1">
-                    {calculateDistanceBetweenNodes(
-                      nodes[config?.server?.node_id ?? ""],
-                      node
-                    ) !== null ? (
-                      `${calculateDistanceBetweenNodes(nodes[config?.server?.node_id ?? ""], node)} km`
+                    {serverNode &&
+                    calculateDistanceBetweenNodes(serverNode, node) !== null ? (
+                      `${calculateDistanceBetweenNodes(serverNode, node)} km`
                     ) : (
                       <span style={{ color: "#777" }}>Unknown</span>
                     )}
