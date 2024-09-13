@@ -181,15 +181,24 @@ class API:
             for message in messages[:100]:
                 m = message.copy()
                 print(m)
-                if 'from' in m and m['from'] is not None and m['from'] in self.data.nodes:
-                    n = self.data.nodes[m['from']]
-                    m['from'] = node_for_chat_message(n)
-                if 'to' in m and m['to'] is not None and m['to'] in self.data.nodes:
-                    n = self.data.nodes[m['to']]
-                    m['to'] = node_for_chat_message(n)
-                if 'gater' in m and m['gater'] is not None and m['gater'] in self.data.nodes:
-                    n = self.data.nodes[m['gater']]
-                    m['gater'] = node_for_chat_message(n)
+                if 'from' in m and m['from'] is not None:
+                    if m['from'] in self.data.nodes:
+                        n = self.data.nodes[m['from']]
+                        m['from'] = node_for_chat_message(n)
+                    else:
+                        m['from'] = { "id": m['from'] }
+                if 'to' in m and m['to'] is not None:
+                    if m['to'] in self.data.nodes:
+                        n = self.data.nodes[m['to']]
+                        m['to'] = node_for_chat_message(n)
+                    else:
+                        m['to'] = { "id": m['to'] }
+                if 'gater' in m and m['gater'] is not None:
+                    if m['gater'] in self.data.nodes:
+                        n = self.data.nodes[m['gater']]
+                        m['gater'] = node_for_chat_message(n)
+                    else:
+                        m['gater'] = { "id": m['gater'] }
                 msgs.append(m)
 
             return jsonable_encoder({ "channel": channel, "messages": msgs })
