@@ -14,7 +14,7 @@ YOUR_FQDN_OR_HOSTNAME {
 		reverse_proxy meshinfo:9000
 	}
 	handle_path /next/* {
-		rewrite * /next{uri}
+		rewrite * /next/{path}
 		reverse_proxy frontend:80
 	}
 }
