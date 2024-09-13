@@ -13,6 +13,11 @@ import utils
 templates = Jinja2Templates(directory="./templates/api")
 app = FastAPI()
 
+def node_for_chat_message(node):
+    if node is None:
+        return None
+    return { 'id': node['id'], 'shortName': node['shortname'], 'longName': node['longname'] }
+
 class API:
     def __init__(self, config, data):
         self.config = config
@@ -166,9 +171,28 @@ class API:
                 return JSONResponse(status_code=404, content={"error": "channel not found"})
 
             # Sort by timestamp descending and paginate (100 per page)
-            messages = sorted(self.data.chat['channels'][channel]['messages'], key=lambda x: x['timestamp'], reverse=True)
-            messages = messages[:100]
-            return jsonable_encoder({ "channel": channel, "messages": messages })
+            if channel not in self.data.chat['channels']:
+                return JSONResponse(status_code=404, content={"error": "channel not found"})
+
+            messages = sorted(self.data.chat['channels'][channel]['messages'].copy(), key=lambda x: x['timestamp'], reverse=True)
+            msgs = []
+
+            # Populate the messages with a slim version of the from, to, and gater nodes
+            for message in messages[:100]:
+                m = message.copy()
+                print(m)
+                if 'from' in m and m['from'] is not None:
+                    n = self.data.nodes[m['from']]
+                    m['from'] = node_for_chat_message(n)
+                if 'to' in m and m['to'] is not None:
+                    n = self.data.nodes[m['to']]
+                    m['to'] = node_for_chat_message(n)
+                if 'gater' in m and m['gater'] is not None:
+                    n = self.data.nodes[m['gater']]
+                    m['gater'] = node_for_chat_message(n)
+                msgs.append(m)
+
+            return jsonable_encoder({ "channel": channel, "messages": msgs })
 
         @app.get("/v1/telemetry")
         async def telemetry(request: Request) -> JSONResponse:
