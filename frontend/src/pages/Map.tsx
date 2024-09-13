@@ -16,7 +16,7 @@ import { Circle, Fill, Stroke, Style } from "ol/style";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";
-import { INode } from "../types";
+import { INode, NodeRole } from "../types";
 
 type IMapNode = INode & {
   online: boolean;
@@ -28,44 +28,88 @@ type IMapNode = INode & {
   }[];
 };
 
-const defaultStyle = new Style({
-  image: new Circle({
-    radius: 6,
-    fill: new Fill({
-      color: "rgba(0, 0, 240, 1)",
-    }),
-    stroke: new Stroke({
-      color: "white",
-      width: 2,
-    }),
-  }),
-});
+const determineStyleForNode = (node: IMapNode | undefined) : Style => {
+  // calculate style based on node status (outer ring) and node type (inner circle)
+  let stroke;
+  let fill;
+  const radius = 7;
 
-const offlineStyle = new Style({
-  image: new Circle({
-    radius: 6,
-    fill: new Fill({
-      color: "rgba(0, 0, 0, 0.50)",
-    }),
-    stroke: new Stroke({
-      color: "white",
-      width: 2,
-    }),
-  }),
-});
+  if (node) {
+    switch (node?.role?.valueOf()) {
+      case 0: {
+        fill = "rgba(69, 158, 234, 1)";
+        break;
+      }
+      case NodeRole.CLIENT_MUTE: {
+        fill = "rgba(69, 158, 234, 1)";
+        break;
+      }
+      case NodeRole.ROUTER: {
+        fill = "rgba(140, 20, 252, 1)";
+        break;
+      }
+      case NodeRole.ROUTER_CLIENT: {
+        fill = "rgba(140, 20, 252, 1)";
+        break;
+      }
+      case NodeRole.REPEATER: {
+        fill = "rgba(140, 20, 252, 1)";
+        break;
+      }
+      case NodeRole.TRACKER: {
+        fill = "rgba(175, 65, 84, 1)";
+        break;
+      }
+      case NodeRole.SENSOR: {
+        fill = "rgba(0, 0, 240, 1)";
+        break;
+      }
+      case NodeRole.ATAK: {
+        fill = "rgba(175, 65, 84, 1)";
+        break;
+      }
+      case NodeRole.CLIENT_HIDDEN: {
+        fill = "rgba(0, 0, 240, 1)";
+        break;
+      }
+      case NodeRole.LOST_AND_FOUND: {
+        fill = "rgba(242, 38, 19, 1)";
+        break;
+      }
+      case NodeRole.ATAK_TRACKER: {
+        fill = "rgba(175, 65, 84, 1)";
+        break;
+      }
+      default: {
+        fill = "rgba(69, 158, 234, 1)";
+        break;
+      }
+    }
 
-const onlineStyle = new Style({
-  image: new Circle({
-    radius: 6,
-    fill: new Fill({
-      color: "rgba(50, 240, 50, 1)",
+    if (node.online) {
+      stroke = "rgba(69, 234, 129, 1)";
+    } else {
+      stroke = "rgba(100, 100, 100, 1)";
+    }
+  } else {
+    fill = "rgba(69, 158, 234, 1)";
+    stroke = "rgba(100, 100, 100, 1)";
+  }
+
+  return new Style({
+    image: new Circle({
+      radius,
+      fill: new Fill({
+        color: fill,
+      }),
+      stroke: new Stroke({
+        color: stroke,
+        width: 3,
+      }),
     }),
-    stroke: new Stroke({
-      color: "white",
-      width: 2,
-    }),
-  }),
-});
+  });
+}
+
 
 export function Map() {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -81,7 +125,7 @@ export function Map() {
         id,
         {
           ...node,
-          online: new Date(node.last_seen) > new Date(now.getTime() - 7200),
+          online: node.active,
           position:
             node.position &&
             node.position.latitude_i &&
@@ -214,11 +258,7 @@ export function Map() {
               position: [node.position[0], node.position[1]],
             },
           });
-          if (node.online) {
-            feature.setStyle(onlineStyle);
-          } else {
-            feature.setStyle(offlineStyle);
-          }
+          feature.setStyle(determineStyleForNode(node as IMapNode));
           return feature;
         }
         return null;
@@ -226,7 +266,7 @@ export function Map() {
       .filter(Boolean) as Feature<Point>[];
 
     const vectorLayer = new VectorLayer({
-      style: defaultStyle,
+      style: determineStyleForNode(undefined),
       source: new VectorSource({ features }),
     });
 
