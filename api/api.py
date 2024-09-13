@@ -16,7 +16,14 @@ app = FastAPI()
 def node_for_chat_message(node):
     if node is None:
         return None
-    return { 'id': node['id'], 'shortName': node['shortname'], 'longName': node['longname'] }
+    n = {
+        'id': node['id'],
+        'shortName': node['shortname'],
+        'longName': node['longname']
+    }
+    if 'position' in node:
+        n['position'] = node['position']
+    return n
 
 class API:
     def __init__(self, config, data):
