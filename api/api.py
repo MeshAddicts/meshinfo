@@ -151,6 +151,23 @@ class API:
 
         @app.get("/v1/chat")
         async def chat(request: Request) -> JSONResponse:
+            # Calculate message count for each channel
+            channels = self.data.chat['channels'].keys()
+            print(channels)
+            chat = {
+                "channels": [ { "id": x, "totalMessages": len(self.data.chat['channels'][x]['messages']), "messages": [] } for x in channels ]
+            }
+            return jsonable_encoder(chat)
+
+        @app.get("/v1/chat/{channel}/messages")
+        async def chat_messages(request: Request) -> JSONResponse:
+            channel = request.path_params.get("channel")
+            if channel is None:
+                return JSONResponse(status_code=404, content={"error": "channel not found"})
+
+            # Sort by timestamp descending and paginate (100 per page)
+            messages = sorted(self.data.chat['channels'][channel]['messages'], key=lambda x: x['timestamp'], reverse=True)
+            messages = messages[:100]
             return jsonable_encoder(self.data.chat)
 
         @app.get("/v1/telemetry")
