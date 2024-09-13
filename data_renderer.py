@@ -15,7 +15,7 @@ class DataRenderer:
 
   def _render(self):
     self.save_file("chat.json", self.data.chat)
-    print(f"Saved {len(self.data.chat['channels']['0']['messages'])} chat messages to file ({self.config['paths']['data']}/chat.json)")
+    print(f"Saved chat messages to file ({self.config['paths']['data']}/chat.json)")
 
     nodes = {}
     for id, node in self.data.nodes.items():
