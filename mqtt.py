@@ -450,19 +450,24 @@ class MQTT:
         if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
             msg['sender'] = msg['sender'].replace('!', '')
         if 'channel' not in msg:
-            msg['channel'] = "0"
+            msg['channel'] = 0
 
-        if str(msg['channel']) not in self.data.chat['channels']:
-            self.data.chat['channels'][str(msg['channel'])] = {
-                'name': f'Channel {msg["channel"]}',
+        gater = msg['topic'].split('/')[-1].replace('!', '')
+        chan = msg['topic'].split('/')[-2]
+        if chan not in self.data.chat['channels']:
+            self.data.chat['channels'][chan] = {
+                'name': chan,
                 'messages': []
             }
 
         chat = {
+            'topic': msg['topic'],
             'id': msg['id'],
+            'gater': gater,
             'from': msg['from'],
             'to': msg['to'],
             'channel': str(msg['channel']),
+            'chan': chan,
             'text': msg['payload']['text'],
             'timestamp': msg['timestamp'],
             'hops_away': msg['hops_away'] if 'hops_away' in msg else None,
@@ -471,14 +476,7 @@ class MQTT:
         }
         if 'sender' in msg:
             chat['sender'] = msg['sender']
-        self.data.chat['channels'][str(msg['channel'])]['messages'].insert(0, chat)
-
-        node = self.data.find_node_by_hex_id(msg['from'])
-        # TODO: Replace with something more configurable
-        if node:
-            if 'TC' in chat['text'] and 'BBS' in chat['text'] and 'Commands' in chat['text']:
-                node['tc2_bbs'] = True
-            self.data.update_node(node['id'], node)
+        self.data.chat['channels'][chan]['messages'].insert(0, chat)
 
         await self.data.save()
 

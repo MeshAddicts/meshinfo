@@ -105,13 +105,32 @@ class MemoryDataStore:
     try:
       chat = self.load_json_file(f"{self.config['paths']['data']}/chat.json")
       if chat is not None:
-        self.chat = chat
-      print(f"Loaded {len(self.chat['channels']['0']['messages'])} chat messages from file ({self.config['paths']['data']}/chat.json)")
+        self.chat = { 'channels': {} }
+        # create new channels based on the message topic from all of the existing channels
+        for channel in chat['channels'].values():
+          for message in channel['messages']:
+            # msh/US/CA/sacvalley/2/e/LongFast/!da635a08
+            # get LongFast from rear of topic
+            if 'topic' in message:
+              message['gater'] = message['topic'].split('/')[-1]
+              chan = message['topic'].split('/')[-2]
+            else:
+              message['gater'] = None
+              chan = 'LongFast' # default to LongFast if no topic available
+            message['chan'] = chan
+
+            if chan not in self.chat['channels']:
+              self.chat['channels'][chan] = {
+                'name': chan,
+                'messages': []
+              }
+            self.chat['channels'][chan]['messages'].append(message)
+      print(f"Loaded chat messages from file ({self.config['paths']['data']}/chat.json)")
     except FileNotFoundError:
       self.chat = {
           'channels': {
-              '0': {
-                'name': 'General',
+              'LongFast': {
+                'name': 'LongFast',
                 'messages': []
               }
           }
