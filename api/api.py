@@ -168,7 +168,7 @@ class API:
             # Sort by timestamp descending and paginate (100 per page)
             messages = sorted(self.data.chat['channels'][channel]['messages'], key=lambda x: x['timestamp'], reverse=True)
             messages = messages[:100]
-            return jsonable_encoder(self.data.chat)
+            return jsonable_encoder({ "channel": channel, "messages": messages })
 
         @app.get("/v1/telemetry")
         async def telemetry(request: Request) -> JSONResponse:
