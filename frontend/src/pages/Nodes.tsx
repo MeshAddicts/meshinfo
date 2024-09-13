@@ -271,7 +271,7 @@ export const Nodes = () => {
                 className="p-1 border border-gray-400 text-nowrap"
                 align="center"
               >
-                {node.role && <Role role={node.role} />}
+                <Role role={node.role} />
               </td>
               {node.position && Object.keys(node.position).length ? (
                 <>
