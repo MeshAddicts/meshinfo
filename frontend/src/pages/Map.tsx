@@ -252,6 +252,7 @@ export function Map() {
             ),
             node: {
               id,
+              online: node.online,
               shortname: node.shortname,
               longname: node.longname,
               last_seen: node.last_seen,
