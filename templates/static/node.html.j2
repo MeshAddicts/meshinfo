@@ -40,7 +40,11 @@
         {% if node.telemetry.temperature %}
           <span class="mr-4 align-middle" title="Temperature">
             <img src="images/icons/temperature.svg" alt="Temperature" class="w-4 h-4 inline-block align-middle">
-            {{ node.telemetry.temperature | round(1) }}&deg;C
+            {% if node.telemetry.temperature is number %}
+              {{ node.telemetry.temperature | round(1) }}&deg;C
+            {% else %}
+              {{ node.telemetry.temperature }}
+            {% endif %}
           </span>
         {% endif %}
         {% if node.telemetry.humidity %}
