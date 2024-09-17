@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 
 import { useGetConfigQuery } from "../slices/apiSlice";
 
@@ -16,9 +16,10 @@ export const Menu = ({
   onDarkChange,
 }: {
   isDark: boolean;
-  onDarkChange: (dark: boolean) => void;
+  onDarkChange: (dark: boolean) => void; 
 }) => {
   const { data: config } = useGetConfigQuery();
+  const location = useLocation();
 
   const [showMenu, setShowMenu] = useState(false);
 
@@ -27,11 +28,24 @@ export const Menu = ({
     localStorage.setItem("theme", dark ? "dark" : "light");
   };
 
+  const handleLinkClick = () => {
+    setShowMenu(false);
+  };
+
+  const getLinkClassName = (path: string) => {
+    const isActive = location.pathname.endsWith(path);
+    return `mb-1 p-2 w-full rounded overflow-hidden ${
+      isActive
+        ? "bg-indigo-200 dark:bg-indigo-800 text-indigo-800 dark:text-indigo-200"
+        : "hover:bg-indigo-100 dark:hover:bg-indigo-700 dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-300"
+    }`;
+  };
+
   return (
     <>
       <button
         type="button"
-        className={`fixed z-50 top-4 left-4 p-2 rounded-full hover:scale-110 transform transition-all duration-300 ${showMenu ? "bg-gray-100 dark:bg-gray-700" : "bg-gray-300 dark:bg-gray-800"}`}
+        className={`fixed z-50 top-4 left-4 p-2 rounded-full lg:hidden  hover:scale-110 transform transition-all duration-300 ${showMenu ? "bg-gray-100 dark:bg-gray-700" : "bg-gray-300 dark:bg-gray-800"}`}
         onClick={() => setShowMenu(!showMenu)}
         aria-label="Show/Hide Menu"
       >
@@ -54,9 +68,11 @@ export const Menu = ({
       </button>
 
       <div
-        className={`w-full lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-60 lg:flex-col ${showMenu ? "" : "hidden"} dark:text-gray-100 z-0`}
+        className={`w-full fixed top-0 left-0 right-0 z-40 lg:inset-y-0 lg:flex lg:w-60 lg:flex-col ${
+          showMenu ? "" : "hidden"
+        } dark:text-gray-100`}
       >
-        <div className="flex flex-col px-6 pb-4 overflow-y-auto bg-gray-300 dark:bg-gray-800 border-r-2 grow gap-y-5 border-r-cyan-600 pt-14 lg:pt-0">
+        <div className="flex flex-col px-6 pb-4 overflow-y-auto bg-gray-300 dark:bg-gray-800 border-r-2 grow gap-y-5 border-r-cyan-600 pt-14 lg:pt-0 h-screen">
           <div className="flex items-center h-24 mt-4 shrink-0">
             <div className="text-2xl">
               {config?.mesh?.name?.split(" ").map((word, index) => (
@@ -99,7 +115,8 @@ export const Menu = ({
             <Link
               to="chat"
               relative="path"
-              className="mb-1 p-2 w-full hover:bg-indigo-100 dark:hover:bg-indigo-700 rounded overflow-hidden dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-300"
+              className={getLinkClassName("chat")}
+              onClick={handleLinkClick}
             >
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/chat.svg`}
@@ -113,7 +130,8 @@ export const Menu = ({
             </Link>
             <Link
               to="map"
-              className="mb-1 p-2 w-full hover:bg-indigo-100 dark:hover:bg-indigo-700 rounded overflow-hidden dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-300"
+              className={getLinkClassName("map")}
+              onClick={handleLinkClick}
             >
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/map.svg`}
@@ -127,7 +145,8 @@ export const Menu = ({
             </Link>
             <Link
               to="nodes"
-              className="mb-1 p-2 w-full hover:bg-indigo-100 dark:hover:bg-indigo-700 rounded overflow-hidden dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-300"
+              className={getLinkClassName("nodes")}
+              onClick={handleLinkClick}
             >
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/node.svg`}
@@ -141,7 +160,8 @@ export const Menu = ({
             </Link>
             <Link
               to="neighbors"
-              className="mb-1 p-2 w-full hover:bg-indigo-100 dark:hover:bg-indigo-700 rounded overflow-hidden dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-300"
+              className={getLinkClassName("neighbors")}
+              onClick={handleLinkClick}
             >
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/neighbors.svg`}
@@ -155,7 +175,8 @@ export const Menu = ({
             </Link>
             <Link
               to="stats"
-              className="mb-1 p-2 w-full hover:bg-indigo-100 dark:hover:bg-indigo-700 rounded overflow-hidden dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-300"
+              className={getLinkClassName("stats")}
+              onClick={handleLinkClick}
             >
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/stats.svg`}
@@ -169,7 +190,8 @@ export const Menu = ({
             </Link>
             <Link
               to="telemetry"
-              className="mb-1 p-2 w-full hover:bg-indigo-100 dark:hover:bg-indigo-700 rounded overflow-hidden dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-300"
+              className={getLinkClassName("telemetry")}
+              onClick={handleLinkClick}
             >
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/telemetry.svg`}
@@ -183,7 +205,8 @@ export const Menu = ({
             </Link>
             <Link
               to="traceroutes"
-              className="mb-1 p-2 w-full hover:bg-indigo-100 dark:hover:bg-indigo-700 rounded overflow-hidden dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-300"
+              className={getLinkClassName("traceroutes")}
+                onClick={handleLinkClick}
             >
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/route2.svg`}
@@ -201,13 +224,15 @@ export const Menu = ({
             <h3 className="mb-1 font-bold">Logs</h3>
             <Link
               to="mesh-log"
-              className="mb-1 p-2 w-full hover:bg-indigo-100 dark:hover:bg-indigo-700 rounded overflow-hidden dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-300"
+              className={getLinkClassName("mesh-log")}
+              onClick={handleLinkClick}
             >
               Mesh Messages
             </Link>
             <Link
               to="mqtt-log"
-              className="mb-1 p-2 w-full hover:bg-indigo-100 dark:hover:bg-indigo-700 rounded overflow-hidden dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-300"
+              className={getLinkClassName("mqtt-log")}
+              onClick={handleLinkClick}
             >
               MQTT Messages
             </Link>
