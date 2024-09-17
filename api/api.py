@@ -1,4 +1,3 @@
-import datetime
 import os
 from fastapi.encoders import jsonable_encoder
 import uvicorn
@@ -12,6 +11,18 @@ import utils
 
 templates = Jinja2Templates(directory="./templates/api")
 app = FastAPI()
+
+def node_for_embedding(node):
+    if node is None:
+        return None
+    n = {
+        'id': node['id'],
+        'short_name': node['shortname'],
+        'long_name': node['longname']
+    }
+    if 'position' in node:
+        n['position'] = node['position']
+    return n
 
 class API:
     def __init__(self, config, data):
@@ -116,10 +127,21 @@ class API:
                 node_id = id
 
             if node_id in self.data.telemetry_by_node:
-                return jsonable_encoder({ "telemetry": self.data.telemetry_by_node[node_id] })
+                telemetries = []
+                for telemetry in self.data.telemetry_by_node[node_id]:
+                    t = telemetry.copy()
+                    if 'from' in t and t['from'] is not None:
+                        if t['from'] in self.data.nodes:
+                            n = self.data.nodes[t['from']]
+                            t['from'] = node_for_embedding(n)
+                        else:
+                            t['from'] = { "id": t['from'] }
+                    telemetries.append(t)
+                return jsonable_encoder({ "telemetry": telemetries })
             else:
                 return JSONResponse(status_code=404, content={"error": "telemetry not found"})
 
+        # TODO: This is deprecated. It was replaced with /v1/chat/nodes/{id}/messages. Remove this!
         @app.get("/v1/nodes/{id}/texts")
         async def node_text(request: Request, id: str) -> JSONResponse:
             try:
@@ -146,33 +168,157 @@ class API:
             traceroutes = []
             for traceroute in self.data.traceroutes:
                 if traceroute['from'] == node_id or traceroute['to'] == node_id:
-                    traceroutes.append(traceroute)
+                    t = traceroute.copy()
+                    if 'from' in t and t['from'] is not None:
+                        if t['from'] in self.data.nodes:
+                            n = self.data.nodes[t['from']]
+                            t['from'] = node_for_embedding(n)
+                        else:
+                            t['from'] = { "id": t['from'] }
+                    if 'to' in t and t['to'] is not None:
+                        if t['to'] in self.data.nodes:
+                            n = self.data.nodes[t['to']]
+                            t['to'] = node_for_embedding(n)
+                        else:
+                            t['to'] = { "id": t['to'] }
+                    traceroutes.append(t)
             return jsonable_encoder({ "traceroutes": traceroutes })
 
         @app.get("/v1/chat")
         async def chat(request: Request) -> JSONResponse:
-            return jsonable_encoder(self.data.chat)
+            # Calculate message count for each channel
+            channels = self.data.chat['channels'].keys()
+            print(channels)
+            chat = {
+                "channels": [ { "id": x, "totalMessages": len(self.data.chat['channels'][x]['messages']), "messages": [] } for x in channels ]
+            }
+            return jsonable_encoder(chat)
+
+        @app.get("/v1/chat/{channel}/messages")
+        async def chat_messages(request: Request) -> JSONResponse:
+            channel = request.path_params.get("channel")
+            if channel is None:
+                return JSONResponse(status_code=404, content={"error": "channel not found"})
+
+            # Sort by timestamp descending and paginate (100 per page)
+            if channel not in self.data.chat['channels']:
+                return JSONResponse(status_code=404, content={"error": "channel not found"})
+
+            messages = sorted(self.data.chat['channels'][channel]['messages'].copy(), key=lambda x: x['timestamp'], reverse=True)
+            msgs = []
+
+            # Populate the messages with a slim version of the from, to, and gater nodes
+            for message in messages[:100]:
+                m = message.copy()
+                if 'from' in m and m['from'] is not None:
+                    if m['from'] in self.data.nodes:
+                        n = self.data.nodes[m['from']]
+                        m['from'] = node_for_embedding(n)
+                    else:
+                        m['from'] = { "id": m['from'] }
+                if 'to' in m and m['to'] is not None:
+                    if m['to'] in self.data.nodes:
+                        n = self.data.nodes[m['to']]
+                        m['to'] = node_for_embedding(n)
+                    else:
+                        m['to'] = { "id": m['to'] }
+                if 'gater' in m and m['gater'] is not None:
+                    if m['gater'] in self.data.nodes:
+                        n = self.data.nodes[m['gater']]
+                        m['gater'] = node_for_embedding(n)
+                    else:
+                        m['gater'] = { "id": m['gater'] }
+                msgs.append(m)
+
+            return jsonable_encoder({ "channel": channel, "messages": msgs })
 
         @app.get("/v1/telemetry")
         async def telemetry(request: Request) -> JSONResponse:
-            return jsonable_encoder(self.data.telemetry[:1000])
+            telemetries = []
+            for telemetry in self.data.telemetry[:1000]:
+                t = telemetry.copy()
+                if 'from' in t and t['from'] is not None:
+                    if t['from'] in self.data.nodes:
+                        n = self.data.nodes[t['from']]
+                        t['from'] = node_for_embedding(n)
+                    else:
+                        t['from'] = { "id": t['from'] }
+                if 'to' in t and t['to'] is not None:
+                    if t['to'] in self.data.nodes:
+                        n = self.data.nodes[t['to']]
+                        t['to'] = node_for_embedding(n)
+                    else:
+                        t['to'] = { "id": t['to'] }
+                if 'gater' in t and t['gater'] is not None:
+                    if t['gater'] in self.data.nodes:
+                        n = self.data.nodes[t['gater']]
+                        t['gater'] = node_for_embedding(n)
+                    else:
+                        t['gater'] = { "id": t['gater'] }
+                telemetries.append(t)
+            return jsonable_encoder(telemetries)
 
         @app.get("/v1/traceroutes")
         async def traceroutes(request: Request) -> JSONResponse:
-            return jsonable_encoder(self.data.traceroutes[:1000])
+            traceroutes = []
+            for traceroute in self.data.traceroutes[:1000]:
+                t = traceroute.copy()
+                if 'from' in t and t['from'] is not None:
+                    if t['from'] in self.data.nodes:
+                        n = self.data.nodes[t['from']]
+                        t['from'] = node_for_embedding(n)
+                    else:
+                        t['from'] = { "id": t['from'] }
+                if 'to' in t and t['to'] is not None:
+                    if t['to'] in self.data.nodes:
+                        n = self.data.nodes[t['to']]
+                        t['to'] = node_for_embedding(n)
+                    else:
+                        t['to'] = { "id": t['to'] }
+                if 'gater' in t and t['gater'] is not None:
+                    if t['gater'] in self.data.nodes:
+                        n = self.data.nodes[t['gater']]
+                        t['gater'] = node_for_embedding(n)
+                    else:
+                        t['gater'] = { "id": t['gater'] }
+                traceroutes.append(t)
+            return jsonable_encoder(traceroutes)
 
         @app.get("/v1/messages")
         async def messages(request: Request) -> JSONResponse:
-            return jsonable_encoder(self.data.messages[:1000])
+            messages = []
+            for message in self.data.messages[:1000]:
+                m = message.copy()
+                if 'from' in m and m['from'] is not None:
+                    if m['from'] in self.data.nodes:
+                        n = self.data.nodes[m['from']]
+                        m['from'] = node_for_embedding(n)
+                    else:
+                        m['from'] = { "id": m['from'] }
+                if 'to' in m and m['to'] is not None:
+                    if m['to'] in self.data.nodes:
+                        n = self.data.nodes[m['to']]
+                        m['to'] = node_for_embedding(n)
+                    else:
+                        m['to'] = { "id": m['to'] }
+                if 'gater' in m and m['gater'] is not None:
+                    if m['gater'] in self.data.nodes:
+                        n = self.data.nodes[m['gater']]
+                        m['gater'] = node_for_embedding(n)
+                    else:
+                        m['gater'] = { "id": m['gater'] }
+                messages.append(m)
+            return jsonable_encoder(messages)
 
         @app.get("/v1/mqtt_messages")
         async def mqtt_messages(request: Request) -> JSONResponse:
-            return jsonable_encoder(self.data.mqtt_messages[:1000])
+            return jsonable_encoder(self.data.mqtt_messages[:500])
 
         @app.get("/v1/stats")
         async def stats(request: Request) -> JSONResponse:
+            active_nodes = len(self.data.nodes.filter(lambda n: n['active'] == True))
             stats = {
-                'active_nodes': 0,
+                'active_nodes': active_nodes,
                 'total_chat': len(self.data.chat['channels']['0']['messages']),
                 'total_nodes': len(self.data.nodes),
                 'total_messages': len(self.data.messages),
@@ -180,17 +326,13 @@ class API:
                 'total_telemetry': len(self.data.telemetry),
                 'total_traceroutes': len(self.data.traceroutes),
             }
-            for _, node in self.data.nodes.items():
-                if 'active' in node and node['active']:
-                    stats['active_nodes'] += 1
-
             return jsonable_encoder({"stats": stats})
 
         @app.get("/v1/server/config")
         async def server_config(request: Request) -> JSONResponse:
             return jsonable_encoder({'config': Config.cleanse(self.config)})
 
-
+        # CORS
         allow_origins = os.getenv("ALLOW_ORIGINS", "").split(",")
         print(f"Allowed origins: {allow_origins} {len(allow_origins)}")
 

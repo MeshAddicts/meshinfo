@@ -4,15 +4,12 @@ FROM node:20.17.0-alpine
 LABEL org.opencontainers.image.source="https://github.com/MeshAddicts/meshinfo"
 LABEL org.opencontainers.image.description="Realtime web UI to run against a Meshtastic regional or private mesh network."
 
-COPY . .
-
 WORKDIR /frontend
 
 ENV NODE_ENV=dev
 
 RUN corepack enable
-RUN yarn
 
 EXPOSE 5173
 
-CMD ["/frontend/scripts/run-frontend.sh"]
+CMD ["/frontend/scripts/run-frontend-dev.sh"]
