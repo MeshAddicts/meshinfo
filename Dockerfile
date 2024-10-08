@@ -1,5 +1,5 @@
 # trunk-ignore-all(checkov/CKV_DOCKER_3)
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 LABEL org.opencontainers.image.source https://github.com/MeshAddicts/meshinfo
 LABEL org.opencontainers.image.description "Realtime web UI to run against a Meshtastic regional or private mesh network."
