@@ -171,7 +171,7 @@
         <td class="hidden lg:table-cell p-1 border border-gray-400 text-nowrap" align=right>
           {% if item.payload.temperature is defined %}
             {% if item.payload.temperature is number %}
-              {{ item.payload.temperature | round(2) }}&deg;C
+              {{ item.payload.temperature | default("0") | float | round(2) }} &deg;C
             {% else %}
               {{ item.payload.temperature }}
             {% endif %}
