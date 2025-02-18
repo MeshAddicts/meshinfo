@@ -67,3 +67,24 @@ def filter_dict(d, whitelist):
         ]
     else:
         return d  # Return the value if it's neither a dict nor a list
+
+def graph_icon(name):
+   if "qth" in name.lower():
+      return "/images/icons/house.png"
+   elif "home" in name.lower():
+      return "/images/icons/house.png"
+   elif "base" in name.lower():
+      return "/images/icons/house.png"
+   elif "qth" in name.lower():
+      return "/images/icons/house.png"
+   elif "mobile" in name.lower():
+      return "/images/icons/car.png"
+   elif " hs" in name.lower():
+      return "/images/icons/tower.png"
+   elif "edc" in name.lower():
+      return "/images/icons/heltec.png"
+   elif "mqtt" in name.lower():
+      return "/images/icons/computer.png"
+   elif "bridge" in name.lower():
+      return "/images/icons/computer.png"
+   return "/images/icons/radio.png"

@@ -192,6 +192,7 @@ class MemoryDataStore:
         self.graph = self.graph_node(self.config['server']['node_id'])
 
     if since_last_render >= self.config['server']['intervals']['render']:
+        self.graph = self.graph_nodes()
         static_html_renderer = StaticHTMLRenderer(self.config, copy.deepcopy(self))
         await static_html_renderer.render()
         end = datetime.now(ZoneInfo(self.config['server']['timezone']))
@@ -373,3 +374,58 @@ class MemoryDataStore:
         return node
 
     return recursive_graph_node(node_id, start_id=node_id)
+  
+  def graph_nodes(self):
+    graph_data = {
+      "nodes": [],
+      "edges": []
+    }
+    known_edges = []
+    known_nodes = []
+    for id, node in self.nodes.items():
+      if id not in known_nodes:
+        if "neighborinfo" not in node:
+            continue
+        if not node["neighborinfo"]:
+            continue
+        if "neighbors" not in node["neighborinfo"]:
+            continue
+        graph_data['nodes'].append(
+          {
+            "id": id,
+            "name": node['longname'],
+            "height": 30,
+            "stroke": None,
+            'fill': {"src": utils.graph_icon(node['longname'])}
+          }
+        )
+        known_nodes.append(id)
+        for neighbor in node['neighborinfo']['neighbors']:
+          neigbor_id = utils.convert_node_id_from_int_to_hex(neighbor["node_id"])
+          edge_key = f"{id}.{neigbor_id}"
+          if edge_key not in known_edges:
+            known_edges.append(edge_key)
+            if neigbor_id in self.nodes:
+              graph_data["edges"].append(
+                {"from": id, "to": neigbor_id}
+              )
+    for edge in graph_data["edges"]:
+      to = edge['to']
+      to_node = None
+      if to in self.nodes:
+        to_node = self.nodes[to]
+      else:
+        to_node = Node.default_node(to)
+      if to not in known_nodes:
+        known_nodes.append(to)
+        graph_data['nodes'].append(
+          {
+            "id": to,
+            "name": to_node['longname'],
+            "height": 30,
+            "stroke": None,
+            'fill': {"src": utils.graph_icon(to_node['longname'])}
+          }
+        )
+
+    return graph_data

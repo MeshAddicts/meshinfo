@@ -72,7 +72,11 @@ class HardwareModel(Enum):
   NRF52_PROMICRO_DIY = 63
   RADIOMASTER_900_BANDIT_NANO = 64
   HELTEC_CAPSULE_SENSOR_V3 = 65
+  HELTEC_MESH_NODE_T114 = 69
+  TRACKER_T1000_E = 71
+  RPI_PICO2 = 79
   PRIVATE_HW = 255
+  XIAO = 81
 
 HARDWARE_PHOTOS = {
   HardwareModel.HELTEC_HT62: "HELTEC_HT62.png",
@@ -99,4 +103,12 @@ HARDWARE_PHOTOS = {
   HardwareModel.T_ECHO: "T_ECHO.png",
   HardwareModel.T_WATCH_S3: "T_WATCH_S3.png",
   HardwareModel.PRIVATE_HW: "PRIVATE_HW.png",
+  HardwareModel.PORTDUINO: "PORTDUINO.png",
+  HardwareModel.XIAO: "XIAO.png",
+  HardwareModel.TBEAM_V0P7: "TBEAM_V0P7.png",
+  HardwareModel.HELTEC_MESH_NODE_T114: "HELTEC_MESH_NODE_T114.png",
+  HardwareModel.HELTEC_CAPSULE_SENSOR_V3: "HELTEC_CAPSULE_SENSOR_V3.png",
+  HardwareModel.TRACKER_T1000_E: "TRACKER_T1000_E.png",
+  HardwareModel.RPI_PICO2: "RPI_PICO.png",
+  HardwareModel.NRF52840DK: "NRF52840DK.png"
 }

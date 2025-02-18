@@ -1,42 +1,37 @@
 {% extends "templates/static/layout.html.j2" %}
 
 {% block title %}Graph{% endblock %}
-
-{% macro graph_node(node) %}
-  {% if node.neighbors_heard|length > 0 %}
-    <ol class="pl-4 list-decimal list-inside">
-      {% for n in node.neighbors_heard %}
-        <li>
-          <div>
-            <a href="node_{{ n['id'] }}.html">
-            {% if n.shortname and n.shortname != "" %}
-            {{ n.shortname }}
-            {% else %}
-            UNK
-            {% endif %}
-            </a>&nbsp;
-          </div>
-          {{ graph_node(n) }}
-        </li>
-      {% endfor %}
-    </ol>
-  {% endif %}
-{% endmacro %}
-
 {% block content %}
-  <h5 class="mb-2 text-gray-500">Graph</h5>
-  <h1 class="mb-2 text-xl">Graph</h1>
-  <p class="mb-2">
-   The graph of nodes connected by neighbors (heard and heard by) as seen on the mesh as seen by
-   and starting with <a href="node_{{ config['server']['node_id'] }}.html">{{ config['server']['node_id'] }}</a> ({{ config['server']['node_id'] }}).
-   In the near future, this will be represented as a visual network graph and be interactive.
-  </p>
-
-  <div>
-    <div>{{ graph['shortname'] }}</div>
-    <div>{{ graph_node(graph) }}</div>
+  <div class="w-full h-full" id="container" style="height: 100vh">
   </div>
-
-  <div id="graph" class="w-full h-96"></div>
-  <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <script src="https://cdn.anychart.com/releases/8.13.0/js/anychart-core.min.js"></script>
+  <script src="https://cdn.anychart.com/releases/8.13.0/js/anychart-graph.min.js"></script>
+  <script>
+    var data = {{ graph|tojson|safe }};
+    {% raw %}
+    var chart = anychart.graph(data);
+    chart.container("container");
+    chart.nodes().labels().enabled(true);
+    chart.nodes().labels().format("{%name}");
+    chart.nodes().labels().fontSize(12);
+    chart.nodes().labels().fontWeight(600);
+    chart.draw();
+    chart.fit();
+    chart.listen('click', function(e) {
+    var tag = e.domTarget.tag;
+    if (tag) {
+      if (tag.type === 'node') {
+        var url;
+        for (var i = 0; i < data.nodes.length; i++) {
+          if (data.nodes[i].id === tag.id) {
+            url = "node_" + data.nodes[i].id + ".html";
+            break;
+          }
+        }
+        window.open(url, '_self');
+      }
+    }
+  });
+    {% endraw %}
+  </script>
 {% endblock %}
