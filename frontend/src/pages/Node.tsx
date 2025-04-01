@@ -325,7 +325,7 @@ export const Node = () => {
             </table>
           </div>
 
-          <div className="mb-4">
+          {/* <div className="mb-4">
             <h3 className="mb-2 font-bold text-gray-600">Heard (zero hop)</h3>
             <table className="table-auto min-w-full border border-gray-200 bg-gray-50 dark:bg-gray-800">
               <tbody className="divide-y divide-dashed divide-gray-200">
@@ -413,7 +413,7 @@ export const Node = () => {
                 )}
               </tbody>
             </table>
-          </div>
+          </div> */}
         </div>
       </div>
     </>

@@ -77,8 +77,14 @@ export const apiSlice = createApi({
       // },
       providesTags: [{ type: "Chat", id: "LIST" }],
     }),
-    getNodes: builder.query<INodesResponse, void | { status: "online" }>({
-      query: () => "nodes",
+    getNodes: builder.query<
+      INodesResponse,
+      void | { status?: "online"; days?: number }
+    >({
+      query: (args) => ({
+        url: "nodes",
+        params: args ?? {},
+      }),
       transformResponse: (response: INodesResponse) =>
         Object.fromEntries(
           Object.entries(response.nodes).map(([id, node]) => [
@@ -133,6 +139,21 @@ export const apiSlice = createApi({
       query: () => "mqtt_messages",
       providesTags: [{ type: "MqttMessages", id: "LIST" }],
     }),
+    getReverseGeocode: builder.query<
+      {
+        address?: {
+          town?: string;
+          city?: string;
+          county?: string;
+          state?: string;
+          country?: string;
+        };
+      },
+      { lon: string; lat: string }
+    >({
+      query: ({ lon, lat }) =>
+        `https://nominatim.openstreetmap.org/reverse?format=json&lon=${lon}&lat=${lat}`,
+    }),
   }),
 });
 
@@ -147,4 +168,5 @@ export const {
   useGetTraceroutesQuery,
   useGetMessagesQuery,
   useGetMqttMessagesQuery,
+  useGetReverseGeocodeQuery,
 } = apiSlice;

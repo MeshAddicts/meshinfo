@@ -3,6 +3,7 @@ import { Link, useLocation } from "react-router-dom";
 
 import { useGetConfigQuery } from "../slices/apiSlice";
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const defaultTools = [
   { name: "Armooo's MeshView", url: "https://meshview.armooo.net" },
   { name: "Liam's Meshtastic Map", url: "https://meshtastic.liamcottle.net" },
@@ -16,7 +17,7 @@ export const Menu = ({
   onDarkChange,
 }: {
   isDark: boolean;
-  onDarkChange: (dark: boolean) => void; 
+  onDarkChange: (dark: boolean) => void;
 }) => {
   const { data: config } = useGetConfigQuery();
   const location = useLocation();
@@ -206,7 +207,7 @@ export const Menu = ({
             <Link
               to="traceroutes"
               className={getLinkClassName("traceroutes")}
-                onClick={handleLinkClick}
+              onClick={handleLinkClick}
             >
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/route2.svg`}
