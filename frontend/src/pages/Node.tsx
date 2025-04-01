@@ -2,7 +2,11 @@ import { Link, useParams } from "react-router-dom";
 
 import { Avatar } from "../components/Avatar";
 import { HardwareImg } from "../components/HardwareImg";
-import { useGetConfigQuery, useGetNodeQuery } from "../slices/apiSlice";
+import {
+  useGetConfigQuery,
+  useGetNodeQuery,
+  useGetNodesQuery,
+} from "../slices/apiSlice";
 import {
   convertNodeIdFromHexToInt,
   convertNodeIdFromIntToHex,
@@ -12,11 +16,14 @@ import { NodeMap } from "./NodeMap";
 
 export const Node = () => {
   const { id } = useParams<{ id: string }>();
+  const { data: nodes } = useGetNodesQuery();
   const { data: node, isFetching } = useGetNodeQuery(id!);
   const { data: config } = useGetConfigQuery();
   const { data: serverNode } = useGetNodeQuery(config?.server?.node_id ?? "", {
     skip: !config?.server?.node_id,
   });
+
+  console.log("Node", node);
 
   if (isFetching) return <div>Loading...</div>;
 

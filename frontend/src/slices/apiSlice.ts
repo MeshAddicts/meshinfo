@@ -99,7 +99,7 @@ export const apiSlice = createApi({
     }),
     getNode: builder.query<INode, string>({
       query: (id) => `nodes/${id}`,
-      transformResponse: (node: INode) => ({
+      transformResponse: ({ node }: { node: INode }) => ({
         ...node,
         position: node.position
           ? {
