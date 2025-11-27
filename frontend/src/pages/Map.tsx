@@ -81,7 +81,7 @@ export function Map() {
         id,
         {
           ...node,
-          online: new Date(node.last_seen) > new Date(now.getTime() - 7200),
+          online: new Date(node.last_seen) > new Date(now.getTime() - 7200000),
           position:
             node.position &&
             node.position.latitude_i &&
