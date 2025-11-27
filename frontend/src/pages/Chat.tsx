@@ -120,7 +120,10 @@ export const Chat = () => {
         </thead>
         <tbody>
           {selectedChannel
-            ? chat?.channels[selectedChannel].messages.map((message, i) => {
+            ? chat?.channels[selectedChannel].messages
+              .slice() // Create a shallow copy to avoid mutating the original array
+              .sort((a, b) => b.timestamp - a.timestamp) // Sort messages by timestamp in descending order
+              s.map((message, i) => {
                 const nodeFrom = nodes[message.from] || null;
                 const senders = message.sender
                   .map((s) => nodes[s])

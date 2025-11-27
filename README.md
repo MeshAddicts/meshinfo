@@ -154,3 +154,46 @@ git tag v0.0.0 && git push && git push --tags
 We happily accept Pull Requests!
 
 TODO: Need to rewrite this section.
+
+## Meshtastic node settings
+
+These are the settings that must be set, and how they must be set on your node if you would like it to show up on the map. Anything that is not preceded by "Recommended" must be set as stated for your node to show.
+
+```
+Channels > Click on LongFast
+	Uplink Enabled: True
+	Downlink Enabled: Recommended False
+	Position Enabled: True
+	Precise Location: False
+	Bottom slider: 1194ft is the *most* accurate setting that will still show up on any map. This is a meshtastic limitation.
+	
+	Be sure to click send to save after each page/section
+
+Position: 
+	
+	Set your lat/long/alt and set "Used fixed position" to True if your node doesn't have GPS or is stationary
+	
+	Otherwise set your GPS settings.
+	
+Lora: 
+	OK to MQTT: True
+	
+MQTT:
+	Address: mqtt.meshtastic.org
+	Username: meshdev
+	Password: large4cats
+	
+	Encryption enabled: True
+	JSON output enabled: False
+
+	Root topic: msh/US/FL/anything
+ (Typical options to replace 'anything' above are: orl, jax, etc...As long as your root topic starts with msh/US/FL then you're good.)
+
+	Proxy to client enabled: True if your board isn't directly hooked to Wi-Fi or Ethernet.
+	Map reporting: True
+	Precise location: False
+	
+	Slider at the bottom: 1194 feet is the *most* accurate you can set things to and still have your node show up on maps.
+	
+	Map reporting interval: 900
+```
