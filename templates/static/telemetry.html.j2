@@ -169,11 +169,11 @@
           {% endif %}
         </td>
         <td class="hidden lg:table-cell p-1 border border-gray-400 text-nowrap" align=right>
-          {% if item.payload.temperature is defined %}
-            {% if item.payload.temperature is number %}
-              {{ item.payload.temperature | round(2) }}&deg;C
+          {% if item.payload.temperature is defined and item.payload.temperature %}
+            {% if item.payload.temperature is string %}
+              {{ item.payload.temperature }} &deg;C
             {% else %}
-              {{ item.payload.temperature }}
+              {{ item.payload.temperature | round(2) }} &deg;C
             {% endif %}
           {% endif %}
         </td>
