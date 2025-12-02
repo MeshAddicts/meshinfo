@@ -19,22 +19,34 @@
       <h1 class="mb-2 text-xl">{{ node.shortname }} - {{ node.longname }}</h1>
       <div class="flex align-middle mb-4">
       {% if node.telemetry %}
-      {% if node.telemetry.air_util_tx %}
+        {% if node.telemetry.air_util_tx %}
           <span class="mr-4 align-middle" title="Air Util TX">
             <img src="images/icons/up.svg" alt="Air Util TX" class="w-4 h-4 inline-block align-middle">
-            {{ node.telemetry.air_util_tx | round(1) }}%
+            {% if node.telemetry.air_util_tx is number %}
+              {{ node.telemetry.air_util_tx | round(1) }}%
+            {% else %}
+              {{ node.telemetry.air_util_tx }}%
+            {% endif %}
           </span>
         {% endif %}
         {% if node.telemetry.channel_utilization %}
           <span class="mr-4 align-middle" title="Channel Util">
             <img src="images/icons/down.svg" alt="Channel Util" class="w-4 h-4 inline-block align-middle">
-            {{ node.telemetry.channel_utilization | round(1) }}%
+            {% if node.telemetry.channel_utilization is number %}
+              {{ node.telemetry.channel_utilization | round(1) }}%
+            {% else %}
+              {{ node.telemetry.channel_utilization }}%
+            {% endif %}
           </span>
         {% endif %}
         {% if node.telemetry.battery_level %}
           <span class="mr-4 align-middle" title="Battery Level">
             <img src="images/icons/battery.svg" alt="Battery" class="w-4 h-4 inline-block align-middle">
-            {{ node.telemetry.battery_level | round(0) }}%
+            {% if node.telemetry.battery_level is number %}
+              {{ node.telemetry.battery_level | round(0) }}%
+            {% else %}
+              {{ node.telemetry.battery_level }}%
+            {% endif %}
           </span>
         {% endif %}
         {% if node.telemetry.temperature %}
@@ -43,7 +55,7 @@
             {% if node.telemetry.temperature is number %}
               {{ node.telemetry.temperature | round(1) }}&deg;C
             {% else %}
-              {{ node.telemetry.temperature }}
+              {{ node.telemetry.temperature }}&deg;C
             {% endif %}
           </span>
         {% endif %}
