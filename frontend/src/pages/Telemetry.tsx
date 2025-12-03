@@ -1,5 +1,3 @@
-import { Link } from "react-router-dom";
-
 import { HeardBy } from "../components/HeardBy";
 import { useGetNodesQuery, useGetTelemetryQuery } from "../slices/apiSlice";
 
@@ -26,119 +24,113 @@ export const Telemetry = () => {
       <table className="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50">
         <thead>
           <tr>
-            <th
-              className="p-1 border border-gray-500 bg-gray-400 dark:bg-gray-900"
-              align="left"
-            >
+            <th className="p-1 border border-gray-500 bg-gray-400" align="left">
               Timestamp
             </th>
-            <th
-              className="p-1 border border-gray-500 bg-gray-400 dark:bg-gray-900"
-              align="left"
-            >
+            <th className="p-1 border border-gray-500 bg-gray-400" align="left">
               Node
             </th>
             <th
-              className="p-1 border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              className="p-1 border border-gray-500 bg-gray-400"
               align="center"
             >
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/up.svg`}
                 alt="Air Util TX"
-                className="w-4 h-4 inline-block dark:invert"
+                className="w-4 h-4 inline-block"
                 title="Air Util TX"
               />
             </th>
             <th
-              className="p-1 border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              className="p-1 border border-gray-500 bg-gray-400"
               align="center"
             >
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/down.svg`}
-                className="w-4 h-4 inline-block dark:invert"
+                className="w-4 h-4 inline-block"
                 alt="Channel Util"
                 title="Channel Util"
               />
             </th>
             <th
-              className="p-1 border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              className="p-1 border border-gray-500 bg-gray-400"
               align="center"
             >
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/battery.svg`}
-                className="w-6 h-6 inline-block dark:invert"
+                className="w-6 h-6 inline-block"
                 alt="Battery"
                 title="Battery"
               />
             </th>
             <th
-              className="p-1 border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              className="p-1 border border-gray-500 bg-gray-400"
               align="center"
             >
               Uptime
             </th>
             <th
-              className="p-1 border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              className="p-1 border border-gray-500 bg-gray-400"
               align="center"
             >
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/voltage.svg`}
-                className="w-4 h-4 inline-block dark:invert"
+                className="w-4 h-4 inline-block"
                 alt="Voltage"
                 title="Voltage"
               />
             </th>
             <th
-              className="p-1 hidden lg:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              className="p-1 hidden lg:table-cell border border-gray-500 bg-gray-400"
               align="center"
             >
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/current.svg`}
-                className="w-5 h-5 inline-block dark:invert"
+                className="w-5 h-5 inline-block"
                 alt="Current"
                 title="Current"
               />
             </th>
             <th
-              className="p-1 hidden lg:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              className="p-1 hidden lg:table-cell border border-gray-500 bg-gray-400"
               align="center"
             >
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/pressure.svg`}
-                className="w-4 h-4 inline-block dark:invert"
+                className="w-4 h-4 inline-block"
                 alt="Barometric Pressure"
                 title="Barometric Pressure"
               />
             </th>
             <th
-              className="p-1 hidden lg:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              className="p-1 hidden lg:table-cell border border-gray-500 bg-gray-400"
               align="center"
             >
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/relative-humidity.svg`}
-                className="w-4 h-4 inline-block dark:invert"
+                className="w-4 h-4 inline-block"
                 alt="Relative Humidity"
                 title="Relative Humidity"
               />
             </th>
             <th
-              className="p-1 hidden lg:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              className="p-1 hidden lg:table-cell border border-gray-500 bg-gray-400"
               align="center"
             >
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/temperature.svg`}
-                className="w-4 h-4 inline-block dark:invert"
+                className="w-4 h-4 inline-block"
                 alt="Temperature"
                 title="Temperature"
               />
             </th>
             <th
-              className="p-1 hidden lg:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900"
+              className="p-1 hidden lg:table-cell border border-gray-500 bg-gray-400"
               align="center"
             >
               <img
                 src={`${import.meta.env.BASE_URL}images/icons/resistance.svg`}
-                className="w-5 h-5 inline-block dark:invert"
+                className="w-5 h-5 inline-block"
                 alt="Gas Resistance"
                 title="Gas Resistance"
               />
@@ -150,22 +142,25 @@ export const Telemetry = () => {
             const inode = nodes[item.from];
             return (
               // eslint-disable-next-line react/no-array-index-key
-              <tr key={`telemetry-${index}`} className="dark:bg-gray-800">
+              <tr key={`telemetry-${index}`}>
                 <td className="p-1 border border-gray-400 text-nowrap">
                   {"timestamp" in item ? (
-                    new Date(item.timestamp * 1000).toISOString()
+                    new Date(item.timestamp * 1000).toLocaleString(undefined, {
+                      year: "numeric",
+                      month: "2-digit",
+                      day: "2-digit",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      second: "2-digit",
+                      hour12: false,
+                    })
                   ) : (
                     <span className="text-gray-500">Unknown</span>
                   )}
                 </td>
                 <td className="p-1 border border-gray-400">
                   {inode ? (
-                    <Link
-                      to={`/nodes/${inode.id}`}
-                      className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-                    >
-                      {inode.shortname}
-                    </Link>
+                    <a href={`node_${inode.id}.html`}>{inode.shortname}</a>
                   ) : (
                     <span className="text-gray-500">UNK</span>
                   )}
@@ -281,8 +276,10 @@ export const Telemetry = () => {
                   className="hidden lg:table-cell p-1 border border-gray-400 text-nowrap"
                   align="right"
                 >
-                  {item.payload.gas_resistance !== undefined &&
-                    `${item.payload.gas_resistance.toFixed(2)} Ohm`}
+                  {item.payload.temperature !== undefined &&
+                    (typeof item.payload.temperature === "string"
+                      ? item.payload.temperature
+                      : `${item.payload.temperature.toFixed(2)} °C`)}
                 </td>
               </tr>
             );
