@@ -269,13 +269,14 @@ export const Telemetry = () => {
                     (typeof item.payload.relative_humidity === "string"
                       ? item.payload.relative_humidity
                       : `${item.payload.relative_humidity.toFixed(2)}%`)}
-                </td>
                 <td
                   className="hidden lg:table-cell p-1 border border-gray-400 text-nowrap"
                   align="right"
                 >
                   {item.payload.temperature !== undefined &&
-                    `${item.payload.temperature.toFixed(2)} °C`}
+                    (typeof item.payload.temperature === "number"
+                      ? `${item.payload.temperature.toFixed(2)} °C`
+                      : item.payload.temperature)}
                 </td>
                 <td
                   className="hidden lg:table-cell p-1 border border-gray-400 text-nowrap"
