@@ -17,6 +17,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";
 import { INode } from "../types";
+import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
+
+const RECENT_DAYS = 30;
 
 type IMapNode = INode & {
   online: boolean;
@@ -76,23 +79,27 @@ export function Map() {
 
   const nodes = useMemo(() => {
     const now = new Date();
+    const sixHoursAgo = now.getTime() - 6 * 60 * 60 * 1000; // 6 hours
+
     return Object.fromEntries(
       Object.entries(rawNodes).map(([id, node]) => [
         id,
         {
           ...node,
-          online: new Date(node.last_seen) > new Date(now.getTime() - 7200000),
+          online:
+            node.last_seen &&
+            new Date(node.last_seen).getTime() > sixHoursAgo,
           position:
             node.position &&
             node.position.latitude_i &&
             node.position.longitude_i
               ? [
-                  (node.position?.longitude_i ?? 0) / 10000000,
-                  (node.position?.latitude_i ?? 0) / 10000000,
+                  (node.position.longitude_i ?? 0) / 10_000_000,
+                  (node.position.latitude_i ?? 0) / 10_000_000,
                 ]
               : undefined,
           neighbors: node.neighborinfo?.neighbors?.map((neighbor) => ({
-            id: neighbor.node_id.toString(16),
+            id: convertNodeIdFromIntToHex(neighbor.node_id),
             snr: neighbor.snr,
             distance: neighbor.distance,
           })),
@@ -133,15 +140,15 @@ export function Map() {
     const defaultPosition = { latitude: 38.5816, longitude: -121.4944 };
     const serverPosition = serverNode?.position
       ? {
-          latitude: serverNode.position[0],
-          longitude: serverNode.position[1],
+          latitude: serverNode.position[1],
+          longitude: serverNode.position[0],
         }
       : defaultPosition;
 
     const savedCenter = JSON.parse(localStorage.getItem("savedCenter") ?? "[]");
     const initialCenter = fromLonLat([
-      savedCenter[0] ?? serverPosition.latitude,
-      savedCenter[1] ?? serverPosition.longitude,
+      savedCenter[0] ?? serverPosition.longitude,
+      savedCenter[1] ?? serverPosition.latitude,
     ]);
     const initialZoom = JSON.parse(localStorage.getItem("savedZoom") ?? "9.5");
 
@@ -199,29 +206,45 @@ export function Map() {
 
     const neighborLayers: VectorLayer<Feature<Geometry>>[] = [];
 
-    const features = Object.entries(nodes)
+    // Only show nodes that are either online OR seen within the last RECENT_DAYS
+    const recentCutoff = Date.now() - RECENT_DAYS * 24 * 60 * 60 * 1000;
+
+    const recentNodeEntries = Object.entries(nodes).filter(([_, node]) => {
+      if (node.online) return true;
+      if (!node.last_seen) return false;
+
+      const lastSeenMs = new Date(node.last_seen).getTime();
+      if (Number.isNaN(lastSeenMs)) return false;
+
+      return lastSeenMs > recentCutoff;
+    });
+
+    const features = recentNodeEntries
       .map(([id, node]) => {
-        if (node.position) {
-          const feature = new Feature({
-            geometry: new Point(
-              fromLonLat([node.position[0], node.position[1]])
-            ),
-            node: {
-              id,
-              shortname: node.shortname,
-              longname: node.longname,
-              last_seen: node.last_seen,
-              position: [node.position[0], node.position[1]],
-            },
-          });
-          if (node.online) {
-            feature.setStyle(onlineStyle);
-          } else {
-            feature.setStyle(offlineStyle);
-          }
-          return feature;
+        if (!node.position) return null;
+
+        const feature = new Feature({
+          geometry: new Point(
+            fromLonLat([node.position[0], node.position[1]])
+          ),
+          node: {
+            id,
+            shortname: node.shortname,
+            longname: node.longname,
+            last_seen: node.last_seen,
+            position: [node.position[0], node.position[1]],
+            online: node.online,
+            neighbors: node.neighbors,
+          },
+        });
+
+        if (node.online) {
+          feature.setStyle(onlineStyle);
+        } else {
+          feature.setStyle(offlineStyle);
         }
-        return null;
+
+        return feature;
       })
       .filter(Boolean) as Feature<Point>[];
 
@@ -450,42 +473,25 @@ export function Map() {
 
           panel += "<b>Elsewhere</b><br/>";
           const nodeId = parseInt(node.id, 16);
-          panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://meshview.armooo.net/packet_list/${
-            nodeId
-          }" target="_blank">Armooo's MeshView</a><br/>`;
-          panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://app.bayme.sh/node/${
-            node.id
-          }" target="_blank">Bay Mesh Explorer</a><br/>`;
-          panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://meshtastic.liamcottle.net/?node_id=${
-            nodeId
-          }" target="_blank">Liam's Map</a><br/>`;
-          panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://meshmap.net/#${
-            nodeId
-          }" target="_blank">MeshMap</a><br/>`;
+          panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://meshview.armooo.net/packet_list/${nodeId}" target="_blank">Armooo's MeshView</a><br/>`;
+          panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://app.bayme.sh/node/${node.id}" target="_blank">Bay Mesh Explorer</a><br/>`;
+          panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://meshtastic.liamcottle.net/?node_id=${nodeId}" target="_blank">Liam's Map</a><br/>`;
+          panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://meshmap.net/#${nodeId}" target="_blank">MeshMap</a><br/>`;
 
           nodeTitle.innerHTML = node.longname;
           nodeSubtitle.innerHTML = node.shortname;
           nodeContent.innerHTML = panel;
           nodePanel.classList.remove("hidden");
         } else {
-          // content.innerHTML = '<b>Unknown</b>';
-          // overlay.setPosition(coordinate);
-
           nodeTitle.innerHTML = "Unknown";
           nodeSubtitle.innerHTML = "UNK";
           nodeContent.innerHTML = "";
           nodePanel.classList.remove("hidden");
         }
       } else {
-        if (nodeTitle) {
-          nodeTitle.innerHTML = "";
-        }
-        if (nodeSubtitle) {
-          nodeSubtitle.innerHTML = "";
-        }
-        if (nodeContent) {
-          nodeContent.innerHTML = "";
-        }
+        nodeTitle.innerHTML = "";
+        nodeSubtitle.innerHTML = "";
+        nodeContent.innerHTML = "";
       }
     });
 
@@ -543,48 +549,7 @@ export function Map() {
             right: 10px;
             z-index: 1000;
           }
-          .ol-popup {
-            position: absolute;
-            background-color: white;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.2);
-            padding: 15px;
-            border-radius: 10px;
-            border: 1px solid #cccccc;
-            bottom: 12px;
-            left: -50px;
-            min-width: 280px;
-          }
-          .ol-popup:after, .ol-popup:before {
-            top: 100%;
-            border: solid transparent;
-            content: " ";
-            height: 0;
-            width: 0;
-            position: absolute;
-            pointer-events: none;
-          }
-          .ol-popup:after {
-            border-top-color: white;
-            border-width: 10px;
-            left: 48px;
-            margin-left: -10px;
-          }
-          .ol-popup:before {
-            border-top-color: #cccccc;
-            border-width: 11px;
-            left: 48px;
-            margin-left: -11px;
-          }
-          .ol-popup-closer {
-            text-decoration: none;
-            position: absolute;
-            top: 2px;
-            right: 8px;
-          }
-          .ol-popup-closer:after {
-            content: "x";
-          }
-      `}
+        `}
       </style>
     </div>
   );
