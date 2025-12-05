@@ -17,6 +17,7 @@ from cryptography.hazmat.backends import default_backend
 from encoders import _JSONDecoder
 from models.node import Node
 import utils
+from api.db import insert_mesh_message
 
 key = "AQ=="
 key_hash = "1PG7OiApB1nwvP+rz05pAQ==" # AQ==
@@ -264,6 +265,7 @@ class MQTT:
 
                 print(outs)
                 await self.handle_log(outs)
+                await self.save_message_to_db(outs)
                 await self.prune_expired_nodes()
 
         elif self.config['broker']['decoders']['json']['enabled']:
@@ -271,10 +273,13 @@ class MQTT:
                 if self.config['debug']:
                     print(f"Received a JSON message: {msg.topic} {msg.payload}")
                 try:
-                    await self.handle_log(msg)
                     decoded = msg.payload.decode("utf-8")
                     j = json.loads(decoded, cls=_JSONDecoder)
                     j['topic'] = msg.topic.value
+
+                    await self.handle_log(j)
+                    await self.save_message_to_db(j)
+
                     if j['type'] == "neighborinfo":
                         await self.handle_neighborinfo(j)
                     if j['type'] == "nodeinfo":
@@ -509,6 +514,40 @@ class MQTT:
             self.data.traceroutes_by_node[id] = [msg]
         self.data.traceroutes.insert(0, msg)
         await self.data.save()
+
+    async def save_message_to_db(self, msg: dict):
+        """
+        Persist a decoded message dict into Postgres mesh_messages.
+
+        This is intentionally best-effort: failures are logged (in debug) but
+        do not interrupt MQTT processing.
+        """
+        try:
+            mqtt_topic = msg.get("topic", "unknown")
+            from_node_id = msg.get("from")
+            to_node_id = msg.get("to")
+            message_type = msg.get("type")
+            hop_count = msg.get("hops_away")
+            rx_rssi = msg.get("rssi")
+            rx_snr = msg.get("snr")
+
+            payload = msg
+
+            insert_mesh_message(
+                mqtt_topic=mqtt_topic,
+                from_node_id=str(from_node_id) if from_node_id is not None else None,
+                to_node_id=str(to_node_id) if to_node_id is not None else None,
+                message_type=message_type,
+                port_num=None,  # we can add portnum later
+                hop_count=hop_count,
+                rx_rssi=rx_rssi,
+                rx_snr=rx_snr,
+                payload_json=payload,
+                raw_payload=None,
+            )
+        except Exception as e:
+            if self.config.get("debug"):
+                print(f"[postgres] Failed to insert mesh_message: {e}")
 
     ### helpers
 

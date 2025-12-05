@@ -61,7 +61,7 @@ def insert_mesh_message(
                         hop_count,
                         rx_rssi,
                         rx_snr,
-                        json.dumps(payload_json),
+                        json.dumps(payload_json, default=str),
                         raw_payload,
                     ),
                 )
