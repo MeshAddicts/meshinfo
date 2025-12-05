@@ -10,3 +10,4 @@ meshtastic
 cryptography
 protobuf
 uvicorn
+psycopg2-binary
