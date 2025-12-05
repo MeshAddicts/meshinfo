@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import Config
 import utils
+from .db import get_recent_mesh_messages
 
 templates = Jinja2Templates(directory="./templates/api")
 app = FastAPI()
@@ -168,6 +169,21 @@ class API:
         @app.get("/v1/mqtt_messages")
         async def mqtt_messages(request: Request) -> JSONResponse:
             return jsonable_encoder(self.data.mqtt_messages[:1000])
+        
+        @app.get("/v1/mesh_messages")
+        async def mesh_messages(request: Request) -> JSONResponse:
+            # Optional ?limit= query param, default 100, max 1000
+            limit_param = request.query_params.get("limit")
+            try:
+                limit = int(limit_param) if limit_param is not None else 100
+            except ValueError:
+                limit = 100
+
+            rows = get_recent_mesh_messages(limit)
+            return jsonable_encoder({
+                "messages": rows,
+                "count": len(rows),
+            })
 
         @app.get("/v1/stats")
         async def stats(request: Request) -> JSONResponse:
