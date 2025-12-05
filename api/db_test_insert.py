@@ -1,5 +1,5 @@
 from datetime import datetime
-from api.db import insert_mesh_message
+from .db import insert_mesh_message
 
 def test_insert():
     payload = {
