@@ -118,6 +118,7 @@ class MQTT:
                 outs['snr'] = mp.rx_snr
                 outs['timestamp'] = mp.rx_time
                 outs['topic'] = msg.topic.value
+                outs['portnum'] = mp.decoded.portnum
 
                 if mp.decoded.portnum == portnums_pb2.TEXT_MESSAGE_APP:
                     try:
@@ -518,27 +519,25 @@ class MQTT:
     async def save_message_to_db(self, msg: dict):
         """
         Persist a decoded message dict into Postgres mesh_messages.
-
-        This is intentionally best-effort: failures are logged (in debug) but
-        do not interrupt MQTT processing.
         """
         try:
             mqtt_topic = msg.get("topic", "unknown")
             from_node_id = msg.get("from")
             to_node_id = msg.get("to")
             message_type = msg.get("type")
+            port_num = msg.get("portnum")
             hop_count = msg.get("hops_away")
             rx_rssi = msg.get("rssi")
             rx_snr = msg.get("snr")
 
-            payload = msg
+            payload = msg  # full decoded message
 
             insert_mesh_message(
                 mqtt_topic=mqtt_topic,
                 from_node_id=str(from_node_id) if from_node_id is not None else None,
                 to_node_id=str(to_node_id) if to_node_id is not None else None,
                 message_type=message_type,
-                port_num=None,  # we can add portnum later
+                port_num=port_num,
                 hop_count=hop_count,
                 rx_rssi=rx_rssi,
                 rx_snr=rx_snr,
