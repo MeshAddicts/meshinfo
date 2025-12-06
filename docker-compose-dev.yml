@@ -16,9 +16,12 @@ services:
   postgres:
     image: postgres:latest
     volumes:
-      - ./postgres/data:/var/lib/postgresql/data
+      - ./postgres/data:/var/lib/postgresql
+      - ./postgres/sql/mesh-messages.sql:/docker-entrypoint-initdb.d/001_mesh_messages.sql:ro
     environment:
       - POSTGRES_PASSWORD=password
+      # - POSTGRES_USER=meshinfo
+      # - POSTGRES_DB=meshinfo
     restart: always
 
   mqtt:
