@@ -1,6 +1,6 @@
-import { format } from "date-fns-tz";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { formatTimestamp } from "../utils/formatTimestamp";
 
 import { HeardBy } from "../components/HeardBy";
 import {
@@ -33,6 +33,26 @@ export const Chat = () => {
     // only on channels change, not on selectedChannel
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channels]);
+
+    // DEBUG: Remove this after fixing the issue
+  useEffect(() => {
+    if (selectedChannel && chat?.channels[selectedChannel]?.messages) {
+      const messages = chat.channels[selectedChannel].messages;
+      console.log('=== DEBUG: Message timestamps ===');
+      console.log('First 10 raw messages:', messages.slice(0, 10).map(m => ({
+        timestamp: m.timestamp,
+        formatted: formatTimestamp(m.timestamp),
+        text: m.text?.substring(0, 30)
+      })));
+      
+      const sorted = [...messages].sort((a, b) => b.timestamp - a.timestamp);
+      console.log('First 10 AFTER sort:', sorted.slice(0, 10).map(m => ({
+        timestamp: m.timestamp,
+        formatted: formatTimestamp(m.timestamp),
+        text: m.text?.substring(0, 30)
+      })));
+    }
+  }, [selectedChannel, chat]);
 
   return (
     <div className="">
@@ -143,10 +163,8 @@ export const Chat = () => {
                     key={`chat-message-${message.id}-${i}`}
                   >
                     <td className="p-1 border border-gray-400 text-nowrap">
-                      {format(
-                        new Date(message.timestamp * 1000),
-                        "yyyy-MM-dd HH:MM:SS xx",
-                        { timeZone: config?.server?.timezone }
+                      {formatTimestamp(message.timestamp) || (
+                        <span className="text-gray-500">Unknown</span>
                       )}
                     </td>
                     <td className="p-1 text-center border border-gray-400">
