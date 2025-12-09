@@ -1,5 +1,6 @@
 import { HeardBy } from "../components/HeardBy";
 import { useGetMqttMessagesQuery } from "../slices/apiSlice";
+import { formatTimestamp } from "../utils/formatTimestamp";
 
 export const MqttLog = () => {
   const { data: messages } = useGetMqttMessagesQuery();
@@ -19,16 +20,16 @@ export const MqttLog = () => {
         are shown.
       </p>
 
-      <table className="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50 dark:bg-gray-300">
+      <table className="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50 dark:bg-gray-800">
         <thead>
           <tr>
-            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-900 ">
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-800">
               Timestamp
             </th>
-            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-900">
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-800">
               Topic
             </th>
-            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-900">
+            <th className="border border-gray-500 bg-gray-400 dark:bg-gray-800">
               Message
             </th>
           </tr>
@@ -41,9 +42,11 @@ export const MqttLog = () => {
               // eslint-disable-next-line react/no-array-index-key
               <tr key={`mqtt-message-${index}`}>
                 <td className="p-1 border border-gray-400 text-nowrap">
-                  {message.timestamp
-                    ? new Date(message.timestamp * 1000).toLocaleString()
-                    : ""}
+                  {message.timestamp ? (
+                    formatTimestamp(message.timestamp)
+                  ) : (
+                    <span className="text-gray-500">Unknown</span>
+                  )}
                 </td>
                 <td className="p-1 border border-gray-400 text-nowrap">
                   {message.topic}
