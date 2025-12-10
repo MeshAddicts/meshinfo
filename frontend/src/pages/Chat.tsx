@@ -34,26 +34,6 @@ export const Chat = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channels]);
 
-    // DEBUG: Remove this after fixing the issue
-  useEffect(() => {
-    if (selectedChannel && chat?.channels[selectedChannel]?.messages) {
-      const messages = chat.channels[selectedChannel].messages;
-      console.log('=== DEBUG: Message timestamps ===');
-      console.log('First 10 raw messages:', messages.slice(0, 10).map(m => ({
-        timestamp: m.timestamp,
-        formatted: formatTimestamp(m.timestamp),
-        text: m.text?.substring(0, 30)
-      })));
-      
-      const sorted = [...messages].sort((a, b) => b.timestamp - a.timestamp);
-      console.log('First 10 AFTER sort:', sorted.slice(0, 10).map(m => ({
-        timestamp: m.timestamp,
-        formatted: formatTimestamp(m.timestamp),
-        text: m.text?.substring(0, 30)
-      })));
-    }
-  }, [selectedChannel, chat]);
-
   return (
     <div className="">
       <h5 className="mb-2 text-gray-500 dark:text-gray-400">Chat</h5>
