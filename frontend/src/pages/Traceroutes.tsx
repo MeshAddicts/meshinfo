@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { formatTimestamp } from "../utils/formatTimestamp";
 
 import { HeardBy } from "../components/HeardBy";
 import { useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
@@ -73,7 +74,7 @@ export const Traceroutes = () => {
               // eslint-disable-next-line react/no-array-index-key
               <tr key={`traceroute-${index}`}>
                 <td className="p-1 border border-gray-400 text-nowrap">
-                  {new Date(item.timestamp * 1000).toLocaleString()}
+                  {formatTimestamp(item.timestamp)}
                 </td>
                 <td className="p-1 border border-gray-400">
                   {fnode ? (

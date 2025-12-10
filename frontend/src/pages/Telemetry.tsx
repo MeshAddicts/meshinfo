@@ -1,5 +1,6 @@
 import { HeardBy } from "../components/HeardBy";
 import { useGetNodesQuery, useGetTelemetryQuery } from "../slices/apiSlice";
+import { formatTimestamp } from "../utils/formatTimestamp";
 
 export const Telemetry = () => {
   const { data: telemetry } = useGetTelemetryQuery();
@@ -144,19 +145,7 @@ export const Telemetry = () => {
               // eslint-disable-next-line react/no-array-index-key
               <tr key={`telemetry-${index}`}>
                 <td className="p-1 border border-gray-400 text-nowrap">
-                  {"timestamp" in item ? (
-                    new Date(item.timestamp * 1000).toLocaleString(undefined, {
-                      year: "numeric",
-                      month: "2-digit",
-                      day: "2-digit",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                      second: "2-digit",
-                      hour12: false,
-                    })
-                  ) : (
-                    <span className="text-gray-500">Unknown</span>
-                  )}
+                  {formatTimestamp(item.timestamp) || <span className="text-gray-500">Unknown</span>}
                 </td>
                 <td className="p-1 border border-gray-400">
                   {inode ? (
