@@ -1,6 +1,6 @@
-import { format } from "date-fns-tz";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { formatTimestamp } from "../utils/formatTimestamp";
 
 import { HeardBy } from "../components/HeardBy";
 import {
@@ -143,10 +143,8 @@ export const Chat = () => {
                     key={`chat-message-${message.id}-${i}`}
                   >
                     <td className="p-1 border border-gray-400 text-nowrap">
-                      {format(
-                        new Date(message.timestamp * 1000),
-                        "yyyy-MM-dd HH:MM:SS xx",
-                        { timeZone: config?.server?.timezone }
+                      {formatTimestamp(message.timestamp) || (
+                        <span className="text-gray-500">Unknown</span>
                       )}
                     </td>
                     <td className="p-1 text-center border border-gray-400">

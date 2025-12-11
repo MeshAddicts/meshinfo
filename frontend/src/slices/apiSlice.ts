@@ -58,7 +58,7 @@ export const apiSlice = createApi({
                     IChatResponse["channels"]["0"]["messages"][0]
                   >
                 )
-              ),
+              ).sort((a, b) => b.timestamp - a.timestamp),
             },
           ])
         );

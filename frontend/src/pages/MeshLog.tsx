@@ -1,5 +1,6 @@
 import { HeardBy } from "../components/HeardBy";
 import { useGetMessagesQuery } from "../slices/apiSlice";
+import { formatTimestamp } from "../utils/formatTimestamp";
 
 export const MeshLog = () => {
   const { data: messages } = useGetMessagesQuery();
@@ -36,9 +37,7 @@ export const MeshLog = () => {
               // eslint-disable-next-line react/no-array-index-key
               <tr key={`messages-${index}`}>
                 <td className="p-1 border border-gray-400">
-                  {message.timestamp
-                    ? new Date(message.timestamp * 1000).toLocaleString()
-                    : ""}
+                  {formatTimestamp(message.timestamp) || <span className="text-gray-500">Unknown</span>}
                 </td>
                 <td className="p-1 border border-gray-400">
                   {JSON.stringify(message)}
