@@ -74,7 +74,7 @@ export const Traceroutes = () => {
               // eslint-disable-next-line react/no-array-index-key
               <tr key={`traceroute-${index}`}>
                 <td className="p-1 border border-gray-400 text-nowrap">
-                  {formatTimestamp(item.timestamp)}
+                  {formatTimestamp(item.timestamp) || <span className="text-gray-500">Unknown</span>}
                 </td>
                 <td className="p-1 border border-gray-400">
                   {fnode ? (
