@@ -18,7 +18,10 @@ services:
     restart: always
 
   meshinfo:
-    image: ghcr.io/meshaddicts/meshinfo:latest
+    image: meshinfo-api:feature-launch-spa
+    build:
+      context: https://github.com/SimmerV/meshinfo.git#feature/launch-spa
+      dockerfile: Dockerfile
     volumes:
       - ./config.json:/app/config.json
       - ./output:/app/output
@@ -32,7 +35,10 @@ services:
       - mqtt
 
   frontend:
-    image: ghcr.io/meshaddicts/meshinfo-spa:latest
+    image: meshinfo-spa:feature-launch-spa
+    build:
+      context: https://github.com/SimmerV/meshinfo.git#feature/launch-spa
+      dockerfile: Dockerfile.spa
     ports:
       - 8000:80
     environment:
