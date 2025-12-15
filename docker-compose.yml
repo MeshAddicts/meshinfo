@@ -18,10 +18,7 @@ services:
     restart: always
 
   meshinfo:
-    image: meshinfo-api:feature-launch-spa
-    build:
-      context: https://github.com/SimmerV/meshinfo.git#feature/launch-spa
-      dockerfile: Dockerfile
+    image: ghcr.io/simmerv/meshinfo:feature-launch-spa
     volumes:
       - ./config.json:/app/config.json
       - ./output:/app/output
@@ -35,10 +32,7 @@ services:
       - mqtt
 
   frontend:
-    image: meshinfo-spa:feature-launch-spa
-    build:
-      context: https://github.com/SimmerV/meshinfo.git#feature/launch-spa
-      dockerfile: Dockerfile.spa
+    image: ghcr.io/simmerv/meshinfo-spa:feature-launch-spa
     ports:
       - 8000:80
     environment:
@@ -60,7 +54,6 @@ services:
       - ./public/images:/srv/images
     environment:
       - CADDY_AGREE=true
-      #- CLOUDFLARE_API_TOKEN= 
     restart: always
     depends_on:
       - meshinfo
