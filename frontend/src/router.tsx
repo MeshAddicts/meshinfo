@@ -1,4 +1,4 @@
-import { createBrowserRouter, Outlet } from "react-router-dom";
+import { createBrowserRouter, Outlet, Navigate } from "react-router-dom";
 
 import { Layout } from "./components/Layout";
 import { Chat } from "./pages/Chat";
@@ -24,7 +24,7 @@ export const router = createBrowserRouter(
         </Layout>
       ),
       children: [
-        { path: "", element: <Home /> },
+        { path: "", element: <Navigate to="/map" replace /> },
         { path: "/chat", element: <Chat /> },
         { path: "/graph", element: <Graph /> },
         { path: "/map", element: <Map /> },
