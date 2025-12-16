@@ -17,7 +17,7 @@ services:
       - ./postgres/data:/var/lib/postgresql/data
     environment:
       - POSTGRES_PASSWORD=password
-    restart: always
+    restart: no
 
   mqtt:
     container_name: mqtt
