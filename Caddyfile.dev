@@ -7,12 +7,10 @@ http://localhost {
 	handle_path /api/* {
 		reverse_proxy meshinfo:9000
 	}
-	handle_path /next/* {
-		rewrite * /next{uri}
-		reverse_proxy frontend:5173
+	handle /next* {
+		respond 404
 	}
-	handle /* {
-		root * /srv
-		file_server
+	handle {
+		reverse_proxy frontend:5173
 	}
 }

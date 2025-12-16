@@ -18,7 +18,7 @@ services:
     restart: always
 
   meshinfo:
-    image: ghcr.io/meshaddicts/meshinfo:latest
+    image: ghcr.io/simmerv/meshinfo:feature-launch-spa
     volumes:
       - ./config.json:/app/config.json
       - ./output:/app/output
@@ -32,7 +32,7 @@ services:
       - mqtt
 
   frontend:
-    image: ghcr.io/meshaddicts/meshinfo-spa:latest
+    image: ghcr.io/simmerv/meshinfo-spa:feature-launch-spa
     ports:
       - 8000:80
     environment:
@@ -54,7 +54,6 @@ services:
       - ./public/images:/srv/images
     environment:
       - CADDY_AGREE=true
-      #- CLOUDFLARE_API_TOKEN= 
     restart: always
     depends_on:
       - meshinfo
