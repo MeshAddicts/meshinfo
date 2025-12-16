@@ -6,8 +6,6 @@ services:
     volumes:
       - ./caddy/data:/data/caddy
       - ./Caddyfile.dev:/etc/caddy/Caddyfile
-      - ./output/static-html:/srv
-      - ./spa:/srv/next
       - ./public/images:/srv/images
     environment:
       - CADDY_AGREE=true

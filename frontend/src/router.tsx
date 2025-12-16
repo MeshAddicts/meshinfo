@@ -39,5 +39,4 @@ export const router = createBrowserRouter(
       ],
     },
   ],
-  { basename: "/next" }
 );
