@@ -12,7 +12,7 @@ To make deployment to run an instance for your mesh easy, Docker support is incl
 
 If you use MeshInfo and have a publicly accessible instance, we'd like to know! Drop a note to kevin@airframes.io with details and we'll link it below.
 
-See an example instance running on the [Sacramento Valley Mesh](https://svm1.meshinfo.network/nodes.html).
+See an example instance running on the [Sacramento Valley Mesh](https://svm1.meshinfo.network/nodes).
 
 If you are running a high elevation node, preferrably a `Router` or `Repeater` node, you might be interested in getting on the notification list for a [cavity filter](https://shop.airframes.io/products/lora-915mhz-filter) that Kevin and Trevor are having made.
 
