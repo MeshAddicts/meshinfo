@@ -22,86 +22,86 @@ export const Telemetry = () => {
 
       {/* Prevent wide tables from blowing up layout on smaller screens */}
       <div className="w-full overflow-x-auto">
-        <table className="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50">
+        <table className="w-full max-w-full table-auto border-collapse border border-gray-500 bg-gray-50 dark:bg-gray-800">
           <thead>
             <tr>
-              <th className="p-1 border border-gray-500 bg-gray-400" align="left">
+              <th className="p-1 border border-gray-500 bg-gray-400 dark:bg-gray-900" align="left">
                 Timestamp
               </th>
-              <th className="p-1 border border-gray-500 bg-gray-400" align="left">
+              <th className="p-1 border border-gray-500 bg-gray-400 dark:bg-gray-900" align="left">
                 Node
               </th>
-              <th className="p-1 border border-gray-500 bg-gray-400" align="center">
+              <th className="p-1 border border-gray-500 bg-gray-400 dark:bg-gray-900" align="center">
                 <img
                   src={`${import.meta.env.BASE_URL}images/icons/up.svg`}
                   alt="Air Util TX"
-                  className="w-4 h-4 inline-block"
+                  className="w-4 h-4 inline-block dark:invert"
                   title="Air Util TX"
                 />
               </th>
-              <th className="p-1 border border-gray-500 bg-gray-400" align="center">
+              <th className="p-1 border border-gray-500 bg-gray-400 dark:bg-gray-900" align="center">
                 <img
                   src={`${import.meta.env.BASE_URL}images/icons/down.svg`}
-                  className="w-4 h-4 inline-block"
+                  className="w-4 h-4 inline-block dark:invert"
                   alt="Channel Util"
                   title="Channel Util"
                 />
               </th>
-              <th className="p-1 border border-gray-500 bg-gray-400" align="center">
+              <th className="p-1 border border-gray-500 bg-gray-400 dark:bg-gray-900" align="center">
                 <img
                   src={`${import.meta.env.BASE_URL}images/icons/battery.svg`}
-                  className="w-6 h-6 inline-block"
+                  className="w-6 h-6 inline-block dark:invert"
                   alt="Battery"
                   title="Battery"
                 />
               </th>
-              <th className="p-1 border border-gray-500 bg-gray-400" align="center">
+              <th className="p-1 border border-gray-500 bg-gray-400 dark:bg-gray-900" align="center">
                 Uptime
               </th>
-              <th className="p-1 border border-gray-500 bg-gray-400" align="center">
+              <th className="p-1 border border-gray-500 bg-gray-400 dark:bg-gray-900" align="center">
                 <img
                   src={`${import.meta.env.BASE_URL}images/icons/voltage.svg`}
-                  className="w-4 h-4 inline-block"
+                  className="w-4 h-4 inline-block dark:invert"
                   alt="Voltage"
                   title="Voltage"
                 />
               </th>
-              <th className="p-1 hidden lg:table-cell border border-gray-500 bg-gray-400" align="center">
+              <th className="p-1 hidden lg:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900" align="center">
                 <img
                   src={`${import.meta.env.BASE_URL}images/icons/current.svg`}
-                  className="w-5 h-5 inline-block"
+                  className="w-5 h-5 inline-block dark:invert"
                   alt="Current"
                   title="Current"
                 />
               </th>
-              <th className="p-1 hidden lg:table-cell border border-gray-500 bg-gray-400" align="center">
+              <th className="p-1 hidden lg:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900" align="center">
                 <img
                   src={`${import.meta.env.BASE_URL}images/icons/pressure.svg`}
-                  className="w-4 h-4 inline-block"
+                  className="w-4 h-4 inline-block dark:invert"
                   alt="Barometric Pressure"
                   title="Barometric Pressure"
                 />
               </th>
-              <th className="p-1 hidden lg:table-cell border border-gray-500 bg-gray-400" align="center">
+              <th className="p-1 hidden lg:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900" align="center">
                 <img
                   src={`${import.meta.env.BASE_URL}images/icons/relative-humidity.svg`}
-                  className="w-4 h-4 inline-block"
+                  className="w-4 h-4 inline-block dark:invert"
                   alt="Relative Humidity"
                   title="Relative Humidity"
                 />
               </th>
-              <th className="p-1 hidden lg:table-cell border border-gray-500 bg-gray-400" align="center">
+              <th className="p-1 hidden lg:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900" align="center">
                 <img
                   src={`${import.meta.env.BASE_URL}images/icons/temperature.svg`}
-                  className="w-4 h-4 inline-block"
+                  className="w-4 h-4 inline-block dark:invert"
                   alt="Temperature"
                   title="Temperature"
                 />
               </th>
-              <th className="p-1 hidden lg:table-cell border border-gray-500 bg-gray-400" align="center">
+              <th className="p-1 hidden lg:table-cell border border-gray-500 bg-gray-400 dark:bg-gray-900" align="center">
                 <img
                   src={`${import.meta.env.BASE_URL}images/icons/resistance.svg`}
-                  className="w-5 h-5 inline-block"
+                  className="w-5 h-5 inline-block dark:invert"
                   alt="Gas Resistance"
                   title="Gas Resistance"
                 />
@@ -116,7 +116,7 @@ export const Telemetry = () => {
               return (
                 // eslint-disable-next-line react/no-array-index-key
                 <tr key={`telemetry-${index}`}>
-                  <td className="p-1 border border-gray-400 whitespace-nowrap">
+                  <td className="p-1 border border-gray-400 whitespace-nowrap dark:text-gray-100">
                     {formatTimestamp(item.timestamp) || (
                       <span className="text-gray-500">Unknown</span>
                     )}
@@ -152,7 +152,7 @@ export const Telemetry = () => {
                       item.payload.uptime_seconds}
                   </td>
 
-                  <td className="p-1 border border-gray-400 whitespace-nowrap" align="right">
+                  <td className="p-1 border border-gray-400 whitespace-nowrap dark:text-gray-100" align="right">
                     {item.payload.voltage !== undefined &&
                       (typeof item.payload.voltage === "string"
                         ? item.payload.voltage
@@ -186,7 +186,7 @@ export const Telemetry = () => {
                       )}
                   </td>
 
-                  <td className="hidden lg:table-cell p-1 border border-gray-400 whitespace-nowrap" align="right">
+                  <td className="hidden lg:table-cell p-1 border border-gray-400 whitespace-nowrap dark:text-gray-100" align="right">
                     {"current" in item.payload &&
                       (typeof item.payload.current === "string"
                         ? item.payload.current
@@ -220,26 +220,26 @@ export const Telemetry = () => {
                       )}
                   </td>
 
-                  <td className="hidden lg:table-cell p-1 border border-gray-400 whitespace-nowrap" align="right">
+                  <td className="hidden lg:table-cell p-1 border border-gray-400 whitespace-nowrap dark:text-gray-100" align="right">
                     {item.payload.barometric_pressure !== undefined &&
                       `${item.payload.barometric_pressure.toFixed(2)} hPa`}
                   </td>
 
-                  <td className="hidden lg:table-cell p-1 border border-gray-400 whitespace-nowrap" align="right">
+                  <td className="hidden lg:table-cell p-1 border border-gray-400 whitespace-nowrap dark:text-gray-100" align="right">
                     {item.payload.relative_humidity !== undefined &&
                       (typeof item.payload.relative_humidity === "string"
                         ? item.payload.relative_humidity
                         : `${item.payload.relative_humidity.toFixed(2)}%`)}
                   </td>
 
-                  <td className="hidden lg:table-cell p-1 border border-gray-400 whitespace-nowrap" align="right">
+                  <td className="hidden lg:table-cell p-1 border border-gray-400 whitespace-nowrap dark:text-gray-100" align="right">
                     {item.payload.temperature !== undefined &&
                       (typeof item.payload.temperature === "string"
                         ? item.payload.temperature
                         : `${item.payload.temperature.toFixed(2)} °C`)}
                   </td>
 
-                  <td className="hidden lg:table-cell p-1 border border-gray-400 whitespace-nowrap" align="right">
+                  <td className="hidden lg:table-cell p-1 border border-gray-400 whitespace-nowrap dark:text-gray-100" align="right">
                     {item.payload.gas_resistance !== undefined &&
                       `${item.payload.gas_resistance.toFixed(2)}`}
                   </td>
