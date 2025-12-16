@@ -245,11 +245,14 @@ export const Telemetry = () => {
                         : `${item.payload.temperature.toFixed(2)} °C`)}
                   </td>
 
-                  <td className="hidden lg:table-cell p-1 border border-gray-400 whitespace-nowrap dark:text-gray-100" align="right">
+                  <td
+                    className="hidden lg:table-cell p-1 border border-gray-400 whitespace-nowrap dark:text-gray-100"
+                    align="right"
+                  >
                     {item.payload.gas_resistance !== undefined &&
                       (typeof item.payload.gas_resistance === "string"
-                        ? item.payload.gas_resistance
-                        : item.payload.gas_resistance.toFixed(2))}
+                        ? `${item.payload.gas_resistance} Ω`
+                        : `${item.payload.gas_resistance.toFixed(0)} Ω`)}
                   </td>
                 </tr>
               );
