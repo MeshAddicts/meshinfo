@@ -3,7 +3,6 @@ import { createBrowserRouter, Outlet, Navigate } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { Chat } from "./pages/Chat";
 import { Graph } from "./pages/Graph";
-import { Home } from "./pages/Home";
 import { Map } from "./pages/Map";
 import { MeshLog } from "./pages/MeshLog";
 import { MqttLog } from "./pages/MqttLog";
@@ -24,7 +23,7 @@ export const router = createBrowserRouter(
         </Layout>
       ),
       children: [
-        { path: "", element: <Navigate to="/map" replace /> },
+        { index: true, element: <Navigate to="/map" replace /> },
         { path: "/chat", element: <Chat /> },
         { path: "/graph", element: <Graph /> },
         { path: "/map", element: <Map /> },
