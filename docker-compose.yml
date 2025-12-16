@@ -18,7 +18,7 @@ services:
     restart: always
 
   meshinfo:
-    image: ghcr.io/simmerv/meshinfo:feature-launch-spa
+    image: ghcr.io/meshaddicts/meshinfo:latest
     volumes:
       - ./config.json:/app/config.json
       - ./output:/app/output
@@ -32,7 +32,7 @@ services:
       - mqtt
 
   frontend:
-    image: ghcr.io/simmerv/meshinfo-spa:feature-launch-spa
+    image: ghcr.io/meshaddicts/meshinfo-spa:latest
     ports:
       - 8000:80
     environment:
