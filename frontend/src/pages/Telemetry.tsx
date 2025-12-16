@@ -115,20 +115,26 @@ export const Telemetry = () => {
 
               return (
                 // eslint-disable-next-line react/no-array-index-key
-                <tr key={`telemetry-${index}`}>
-                  <td className="p-1 border border-gray-400 whitespace-nowrap dark:text-gray-100">
+                <tr
+                  key={`telemetry-${index}`}
+                  className="odd:bg-gray-50 even:bg-white dark:odd:bg-gray-800 dark:even:bg-gray-900">
+                  <td className="p-1 border border-gray-400 whitespace-nowrap dark:text-gray-100"
+                >
                     {formatTimestamp(item.timestamp) || (
-                      <span className="text-gray-500">Unknown</span>
+                      <span className="text-gray-500 dark:text-gray-400">Unknown</span>
                     )}
                   </td>
 
                   <td className="p-1 border border-gray-400">
                     {inode ? (
-                      <Link to={`/nodes/${inode.id}`} className="underline">
+                      <Link
+                        to={`/nodes/${inode.id}`}
+                        className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+                      >
                         {inode.shortname}
                       </Link>
                     ) : (
-                      <span className="text-gray-500">UNK</span>
+                      <span className="text-gray-500 dark:text-gray-400">Unknown</span>
                     )}
                   </td>
 
@@ -161,7 +167,7 @@ export const Telemetry = () => {
                     {"voltage_ch1" in item.payload &&
                       "voltage_ch2" in item.payload &&
                       "voltage_ch3" in item.payload && (
-                        <table className="ml-auto mt-1 text-xs">
+                        <table className="ml-auto mt-1 text-xs dark:text-gray-100">
                           <tbody>
                             <tr>
                               <td>Ch1</td>
@@ -195,7 +201,7 @@ export const Telemetry = () => {
                     {"current_ch1" in item.payload &&
                       "current_ch2" in item.payload &&
                       "current_ch3" in item.payload && (
-                        <table className="ml-auto mt-1 text-xs">
+                        <table className="ml-auto mt-1 text-xs dark:text-gray-100">
                           <tbody>
                             <tr>
                               <td>Ch1</td>
@@ -241,7 +247,9 @@ export const Telemetry = () => {
 
                   <td className="hidden lg:table-cell p-1 border border-gray-400 whitespace-nowrap dark:text-gray-100" align="right">
                     {item.payload.gas_resistance !== undefined &&
-                      `${item.payload.gas_resistance.toFixed(2)}`}
+                      (typeof item.payload.gas_resistance === "string"
+                        ? item.payload.gas_resistance
+                        : item.payload.gas_resistance.toFixed(2))}
                   </td>
                 </tr>
               );
