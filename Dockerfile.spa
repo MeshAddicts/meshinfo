@@ -13,7 +13,7 @@ ENV NODE_ENV=$env
 
 RUN corepack enable
 RUN yarn
-RUN yarn build --base=/next/
+RUN yarn build --base=/
 
 EXPOSE 80
 

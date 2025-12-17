@@ -85,15 +85,6 @@ export const Menu = ({
             </a>
           </div>
 
-          <div>
-            <a
-              href="/"
-              className="text-xs text-gray-900 dark:text-gray-50 dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-            >
-              Back to the old UI
-            </a>
-          </div>
-
           <nav className="flex flex-col flex-1">
             <h3 className="font-bold">Mesh</h3>
             <div className="mb-1">

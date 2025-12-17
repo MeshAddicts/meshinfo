@@ -9,7 +9,7 @@ const app = express();
 const port = process.env.PORT || 80;
 
 // Serve static files from the dist directory
-app.use("/next", express.static(path.join(__dirname, "../dist")));
+app.use("/", express.static(path.join(__dirname, "../dist")));
 
 // log all requests
 app.use((req, res, next) => {
@@ -18,7 +18,7 @@ app.use((req, res, next) => {
 });
 
 // Handle every other route with index.html, which will contain a script tag to your application's JavaScript
-app.get("/next/*", (req, res) => {
+app.get("/*", (req, res) => {
   res.sendFile(path.join(__dirname, "../dist", "index.html"));
 });
 

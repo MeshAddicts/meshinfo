@@ -54,7 +54,6 @@ services:
       - ./public/images:/srv/images
     environment:
       - CADDY_AGREE=true
-      #- CLOUDFLARE_API_TOKEN= 
     restart: always
     depends_on:
       - meshinfo
