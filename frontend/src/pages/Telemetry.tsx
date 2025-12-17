@@ -118,8 +118,7 @@ export const Telemetry = () => {
                 <tr
                   key={`telemetry-${index}`}
                   className="odd:bg-gray-50 even:bg-white dark:odd:bg-gray-800 dark:even:bg-gray-900">
-                  <td className="p-1 border border-gray-400 whitespace-nowrap dark:text-gray-100"
-                >
+                  <td className="p-1 border border-gray-400 whitespace-nowrap dark:text-gray-100">
                     {formatTimestamp(item.timestamp) || (
                       <span className="text-gray-500 dark:text-gray-400">Unknown</span>
                     )}
