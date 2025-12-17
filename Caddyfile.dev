@@ -4,11 +4,15 @@
 
 http://localhost {
 	encode gzip
+
 	handle_path /api/* {
 		reverse_proxy meshinfo:9000
 	}
-	handle /next* {
-		respond 404
+	handle /next {
+		respond "Gone" 410
+	}
+	handle /next/* {
+		respond "Gone" 410
 	}
 	handle {
 		reverse_proxy frontend:5173

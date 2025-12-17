@@ -5,14 +5,19 @@
 YOUR_FQDN_OR_HOSTNAME {
 	encode gzip
 	tls YOUR_EMAIL_ADDRESS
+
 	log {
 		output file /var/log/caddy.log
 	}
+
 	handle_path /api/* {
 		reverse_proxy meshinfo:9000
 	}
-	handle /next* {
-		respond 404
+	handle /next {
+		respond "Gone" 410
+	}
+	handle /next/* {
+		respond "Gone" 410
 	}
 	handle {
 		reverse_proxy frontend:80
