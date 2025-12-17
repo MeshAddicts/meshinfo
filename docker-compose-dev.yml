@@ -37,6 +37,7 @@ services:
       - 5173:5173
     environment:
       - VITE_API_BASE_URL=/api
+      - VITE_API_PROXY_TARGET=http://meshinfo:9000
       - NODE_ENV=dev
     restart: always
 
