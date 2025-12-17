@@ -110,7 +110,7 @@ export const Telemetry = () => {
           </thead>
 
           <tbody>
-            {(telemetry ?? []).map((item, index) => {
+            {telemetry.map((item, index) => {
               const inode = nodes[item.from];
 
               return (
