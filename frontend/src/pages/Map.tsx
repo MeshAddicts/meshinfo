@@ -10,7 +10,7 @@ import VectorLayer from "ol/layer/Vector";
 import { fromLonLat, transform } from "ol/proj";
 import { Vector } from "ol/source";
 import VectorSource from "ol/source/Vector";
-import type { RenderEvent } from "ol/render/Event";
+import type RenderEvent from "ol/render/Event";
 import { createBaseTileLayer } from "../maps/baseLayer";
 import { reverseGeocode } from "../maps/geocoder";
 import { Circle, Fill, Stroke, Style } from "ol/style";

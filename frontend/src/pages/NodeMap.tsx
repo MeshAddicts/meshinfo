@@ -5,7 +5,7 @@ import { fromLonLat } from "ol/proj";
 import { createBaseTileLayer } from "../maps/baseLayer";
 import VectorSource from "ol/source/Vector";
 import { Circle, Fill, Stroke, Style } from "ol/style";
-import type { RenderEvent } from "ol/render/Event";
+import type RenderEvent from "ol/render/Event";
 import { useEffect, useRef, useState } from "react";
 
 import { INode } from "../types";
