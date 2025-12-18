@@ -34,10 +34,15 @@ services:
   frontend:
     image: ghcr.io/simmerv/meshinfo-spa:develop
     ports:
-      - 8000:80
+      - "8000:80"
     environment:
-      - VITE_API_BASE_URL=/api
-      - NODE_ENV=production
+      NODE_ENV: production
+      VITE_API_BASE_URL: /api
+
+      # Optional: Mapbox basemap
+      VITE_MAP_PROVIDER: mapbox
+      # VITE_MAPBOX_STYLE: mapbox/streets-v12
+      # VITE_MAPBOX_TOKEN: pk_XXXXXXXXXXXXXXXXXXXX
     restart: always
 
   caddy:

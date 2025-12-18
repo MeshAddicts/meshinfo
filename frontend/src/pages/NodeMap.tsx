@@ -3,7 +3,7 @@ import { Point } from "ol/geom";
 import TileLayer from "ol/layer/Tile";
 import VectorLayer from "ol/layer/Vector";
 import { fromLonLat } from "ol/proj";
-import { OSM } from "ol/source";
+import { createBaseTileLayer } from "../maps/baseLayer";
 import VectorSource from "ol/source/Vector";
 import { Circle, Fill, Stroke, Style } from "ol/style";
 import { useEffect, useRef, useState } from "react";
@@ -57,9 +57,7 @@ export const NodeMap = ({ node }: { node: INode }) => {
     if (olMap) return;
     if (!node.position || !mapRef) return;
 
-    const tileLayer = new TileLayer({
-      source: new OSM(),
-    });
+    const tileLayer = createBaseTileLayer();
 
     if (
       window.matchMedia &&
