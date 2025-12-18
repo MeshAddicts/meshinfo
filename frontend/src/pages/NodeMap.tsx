@@ -2,12 +2,12 @@ import { Feature, Map as OlMap, View } from "ol";
 import { Point } from "ol/geom";
 import VectorLayer from "ol/layer/Vector";
 import { fromLonLat } from "ol/proj";
-import { createBaseTileLayer } from "../maps/baseLayer";
+import type RenderEvent from "ol/render/Event";
 import VectorSource from "ol/source/Vector";
 import { Circle, Fill, Stroke, Style } from "ol/style";
-import type RenderEvent from "ol/render/Event";
 import { useEffect, useRef, useState } from "react";
 
+import { createBaseTileLayer } from "../maps/baseLayer";
 import { INode } from "../types";
 
 export const NodeMap = ({ node }: { node: INode }) => {
@@ -55,11 +55,19 @@ export const NodeMap = ({ node }: { node: INode }) => {
 
   useEffect(() => {
     if (olMap) return;
-    if (!node.position || !mapRef) return;
+    if (!node.position || !mapRef.current) return;
 
     const tileLayer = createBaseTileLayer();
 
+    // Only apply the "dark invert" filter for OSM (including mapbox-without-token fallback)
+    const provider = (import.meta.env.VITE_MAP_PROVIDER ?? "osm") as
+      | "osm"
+      | "mapbox";
+    const hasMapboxToken = Boolean(import.meta.env.VITE_MAPBOX_TOKEN);
+    const usingMapbox = provider === "mapbox" && hasMapboxToken;
+
     if (
+      !usingMapbox &&
       window.matchMedia &&
       window.matchMedia("(prefers-color-scheme: dark)").matches
     ) {
@@ -70,6 +78,7 @@ export const NodeMap = ({ node }: { node: INode }) => {
           context.globalCompositeOperation = "source-over";
         }
       });
+
       tileLayer.on("postrender", (evt: RenderEvent) => {
         if (evt.context) {
           const context = evt.context as CanvasRenderingContext2D;
@@ -80,7 +89,7 @@ export const NodeMap = ({ node }: { node: INode }) => {
 
     const map = new OlMap({
       layers: [tileLayer],
-      target: mapRef.current as HTMLElement,
+      target: mapRef.current,
       view: new View({
         center: fromLonLat([node.position.longitude, node.position.latitude]),
         zoom: 12,
@@ -88,7 +97,7 @@ export const NodeMap = ({ node }: { node: INode }) => {
     });
     setMap(map);
 
-    const features = [];
+    const features: Feature<Point>[] = [];
     const feature = new Feature({
       geometry: new Point(
         fromLonLat([node.position.longitude, node.position.latitude])
@@ -96,11 +105,7 @@ export const NodeMap = ({ node }: { node: INode }) => {
       node,
     });
 
-    if (node.active) {
-      feature.setStyle(onlineStyle);
-    } else {
-      feature.setStyle(offlineStyle);
-    }
+    feature.setStyle(node.active ? onlineStyle : offlineStyle);
     features.push(feature);
 
     const layer = new VectorLayer({
@@ -111,7 +116,6 @@ export const NodeMap = ({ node }: { node: INode }) => {
     });
     map.addLayer(layer);
 
-    // eslint-disable-next-line consistent-return
     return () => {
       map.setTarget(undefined);
     };

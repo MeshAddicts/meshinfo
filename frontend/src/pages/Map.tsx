@@ -137,7 +137,15 @@ export function Map() {
 
     const tileLayer = createBaseTileLayer();
 
+    // Only apply the "dark invert" filter for OSM (including mapbox-without-token fallback)
+    const provider = (import.meta.env.VITE_MAP_PROVIDER ?? "osm") as
+      | "osm"
+      | "mapbox";
+    const hasMapboxToken = Boolean(import.meta.env.VITE_MAPBOX_TOKEN);
+    const usingMapbox = provider === "mapbox" && hasMapboxToken;
+
     if (
+      !usingMapbox &&
       window.matchMedia &&
       window.matchMedia("(prefers-color-scheme: dark)").matches
     ) {
@@ -278,7 +286,10 @@ export function Map() {
           const { node } = properties as {
             node: IMapNode & { position: Coordinate }; // if it's a node, it will have a position
           };
-          const displayName = await reverseGeocode(node.position[0], node.position[1]);
+          const displayName = await reverseGeocode(
+            node.position[0],
+            node.position[1]
+          );
 
           let panel =
             `<b>${node.longname}</b><br/>${node.shortname} / ${
@@ -319,7 +330,9 @@ export function Map() {
                   nnode.shortname
                 }</td><td align=center>${
                   neighbor.snr
-                }</td><td align=right>${distance ? distance.toFixed(2) : "unk"} km</td></tr>`;
+                }</td><td align=right>${
+                  distance ? distance.toFixed(2) : "unk"
+                } km</td></tr>`;
               })
               .join("");
             panel += "</table>";
@@ -387,12 +400,13 @@ export function Map() {
                         (node.position[1] - nnode.position[1]) ** 2
                     ) * 111.32;
                 }
-                // calculate distance between two nodes without using ol.sphere
                 return `<tr><td align=left>${
                   nnode.shortname
                 }</td><td align=center>${
                   neighbor?.snr
-                }</td><td align=right>${distance ? distance.toFixed(2) : "unk"} km</td></tr>`;
+                }</td><td align=right>${
+                  distance ? distance.toFixed(2) : "unk"
+                } km</td></tr>`;
               })
               .join("");
             panel += "</table>";
