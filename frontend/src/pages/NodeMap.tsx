@@ -1,11 +1,11 @@
 import { Feature, Map as OlMap, View } from "ol";
 import { Point } from "ol/geom";
-import TileLayer from "ol/layer/Tile";
 import VectorLayer from "ol/layer/Vector";
 import { fromLonLat } from "ol/proj";
 import { createBaseTileLayer } from "../maps/baseLayer";
 import VectorSource from "ol/source/Vector";
 import { Circle, Fill, Stroke, Style } from "ol/style";
+import type { RenderEvent } from "ol/render/Event";
 import { useEffect, useRef, useState } from "react";
 
 import { INode } from "../types";
@@ -63,14 +63,14 @@ export const NodeMap = ({ node }: { node: INode }) => {
       window.matchMedia &&
       window.matchMedia("(prefers-color-scheme: dark)").matches
     ) {
-      tileLayer.on("prerender", (evt) => {
+      tileLayer.on("prerender", (evt: RenderEvent) => {
         if (evt.context) {
           const context = evt.context as CanvasRenderingContext2D;
           context.filter = "grayscale(80%) invert(100%) ";
           context.globalCompositeOperation = "source-over";
         }
       });
-      tileLayer.on("postrender", (evt) => {
+      tileLayer.on("postrender", (evt: RenderEvent) => {
         if (evt.context) {
           const context = evt.context as CanvasRenderingContext2D;
           context.filter = "none";

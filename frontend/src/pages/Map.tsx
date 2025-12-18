@@ -10,6 +10,7 @@ import VectorLayer from "ol/layer/Vector";
 import { fromLonLat, transform } from "ol/proj";
 import { Vector } from "ol/source";
 import VectorSource from "ol/source/Vector";
+import type { RenderEvent } from "ol/render/Event";
 import { createBaseTileLayer } from "../maps/baseLayer";
 import { reverseGeocode } from "../maps/geocoder";
 import { Circle, Fill, Stroke, Style } from "ol/style";
@@ -140,14 +141,15 @@ export function Map() {
       window.matchMedia &&
       window.matchMedia("(prefers-color-scheme: dark)").matches
     ) {
-      tileLayer.on("prerender", (evt) => {
+      tileLayer.on("prerender", (evt: RenderEvent) => {
         if (evt.context) {
           const context = evt.context as CanvasRenderingContext2D;
           context.filter = "grayscale(80%) invert(100%) ";
           context.globalCompositeOperation = "source-over";
         }
       });
-      tileLayer.on("postrender", (evt) => {
+
+      tileLayer.on("postrender", (evt: RenderEvent) => {
         if (evt.context) {
           const context = evt.context as CanvasRenderingContext2D;
           context.filter = "none";
