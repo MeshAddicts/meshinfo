@@ -3,7 +3,7 @@ name: Build & Push (GHCR)
 on:
   push:
     branches:
-      - feature/mapbox
+      - develop
   workflow_dispatch:
 
 permissions:
