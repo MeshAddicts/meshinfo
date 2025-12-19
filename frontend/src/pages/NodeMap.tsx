@@ -34,9 +34,9 @@ function makeNodeGeoJSON(node: INode) {
     features: [
       {
         type: "Feature" as const,
-        id: node.node_id ?? node.shortname ?? "node",
+        id: node.id ?? node.shortname ?? "node",
         properties: {
-          id: node.node_id ?? "",
+          id: node.id ?? "",
           shortname: node.shortname ?? "",
           longname: node.longname ?? "",
           online: Boolean((node as any).active),

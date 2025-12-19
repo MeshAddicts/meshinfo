@@ -1,8 +1,18 @@
 import "ol/ol.css";
 import "mapbox-gl/dist/mapbox-gl.css";
 
-import mapboxgl, { GeoJSONSource as MbGeoJSONSource, Map as MbMap } from "mapbox-gl";
+import mapboxgl, {
+  GeoJSONSource as MbGeoJSONSource,
+  Map as MbMap,
+} from "mapbox-gl";
 
+import type {
+  Feature as GeoFeature,
+  FeatureCollection,
+  GeoJsonProperties,
+  LineString as GeoLineString,
+  Point as GeoPoint,
+} from "geojson";
 import { Feature, Map as OlMap, View } from "ol";
 import { Coordinate } from "ol/coordinate";
 import { click } from "ol/events/condition";
@@ -15,11 +25,10 @@ import { Vector } from "ol/source";
 import VectorSource from "ol/source/Vector";
 import type RenderEvent from "ol/render/Event";
 import { Circle, Fill, Stroke, Style } from "ol/style";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { createBaseTileLayer } from "../maps/baseLayer";
 import { reverseGeocode } from "../maps/geocoder";
-import { useEffect, useMemo, useRef, useState } from "react";
-
 import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";
 import { INode } from "../types";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
@@ -30,7 +39,22 @@ type MapProvider = "osm" | "mapbox";
 
 type IMapNode = INode & {
   online: boolean;
-  position?: Coordinate; // [lon, lat]
+  map_position?: Coordinate;
+  neighbors?: {
+    id: string;
+    snr: number;
+    distance: number;
+  }[];
+};
+
+// OL Feature properties for click handling
+type IFeatureNode = {
+  id: string;
+  shortname?: string;
+  longname?: string;
+  last_seen?: string;
+  position: Coordinate; // [lon, lat]
+  online: boolean;
   neighbors?: {
     id: string;
     snr: number;
@@ -39,7 +63,7 @@ type IMapNode = INode & {
 };
 
 // --------------------
-// OpenLayers styles 
+// OpenLayers styles
 // --------------------
 const defaultStyle = new Style({
   image: new Circle({
@@ -97,37 +121,41 @@ function computeRecentNodes(nodes: Record<string, IMapNode>) {
   });
 }
 
-function buildNodesGeoJSON(nodes: Record<string, IMapNode>) {
+function buildNodesGeoJSON(
+  nodes: Record<string, IMapNode>
+): FeatureCollection<GeoPoint, GeoJsonProperties> {
   const recentNodeEntries = computeRecentNodes(nodes);
 
-  return {
-    type: "FeatureCollection" as const,
-    features: recentNodeEntries
-      .map(([id, node]) => {
-        if (!node.position) return null;
+  const features: GeoFeature<GeoPoint, GeoJsonProperties>[] = [];
 
-        return {
-          type: "Feature" as const,
-          id, // for feature-state selection
-          properties: {
-            id,
-            shortname: node.shortname ?? "",
-            longname: node.longname ?? "",
-            last_seen: node.last_seen ?? "",
-            online: Boolean(node.online),
-          },
-          geometry: {
-            type: "Point" as const,
-            coordinates: [node.position[0], node.position[1]] as [number, number],
-          },
-        };
-      })
-      .filter(Boolean),
-  };
+  for (const [id, node] of recentNodeEntries) {
+    if (!node.map_position) continue;
+
+    features.push({
+      type: "Feature",
+      id,
+      properties: {
+        id,
+        shortname: node.shortname ?? "",
+        longname: node.longname ?? "",
+        last_seen: node.last_seen ?? "",
+        online: Boolean(node.online),
+      },
+      geometry: {
+        type: "Point",
+        coordinates: [node.map_position[0], node.map_position[1]],
+      },
+    });
+  }
+
+  return { type: "FeatureCollection", features };
 }
 
-function emptyFeatureCollection() {
-  return { type: "FeatureCollection" as const, features: [] as any[] };
+function emptyLineFeatureCollection(): FeatureCollection<
+  GeoLineString,
+  GeoJsonProperties
+> {
+  return { type: "FeatureCollection", features: [] };
 }
 
 export function Map() {
@@ -139,6 +167,7 @@ export function Map() {
   // Mapbox refs (Mapbox path)
   const mbMapRef = useRef<MbMap | null>(null);
   const mbSelectedIdRef = useRef<string | null>(null);
+  const mbHandlersBoundRef = useRef(false);
 
   const { data: rawNodes = {} } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
@@ -152,18 +181,22 @@ export function Map() {
         id,
         {
           ...node,
-          online: node.last_seen && new Date(node.last_seen).getTime() > sixHoursAgo,
-          position:
-            node.position && node.position.latitude_i && node.position.longitude_i
-              ? [
+          online:
+            Boolean(node.last_seen) &&
+            new Date(node.last_seen as string).getTime() > sixHoursAgo,
+          map_position:
+            node.position &&
+            node.position.latitude_i != null &&
+            node.position.longitude_i != null
+              ? ([
                   (node.position.longitude_i ?? 0) / 10_000_000,
                   (node.position.latitude_i ?? 0) / 10_000_000,
-                ]
+                ] as Coordinate)
               : undefined,
           neighbors: node.neighborinfo?.neighbors?.map((neighbor) => ({
             id: convertNodeIdFromIntToHex(neighbor.node_id),
             snr: neighbor.snr,
-            distance: neighbor.distance,
+            distance: neighbor.distance ?? 0,
           })),
         },
       ])
@@ -207,11 +240,14 @@ export function Map() {
     if (!usingMapbox) return;
     if (mbMapRef.current) return; // already created
     if (!mapRef.current) return;
-    if (!serverNode || !nodes) return;
+    if (!serverNode) return;
 
     const defaultPosition = { latitude: 38.5816, longitude: -121.4944 };
-    const serverPosition = serverNode?.position
-      ? { latitude: serverNode.position[1], longitude: serverNode.position[0] }
+    const serverPosition = serverNode.map_position
+      ? {
+          latitude: serverNode.map_position[1],
+          longitude: serverNode.map_position[0],
+        }
       : defaultPosition;
 
     const savedCenter = JSON.parse(localStorage.getItem("savedCenter") ?? "[]");
@@ -221,8 +257,11 @@ export function Map() {
     ];
     const initialZoom = JSON.parse(localStorage.getItem("savedZoom") ?? "9.5");
 
-    const stylePath = (import.meta.env.VITE_MAPBOX_STYLE ?? "mapbox/streets-v12") as string;
-    const styleUrl = stylePath.startsWith("mapbox://") ? stylePath : `mapbox://styles/${stylePath}`;
+    const stylePath = (import.meta.env.VITE_MAPBOX_STYLE ??
+      "mapbox/streets-v12") as string;
+    const styleUrl = stylePath.startsWith("mapbox://")
+      ? stylePath
+      : `mapbox://styles/${stylePath}`;
 
     mapboxgl.accessToken = token!;
 
@@ -243,10 +282,12 @@ export function Map() {
       localStorage.setItem("savedZoom", map.getZoom().toString());
     });
 
-    // Add basic controls 
-    map.addControl(new mapboxgl.NavigationControl({ showCompass: true }), "top-left");
+    // Add basic controls
+    map.addControl(
+      new mapboxgl.NavigationControl({ showCompass: true }),
+      "top-left"
+    );
 
-    // Ensure sources/layers exist on style load 
     const ensureSourcesAndLayers = () => {
       // Nodes source (clustered)
       if (!map.getSource("nodes")) {
@@ -263,7 +304,7 @@ export function Map() {
       if (!map.getSource("links")) {
         map.addSource("links", {
           type: "geojson",
-          data: emptyFeatureCollection(),
+          data: emptyLineFeatureCollection(),
         });
       }
 
@@ -317,7 +358,6 @@ export function Map() {
               50,
               30,
             ],
-            // neutral cluster color 
             "circle-color": "#3b82f6",
             "circle-opacity": 0.85,
           },
@@ -358,8 +398,8 @@ export function Map() {
             "circle-color": [
               "case",
               ["boolean", ["get", "online"], false],
-              "#32f032", // online
-              "rgba(0,0,0,0.50)", // offline
+              "#32f032",
+              "rgba(0,0,0,0.50)",
             ],
             "circle-stroke-width": 2,
             "circle-stroke-color": [
@@ -382,7 +422,17 @@ export function Map() {
           minzoom: 9,
           layout: {
             "text-field": ["get", "shortname"],
-            "text-size": ["interpolate", ["linear"], ["zoom"], 9, 10, 13, 14, 16, 16],
+            "text-size": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              9,
+              10,
+              13,
+              14,
+              16,
+              16,
+            ],
             "text-offset": [0, 1.2],
             "text-anchor": "top",
             "text-optional": true,
@@ -394,6 +444,10 @@ export function Map() {
           },
         });
       }
+
+      // Bind handlers once (important: style reloads can re-run this)
+      if (mbHandlersBoundRef.current) return;
+      mbHandlersBoundRef.current = true;
 
       // Cursor behaviors
       map.on("mouseenter", "unclustered-nodes", () => {
@@ -411,7 +465,9 @@ export function Map() {
 
       // Clicking a cluster zooms in
       map.on("click", "clusters", (e) => {
-        const features = map.queryRenderedFeatures(e.point, { layers: ["clusters"] });
+        const features = map.queryRenderedFeatures(e.point, {
+          layers: ["clusters"],
+        });
         const cluster = features[0];
         if (!cluster) return;
 
@@ -421,7 +477,12 @@ export function Map() {
 
         source.getClusterExpansionZoom(clusterId, (err, zoom) => {
           if (err) return;
-          const [lng, lat] = (cluster.geometry as any).coordinates as [number, number];
+          if (zoom == null) return;
+
+          const [lng, lat] = (cluster.geometry as any).coordinates as [
+            number,
+            number
+          ];
           map.easeTo({ center: [lng, lat], zoom });
         });
       });
@@ -433,25 +494,35 @@ export function Map() {
 
         const id = (feature.properties?.id ?? "") as string;
         const node = nodes[id];
-        if (!node || !node.position) return;
+        if (!node || !node.map_position) return;
 
         // feature-state selection highlight
-        if (mbSelectedIdRef.current && map.getSource("nodes")) {
+        if (mbSelectedIdRef.current) {
           try {
-            map.setFeatureState({ source: "nodes", id: mbSelectedIdRef.current }, { selected: false });
+            map.setFeatureState(
+              { source: "nodes", id: mbSelectedIdRef.current },
+              { selected: false }
+            );
           } catch {
-            // ignore if feature vanished due to filter updates
+            // ignore
           }
         }
         mbSelectedIdRef.current = id;
-        map.setFeatureState({ source: "nodes", id }, { selected: true });
+        try {
+          map.setFeatureState({ source: "nodes", id }, { selected: true });
+        } catch {
+          // ignore
+        }
 
-        // Build the panel 
-        const displayName = await reverseGeocode(node.position[0], node.position[1]);
+        // Panel details
+        const displayName = await reverseGeocode(
+          node.map_position[0],
+          node.map_position[1]
+        );
 
         let panel =
           `<b>${node.longname}</b><br/>${node.shortname} / ${id}<br/><br/>` +
-          `<b>Position</b><br/>${node.position}<br/><br/>` +
+          `<b>Position</b><br/>${node.map_position}<br/><br/>` +
           `<b>Location</b><br/>${displayName || "Unknown"}<br/><br/>` +
           `<b>Status</b><br/>${node.online ? "Online" : "Offline"}<br/><br/>` +
           `<b>Last Seen</b><br/>${node.last_seen}<br/><br/>`;
@@ -473,11 +544,11 @@ export function Map() {
               }
 
               let distance;
-              if (nnode.position) {
+              if (nnode.map_position) {
                 distance =
                   Math.sqrt(
-                    (node.position![0] - nnode.position[0]) ** 2 +
-                      (node.position![1] - nnode.position[1]) ** 2
+                    (node.map_position![0] - nnode.map_position[0]) ** 2 +
+                      (node.map_position![1] - nnode.map_position[1]) ** 2
                   ) * 111.32;
               }
 
@@ -514,11 +585,11 @@ export function Map() {
               }
 
               let distance;
-              if (nnode.position) {
+              if (nnode.map_position) {
                 distance =
                   Math.sqrt(
-                    (node.position![0] - nnode.position[0]) ** 2 +
-                      (node.position![1] - nnode.position[1]) ** 2
+                    (node.map_position![0] - nnode.map_position[0]) ** 2 +
+                      (node.map_position![1] - nnode.map_position[1]) ** 2
                   ) * 111.32;
               }
 
@@ -540,7 +611,8 @@ export function Map() {
         panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://meshtastic.liamcottle.net/?node_id=${nodeId}" target="_blank">Liam's Map</a><br/>`;
         panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://meshmap.net/#${nodeId}" target="_blank">MeshMap</a><br/>`;
 
-        const { nodePanel, nodeTitle, nodeSubtitle, nodeContent } = getDetailsDom();
+        const { nodePanel, nodeTitle, nodeSubtitle, nodeContent } =
+          getDetailsDom();
         if (nodePanel && nodeTitle && nodeSubtitle && nodeContent) {
           nodeTitle.innerHTML = node.longname ?? "";
           nodeSubtitle.innerHTML = node.shortname ?? "";
@@ -548,22 +620,25 @@ export function Map() {
           nodePanel.classList.remove("hidden");
         }
 
-        // Draw links in Mapbox: build a GeoJSON LineString set and setData()
-        const linkFeatures: any[] = [];
+        // Draw links in Mapbox
+        const linkFeatures: GeoFeature<GeoLineString, GeoJsonProperties>[] = [];
 
         const neighborSet = new Set((node.neighbors ?? []).map((n) => n.id));
         const heardBySet = new Set(heardBy);
-
         const union = new Set<string>([...neighborSet, ...heardBySet]);
 
         union.forEach((otherId) => {
           const other = nodes[otherId];
-          if (!other?.position) return;
+          if (!other?.map_position) return;
 
           const isNeighbor = neighborSet.has(otherId);
           const isHeardBy = heardBySet.has(otherId);
-
-          const kind = isNeighbor && isHeardBy ? "both" : isNeighbor ? "neighbor" : "heard_by";
+          const kind =
+            isNeighbor && isHeardBy
+              ? "both"
+              : isNeighbor
+              ? "neighbor"
+              : "heard_by";
 
           linkFeatures.push({
             type: "Feature",
@@ -571,8 +646,8 @@ export function Map() {
             geometry: {
               type: "LineString",
               coordinates: [
-                [node.position![0], node.position![1]],
-                [other.position[0], other.position[1]],
+                [node.map_position![0], node.map_position![1]],
+                [other.map_position[0], other.map_position[1]],
               ],
             },
           });
@@ -583,34 +658,41 @@ export function Map() {
           linksSource.setData({
             type: "FeatureCollection",
             features: linkFeatures,
-          } as any);
+          } as FeatureCollection<GeoLineString, GeoJsonProperties>);
         }
       });
 
-      // Clicking empty space clears panel + links / keeps selection until next click
+      // Clicking empty space clears panel + links
       map.on("click", (e) => {
-        const hitNode = map.queryRenderedFeatures(e.point, { layers: ["unclustered-nodes"] }).length > 0;
-        const hitCluster = map.queryRenderedFeatures(e.point, { layers: ["clusters"] }).length > 0;
+        const hitNode =
+          map.queryRenderedFeatures(e.point, {
+            layers: ["unclustered-nodes"],
+          }).length > 0;
+        const hitCluster =
+          map.queryRenderedFeatures(e.point, { layers: ["clusters"] }).length >
+          0;
         if (hitNode || hitCluster) return;
 
         clearDetailsPanel();
 
         const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
-        linksSource?.setData(emptyFeatureCollection() as any);
+        linksSource?.setData(emptyLineFeatureCollection());
       });
     };
 
     map.on("style.load", ensureSourcesAndLayers);
 
-    // cleanup
     return () => {
       if (mbMapRef.current) {
         mbMapRef.current.remove();
         mbMapRef.current = null;
         mbSelectedIdRef.current = null;
+        mbHandlersBoundRef.current = false;
       }
     };
-  }, [nodes, serverNode]);
+    // NOTE: only creates the map once. Live updates are handled in a separate effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverNode]);
 
   // Mapbox: live updates (nodes appear/disappear) via setData()
   useEffect(() => {
@@ -621,12 +703,14 @@ export function Map() {
     if (!src) return;
 
     const data = buildNodesGeoJSON(nodes);
-    src.setData(data as any);
+    src.setData(data);
 
     // If selected node disappears (no longer recent), clear selection + links/panel
     const selectedId = mbSelectedIdRef.current;
     if (selectedId) {
-      const stillExists = (data.features as any[]).some((f) => f?.properties?.id === selectedId);
+      const stillExists = data.features.some(
+        (f) => (f.properties?.id as string | undefined) === selectedId
+      );
       if (!stillExists) {
         try {
           map.setFeatureState({ source: "nodes", id: selectedId }, { selected: false });
@@ -636,7 +720,7 @@ export function Map() {
         mbSelectedIdRef.current = null;
 
         const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
-        linksSource?.setData(emptyFeatureCollection() as any);
+        linksSource?.setData(emptyLineFeatureCollection());
         clearDetailsPanel();
       }
     }
@@ -654,16 +738,11 @@ export function Map() {
     if (usingMapbox) return;
 
     if (olMap) return;
-    if (!serverNode || !nodes || !mapRef) {
-      return;
-    }
+    if (!serverNode || !mapRef.current) return;
 
     const defaultPosition = { latitude: 38.5816, longitude: -121.4944 };
-    const serverPosition = serverNode?.position
-      ? {
-          latitude: serverNode.position[1],
-          longitude: serverNode.position[0],
-        }
+    const serverPosition = serverNode.map_position
+      ? { latitude: serverNode.map_position[1], longitude: serverNode.map_position[0] }
       : defaultPosition;
 
     const savedCenter = JSON.parse(localStorage.getItem("savedCenter") ?? "[]");
@@ -675,7 +754,7 @@ export function Map() {
 
     const tileLayer = createBaseTileLayer();
 
-    // Only apply the "dark invert" filter for OSM (including mapbox-without-token fallback)
+    // Only apply the "dark invert" filter for OSM (including fallback)
     const hasMapboxToken = Boolean(import.meta.env.VITE_MAPBOX_TOKEN);
     const reallyUsingMapbox = provider === "mapbox" && hasMapboxToken;
 
@@ -719,7 +798,7 @@ export function Map() {
           localStorage.setItem("savedCenter", JSON.stringify([lon, lat]));
         }
       }
-      if (zoom) {
+      if (zoom != null) {
         localStorage.setItem("savedZoom", zoom.toString());
       }
     });
@@ -735,30 +814,25 @@ export function Map() {
 
     const features = recentNodeEntries
       .map(([id, node]) => {
-        if (!node.position) return null;
+        if (!node.map_position) return null;
 
         const feature = new Feature({
-          geometry: new Point(fromLonLat([node.position[0], node.position[1]])),
+          geometry: new Point(fromLonLat([node.map_position[0], node.map_position[1]])),
           node: {
             id,
             shortname: node.shortname,
             longname: node.longname,
             last_seen: node.last_seen,
-            position: [node.position[0], node.position[1]],
+            position: [node.map_position[0], node.map_position[1]] as Coordinate,
             online: node.online,
             neighbors: node.neighbors,
-          },
+          } satisfies IFeatureNode,
         });
 
-        if (node.online) {
-          feature.setStyle(onlineStyle);
-        } else {
-          feature.setStyle(offlineStyle);
-        }
-
+        feature.setStyle(node.online ? onlineStyle : offlineStyle);
         return feature;
       })
-      .filter(Boolean) as Feature<Point>[];
+      .filter((f): f is Feature<Point> => Boolean(f));
 
     const vectorLayer = new VectorLayer({
       style: defaultStyle,
@@ -767,14 +841,8 @@ export function Map() {
 
     map.addLayer(vectorLayer);
 
-    const nodePanel = document.getElementById("details");
-    const nodeTitle = document.getElementById("details-title");
-    const nodeSubtitle = document.getElementById("details-subtitle");
-    const nodeContent = document.getElementById("details-content");
-
-    if (!nodePanel || !nodeTitle || !nodeSubtitle || !nodeContent) {
-      return;
-    }
+    const { nodePanel, nodeTitle, nodeSubtitle, nodeContent } = getDetailsDom();
+    if (!nodePanel || !nodeTitle || !nodeSubtitle || !nodeContent) return;
 
     const selectedStyle = new Style({
       image: new Circle({
@@ -805,9 +873,8 @@ export function Map() {
         const feature = map.forEachFeatureAtPixel(event.pixel, (f) => f);
         if (feature) {
           const properties = feature.getProperties();
-          const { node } = properties as {
-            node: IMapNode & { position: Coordinate };
-          };
+          const { node } = properties as { node: IFeatureNode };
+
           const displayName = await reverseGeocode(node.position[0], node.position[1]);
 
           let panel =
@@ -818,42 +885,44 @@ export function Map() {
             `<b>Last Seen</b><br/>${node.last_seen}<br/><br/>`;
 
           panel += "<b>Neighbors Heard</b><br/>";
-          if (node.neighbors?.length === 0) {
+          if ((node.neighbors?.length ?? 0) === 0) {
             panel += "None";
           } else {
             panel +=
               "<table border=1 cellpadding=2 cellspacing=0 width=100% class='border border-gray-300'>";
             panel +=
               "<tr><th width=33% align=left>Node</th><th width=33% align=center>SNR</th><th width=33% align=right>Distance</th></tr>";
+
             panel += (node.neighbors ?? [])
               .map((neighbor) => {
                 const nnode = nodes[neighbor.id];
                 if (!nnode) {
                   return `<tr><td class="text-gray-600">UNK</td><td align=center>${neighbor.snr}</td><td></td></tr>`;
                 }
+
                 let distance;
-                if (nnode.position) {
+                if (nnode.map_position) {
                   distance =
                     Math.sqrt(
-                      (node.position[0] - nnode.position[0]) ** 2 +
-                        (node.position[1] - nnode.position[1]) ** 2
+                      (node.position[0] - nnode.map_position[0]) ** 2 +
+                        (node.position[1] - nnode.map_position[1]) ** 2
                     ) * 111.32;
                 }
+
                 return `<tr><td align=left>${nnode.shortname}</td><td align=center>${neighbor.snr}</td><td align=right>${
                   distance ? distance.toFixed(2) : "unk"
                 } km</td></tr>`;
               })
               .join("");
+
             panel += "</table>";
 
             node.neighbors?.forEach((neighbor) => {
               const nnode = nodes[neighbor.id];
-              if (!nnode || !nnode.position) {
-                return;
-              }
-              const points = [node.position, nnode.position];
+              if (!nnode?.map_position) return;
 
-              // eslint-disable-next-line no-plusplus
+              const points: Coordinate[] = [node.position, nnode.map_position];
+
               for (let i = 0; i < points.length; i++) {
                 points[i] = transform(points[i], "EPSG:4326", "EPSG:3857");
               }
@@ -876,12 +945,14 @@ export function Map() {
               map.addLayer(vectorLineLayer);
             });
           }
+
           panel += "<br/><br/>";
 
           panel += "<b>Heard By Neighbors</b><br/>";
-          const heardBy = Object.keys(nodes).filter((id) =>
-            nodes[id].neighbors?.some((neighbor) => neighbor.id === node.id)
+          const heardBy = Object.keys(nodes).filter((nid) =>
+            nodes[nid].neighbors?.some((neighbor) => neighbor.id === node.id)
           );
+
           if (heardBy.length === 0) {
             panel += "None<br/>";
           } else {
@@ -889,38 +960,39 @@ export function Map() {
               "<table border=1 cellpadding=2 cellspacing=0 width=100% class='border border-gray-300'>";
             panel +=
               "<tr><th width=33% align=left>Node</th><th width=33% align=center>SNR</th><th width=33% align=right>Distance</th></tr>";
+
             panel += heardBy
-              .map((id) => {
-                const nnode = nodes[id];
+              .map((nid) => {
+                const nnode = nodes[nid];
                 const neighbor = nnode?.neighbors?.find((n) => n.id === node.id);
+
                 if (!nnode) {
                   return `<tr><td class="text-gray-600">UNK</td><td align=center>${neighbor?.snr}</td><td></td></tr>`;
                 }
-                let distance;
 
-                if (nnode.position) {
+                let distance;
+                if (nnode.map_position) {
                   distance =
                     Math.sqrt(
-                      (node.position[0] - nnode.position[0]) ** 2 +
-                        (node.position[1] - nnode.position[1]) ** 2
+                      (node.position[0] - nnode.map_position[0]) ** 2 +
+                        (node.position[1] - nnode.map_position[1]) ** 2
                     ) * 111.32;
                 }
+
                 return `<tr><td align=left>${nnode.shortname}</td><td align=center>${neighbor?.snr}</td><td align=right>${
                   distance ? distance.toFixed(2) : "unk"
                 } km</td></tr>`;
               })
               .join("");
+
             panel += "</table>";
 
-            // add the heard_by lines
-            heardBy.forEach((id) => {
-              const nnode = nodes[id];
-              if (!nnode || !nnode.position) {
-                return;
-              }
-              const points = [node.position, nnode.position];
+            heardBy.forEach((nid) => {
+              const nnode = nodes[nid];
+              if (!nnode?.map_position) return;
 
-              // eslint-disable-next-line no-plusplus
+              const points: Coordinate[] = [node.position, nnode.map_position];
+
               for (let i = 0; i < points.length; i++) {
                 points[i] = transform(points[i], "EPSG:4326", "EPSG:3857");
               }
@@ -934,11 +1006,10 @@ export function Map() {
 
               let lineStyle = new Style({
                 fill: new Fill({ color: "#6666FF" }),
-                stroke: new Stroke({ color: "#6666FF", width: 4 }),
+                stroke: new Stroke({ color: "#6666FF" as any, width: 4 }),
               });
 
-              // if the nnode is also a neighbor of the node, make the line purple
-              if (node.neighbors?.some((neighbor) => neighbor.id === id)) {
+              if (node.neighbors?.some((neighbor) => neighbor.id === nid)) {
                 lineStyle = new Style({
                   fill: new Fill({ color: "#FF66FF" }),
                   stroke: new Stroke({ color: "#FF66FF", width: 4 }),
@@ -991,7 +1062,10 @@ export function Map() {
           <div id="details-title" className="flex-auto text-lg text-start">
             NODE NAME
           </div>
-          <div id="details-subtitle" className="flex-auto ml-4 text-sm text-end">
+          <div
+            id="details-subtitle"
+            className="flex-auto ml-4 text-sm text-end"
+          >
             NODE
           </div>
         </div>
@@ -1006,7 +1080,8 @@ export function Map() {
           <div className="inline-block w-12 h-1 bg-blue-400" /> Heard By Neighbor
         </div>
         <div>
-          <div className="inline-block w-12 h-1 bg-purple-400" /> Both Heard Each Other
+          <div className="inline-block w-12 h-1 bg-purple-400" /> Both Heard Each
+          Other
         </div>
       </div>
       <style>
