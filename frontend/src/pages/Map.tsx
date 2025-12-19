@@ -147,6 +147,23 @@ function computeRecentNodes(
   });
 }
 
+function bumpOlRender(map: OlMap) {
+  map.updateSize();
+  map.renderSync();
+
+  requestAnimationFrame(() => {
+    map.updateSize();
+    map.renderSync();
+  });
+
+  // One more delayed bump catches late layout/font/sidebar shifts.
+  window.setTimeout(() => {
+    map.updateSize();
+    map.renderSync();
+  }, 200);
+}
+
+
 function buildNodesGeoJSON(
   nodes: Record<string, IMapNode>,
   recentDays: number
@@ -980,8 +997,7 @@ export function Map() {
         olMap.setTarget(mapRef.current as HTMLElement);
 
         // Prevent "blank until resize" / stalled render
-        olMap.updateSize();
-        requestAnimationFrame(() => olMap.updateSize());
+        bumpOlRender(olMap);
         return;
       }
     }
@@ -1039,8 +1055,7 @@ export function Map() {
     olBaseLayerRef.current = tileLayer;
 
     // Helps prevent “blank until resize” in some layouts
-    map.updateSize();
-    requestAnimationFrame(() => map.updateSize());
+    bumpOlRender(map);
 
     map.on("moveend", () => {
       const center = map.getView().getCenter();
