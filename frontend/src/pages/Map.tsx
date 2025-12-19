@@ -1313,7 +1313,7 @@ export function Map() {
 
       <div
         id="map-settings"
-        className="absolute left-2 top-1/2 -translate-y-1/2 z-[1100] w-64 rounded-xl shadow-lg border border-gray-200/70 dark:border-gray-700/70 bg-white/90 dark:bg-black/70 backdrop-blur p-3"
+        className="absolute left-2 top-1/2 -translate-y-1/2 z-[1100] w-56 rounded-xl shadow-lg border border-gray-200/70 dark:border-gray-700/70 bg-white/90 dark:bg-black/70 backdrop-blur p-3"
       >
         <div className="font-semibold text-sm mb-2 dark:text-gray-100">
           Map Settings
