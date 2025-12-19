@@ -23,7 +23,6 @@ import VectorLayer from "ol/layer/Vector";
 import { fromLonLat, transform } from "ol/proj";
 import { Vector } from "ol/source";
 import VectorSource from "ol/source/Vector";
-import type RenderEvent from "ol/render/Event";
 import { Circle, Fill, Stroke, Style } from "ol/style";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -262,7 +261,14 @@ export function Map() {
 
   const [osmBasemap, setOsmBasemap] = useState<OsmBasemap>(() => {
     const stored = readJson<OsmBasemap | null>(LS_KEYS.osmBasemap, null);
-    return stored ?? "osm";
+    if (stored) return stored;
+
+    const prefersDark =
+      window.matchMedia &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches;
+
+    // Default basemap only for first-time visitors / no saved preference yet.
+    return prefersDark ? "carto_dark" : "carto_positron";
   });
 
   const [recentDays, setRecentDays] = useState<number>(() => {
@@ -1026,22 +1032,6 @@ export function Map() {
       osmBasemap,
     });
 
-    // Apply “dark invert” only when in dark mode (OSM path)
-    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
-      tileLayer.on("prerender", (evt: RenderEvent) => {
-        if (!evt.context) return;
-        const context = evt.context as CanvasRenderingContext2D;
-        context.filter = "grayscale(80%) invert(100%) ";
-        context.globalCompositeOperation = "source-over";
-      });
-
-      tileLayer.on("postrender", (evt: RenderEvent) => {
-        if (!evt.context) return;
-        const context = evt.context as CanvasRenderingContext2D;
-        context.filter = "none";
-      });
-    }
-
     const map = new OlMap({
       layers: [tileLayer],
       target: mapRef.current as HTMLElement,
@@ -1311,28 +1301,11 @@ export function Map() {
 
     const newBase = createBaseTileLayer({ provider: "osm", osmBasemap });
 
-    // Apply dark invert for OSM path (independent of Mapbox availability)
-    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
-      newBase.on("prerender", (evt: RenderEvent) => {
-        if (!evt.context) return;
-        const context = evt.context as CanvasRenderingContext2D;
-        context.filter = "grayscale(80%) invert(100%) ";
-        context.globalCompositeOperation = "source-over";
-      });
-
-      newBase.on("postrender", (evt: RenderEvent) => {
-        if (!evt.context) return;
-        const context = evt.context as CanvasRenderingContext2D;
-        context.filter = "none";
-      });
-    }
-
     // Replace layer 0 (base layer)
     olMap.getLayers().setAt(0, newBase);
     olBaseLayerRef.current = newBase;
 
-    olMap.updateSize();
-    requestAnimationFrame(() => olMap.updateSize());
+    bumpOlRender(olMap);
   }, [osmBasemap, provider, olMap]);
 
   // ----------------------------
@@ -1397,6 +1370,8 @@ export function Map() {
               >
                 <option value="osm">OSM Standard</option>
                 <option value="osm_hot">OSM HOT</option>
+                <option value="carto_positron">Carto Positron (Light)</option>
+                <option value="carto_dark">Carto Dark Matter (Dark)</option>
               </select>
             </div>
           )}
