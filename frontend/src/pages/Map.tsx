@@ -11,9 +11,9 @@ import { fromLonLat, transform } from "ol/proj";
 import { Vector } from "ol/source";
 import VectorSource from "ol/source/Vector";
 import type RenderEvent from "ol/render/Event";
+import { Circle, Fill, Stroke, Style } from "ol/style";
 import { createBaseTileLayer } from "../maps/baseLayer";
 import { reverseGeocode } from "../maps/geocoder";
-import { Circle, Fill, Stroke, Style } from "ol/style";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";

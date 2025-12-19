@@ -18,7 +18,7 @@ services:
     restart: always
 
   meshinfo:
-    image: ghcr.io/Meshaddicts/meshinfo:develop
+    image: ghcr.io/meshaddicts/meshinfo:latest
     volumes:
       - ./config.json:/app/config.json
       - ./output:/app/output
@@ -32,17 +32,13 @@ services:
       - mqtt
 
   frontend:
-    image: ghcr.io/Meshaddicts/meshinfo-spa:develop
+    image: ghcr.io/meshaddicts/meshinfo-spa:latest
     ports:
-      - "8000:80"
+      - 8000:80
+    env_file:
+      - .env
     environment:
       NODE_ENV: production
-      VITE_API_BASE_URL: /api
-
-      # Optional: Mapbox basemap
-      VITE_MAP_PROVIDER: mapbox
-      # VITE_MAPBOX_STYLE: mapbox/streets-v12
-      # VITE_MAPBOX_TOKEN: pk_XXXXXXXXXXXXXXXXXXXX
     restart: always
 
   caddy:
