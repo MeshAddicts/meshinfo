@@ -4,17 +4,54 @@ import OSM from "ol/source/OSM";
 import XYZ from "ol/source/XYZ";
 
 type MapProvider = "osm" | "mapbox";
+export type OsmBasemap = "osm" | "osm_hot";
 
-export function createBaseTileLayer(): TileLayer<TileSource> {
-  const provider = (import.meta.env.VITE_MAP_PROVIDER ?? "osm") as MapProvider;
-  const token = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
-  const style = (import.meta.env.VITE_MAPBOX_STYLE ??
-    "mapbox/streets-v12") as string;
+type CreateBaseLayerOptions = {
+  provider?: MapProvider;
+  osmBasemap?: OsmBasemap;
 
-  // If mapbox selected but no token, fall back safely to OSM.
+  // used only for OL raster Mapbox fallback path (NodeMap etc)
+  mapboxToken?: string;
+  mapboxStyle?: string;
+};
+
+function createOsmSource(osmBasemap: OsmBasemap): TileSource {
+  if (osmBasemap === "osm_hot") {
+    return new XYZ({
+      url: "https://{a-c}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png",
+      crossOrigin: "anonymous",
+      attributions:
+        '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    });
+  }
+
+  return new OSM({
+    attributions:
+      '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  });
+}
+
+export function createBaseTileLayer(
+  opts: CreateBaseLayerOptions = {}
+): TileLayer<TileSource> {
+  const provider =
+    (opts.provider ??
+      (import.meta.env.VITE_MAP_PROVIDER ?? "osm")) as MapProvider;
+
+  const osmBasemap = (opts.osmBasemap ?? "osm") as OsmBasemap;
+
+  const token =
+    (opts.mapboxToken ??
+      (import.meta.env.VITE_MAPBOX_TOKEN as string | undefined)) as
+      | string
+      | undefined;
+
+  const style =
+    (opts.mapboxStyle ??
+      (import.meta.env.VITE_MAPBOX_STYLE ?? "mapbox/streets-v12")) as string;
+
+  // Mapbox raster tiles (Styles API). EPSG:3857-compatible.
   if (provider === "mapbox" && token) {
-    // Mapbox raster tiles (Styles API). EPSG:3857-compatible.
-    // 512px tiles => tell OL tileSize=512.
     const url =
       `https://api.mapbox.com/styles/v1/${style}/tiles/512/{z}/{x}/{y}@2x` +
       `?access_token=${token}`;
@@ -31,10 +68,8 @@ export function createBaseTileLayer(): TileLayer<TileSource> {
     });
   }
 
+  // Default: OSM variants
   return new TileLayer({
-    source: new OSM({
-      attributions:
-        '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    }),
+    source: createOsmSource(osmBasemap),
   });
 }
