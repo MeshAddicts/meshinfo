@@ -18,7 +18,7 @@ services:
     restart: always
 
   meshinfo:
-    image: ghcr.io/meshaddicts/meshinfo:latest
+    image: ghcr.io/simmerv/meshinfo:upgrade-mapbox-upgrade
     volumes:
       - ./config.json:/app/config.json
       - ./output:/app/output
@@ -32,7 +32,7 @@ services:
       - mqtt
 
   frontend:
-    image: ghcr.io/meshaddicts/meshinfo-spa:latest
+    image: ghcr.io/simmerv/meshinfo-spa:upgrade-mapbox-upgrade
     ports:
       - 8000:80
     env_file:
