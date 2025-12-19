@@ -369,9 +369,6 @@ export function Map() {
 
     if (provider !== "osm" && olMap) {
       olMap.setTarget(undefined);
-      setOlMap(undefined);
-      olBaseLayerRef.current = null;
-      olNodesSourceRef.current = null;
 
       if (mapRef.current) mapRef.current.innerHTML = "";
     }
@@ -974,7 +971,20 @@ export function Map() {
     const usingOsm = provider === "osm";
 
     if (!usingOsm) return;
-    if (olMap) return;
+    if (olMap) {
+      const target = olMap.getTarget();
+      if (target && target === mapRef.current) return;
+
+      if (mapRef.current) {
+        mapRef.current.innerHTML = "";
+        olMap.setTarget(mapRef.current as HTMLElement);
+
+        // Prevent "blank until resize" / stalled render
+        olMap.updateSize();
+        requestAnimationFrame(() => olMap.updateSize());
+        return;
+      }
+    }
     if (!serverNode || !mapRef.current) return;
 
     // Ensure container is clean (especially after Mapbox)
