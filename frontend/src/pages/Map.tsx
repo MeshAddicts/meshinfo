@@ -130,7 +130,10 @@ const onlineStyle = new Style({
 // --------------------
 // Helpers
 // --------------------
-function computeRecentNodes(nodes: Record<string, IMapNode>, recentDays: number) {
+function computeRecentNodes(
+  nodes: Record<string, IMapNode>,
+  recentDays: number
+) {
   const recentCutoff = Date.now() - recentDays * 24 * 60 * 60 * 1000;
 
   return Object.entries(nodes).filter(([_, node]) => {
@@ -182,10 +185,7 @@ function emptyLineFeatureCollection(): FeatureCollection<
   return { type: "FeatureCollection", features: [] };
 }
 
-function applyMapboxClusterVisibility(
-  map: MbMap,
-  enabled: boolean
-): void {
+function applyMapboxClusterVisibility(map: MbMap, enabled: boolean): void {
   const set = (layerId: string, visible: boolean) => {
     if (!map.getLayer(layerId)) return;
     map.setLayoutProperty(layerId, "visibility", visible ? "visible" : "none");
@@ -230,15 +230,17 @@ export function Map() {
   const [provider, setProvider] = useState<MapProvider>(() => {
     const stored = readJson<MapProvider | null>(LS_KEYS.provider, null);
     const desired = stored ?? envProvider;
-    // If they picked mapbox but there's no token, fall back to osm.
     if (desired === "mapbox" && !hasMapbox) return "osm";
     return desired;
   });
 
   const [mapboxStyle, setMapboxStyle] = useState<string>(() => {
     const stored = readJson<string | null>(LS_KEYS.mapboxStyle, null);
-    // default requested: dark-v11
-    return stored ?? (import.meta.env.VITE_MAPBOX_STYLE as string | undefined) ?? "mapbox/dark-v11";
+    return (
+      stored ??
+      (import.meta.env.VITE_MAPBOX_STYLE as string | undefined) ??
+      "mapbox/dark-v11"
+    );
   });
 
   const [osmBasemap, setOsmBasemap] = useState<OsmBasemap>(() => {
@@ -261,7 +263,10 @@ export function Map() {
   useEffect(() => writeJson(LS_KEYS.mapboxStyle, mapboxStyle), [mapboxStyle]);
   useEffect(() => writeJson(LS_KEYS.osmBasemap, osmBasemap), [osmBasemap]);
   useEffect(() => writeJson(LS_KEYS.recentDays, recentDays), [recentDays]);
-  useEffect(() => writeJson(LS_KEYS.clusterEnabled, clusterEnabled), [clusterEnabled]);
+  useEffect(
+    () => writeJson(LS_KEYS.clusterEnabled, clusterEnabled),
+    [clusterEnabled]
+  );
 
   // If token disappears / not configured, force provider to osm
   useEffect(() => {
@@ -309,6 +314,25 @@ export function Map() {
   );
 
   // ----------------------------
+  // Refs to avoid stale closures (Mapbox handlers)
+  // ----------------------------
+  const nodesRef = useRef(nodes);
+  const recentDaysRef = useRef(recentDays);
+  const clusterEnabledRef = useRef(clusterEnabled);
+
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
+
+  useEffect(() => {
+    recentDaysRef.current = recentDays;
+  }, [recentDays]);
+
+  useEffect(() => {
+    clusterEnabledRef.current = clusterEnabled;
+  }, [clusterEnabled]);
+
+  // ----------------------------
   // Shared DOM refs for the side panel
   // ----------------------------
   function getDetailsDom() {
@@ -333,26 +357,26 @@ export function Map() {
   // Provider switching cleanup
   // ----------------------------
   useEffect(() => {
-  if (provider !== "mapbox" && mbMapRef.current) {
-    mbMapRef.current.remove();
-    mbMapRef.current = null;
-    mbSelectedIdRef.current = null;
-    mbHandlersBoundRef.current = false;
-    mbCurrentStyleUrlRef.current = null;
+    if (provider !== "mapbox" && mbMapRef.current) {
+      mbMapRef.current.remove();
+      mbMapRef.current = null;
+      mbSelectedIdRef.current = null;
+      mbHandlersBoundRef.current = false;
+      mbCurrentStyleUrlRef.current = null;
 
-    if (mapRef.current) mapRef.current.innerHTML = "";
-  }
+      if (mapRef.current) mapRef.current.innerHTML = "";
+    }
 
-  if (provider !== "osm" && olMap) {
-    olMap.setTarget(undefined);
-    setOlMap(undefined);
-    olBaseLayerRef.current = null;
-    olNodesSourceRef.current = null;
+    if (provider !== "osm" && olMap) {
+      olMap.setTarget(undefined);
+      setOlMap(undefined);
+      olBaseLayerRef.current = null;
+      olNodesSourceRef.current = null;
 
-    if (mapRef.current) mapRef.current.innerHTML = "";
-  }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [provider]);
+      if (mapRef.current) mapRef.current.innerHTML = "";
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provider]);
 
   // ----------------------------
   // Mapbox: init + layers
@@ -383,7 +407,7 @@ export function Map() {
     const styleUrl = toMapboxStyleUrl(mapboxStyle);
     mbCurrentStyleUrlRef.current = styleUrl;
 
-
+    // fresh container
     mapRef.current.innerHTML = "";
 
     mapboxgl.accessToken = mapboxToken!;
@@ -397,6 +421,54 @@ export function Map() {
     });
 
     mbMapRef.current = map;
+
+    const clearSelected = () => {
+      const prev = mbSelectedIdRef.current;
+      if (!prev) return;
+      try {
+        map.setFeatureState({ source: "nodes_clustered", id: prev }, { selected: false });
+      } catch {
+        // ignore
+      }
+      try {
+        map.setFeatureState({ source: "nodes_plain", id: prev }, { selected: false });
+      } catch {
+        // ignore
+      }
+      mbSelectedIdRef.current = null;
+    };
+
+    const setSelected = (id: string) => {
+      if (mbSelectedIdRef.current && mbSelectedIdRef.current !== id) {
+        clearSelected();
+      }
+
+      mbSelectedIdRef.current = id;
+
+      try {
+        map.setFeatureState({ source: "nodes_clustered", id }, { selected: true });
+      } catch {
+        // ignore
+      }
+      try {
+        map.setFeatureState({ source: "nodes_plain", id }, { selected: true });
+      } catch {
+        // ignore
+      }
+    };
+
+    const refreshMapboxNodeData = () => {
+      const m = mbMapRef.current;
+      if (!m) return;
+
+      const data = buildNodesGeoJSON(nodesRef.current, recentDaysRef.current);
+
+      const clustered = m.getSource("nodes_clustered") as MbGeoJSONSource | undefined;
+      clustered?.setData(data);
+
+      const plain = m.getSource("nodes_plain") as MbGeoJSONSource | undefined;
+      plain?.setData(data);
+    };
 
     map.on("moveend", () => {
       const c = map.getCenter();
@@ -414,7 +486,7 @@ export function Map() {
       if (!map.getSource("nodes_clustered")) {
         map.addSource("nodes_clustered", {
           type: "geojson",
-          data: buildNodesGeoJSON(nodes, recentDays),
+          data: buildNodesGeoJSON(nodesRef.current, recentDaysRef.current),
           cluster: true,
           clusterRadius: 50,
           clusterMaxZoom: 14,
@@ -425,7 +497,7 @@ export function Map() {
       if (!map.getSource("nodes_plain")) {
         map.addSource("nodes_plain", {
           type: "geojson",
-          data: buildNodesGeoJSON(nodes, recentDays),
+          data: buildNodesGeoJSON(nodesRef.current, recentDaysRef.current),
         });
       }
 
@@ -472,17 +544,7 @@ export function Map() {
           paint: {
             "circle-stroke-width": 2,
             "circle-stroke-color": "#ffffff",
-            "circle-radius": [
-              "step",
-              ["get", "point_count"],
-              14,
-              10,
-              18,
-              25,
-              24,
-              50,
-              30,
-            ],
+            "circle-radius": ["step", ["get", "point_count"], 14, 10, 18, 25, 24, 50, 30],
             "circle-color": "#3b82f6",
             "circle-opacity": 0.85,
           },
@@ -509,12 +571,7 @@ export function Map() {
           source: "nodes_clustered",
           filter: ["!", ["has", "point_count"]],
           paint: {
-            "circle-radius": [
-              "case",
-              ["boolean", ["feature-state", "selected"], false],
-              10,
-              6,
-            ],
+            "circle-radius": ["case", ["boolean", ["feature-state", "selected"], false], 10, 6],
             "circle-color": [
               "case",
               ["boolean", ["get", "online"], false],
@@ -561,12 +618,7 @@ export function Map() {
           type: "circle",
           source: "nodes_plain",
           paint: {
-            "circle-radius": [
-              "case",
-              ["boolean", ["feature-state", "selected"], false],
-              10,
-              6,
-            ],
+            "circle-radius": ["case", ["boolean", ["feature-state", "selected"], false], 10, 6],
             "circle-color": [
               "case",
               ["boolean", ["get", "online"], false],
@@ -605,42 +657,19 @@ export function Map() {
         });
       }
 
-      // Apply current cluster visibility
-      applyMapboxClusterVisibility(map, clusterEnabled);
+      // Apply current cluster visibility (use ref to avoid stale closure)
+      applyMapboxClusterVisibility(map, clusterEnabledRef.current);
+
+      // Ensure sources have current data (important after style changes)
+      refreshMapboxNodeData();
 
       // Bind handlers once
       if (mbHandlersBoundRef.current) return;
       mbHandlersBoundRef.current = true;
 
-      const setSelected = (id: string) => {
-        if (mbSelectedIdRef.current) {
-          const prev = mbSelectedIdRef.current;
-          try {
-            map.setFeatureState({ source: "nodes_clustered", id: prev }, { selected: false });
-          } catch {
-            // ignore
-          }
-          try {
-            map.setFeatureState({ source: "nodes_plain", id: prev }, { selected: false });
-          } catch {
-            // ignore
-          }
-        }
-        mbSelectedIdRef.current = id;
-        try {
-          map.setFeatureState({ source: "nodes_clustered", id }, { selected: true });
-        } catch {
-          // ignore
-        }
-        try {
-          map.setFeatureState({ source: "nodes_plain", id }, { selected: true });
-        } catch {
-          // ignore
-        }
-      };
-
       const handleNodeClick = async (id: string) => {
-        const node = nodes[id];
+        const liveNodes = nodesRef.current;
+        const node = liveNodes[id];
         if (!node?.map_position) return;
 
         setSelected(id);
@@ -665,7 +694,7 @@ export function Map() {
 
           panel += (node.neighbors ?? [])
             .map((neighbor) => {
-              const nnode = nodes[neighbor.id];
+              const nnode = liveNodes[neighbor.id];
               if (!nnode) {
                 return `<tr><td class="text-gray-600">UNK</td><td align=center>${neighbor.snr}</td><td></td></tr>`;
               }
@@ -690,8 +719,8 @@ export function Map() {
         panel += "<br/><br/>";
 
         panel += "<b>Heard By Neighbors</b><br/>";
-        const heardBy = Object.keys(nodes).filter((nid) =>
-          nodes[nid].neighbors?.some((neighbor) => neighbor.id === id)
+        const heardBy = Object.keys(liveNodes).filter((nid) =>
+          liveNodes[nid].neighbors?.some((neighbor) => neighbor.id === id)
         );
 
         if (heardBy.length === 0) {
@@ -704,7 +733,7 @@ export function Map() {
 
           panel += heardBy
             .map((nid) => {
-              const nnode = nodes[nid];
+              const nnode = liveNodes[nid];
               const neighbor = nnode?.neighbors?.find((n) => n.id === id);
 
               if (!nnode) {
@@ -754,7 +783,7 @@ export function Map() {
         const union = new Set<string>([...neighborSet, ...heardBySet]);
 
         union.forEach((otherId) => {
-          const other = nodes[otherId];
+          const other = liveNodes[otherId];
           if (!other?.map_position) return;
 
           const isNeighbor = neighborSet.has(otherId);
@@ -833,7 +862,7 @@ export function Map() {
         void handleNodeClick(id);
       });
 
-      // Clicking empty space clears
+      // Clicking empty space clears (INCLUDING selection)
       map.on("click", (e) => {
         const hitNode =
           map.queryRenderedFeatures(e.point, { layers: ["unclustered-nodes", "plain-nodes"] })
@@ -842,6 +871,7 @@ export function Map() {
           map.queryRenderedFeatures(e.point, { layers: ["clusters"] }).length > 0;
         if (hitNode || hitCluster) return;
 
+        clearSelected();
         clearDetailsPanel();
         const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
         linksSource?.setData(emptyLineFeatureCollection());
@@ -856,12 +886,13 @@ export function Map() {
         mbMapRef.current = null;
         mbSelectedIdRef.current = null;
         mbHandlersBoundRef.current = false;
+        mbCurrentStyleUrlRef.current = null;
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider, hasMapbox, serverNode]);
 
-  // Mapbox: style switching (no restart)
+  // Mapbox: style switching (re-style, let style.load re-add layers/sources)
   useEffect(() => {
     const map = mbMapRef.current;
     if (!map) return;
@@ -869,38 +900,38 @@ export function Map() {
     if (!hasMapbox) return;
 
     const desired = toMapboxStyleUrl(mapboxStyle);
-
     if (mbCurrentStyleUrlRef.current === desired) return;
 
-    const apply = () => {
-      const m = mbMapRef.current;
-      if (!m) return;
+    try {
+      // Style change resets sources/layers; style.load handler re-creates them.
+      mbCurrentStyleUrlRef.current = desired;
 
-      try {
-        m.setStyle(desired);
-        mbCurrentStyleUrlRef.current = desired;
-      } catch {
-      }
-    };
+      // Clear selection & overlays to avoid stale feature-state during style swap
+      mbSelectedIdRef.current = null;
+      clearDetailsPanel();
+      const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
+      linksSource?.setData(emptyLineFeatureCollection());
 
-    if (map.isStyleLoaded()) {
-      apply();
-    } else {
-      map.once("style.load", apply);
+      map.setStyle(desired);
+    } catch {
+      // ignore
     }
   }, [mapboxStyle, provider, hasMapbox]);
 
-  // Mapbox: cluster toggle (just visibility switch between sources/layers)
+  // Mapbox: cluster toggle
   useEffect(() => {
     const map = mbMapRef.current;
     if (!map) return;
+    if (provider !== "mapbox") return;
+    if (!hasMapbox) return;
     applyMapboxClusterVisibility(map, clusterEnabled);
-  }, [clusterEnabled]);
+  }, [clusterEnabled, provider, hasMapbox]);
 
   // Mapbox: live updates (nodes appear/disappear) via setData()
   useEffect(() => {
     const map = mbMapRef.current;
     if (!map) return;
+    if (provider !== "mapbox") return;
 
     const data = buildNodesGeoJSON(nodes, recentDays);
 
@@ -934,7 +965,7 @@ export function Map() {
         clearDetailsPanel();
       }
     }
-  }, [nodes, recentDays]);
+  }, [nodes, recentDays, provider]);
 
   // ----------------------------
   // OpenLayers: init (OSM path)
@@ -945,6 +976,9 @@ export function Map() {
     if (!usingOsm) return;
     if (olMap) return;
     if (!serverNode || !mapRef.current) return;
+
+    // Ensure container is clean (especially after Mapbox)
+    mapRef.current.innerHTML = "";
 
     const defaultPosition = { latitude: 38.5816, longitude: -121.4944 };
     const serverPosition = serverNode.map_position
@@ -967,10 +1001,7 @@ export function Map() {
     });
 
     // Apply “dark invert” only when in dark mode (OSM path)
-    if (
-      window.matchMedia &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches
-    ) {
+    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
       tileLayer.on("prerender", (evt: RenderEvent) => {
         if (!evt.context) return;
         const context = evt.context as CanvasRenderingContext2D;
@@ -996,6 +1027,10 @@ export function Map() {
 
     setOlMap(map);
     olBaseLayerRef.current = tileLayer;
+
+    // Helps prevent “blank until resize” in some layouts
+    map.updateSize();
+    requestAnimationFrame(() => map.updateSize());
 
     map.on("moveend", () => {
       const center = map.getView().getCenter();
@@ -1250,14 +1285,9 @@ export function Map() {
     if (!olMap) return;
 
     const newBase = createBaseTileLayer({ provider: "osm", osmBasemap });
-    const hasMapboxToken = Boolean(import.meta.env.VITE_MAPBOX_TOKEN);
 
-    // Only apply dark invert for OSM path
-    if (
-      !hasMapboxToken &&
-      window.matchMedia &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches
-    ) {
+    // Apply dark invert for OSM path (independent of Mapbox availability)
+    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
       newBase.on("prerender", (evt: RenderEvent) => {
         if (!evt.context) return;
         const context = evt.context as CanvasRenderingContext2D;
@@ -1275,6 +1305,9 @@ export function Map() {
     // Replace layer 0 (base layer)
     olMap.getLayers().setAt(0, newBase);
     olBaseLayerRef.current = newBase;
+
+    olMap.updateSize();
+    requestAnimationFrame(() => olMap.updateSize());
   }, [osmBasemap, provider, olMap]);
 
   // ----------------------------
@@ -1287,7 +1320,6 @@ export function Map() {
     <div className="h-screen relative">
       <div id="map" className="map" ref={mapRef} />
 
-      {/* Settings panel: centered-left inside map area */}
       <div
         id="map-settings"
         className="absolute left-2 top-1/2 -translate-y-1/2 z-[1100] w-64 rounded-xl shadow-lg border border-gray-200/70 dark:border-gray-700/70 bg-white/90 dark:bg-black/70 backdrop-blur p-3"
@@ -1297,7 +1329,6 @@ export function Map() {
         </div>
 
         <div className="space-y-3 text-sm">
-          {/* Provider */}
           <div>
             <div className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-1">
               Provider
@@ -1314,7 +1345,6 @@ export function Map() {
             </select>
           </div>
 
-          {/* Basemap */}
           {usingMapbox ? (
             <div>
               <div className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-1">
@@ -1346,7 +1376,6 @@ export function Map() {
             </div>
           )}
 
-          {/* Last seen filter */}
           <div>
             <div className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-1">
               Last seen
@@ -1365,7 +1394,6 @@ export function Map() {
             </select>
           </div>
 
-          {/* Cluster toggle (Mapbox only) */}
           <div className="flex items-center justify-between">
             <div className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300">
               Clustering
@@ -1388,7 +1416,6 @@ export function Map() {
         </div>
       </div>
 
-      {/* Existing Details panel */}
       <div id="details" className="p-4 bg-white dark:bg-black hidden">
         <div className="flex items-center w-full justify-items-stretch">
           <div id="details-title" className="flex-auto text-lg text-start">
@@ -1401,7 +1428,6 @@ export function Map() {
         <div id="details-content" className="align-items-center" />
       </div>
 
-      {/* Legend */}
       <div id="legend" className="p-2 bg-white dark:bg-black">
         <div className="text-lg">LEGEND</div>
         <div className="align-items-center">
@@ -1411,8 +1437,7 @@ export function Map() {
           <div className="inline-block w-12 h-1 bg-blue-400" /> Heard By Neighbor
         </div>
         <div>
-          <div className="inline-block w-12 h-1 bg-purple-400" /> Both Heard Each
-          Other
+          <div className="inline-block w-12 h-1 bg-purple-400" /> Both Heard Each Other
         </div>
       </div>
 
