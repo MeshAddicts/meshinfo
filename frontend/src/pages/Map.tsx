@@ -216,6 +216,7 @@ export function Map() {
   const mbMapRef = useRef<MbMap | null>(null);
   const mbSelectedIdRef = useRef<string | null>(null);
   const mbHandlersBoundRef = useRef(false);
+  const mbCurrentStyleUrlRef = useRef<string | null>(null);
 
   const { data: rawNodes = {} } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
@@ -332,23 +333,26 @@ export function Map() {
   // Provider switching cleanup
   // ----------------------------
   useEffect(() => {
-    // Leaving Mapbox -> remove mapbox instance
-    if (provider !== "mapbox" && mbMapRef.current) {
-      mbMapRef.current.remove();
-      mbMapRef.current = null;
-      mbSelectedIdRef.current = null;
-      mbHandlersBoundRef.current = false;
-    }
+  if (provider !== "mapbox" && mbMapRef.current) {
+    mbMapRef.current.remove();
+    mbMapRef.current = null;
+    mbSelectedIdRef.current = null;
+    mbHandlersBoundRef.current = false;
+    mbCurrentStyleUrlRef.current = null;
 
-    // Leaving OSM -> detach OL map
-    if (provider !== "osm" && olMap) {
-      olMap.setTarget(undefined);
-      setOlMap(undefined);
-      olBaseLayerRef.current = null;
-      olNodesSourceRef.current = null;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider]);
+    if (mapRef.current) mapRef.current.innerHTML = "";
+  }
+
+  if (provider !== "osm" && olMap) {
+    olMap.setTarget(undefined);
+    setOlMap(undefined);
+    olBaseLayerRef.current = null;
+    olNodesSourceRef.current = null;
+
+    if (mapRef.current) mapRef.current.innerHTML = "";
+  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [provider]);
 
   // ----------------------------
   // Mapbox: init + layers
@@ -376,11 +380,16 @@ export function Map() {
     ];
     const initialZoom = JSON.parse(localStorage.getItem("savedZoom") ?? "9.5");
 
+    const styleUrl = toMapboxStyleUrl(mapboxStyle);
+    mbCurrentStyleUrlRef.current = styleUrl;
+
+    mapRef.current.innerHTML = "";
+
     mapboxgl.accessToken = mapboxToken!;
 
     const map = new mapboxgl.Map({
       container: mapRef.current,
-      style: toMapboxStyleUrl(mapboxStyle),
+      style: styleUrl,
       center: initialCenter,
       zoom: initialZoom,
       attributionControl: true,
@@ -858,10 +867,26 @@ export function Map() {
     if (provider !== "mapbox") return;
     if (!hasMapbox) return;
 
-    const next = toMapboxStyleUrl(mapboxStyle);
-    if ((map.getStyle()?.sprite ?? "").includes(next)) {
+    const desired = toMapboxStyleUrl(mapboxStyle);
+
+    if (mbCurrentStyleUrlRef.current === desired) return;
+
+    const apply = () => {
+      const m = mbMapRef.current;
+      if (!m) return;
+
+      try {
+        m.setStyle(desired);
+        mbCurrentStyleUrlRef.current = desired;
+      } catch {
+      }
+    };
+
+    if (map.isStyleLoaded()) {
+      apply();
+    } else {
+      map.once("style.load", apply);
     }
-    map.setStyle(next);
   }, [mapboxStyle, provider, hasMapbox]);
 
   // Mapbox: cluster toggle (just visibility switch between sources/layers)
