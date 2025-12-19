@@ -6,13 +6,14 @@ import { click } from "ol/events/condition";
 import { Geometry, LineString } from "ol/geom";
 import Point from "ol/geom/Point";
 import Select from "ol/interaction/Select";
-import TileLayer from "ol/layer/Tile";
 import VectorLayer from "ol/layer/Vector";
 import { fromLonLat, transform } from "ol/proj";
 import { Vector } from "ol/source";
-import OSM from "ol/source/OSM";
 import VectorSource from "ol/source/Vector";
+import type RenderEvent from "ol/render/Event";
 import { Circle, Fill, Stroke, Style } from "ol/style";
+import { createBaseTileLayer } from "../maps/baseLayer";
+import { reverseGeocode } from "../maps/geocoder";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";
@@ -113,24 +114,6 @@ export function Map() {
     [config?.server?.node_id, nodes]
   );
 
-  const reverseGeocode = async (
-    lon: string,
-    lat: string
-  ): Promise<{
-    address?: {
-      town?: string;
-      city?: string;
-      county?: string;
-      state?: string;
-      country?: string;
-    };
-  }> =>
-    (
-      await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=json&lon=${lon}&lat=${lat}`
-      )
-    ).json();
-
   useEffect(() => {
     if (olMap) return;
     if (!serverNode || !nodes || !mapRef) {
@@ -152,22 +135,29 @@ export function Map() {
     ]);
     const initialZoom = JSON.parse(localStorage.getItem("savedZoom") ?? "9.5");
 
-    const tileLayer = new TileLayer({
-      source: new OSM(),
-    });
+    const tileLayer = createBaseTileLayer();
+
+    // Only apply the "dark invert" filter for OSM (including mapbox-without-token fallback)
+    const provider = (import.meta.env.VITE_MAP_PROVIDER ?? "osm") as
+      | "osm"
+      | "mapbox";
+    const hasMapboxToken = Boolean(import.meta.env.VITE_MAPBOX_TOKEN);
+    const usingMapbox = provider === "mapbox" && hasMapboxToken;
 
     if (
+      !usingMapbox &&
       window.matchMedia &&
       window.matchMedia("(prefers-color-scheme: dark)").matches
     ) {
-      tileLayer.on("prerender", (evt) => {
+      tileLayer.on("prerender", (evt: RenderEvent) => {
         if (evt.context) {
           const context = evt.context as CanvasRenderingContext2D;
           context.filter = "grayscale(80%) invert(100%) ";
           context.globalCompositeOperation = "source-over";
         }
       });
-      tileLayer.on("postrender", (evt) => {
+
+      tileLayer.on("postrender", (evt: RenderEvent) => {
         if (evt.context) {
           const context = evt.context as CanvasRenderingContext2D;
           context.filter = "none";
@@ -296,26 +286,17 @@ export function Map() {
           const { node } = properties as {
             node: IMapNode & { position: Coordinate }; // if it's a node, it will have a position
           };
-          const address = await reverseGeocode(
-            node.position[0].toString(),
-            node.position[1].toString()
+          const displayName = await reverseGeocode(
+            node.position[0],
+            node.position[1]
           );
-          const displayName = [
-            address.address?.town,
-            address.address?.city,
-            address.address?.county,
-            address.address?.state,
-            address.address?.country,
-          ]
-            .filter(Boolean)
-            .join(", ");
 
           let panel =
             `<b>${node.longname}</b><br/>${node.shortname} / ${
               node.id
             }<br/><br/>` +
             `<b>Position</b><br/>${node.position}<br/><br/>` +
-            `<b>Location</b><br/>${displayName}<br/><br/>` +
+            `<b>Location</b><br/>${displayName || "Unknown"}<br/><br/>` +
             `<b>Status</b><br/>${
               node.online ? "Online" : "Offline"
             }<br/><br/>` +
@@ -349,7 +330,9 @@ export function Map() {
                   nnode.shortname
                 }</td><td align=center>${
                   neighbor.snr
-                }</td><td align=right>${distance ? distance.toFixed(2) : "unk"} km</td></tr>`;
+                }</td><td align=right>${
+                  distance ? distance.toFixed(2) : "unk"
+                } km</td></tr>`;
               })
               .join("");
             panel += "</table>";
@@ -417,12 +400,13 @@ export function Map() {
                         (node.position[1] - nnode.position[1]) ** 2
                     ) * 111.32;
                 }
-                // calculate distance between two nodes without using ol.sphere
                 return `<tr><td align=left>${
                   nnode.shortname
                 }</td><td align=center>${
                   neighbor?.snr
-                }</td><td align=right>${distance ? distance.toFixed(2) : "unk"} km</td></tr>`;
+                }</td><td align=right>${
+                  distance ? distance.toFixed(2) : "unk"
+                } km</td></tr>`;
               })
               .join("");
             panel += "</table>";

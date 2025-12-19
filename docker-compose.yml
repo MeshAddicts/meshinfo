@@ -35,9 +35,10 @@ services:
     image: ghcr.io/meshaddicts/meshinfo-spa:latest
     ports:
       - 8000:80
+    env_file:
+      - .env
     environment:
-      - VITE_API_BASE_URL=/api
-      - NODE_ENV=production
+      NODE_ENV: production
     restart: always
 
   caddy:
