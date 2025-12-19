@@ -245,9 +245,12 @@ export function Map() {
   // ----- UI settings (persisted)
   const [provider, setProvider] = useState<MapProvider>(() => {
     const stored = readJson<MapProvider | null>(LS_KEYS.provider, null);
-    const desired = stored ?? envProvider;
-    if (desired === "mapbox" && !hasMapbox) return "osm";
-    return desired;
+
+    // If the user has a saved preference, respect it (but don't allow mapbox without token)
+    if (stored) return stored === "mapbox" && !hasMapbox ? "osm" : stored;
+
+    // First-time visitors: always default to OSM
+    return "osm";
   });
 
   const [mapboxStyle, setMapboxStyle] = useState<string>(() => {
