@@ -82,6 +82,7 @@ cd meshinfo
  - If you are using a reverse proxy other than Caddy, change the `FQDN` to `:80` then set your reverse proxy's upstream config to listen to port 80.
       
 3. Edit the `docker-compose.yml` (or `docker-compose-dev.yml` if you are going to use that one) and adjust any port mappings for caddy if you wish to have it run on anything other than 80/443. Keep in mind that if you are not using a FQDN and ports 80/443, Caddy will fail to provision a Let's Encrypt certificate. This is because Let's Encrypt requires 80/443 to be accessible and this is not a limitation of Caddy nor MeshInfo.
+4. Copy and then edit the `frontend/.env.sample` to `frontend/.env`. Note OSM is the default map provider, MapBox support requires opt-in with MapBox token. 
 
 #### To Run
 
