@@ -182,10 +182,7 @@ function emptyLineFeatureCollection(): FeatureCollection<
   return { type: "FeatureCollection", features: [] };
 }
 
-function applyMapboxClusterVisibility(
-  map: MbMap,
-  enabled: boolean
-): void {
+function applyMapboxClusterVisibility(map: MbMap, enabled: boolean): void {
   const set = (layerId: string, visible: boolean) => {
     if (!map.getLayer(layerId)) return;
     map.setLayoutProperty(layerId, "visibility", visible ? "visible" : "none");
@@ -230,15 +227,17 @@ export function Map() {
   const [provider, setProvider] = useState<MapProvider>(() => {
     const stored = readJson<MapProvider | null>(LS_KEYS.provider, null);
     const desired = stored ?? envProvider;
-    // If they picked mapbox but there's no token, fall back to osm.
     if (desired === "mapbox" && !hasMapbox) return "osm";
     return desired;
   });
 
   const [mapboxStyle, setMapboxStyle] = useState<string>(() => {
     const stored = readJson<string | null>(LS_KEYS.mapboxStyle, null);
-    // default requested: dark-v11
-    return stored ?? (import.meta.env.VITE_MAPBOX_STYLE as string | undefined) ?? "mapbox/dark-v11";
+    return (
+      stored ??
+      (import.meta.env.VITE_MAPBOX_STYLE as string | undefined) ??
+      "mapbox/dark-v11"
+    );
   });
 
   const [osmBasemap, setOsmBasemap] = useState<OsmBasemap>(() => {
@@ -261,7 +260,10 @@ export function Map() {
   useEffect(() => writeJson(LS_KEYS.mapboxStyle, mapboxStyle), [mapboxStyle]);
   useEffect(() => writeJson(LS_KEYS.osmBasemap, osmBasemap), [osmBasemap]);
   useEffect(() => writeJson(LS_KEYS.recentDays, recentDays), [recentDays]);
-  useEffect(() => writeJson(LS_KEYS.clusterEnabled, clusterEnabled), [clusterEnabled]);
+  useEffect(
+    () => writeJson(LS_KEYS.clusterEnabled, clusterEnabled),
+    [clusterEnabled]
+  );
 
   // If token disappears / not configured, force provider to osm
   useEffect(() => {
@@ -333,26 +335,26 @@ export function Map() {
   // Provider switching cleanup
   // ----------------------------
   useEffect(() => {
-  if (provider !== "mapbox" && mbMapRef.current) {
-    mbMapRef.current.remove();
-    mbMapRef.current = null;
-    mbSelectedIdRef.current = null;
-    mbHandlersBoundRef.current = false;
-    mbCurrentStyleUrlRef.current = null;
+    if (provider !== "mapbox" && mbMapRef.current) {
+      mbMapRef.current.remove();
+      mbMapRef.current = null;
+      mbSelectedIdRef.current = null;
+      mbHandlersBoundRef.current = false;
+      mbCurrentStyleUrlRef.current = null;
 
-    if (mapRef.current) mapRef.current.innerHTML = "";
-  }
+      if (mapRef.current) mapRef.current.innerHTML = "";
+    }
 
-  if (provider !== "osm" && olMap) {
-    olMap.setTarget(undefined);
-    setOlMap(undefined);
-    olBaseLayerRef.current = null;
-    olNodesSourceRef.current = null;
+    if (provider !== "osm" && olMap) {
+      olMap.setTarget(undefined);
+      setOlMap(undefined);
+      olBaseLayerRef.current = null;
+      olNodesSourceRef.current = null;
 
-    if (mapRef.current) mapRef.current.innerHTML = "";
-  }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [provider]);
+      if (mapRef.current) mapRef.current.innerHTML = "";
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provider]);
 
   // ----------------------------
   // Mapbox: init + layers
@@ -409,7 +411,6 @@ export function Map() {
     );
 
     const ensureSourcesAndLayers = () => {
-      // clustered nodes source
       if (!map.getSource("nodes_clustered")) {
         map.addSource("nodes_clustered", {
           type: "geojson",
@@ -420,7 +421,6 @@ export function Map() {
         });
       }
 
-      // plain nodes source
       if (!map.getSource("nodes_plain")) {
         map.addSource("nodes_plain", {
           type: "geojson",
@@ -428,7 +428,6 @@ export function Map() {
         });
       }
 
-      // links source
       if (!map.getSource("links")) {
         map.addSource("links", {
           type: "geojson",
@@ -436,7 +435,6 @@ export function Map() {
         });
       }
 
-      // links layer
       if (!map.getLayer("links-line")) {
         map.addLayer({
           id: "links-line",
@@ -461,7 +459,6 @@ export function Map() {
         });
       }
 
-      // cluster circles
       if (!map.getLayer("clusters")) {
         map.addLayer({
           id: "clusters",
@@ -488,19 +485,20 @@ export function Map() {
         });
       }
 
-      // cluster count
       if (!map.getLayer("cluster-count")) {
         map.addLayer({
           id: "cluster-count",
           type: "symbol",
           source: "nodes_clustered",
           filter: ["has", "point_count"],
-          layout: { "text-field": ["get", "point_count_abbreviated"], "text-size": 12 },
+          layout: {
+            "text-field": ["get", "point_count_abbreviated"],
+            "text-size": 12,
+          },
           paint: { "text-color": "#ffffff" },
         });
       }
 
-      // clustered unclustered nodes
       if (!map.getLayer("unclustered-nodes")) {
         map.addLayer({
           id: "unclustered-nodes",
@@ -540,7 +538,17 @@ export function Map() {
           minzoom: 9,
           layout: {
             "text-field": ["get", "shortname"],
-            "text-size": ["interpolate", ["linear"], ["zoom"], 9, 10, 13, 14, 16, 16],
+            "text-size": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              9,
+              10,
+              13,
+              14,
+              16,
+              16,
+            ],
             "text-offset": [0, 1.2],
             "text-anchor": "top",
             "text-optional": true,
@@ -553,7 +561,6 @@ export function Map() {
         });
       }
 
-      // plain nodes layer
       if (!map.getLayer("plain-nodes")) {
         map.addLayer({
           id: "plain-nodes",
@@ -591,7 +598,17 @@ export function Map() {
           minzoom: 9,
           layout: {
             "text-field": ["get", "shortname"],
-            "text-size": ["interpolate", ["linear"], ["zoom"], 9, 10, 13, 14, 16, 16],
+            "text-size": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              9,
+              10,
+              13,
+              14,
+              16,
+              16,
+            ],
             "text-offset": [0, 1.2],
             "text-anchor": "top",
             "text-optional": true,
@@ -604,10 +621,8 @@ export function Map() {
         });
       }
 
-      // Apply current cluster visibility
       applyMapboxClusterVisibility(map, clusterEnabled);
 
-      // Bind handlers once
       if (mbHandlersBoundRef.current) return;
       mbHandlersBoundRef.current = true;
 
@@ -615,12 +630,18 @@ export function Map() {
         if (mbSelectedIdRef.current) {
           const prev = mbSelectedIdRef.current;
           try {
-            map.setFeatureState({ source: "nodes_clustered", id: prev }, { selected: false });
+            map.setFeatureState(
+              { source: "nodes_clustered", id: prev },
+              { selected: false }
+            );
           } catch {
             // ignore
           }
           try {
-            map.setFeatureState({ source: "nodes_plain", id: prev }, { selected: false });
+            map.setFeatureState(
+              { source: "nodes_plain", id: prev },
+              { selected: false }
+            );
           } catch {
             // ignore
           }
@@ -644,7 +665,10 @@ export function Map() {
 
         setSelected(id);
 
-        const displayName = await reverseGeocode(node.map_position[0], node.map_position[1]);
+        const displayName = await reverseGeocode(
+          node.map_position[0],
+          node.map_position[1]
+        );
 
         let panel =
           `<b>${node.longname}</b><br/>${node.shortname} / ${id}<br/><br/>` +
@@ -745,7 +769,6 @@ export function Map() {
           nodePanel.classList.remove("hidden");
         }
 
-        // Draw links
         const linkFeatures: GeoFeature<GeoLineString, GeoJsonProperties>[] = [];
 
         const neighborSet = new Set((node.neighbors ?? []).map((n) => n.id));
@@ -759,7 +782,11 @@ export function Map() {
           const isNeighbor = neighborSet.has(otherId);
           const isHeardBy = heardBySet.has(otherId);
           const kind =
-            isNeighbor && isHeardBy ? "both" : isNeighbor ? "neighbor" : "heard_by";
+            isNeighbor && isHeardBy
+              ? "both"
+              : isNeighbor
+              ? "neighbor"
+              : "heard_by";
 
           linkFeatures.push({
             type: "Feature",
@@ -781,7 +808,6 @@ export function Map() {
         } as FeatureCollection<GeoLineString, GeoJsonProperties>);
       };
 
-      // Cursor behaviors (both render modes)
       const setCursor = (value: string) => {
         map.getCanvas().style.cursor = value;
       };
@@ -795,7 +821,6 @@ export function Map() {
       bindHover("clusters");
       bindHover("plain-nodes");
 
-      // Clicking a cluster zooms in
       map.on("click", "clusters", (e) => {
         const features = map.queryRenderedFeatures(e.point, { layers: ["clusters"] });
         const cluster = features[0];
@@ -814,7 +839,6 @@ export function Map() {
         });
       });
 
-      // Clicking nodes (clustered mode)
       map.on("click", "unclustered-nodes", (e) => {
         const feature = e.features?.[0];
         if (!feature) return;
@@ -823,7 +847,6 @@ export function Map() {
         void handleNodeClick(id);
       });
 
-      // Clicking nodes (plain mode)
       map.on("click", "plain-nodes", (e) => {
         const feature = e.features?.[0];
         if (!feature) return;
@@ -832,11 +855,11 @@ export function Map() {
         void handleNodeClick(id);
       });
 
-      // Clicking empty space clears
       map.on("click", (e) => {
         const hitNode =
-          map.queryRenderedFeatures(e.point, { layers: ["unclustered-nodes", "plain-nodes"] })
-            .length > 0;
+          map.queryRenderedFeatures(e.point, {
+            layers: ["unclustered-nodes", "plain-nodes"],
+          }).length > 0;
         const hitCluster =
           map.queryRenderedFeatures(e.point, { layers: ["clusters"] }).length > 0;
         if (hitNode || hitCluster) return;
@@ -879,6 +902,7 @@ export function Map() {
         m.setStyle(desired);
         mbCurrentStyleUrlRef.current = desired;
       } catch {
+        // ignore
       }
     };
 
@@ -909,7 +933,6 @@ export function Map() {
     const plain = map.getSource("nodes_plain") as MbGeoJSONSource | undefined;
     plain?.setData(data);
 
-    // If selected node disappears, clear selection + links/panel
     const selectedId = mbSelectedIdRef.current;
     if (selectedId) {
       const stillExists = data.features.some(
@@ -917,12 +940,18 @@ export function Map() {
       );
       if (!stillExists) {
         try {
-          map.setFeatureState({ source: "nodes_clustered", id: selectedId }, { selected: false });
+          map.setFeatureState(
+            { source: "nodes_clustered", id: selectedId },
+            { selected: false }
+          );
         } catch {
           // ignore
         }
         try {
-          map.setFeatureState({ source: "nodes_plain", id: selectedId }, { selected: false });
+          map.setFeatureState(
+            { source: "nodes_plain", id: selectedId },
+            { selected: false }
+          );
         } catch {
           // ignore
         }
@@ -942,8 +971,25 @@ export function Map() {
     const usingOsm = provider === "osm";
 
     if (!usingOsm) return;
-    if (olMap) return;
     if (!serverNode || !mapRef.current) return;
+
+    if (mbMapRef.current) {
+      mbMapRef.current.remove();
+      mbMapRef.current = null;
+      mbSelectedIdRef.current = null;
+      mbHandlersBoundRef.current = false;
+      mbCurrentStyleUrlRef.current = null;
+    }
+
+    if (olMap) {
+      if (mapRef.current) {
+        mapRef.current.innerHTML = "";
+        olMap.setTarget(mapRef.current as HTMLElement);
+        olMap.updateSize();
+        requestAnimationFrame(() => olMap.updateSize());
+      }
+      return;
+    }
 
     const defaultPosition = { latitude: 38.5816, longitude: -121.4944 };
     const serverPosition = serverNode.map_position
@@ -960,16 +1006,14 @@ export function Map() {
     ]);
     const initialZoom = JSON.parse(localStorage.getItem("savedZoom") ?? "9.5");
 
+    if (mapRef.current) mapRef.current.innerHTML = "";
+
     const tileLayer = createBaseTileLayer({
       provider: "osm",
       osmBasemap,
     });
 
-    // Apply “dark invert” only when in dark mode (OSM path)
-    if (
-      window.matchMedia &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches
-    ) {
+    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
       tileLayer.on("prerender", (evt: RenderEvent) => {
         if (!evt.context) return;
         const context = evt.context as CanvasRenderingContext2D;
@@ -984,6 +1028,11 @@ export function Map() {
       });
     }
 
+    const srcAny = (tileLayer as any)?.getSource?.();
+    srcAny?.on?.("tileloaderror", (e: any) => {
+      console.warn("OSM tile load error:", e);
+    });
+
     const map = new OlMap({
       layers: [tileLayer],
       target: mapRef.current as HTMLElement,
@@ -995,6 +1044,9 @@ export function Map() {
 
     setOlMap(map);
     olBaseLayerRef.current = tileLayer;
+
+    map.updateSize();
+    requestAnimationFrame(() => map.updateSize());
 
     map.on("moveend", () => {
       const center = map.getView().getCenter();
@@ -1013,7 +1065,6 @@ export function Map() {
       map.getTargetElement().style.cursor = hit ? "pointer" : "";
     });
 
-    // nodes layer
     const nodeEntries = computeRecentNodes(nodes, recentDays);
     const features = nodeEntries
       .map(([id, node]) => {
@@ -1206,7 +1257,7 @@ export function Map() {
     });
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider, serverNode, olMap]);
+  }, [provider, serverNode, olMap, osmBasemap, recentDays, nodes]);
 
   // OpenLayers: update nodes live when nodes/recentDays change
   useEffect(() => {
@@ -1249,14 +1300,8 @@ export function Map() {
     if (!olMap) return;
 
     const newBase = createBaseTileLayer({ provider: "osm", osmBasemap });
-    const hasMapboxToken = Boolean(import.meta.env.VITE_MAPBOX_TOKEN);
 
-    // Only apply dark invert for OSM path
-    if (
-      !hasMapboxToken &&
-      window.matchMedia &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches
-    ) {
+    if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
       newBase.on("prerender", (evt: RenderEvent) => {
         if (!evt.context) return;
         const context = evt.context as CanvasRenderingContext2D;
@@ -1271,9 +1316,11 @@ export function Map() {
       });
     }
 
-    // Replace layer 0 (base layer)
     olMap.getLayers().setAt(0, newBase);
     olBaseLayerRef.current = newBase;
+
+    olMap.updateSize();
+    requestAnimationFrame(() => olMap.updateSize());
   }, [osmBasemap, provider, olMap]);
 
   // ----------------------------
@@ -1286,7 +1333,6 @@ export function Map() {
     <div className="h-screen relative">
       <div id="map" className="map" ref={mapRef} />
 
-      {/* Settings panel: centered-left inside map area */}
       <div
         id="map-settings"
         className="absolute left-2 top-1/2 -translate-y-1/2 z-[1100] w-64 rounded-xl shadow-lg border border-gray-200/70 dark:border-gray-700/70 bg-white/90 dark:bg-black/70 backdrop-blur p-3"
@@ -1296,7 +1342,6 @@ export function Map() {
         </div>
 
         <div className="space-y-3 text-sm">
-          {/* Provider */}
           <div>
             <div className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-1">
               Provider
@@ -1313,7 +1358,6 @@ export function Map() {
             </select>
           </div>
 
-          {/* Basemap */}
           {usingMapbox ? (
             <div>
               <div className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-1">
@@ -1326,7 +1370,9 @@ export function Map() {
               >
                 <option value="mapbox/dark-v11">Dark</option>
                 <option value="mapbox/streets-v12">Streets</option>
-                <option value="mapbox/satellite-streets-v12">Satellite Streets</option>
+                <option value="mapbox/satellite-streets-v12">
+                  Satellite Streets
+                </option>
               </select>
             </div>
           ) : (
@@ -1345,7 +1391,6 @@ export function Map() {
             </div>
           )}
 
-          {/* Last seen filter */}
           <div>
             <div className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-1">
               Last seen
@@ -1364,7 +1409,6 @@ export function Map() {
             </select>
           </div>
 
-          {/* Cluster toggle (Mapbox only) */}
           <div className="flex items-center justify-between">
             <div className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300">
               Clustering
@@ -1387,7 +1431,6 @@ export function Map() {
         </div>
       </div>
 
-      {/* Existing Details panel */}
       <div id="details" className="p-4 bg-white dark:bg-black hidden">
         <div className="flex items-center w-full justify-items-stretch">
           <div id="details-title" className="flex-auto text-lg text-start">
@@ -1400,7 +1443,6 @@ export function Map() {
         <div id="details-content" className="align-items-center" />
       </div>
 
-      {/* Legend */}
       <div id="legend" className="p-2 bg-white dark:bg-black">
         <div className="text-lg">LEGEND</div>
         <div className="align-items-center">
