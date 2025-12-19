@@ -238,15 +238,12 @@ export function Map() {
   const { data: config } = useGetConfigQuery();
 
   // ----- env capabilities
-  const envProvider = (import.meta.env.VITE_MAP_PROVIDER ?? "osm") as MapProvider;
   const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
   const hasMapbox = Boolean(mapboxToken);
 
   // ----- UI settings (persisted)
   const [provider, setProvider] = useState<MapProvider>(() => {
     const stored = readJson<MapProvider | null>(LS_KEYS.provider, null);
-
-    // If the user has a saved preference, respect it (but don't allow mapbox without token)
     if (stored) return stored === "mapbox" && !hasMapbox ? "osm" : stored;
 
     // First-time visitors: always default to OSM
@@ -264,14 +261,7 @@ export function Map() {
 
   const [osmBasemap, setOsmBasemap] = useState<OsmBasemap>(() => {
     const stored = readJson<OsmBasemap | null>(LS_KEYS.osmBasemap, null);
-    if (stored) return stored;
-
-    const prefersDark =
-      window.matchMedia &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches;
-
-    // Default basemap only for first-time visitors / no saved preference yet.
-    return prefersDark ? "carto_dark" : "carto_positron";
+    return stored ?? "carto_dark"; // first-time = dark
   });
 
   const [recentDays, setRecentDays] = useState<number>(() => {
