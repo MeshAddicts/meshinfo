@@ -23,7 +23,7 @@ export const Node = () => {
 
   return (
     <>
-      <h5 className="mb-4 text-gray-500">
+      <h5 className="mb-4 text-gray-500 dark:text-gray-400">
         <Link to="/nodes">Nodes</Link> &gt; {node.shortname}
       </h5>
 
@@ -119,7 +119,7 @@ export const Node = () => {
             )}
 
           <div>
-            <h3 className="font-bold text-gray-600">Elsewhere</h3>
+            <h3 className="font-bold text-gray-600 dark:text-gray-300">Elsewhere</h3>
             <div>
               <a
                 href={`https://meshview.armooo.net/packet_list/${convertNodeIdFromHexToInt(node.id)}`}
@@ -158,9 +158,9 @@ export const Node = () => {
 
         <div className="w-auto md:w-96">
           <div className="mb-4">
-            <h3 className="mb-2 font-bold text-gray-600">Details</h3>
-            <table className="table-auto min-w-full border border-gray-200 bg-gray-50">
-              <tbody className="divide-y divide-dashed divide-gray-200">
+            <h3 className="mb-2 font-bold text-gray-600 dark:text-gray-300">Details</h3>
+            <table className="table-auto min-w-full border border-gray-200 bg-gray-50 text-gray-900 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100">
+              <tbody className="divide-y divide-dashed divide-gray-200 dark:divide-gray-700">
                 <tr>
                   <th className="p-1" align="left">
                     ID (hex)
@@ -281,7 +281,7 @@ export const Node = () => {
                     {node.active ? (
                       <span className="text-green-500">Online</span>
                     ) : (
-                      <span className="text-gray-700">Offline</span>
+                      <span className="text-gray-700 dark:text-gray-300">Offline</span>
                     )}
                   </td>
                 </tr>
@@ -315,9 +315,9 @@ export const Node = () => {
           </div>
 
           <div className="mb-4">
-            <h3 className="mb-2 font-bold text-gray-600">Heard (zero hop)</h3>
-            <table className="table-auto min-w-full border border-gray-200 bg-gray-50">
-              <tbody className="divide-y divide-dashed divide-gray-200">
+            <h3 className="mb-2 font-bold text-gray-600 dark:text-gray-300">Heard (zero hop)</h3>
+            <table className="table-auto min-w-full border border-gray-200 bg-gray-50 text-gray-900 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100">
+              <tbody className="divide-y divide-dashed divide-gray-200 dark:divide-gray-700">
                 {node.neighborinfo?.neighbors?.map((neighbor, index) => {
                   const nid = convertNodeIdFromIntToHex(neighbor.node_id);
                   const nnode = nodes[nid] || null;
@@ -326,11 +326,14 @@ export const Node = () => {
                     <tr key={`neighbors-${index}`}>
                       <td className="w-1/3 p-1 text-nowrap">
                         {nnode ? (
-                          <a href={`node_${nnode.id}.html`}>
+                          <a
+                            className="text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
+                            href={`node_${nnode.id}.html`}
+                          >
                             {nnode.shortname}
                           </a>
                         ) : (
-                          <span className="text-gray-500">UNK</span>
+                          <span className="text-gray-500 dark:text-gray-400">UNK</span>
                         )}
                       </td>
                       <td className="p-1 text-nowrap">SNR: {neighbor.snr}</td>
@@ -347,11 +350,11 @@ export const Node = () => {
           </div>
 
           <div className="mb-4">
-            <h3 className="mb-2 font-bold text-gray-600">
+            <h3 className="mb-2 font-bold text-gray-600 dark:text-gray-300">
               Heard By (zero hop)
             </h3>
-            <table className="table-auto min-w-full border border-gray-200 bg-gray-50">
-              <tbody className="divide-y divide-dashed divide-gray-200">
+            <table className="table-auto min-w-full border border-gray-200 bg-gray-50 text-gray-900 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100">
+              <tbody className="divide-y divide-dashed divide-gray-200 dark:divide-gray-700">
                 {Object.entries(nodes).map(
                   ([iid, nnode], index) =>
                     nnode.neighborinfo &&
@@ -368,7 +371,7 @@ export const Node = () => {
                                   {nodes[iid].shortname}
                                 </a>
                               ) : (
-                                <span className="text-gray-500">UNK</span>
+                                <span className="text-gray-500 dark:text-gray-400">UNK</span>
                               )}
                             </td>
                             <td className="p-1 text-nowrap">
