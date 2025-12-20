@@ -1,7 +1,10 @@
 import "ol/ol.css";
 import "mapbox-gl/dist/mapbox-gl.css";
 
-import mapboxgl, { GeoJSONSource as MbGeoJSONSource, Map as MbMap } from "mapbox-gl";
+import mapboxgl, {
+  GeoJSONSource as MbGeoJSONSource,
+  Map as MbMap,
+} from "mapbox-gl";
 
 import { Feature, Map as OlMap, View } from "ol";
 import { Point } from "ol/geom";
@@ -36,19 +39,37 @@ function toMapboxStyleUrl(style: string) {
   return style.startsWith("mapbox://") ? style : `mapbox://styles/${style}`;
 }
 
-function bumpOlRender(map: OlMap) {
-  map.updateSize();
-  map.renderSync();
+function bumpOlRender(map: OlMap): () => void {
+  if (!map.getTarget()) return () => {};
 
-  requestAnimationFrame(() => {
-    map.updateSize();
+  map.updateSize();
+  try {
     map.renderSync();
+  } catch {
+  }
+
+  const raf = requestAnimationFrame(() => {
+    if (!map.getTarget()) return;
+    map.updateSize();
+    try {
+      map.renderSync();
+    } catch {
+    }
   });
 
-  window.setTimeout(() => {
+  const t = window.setTimeout(() => {
+    if (!map.getTarget()) return;
     map.updateSize();
-    map.renderSync();
+    try {
+      map.renderSync();
+    } catch {
+    }
   }, 200);
+
+  return () => {
+    cancelAnimationFrame(raf);
+    window.clearTimeout(t);
+  };
 }
 
 function getLonLat(node: INode): [number, number] | null {
@@ -125,6 +146,13 @@ export const NodeMap = ({ node }: { node: INode }) => {
   // Mapbox map ref
   const mbMapRef = useRef<MbMap | null>(null);
 
+  // Cancel any queued OL bump callbacks on teardown / remount
+  const cancelOlBumpRef = useRef<(() => void) | null>(null);
+  const scheduleOlBump = (map: OlMap) => {
+    cancelOlBumpRef.current?.();
+    cancelOlBumpRef.current = bumpOlRender(map);
+  };
+
   // ----- capabilities
   const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
   const hasMapbox = Boolean(mapboxToken);
@@ -144,7 +172,6 @@ export const NodeMap = ({ node }: { node: INode }) => {
       readJson<OsmBasemap | null>(LS_KEYS.osmBasemap, null) ?? "carto_dark";
 
     return { provider, mapboxStyle, osmBasemap };
-    // NOTE: intentionally not reactive to future localStorage changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasMapbox]);
 
@@ -200,7 +227,10 @@ export const NodeMap = ({ node }: { node: INode }) => {
     });
 
     mbMapRef.current = map;
-    map.addControl(new mapboxgl.NavigationControl({ showCompass: true }), "top-left");
+    map.addControl(
+      new mapboxgl.NavigationControl({ showCompass: true }),
+      "top-left"
+    );
 
     const ensureLayers = () => {
       if (!map.getSource("node")) {
@@ -270,7 +300,7 @@ export const NodeMap = ({ node }: { node: INode }) => {
 
     const lonLat = getLonLat(node);
     if (lonLat) {
-      map.jumpTo({ center: lonLat }); // keep zoom
+      map.jumpTo({ center: lonLat });
     }
   }, [node]);
 
@@ -283,7 +313,7 @@ export const NodeMap = ({ node }: { node: INode }) => {
     const lonLat = getLonLat(node);
     if (!lonLat) return;
 
-    // fresh container (safe)
+    // fresh container
     mapRef.current.innerHTML = "";
 
     const base = createBaseTileLayer({
@@ -319,9 +349,13 @@ export const NodeMap = ({ node }: { node: INode }) => {
     olMarkerRef.current = feature;
     olMarkerSourceRef.current = src;
 
-    bumpOlRender(map);
+    scheduleOlBump(map);
 
     return () => {
+      // cancel any pending bump callbacks before detaching OL
+      cancelOlBumpRef.current?.();
+      cancelOlBumpRef.current = null;
+
       map.setTarget(undefined);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -341,12 +375,27 @@ export const NodeMap = ({ node }: { node: INode }) => {
       f.setStyle(isNodeOnline(node) ? onlineStyle : offlineStyle);
     }
 
-    // re-center (keep zoom)
+    // re-center
     const view = olMap.getView();
     view.setCenter(fromLonLat(lonLat));
 
-    bumpOlRender(olMap);
+    scheduleOlBump(olMap);
   }, [node, usingMapbox, olMap]);
 
-  return <div id="map" className="map" ref={mapRef} style={{ height: "300px", width: "100%" }} />;
+  // cancel any pending bumps on component unmount
+  useEffect(() => {
+    return () => {
+      cancelOlBumpRef.current?.();
+      cancelOlBumpRef.current = null;
+    };
+  }, []);
+
+  return (
+    <div
+      id="node-map"
+      className="map"
+      ref={mapRef}
+      style={{ height: "300px", width: "100%" }}
+    />
+  );
 };
