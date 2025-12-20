@@ -5,7 +5,7 @@ services:
       - ./postgres/data:/var/lib/postgresql/data
     environment:
       - POSTGRES_PASSWORD=password
-    restart: always
+    restart: no
 
   mqtt:
     container_name: mqtt
@@ -18,7 +18,7 @@ services:
     restart: always
 
   meshinfo:
-    image: ghcr.io/simmerv/meshinfo:upgrade-mapbox-upgrade
+    image: ghcr.io/simmerv/meshaddicts/meshinfo:latest
     volumes:
       - ./config.json:/app/config.json
       - ./output:/app/output
@@ -32,7 +32,7 @@ services:
       - mqtt
 
   frontend:
-    image: ghcr.io/simmerv/meshinfo-spa:upgrade-mapbox-upgrade
+    image: ghcr.io/simmerv/meshaddicts/meshinfo:latest
     ports:
       - 8000:80
     env_file:
