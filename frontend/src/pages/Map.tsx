@@ -59,7 +59,6 @@ function writeJson<T>(key: string, value: T) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch {
-    // ignore
   }
 }
 
@@ -441,12 +440,10 @@ export function Map() {
       try {
         map.setFeatureState({ source: "nodes_clustered", id: prev }, { selected: false });
       } catch {
-        // ignore
       }
       try {
         map.setFeatureState({ source: "nodes_plain", id: prev }, { selected: false });
       } catch {
-        // ignore
       }
       mbSelectedIdRef.current = null;
     };
@@ -461,12 +458,10 @@ export function Map() {
       try {
         map.setFeatureState({ source: "nodes_clustered", id }, { selected: true });
       } catch {
-        // ignore
       }
       try {
         map.setFeatureState({ source: "nodes_plain", id }, { selected: true });
       } catch {
-        // ignore
       }
     };
 
@@ -875,7 +870,7 @@ export function Map() {
         void handleNodeClick(id);
       });
 
-      // Clicking empty space clears (INCLUDING selection)
+      // Clicking empty space clears
       map.on("click", (e) => {
         const hitNode =
           map.queryRenderedFeatures(e.point, { layers: ["unclustered-nodes", "plain-nodes"] })
@@ -927,7 +922,6 @@ export function Map() {
 
       map.setStyle(desired);
     } catch {
-      // ignore
     }
   }, [mapboxStyle, provider, hasMapbox]);
 
@@ -964,12 +958,10 @@ export function Map() {
         try {
           map.setFeatureState({ source: "nodes_clustered", id: selectedId }, { selected: false });
         } catch {
-          // ignore
         }
         try {
           map.setFeatureState({ source: "nodes_plain", id: selectedId }, { selected: false });
         } catch {
-          // ignore
         }
         mbSelectedIdRef.current = null;
 
@@ -1002,7 +994,6 @@ export function Map() {
     }
     if (!serverNode || !mapRef.current) return;
 
-    // Ensure container is clean (especially after Mapbox)
     mapRef.current.innerHTML = "";
 
     const defaultPosition = { latitude: 38.5816, longitude: -121.4944 };
@@ -1252,7 +1243,7 @@ export function Map() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider, serverNode, olMap]);
 
-  // OpenLayers: update nodes live when nodes/recentDays change
+  // OpenLayers: update nodes in real time when nodes/recentDays change
   useEffect(() => {
     if (provider !== "osm") return;
     if (!olMap) return;

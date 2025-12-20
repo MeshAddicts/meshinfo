@@ -350,7 +350,7 @@ export const Node = () => {
           </div>
 
           <div className="mb-4">
-            <h3 className="mb-2 font-bold text-gray-600">
+            <h3 className="mb-2 font-bold text-gray-600 dark:text-gray-300">
               Heard By (zero hop)
             </h3>
             <table className="table-auto min-w-full border border-gray-200 bg-gray-50 text-gray-900 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100">
