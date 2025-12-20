@@ -51,7 +51,6 @@ function num(v: unknown): number | null {
 function getLonLat(node: INode): [number, number] | null {
   const anyNode: any = node as any;
 
-  // Preferred if you have it (Map.tsx normalization style)
   const mp = anyNode.map_position;
   if (Array.isArray(mp) && mp.length === 2) {
     const lng = num(mp[0]);
@@ -126,7 +125,6 @@ function bumpOl(map: OlMap): () => void {
     try {
       map.renderSync();
     } catch {
-      // ignore
     }
     return true;
   };
@@ -192,7 +190,7 @@ export const NodeMap = ({ node }: { node: INode }) => {
   const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
   const hasMapbox = Boolean(mapboxToken);
 
-  // Read preferences once per mount (mirrors your Map.tsx “persisted settings” approach)
+  // Read preferences once per mount (mirrors Map.tsx)
   const settings = useMemo(() => {
     const storedProvider = readJson<MapProvider | null>(LS_KEYS.provider, null);
     const provider: MapProvider =
@@ -256,7 +254,6 @@ export const NodeMap = ({ node }: { node: INode }) => {
 
     const lonLat = getLonLat(node);
 
-    // Always cleanup any pending bumps before we do anything
     cancelOlBumpRef.current?.();
     cancelOlBumpRef.current = null;
     cancelMbBumpRef.current?.();
@@ -266,12 +263,10 @@ export const NodeMap = ({ node }: { node: INode }) => {
     // Mapbox path
     // -----------------------
     if (usingMapbox) {
-      // Tear down OL if it exists
       if (olMapRef.current) {
         try {
           olMapRef.current.setTarget(undefined);
         } catch {
-          // ignore
         }
         olMapRef.current = null;
         olMarkerRef.current = null;
@@ -279,14 +274,12 @@ export const NodeMap = ({ node }: { node: INode }) => {
       }
 
       if (!lonLat) {
-        // no coords yet; don't create map
         return;
       }
 
       // Create or update mapbox map
       const existing = mbMapRef.current;
       if (!existing) {
-        // fresh container
         el.innerHTML = "";
 
         mapboxgl.accessToken = mapboxToken!;
@@ -363,10 +356,8 @@ export const NodeMap = ({ node }: { node: INode }) => {
           cancelMbBumpRef.current = bumpMb(map);
         });
 
-        // extra bump immediately (helps if container is mid-layout)
         cancelMbBumpRef.current = bumpMb(map);
       } else {
-        // Update data + center
         const src = existing.getSource("node") as MbGeoJSONSource | undefined;
         if (src) src.setData(makeNodeGeoJSON(node) as any);
         existing.jumpTo({ center: lonLat }); // keep zoom
@@ -382,12 +373,10 @@ export const NodeMap = ({ node }: { node: INode }) => {
     // -----------------------
     // OpenLayers path
     // -----------------------
-    // Tear down Mapbox if it exists
     if (mbMapRef.current) {
       try {
         mbMapRef.current.remove();
       } catch {
-        // ignore
       }
       mbMapRef.current = null;
     }
@@ -440,7 +429,6 @@ export const NodeMap = ({ node }: { node: INode }) => {
         try {
           existingOl.setTarget(el as HTMLElement);
         } catch {
-          // ignore
         }
       }
 
@@ -482,7 +470,6 @@ export const NodeMap = ({ node }: { node: INode }) => {
         try {
           mbMapRef.current.remove();
         } catch {
-          // ignore
         }
         mbMapRef.current = null;
       }
@@ -490,17 +477,12 @@ export const NodeMap = ({ node }: { node: INode }) => {
         try {
           olMapRef.current.setTarget(undefined);
         } catch {
-          // ignore
         }
         olMapRef.current = null;
       }
     };
   }, []);
 
-  /**
-   * NOTE: keep id="map" here.
-   * Some existing CSS/layout in meshinfo targets #map on the node page.
-   */
   return (
     <div
       id="map"
