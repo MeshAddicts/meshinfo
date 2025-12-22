@@ -17,6 +17,23 @@ import { useEffect, useMemo, useRef } from "react";
 import { createBaseTileLayer, type OsmBasemap } from "../maps/baseLayer";
 import { INode } from "../types";
 
+interface NodePosition {
+  longitude?: number;
+  latitude?: number;
+  longitude_i?: number;
+  latitude_i?: number;
+}
+
+interface NodeWithLocationData extends INode {
+  map_position?: [number, number];
+  position?: NodePosition;
+  last_seen?: string;
+  active?: boolean;
+  id?: string;
+  shortname?: string;
+  longname?: string;
+}
+
 type MapProvider = "osm" | "mapbox";
 
 const LS_KEYS = {
@@ -49,16 +66,18 @@ function num(v: unknown): number | null {
 }
 
 function getLonLat(node: INode): [number, number] | null {
-  const anyNode: any = node as any;
+  const nodeWithLocation = node as NodeWithLocationData;
 
-  const mp = anyNode.map_position;
+  // Check map_position array first
+  const mp = nodeWithLocation.map_position;
   if (Array.isArray(mp) && mp.length === 2) {
     const lng = num(mp[0]);
     const lat = num(mp[1]);
     if (lng != null && lat != null) return [lng, lat];
   }
 
-  const p: any = anyNode.position;
+  // Check position object
+  const p = nodeWithLocation.position;
   if (!p) return null;
 
   // Float coordinates
@@ -66,7 +85,7 @@ function getLonLat(node: INode): [number, number] | null {
   const latF = num(p.latitude);
   if (lngF != null && latF != null) return [lngF, latF];
 
-  // Meshtastic-style scaled ints
+  // Meshtastic-style scaled integers
   const lngI = num(p.longitude_i);
   const latI = num(p.latitude_i);
   if (lngI != null && latI != null) return [lngI / 10_000_000, latI / 10_000_000];
@@ -75,7 +94,9 @@ function getLonLat(node: INode): [number, number] | null {
 }
 
 function isNodeOnline(node: INode): boolean {
-  const lastSeen = (node as any).last_seen as string | undefined;
+  const nodeWithStatus = node as NodeWithLocationData;
+  
+  const lastSeen = nodeWithStatus.last_seen;
   if (lastSeen) {
     const t = new Date(lastSeen).getTime();
     if (!Number.isNaN(t)) {
@@ -83,7 +104,7 @@ function isNodeOnline(node: INode): boolean {
       return Date.now() - t < SIX_HOURS_MS;
     }
   }
-  return Boolean((node as any).active);
+  return Boolean(nodeWithStatus.active);
 }
 
 function makeNodeGeoJSON(node: INode) {
@@ -92,6 +113,7 @@ function makeNodeGeoJSON(node: INode) {
     return { type: "FeatureCollection" as const, features: [] as any[] };
   }
 
+  const nodeWithData = node as NodeWithLocationData;
   const [lng, lat] = lonLat;
   const online = isNodeOnline(node);
 
@@ -100,11 +122,11 @@ function makeNodeGeoJSON(node: INode) {
     features: [
       {
         type: "Feature" as const,
-        id: (node as any).id ?? (node as any).shortname ?? "node",
+        id: nodeWithData.id ?? nodeWithData.shortname ?? "node",
         properties: {
-          id: (node as any).id ?? "",
-          shortname: (node as any).shortname ?? "",
-          longname: (node as any).longname ?? "",
+          id: nodeWithData.id ?? "",
+          shortname: nodeWithData.shortname ?? "",
+          longname: nodeWithData.longname ?? "",
           online,
         },
         geometry: {
