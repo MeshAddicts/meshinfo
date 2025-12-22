@@ -282,7 +282,9 @@ export const NodeMap = ({ node }: { node: INode }) => {
       if (!existing) {
         el.innerHTML = "";
 
-        mapboxgl.accessToken = mapboxToken!;
+        if (!mapboxgl.accessToken) {
+          mapboxgl.accessToken = mapboxToken!;
+        }
 
         const styleUrl = toMapboxStyleUrl(settings.mapboxStyle);
 
