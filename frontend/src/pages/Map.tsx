@@ -58,7 +58,11 @@ function readJson<T>(key: string, fallback: T): T {
 function writeJson<T>(key: string, value: T) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
-  } catch {
+  } catch (err) {
+    // Log storage write failures (e.g., quota exceeded, storage disabled) instead of failing silently
+    // This keeps normal behavior unchanged while making issues diagnosable
+    // eslint-disable-next-line no-console
+    console.warn("Failed to persist map setting to localStorage", { key, error: err });
   }
 }
 
@@ -68,6 +72,26 @@ function toMapboxStyleUrl(stylePath: string): string {
   // - "mapbox/streets-v12" or "user/styleid"
   if (stylePath.startsWith("mapbox://")) return stylePath;
   return `mapbox://styles/${stylePath}`;
+}
+
+// --------------------
+// Utilities
+// --------------------
+function escapeHtml(text: string): string {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function calculateGeodesicDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371; // Earth's radius in kilometers
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
 }
 
 // --------------------
@@ -302,7 +326,7 @@ export function Map() {
         {
           ...node,
           online:
-            Boolean(node.last_seen) &&
+            node.last_seen != null &&
             new Date(node.last_seen as string).getTime() > sixHoursAgo,
           map_position:
             node.position &&
@@ -422,7 +446,9 @@ export function Map() {
     // fresh container
     mapRef.current.innerHTML = "";
 
-    mapboxgl.accessToken = mapboxToken!;
+    if (!mapboxgl.accessToken) {
+      mapboxgl.accessToken = mapboxToken!;
+    }
 
     const map = new mapboxgl.Map({
       container: mapRef.current,
@@ -439,11 +465,17 @@ export function Map() {
       if (!prev) return;
       try {
         map.setFeatureState({ source: "nodes_clustered", id: prev }, { selected: false });
-      } catch {
+      } catch (error) {
+        if (process.env.NODE_ENV !== "production") {
+          console.error("Failed to clear feature state for nodes_clustered", error);
+        }
       }
       try {
         map.setFeatureState({ source: "nodes_plain", id: prev }, { selected: false });
-      } catch {
+      } catch (error) {
+        if (process.env.NODE_ENV !== "production") {
+          console.error("Failed to clear feature state for nodes_plain", error);
+        }
       }
       mbSelectedIdRef.current = null;
     };
@@ -457,11 +489,17 @@ export function Map() {
 
       try {
         map.setFeatureState({ source: "nodes_clustered", id }, { selected: true });
-      } catch {
+      } catch (error) {
+        if (process.env.NODE_ENV !== "production") {
+          console.error("Failed to set feature state for nodes_clustered", error);
+        }
       }
       try {
         map.setFeatureState({ source: "nodes_plain", id }, { selected: true });
-      } catch {
+      } catch (error) {
+        if (process.env.NODE_ENV !== "production") {
+          console.error("Failed to set feature state for nodes_plain", error);
+        }
       }
     };
 
@@ -685,11 +723,11 @@ export function Map() {
         const displayName = await reverseGeocode(node.map_position[0], node.map_position[1]);
 
         let panel =
-          `<b>${node.longname}</b><br/>${node.shortname} / ${id}<br/><br/>` +
-          `<b>Position</b><br/>${node.map_position}<br/><br/>` +
-          `<b>Location</b><br/>${displayName || "Unknown"}<br/><br/>` +
+          `<b>${escapeHtml(node.longname ?? "")}</b><br/>${escapeHtml(node.shortname ?? "")} / ${escapeHtml(id)}<br/><br/>` +
+          `<b>Position</b><br/>${escapeHtml(node.map_position.toString())}<br/><br/>` +
+          `<b>Location</b><br/>${escapeHtml(displayName || "Unknown")}<br/><br/>` +
           `<b>Status</b><br/>${node.online ? "Online" : "Offline"}<br/><br/>` +
-          `<b>Last Seen</b><br/>${node.last_seen}<br/><br/>`;
+          `<b>Last Seen</b><br/>${escapeHtml(node.last_seen ?? "")}<br/><br/>`;
 
         panel += "<b>Neighbors Heard</b><br/>";
         if ((node.neighbors?.length ?? 0) === 0) {
@@ -709,14 +747,13 @@ export function Map() {
 
               let distance;
               if (nnode.map_position) {
-                distance =
-                  Math.sqrt(
-                    (node.map_position![0] - nnode.map_position[0]) ** 2 +
-                      (node.map_position![1] - nnode.map_position[1]) ** 2
-                  ) * 111.32;
+                distance = calculateGeodesicDistance(
+                  node.map_position![1], node.map_position![0],
+                  nnode.map_position[1], nnode.map_position[0]
+                );
               }
 
-              return `<tr><td align=left>${nnode.shortname}</td><td align=center>${neighbor.snr}</td><td align=right>${
+              return `<tr><td align=left>${escapeHtml(nnode.shortname ?? "")}</td><td align=center>${neighbor.snr}</td><td align=right>${
                 distance ? distance.toFixed(2) : "unk"
               } km</td></tr>`;
             })
@@ -750,14 +787,13 @@ export function Map() {
 
               let distance;
               if (nnode.map_position) {
-                distance =
-                  Math.sqrt(
-                    (node.map_position![0] - nnode.map_position[0]) ** 2 +
-                      (node.map_position![1] - nnode.map_position[1]) ** 2
-                  ) * 111.32;
+                distance = calculateGeodesicDistance(
+                  node.map_position![1], node.map_position![0],
+                  nnode.map_position[1], nnode.map_position[0]
+                );
               }
 
-              return `<tr><td align=left>${nnode.shortname}</td><td align=center>${neighbor?.snr}</td><td align=right>${
+              return `<tr><td align=left>${escapeHtml(nnode.shortname ?? "")}</td><td align=center>${neighbor?.snr}</td><td align=right>${
                 distance ? distance.toFixed(2) : "unk"
               } km</td></tr>`;
             })
@@ -771,14 +807,14 @@ export function Map() {
         panel += "<b>Elsewhere</b><br/>";
         const nodeId = parseInt(id, 16);
         panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://meshview.armooo.net/packet_list/${nodeId}" target="_blank">Armooo's MeshView</a><br/>`;
-        panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://app.bayme.sh/node/${id}" target="_blank">Bay Mesh Explorer</a><br/>`;
+        panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://app.bayme.sh/node/${encodeURIComponent(id)}" target="_blank">Bay Mesh Explorer</a><br/>`;
         panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://meshtastic.liamcottle.net/?node_id=${nodeId}" target="_blank">Liam's Map</a><br/>`;
         panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://meshmap.net/#${nodeId}" target="_blank">MeshMap</a><br/>`;
 
         const { nodePanel, nodeTitle, nodeSubtitle, nodeContent } = getDetailsDom();
         if (nodePanel && nodeTitle && nodeSubtitle && nodeContent) {
-          nodeTitle.innerHTML = node.longname ?? "";
-          nodeSubtitle.innerHTML = node.shortname ?? "";
+          nodeTitle.textContent = node.longname ?? "";
+          nodeSubtitle.textContent = node.shortname ?? "";
           nodeContent.innerHTML = panel;
           nodePanel.classList.remove("hidden");
         }
@@ -1028,7 +1064,7 @@ export function Map() {
     setOlMap(map);
     olBaseLayerRef.current = tileLayer;
 
-    // Helps prevent “blank until resize” in some layouts
+    // Helps prevent "blank until resize" in some layouts
     bumpOlRender(map);
 
     map.on("moveend", () => {
@@ -1117,11 +1153,11 @@ export function Map() {
       const displayName = await reverseGeocode(node.position[0], node.position[1]);
 
       let panel =
-        `<b>${node.longname}</b><br/>${node.shortname} / ${node.id}<br/><br/>` +
-        `<b>Position</b><br/>${node.position}<br/><br/>` +
-        `<b>Location</b><br/>${displayName || "Unknown"}<br/><br/>` +
+        `<b>${escapeHtml(node.longname ?? "")}</b><br/>${escapeHtml(node.shortname ?? "")} / ${escapeHtml(node.id)}<br/><br/>` +
+        `<b>Position</b><br/>${escapeHtml(node.position.toString())}<br/><br/>` +
+        `<b>Location</b><br/>${escapeHtml(displayName || "Unknown")}<br/><br/>` +
         `<b>Status</b><br/>${node.online ? "Online" : "Offline"}<br/><br/>` +
-        `<b>Last Seen</b><br/>${node.last_seen}<br/><br/>`;
+        `<b>Last Seen</b><br/>${escapeHtml(node.last_seen ?? "")}<br/><br/>`;
 
       panel += "<b>Neighbors Heard</b><br/>";
       if ((node.neighbors?.length ?? 0) === 0) {
@@ -1141,14 +1177,13 @@ export function Map() {
 
             let distance;
             if (nnode.map_position) {
-              distance =
-                Math.sqrt(
-                  (node.position[0] - nnode.map_position[0]) ** 2 +
-                    (node.position[1] - nnode.map_position[1]) ** 2
-                ) * 111.32;
+              distance = calculateGeodesicDistance(
+                node.position[1], node.position[0],
+                nnode.map_position[1], nnode.map_position[0]
+              );
             }
 
-            return `<tr><td align=left>${nnode.shortname}</td><td align=center>${neighbor.snr}</td><td align=right>${
+            return `<tr><td align=left>${escapeHtml(nnode.shortname ?? "")}</td><td align=center>${neighbor.snr}</td><td align=right>${
               distance ? distance.toFixed(2) : "unk"
             } km</td></tr>`;
           })
@@ -1209,14 +1244,13 @@ export function Map() {
 
             let distance;
             if (nnode.map_position) {
-              distance =
-                Math.sqrt(
-                  (node.position[0] - nnode.map_position[0]) ** 2 +
-                    (node.position[1] - nnode.map_position[1]) ** 2
-                ) * 111.32;
+              distance = calculateGeodesicDistance(
+                node.position[1], node.position[0],
+                nnode.map_position[1], nnode.map_position[0]
+              );
             }
 
-            return `<tr><td align=left>${nnode.shortname}</td><td align=center>${neighbor?.snr}</td><td align=right>${
+            return `<tr><td align=left>${escapeHtml(nnode.shortname ?? "")}</td><td align=center>${neighbor?.snr}</td><td align=right>${
               distance ? distance.toFixed(2) : "unk"
             } km</td></tr>`;
           })
@@ -1230,12 +1264,12 @@ export function Map() {
       panel += "<b>Elsewhere</b><br/>";
       const nodeId = parseInt(node.id, 16);
       panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://meshview.armooo.net/packet_list/${nodeId}" target="_blank">Armooo's MeshView</a><br/>`;
-      panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://app.bayme.sh/node/${node.id}" target="_blank">Bay Mesh Explorer</a><br/>`;
+      panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://app.bayme.sh/node/${encodeURIComponent(node.id)}" target="_blank">Bay Mesh Explorer</a><br/>`;
       panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://meshtastic.liamcottle.net/?node_id=${nodeId}" target="_blank">Liam's Map</a><br/>`;
       panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://meshmap.net/#${nodeId}" target="_blank">MeshMap</a><br/>`;
 
-      nodeTitle.innerHTML = node.longname ?? "";
-      nodeSubtitle.innerHTML = node.shortname ?? "";
+      nodeTitle.textContent = node.longname ?? "";
+      nodeSubtitle.textContent = node.shortname ?? "";
       nodeContent.innerHTML = panel;
       nodePanel.classList.remove("hidden");
     });
@@ -1304,6 +1338,8 @@ export function Map() {
 
       <div
         id="map-settings"
+        role="region"
+        aria-label="Map Settings"
         className="absolute left-2 top-1/2 -translate-y-1/2 z-[1100] w-56 rounded-xl shadow-lg border border-gray-200/70 dark:border-gray-700/70 bg-white/90 dark:bg-black/70 backdrop-blur p-3"
       >
         <div className="font-semibold text-sm mb-2 dark:text-gray-100">
@@ -1312,10 +1348,12 @@ export function Map() {
 
         <div className="space-y-3 text-sm">
           <div>
-            <div className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-1">
+            <label htmlFor="provider-select" className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-1 block">
               Provider
-            </div>
+            </label>
             <select
+              id="provider-select"
+              aria-label="Map provider selection"
               className="w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-black px-2 py-1 dark:text-gray-100"
               value={provider}
               onChange={(e) => setProvider(e.target.value as MapProvider)}
@@ -1329,10 +1367,12 @@ export function Map() {
 
           {usingMapbox ? (
             <div>
-              <div className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-1">
+              <label htmlFor="mapbox-style-select" className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-1 block">
                 Mapbox style
-              </div>
+              </label>
               <select
+                id="mapbox-style-select"
+                aria-label="Mapbox map style selection"
                 className="w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-black px-2 py-1 dark:text-gray-100"
                 value={mapboxStyle}
                 onChange={(e) => setMapboxStyle(e.target.value)}
@@ -1344,10 +1384,12 @@ export function Map() {
             </div>
           ) : (
             <div>
-              <div className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-1">
+              <label htmlFor="osm-basemap-select" className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-1 block">
                 OSM basemap
-              </div>
+              </label>
               <select
+                id="osm-basemap-select"
+                aria-label="OpenStreetMap basemap selection"
                 className="w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-black px-2 py-1 dark:text-gray-100"
                 value={osmBasemap}
                 onChange={(e) => setOsmBasemap(e.target.value as OsmBasemap)}
@@ -1361,10 +1403,12 @@ export function Map() {
           )}
 
           <div>
-            <div className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-1">
+            <label htmlFor="recent-days-select" className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-1 block">
               Last seen
-            </div>
+            </label>
             <select
+              id="recent-days-select"
+              aria-label="Filter nodes by last seen timeframe"
               className="w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-black px-2 py-1 dark:text-gray-100"
               value={recentDays}
               onChange={(e) => setRecentDays(Number(e.target.value))}
@@ -1379,15 +1423,17 @@ export function Map() {
           </div>
 
           <div className="flex items-center justify-between">
-            <div className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300">
+            <label htmlFor="clustering-checkbox" className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300">
               Clustering
-            </div>
+            </label>
             <input
+              id="clustering-checkbox"
               type="checkbox"
               checked={clusterEnabled}
               onChange={(e) => setClusterEnabled(e.target.checked)}
               disabled={!usingMapbox}
               className="h-4 w-4"
+              aria-label="Toggle node clustering (Mapbox only)"
               title={!usingMapbox ? "Clustering is Mapbox-only (for now)" : ""}
             />
           </div>
@@ -1435,3 +1481,5 @@ export function Map() {
     </div>
   );
 }
+
+
