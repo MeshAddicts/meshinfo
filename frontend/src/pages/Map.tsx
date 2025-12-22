@@ -446,7 +446,9 @@ export function Map() {
     // fresh container
     mapRef.current.innerHTML = "";
 
-    mapboxgl.accessToken = mapboxToken!;
+    if (!mapboxgl.accessToken) {
+      mapboxgl.accessToken = mapboxToken!;
+    }
 
     const map = new mapboxgl.Map({
       container: mapRef.current,
@@ -1479,4 +1481,5 @@ export function Map() {
     </div>
   );
 }
+
 
