@@ -326,7 +326,7 @@ export function Map() {
         {
           ...node,
           online:
-            Boolean(node.last_seen) &&
+            node.last_seen != null &&
             new Date(node.last_seen as string).getTime() > sixHoursAgo,
           map_position:
             node.position &&
@@ -1479,3 +1479,4 @@ export function Map() {
     </div>
   );
 }
+
