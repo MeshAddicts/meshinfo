@@ -11,6 +11,8 @@ WORKDIR /frontend
 ARG env=production
 ENV NODE_ENV=$env
 
+RUN rm -f /usr/local/bin/yarn /usr/local/bin/yarnpkg
+RUN npm install -g corepack
 RUN corepack enable
 RUN yarn
 
