@@ -24,15 +24,17 @@ interface NodePosition {
   latitude_i?: number;
 }
 
-interface NodeWithLocationData extends INode {
+interface NodeLocationData {
   map_position?: [number, number];
   position?: NodePosition;
   last_seen?: string;
   active?: boolean;
-  id?: string;
+  id?: string | number; // Allow both string and number to be safe
   shortname?: string;
   longname?: string;
 }
+
+type NodeWithLocationData = INode & NodeLocationData;
 
 type MapProvider = "osm" | "mapbox";
 
@@ -124,7 +126,7 @@ function makeNodeGeoJSON(node: INode) {
         type: "Feature" as const,
         id: nodeWithData.id ?? nodeWithData.shortname ?? "node",
         properties: {
-          id: nodeWithData.id ?? "",
+          id: String(nodeWithData.id ?? ""), // Convert to string to ensure type safety
           shortname: nodeWithData.shortname ?? "",
           longname: nodeWithData.longname ?? "",
           online,
@@ -138,7 +140,6 @@ function makeNodeGeoJSON(node: INode) {
   };
 }
 
-/** Prevent “blank until resize” and avoid calling OL renderSync after teardown. */
 function bumpOl(map: OlMap): () => void {
   const safe = () => {
     const el = map.getTargetElement?.();
@@ -167,7 +168,6 @@ function bumpOl(map: OlMap): () => void {
   };
 }
 
-/** Same idea for Mapbox GL */
 function bumpMb(map: MbMap): () => void {
   const safe = () => {
     try {
