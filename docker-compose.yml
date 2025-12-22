@@ -5,7 +5,7 @@ services:
       - ./postgres/data:/var/lib/postgresql/data
     environment:
       - POSTGRES_PASSWORD=password
-    restart: always
+    restart: "no"
 
   mqtt:
     container_name: mqtt
@@ -36,7 +36,9 @@ services:
     ports:
       - 8000:80
     env_file:
-      - .env
+      - path: ./frontend/.env
+        required: false
+
     environment:
       NODE_ENV: production
     restart: always

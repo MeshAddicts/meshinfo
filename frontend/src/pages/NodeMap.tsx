@@ -1,127 +1,510 @@
+import "ol/ol.css";
+import "mapbox-gl/dist/mapbox-gl.css";
+
+import mapboxgl, {
+  GeoJSONSource as MbGeoJSONSource,
+  Map as MbMap,
+} from "mapbox-gl";
+
 import { Feature, Map as OlMap, View } from "ol";
 import { Point } from "ol/geom";
 import VectorLayer from "ol/layer/Vector";
 import { fromLonLat } from "ol/proj";
-import type RenderEvent from "ol/render/Event";
 import VectorSource from "ol/source/Vector";
 import { Circle, Fill, Stroke, Style } from "ol/style";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
-import { createBaseTileLayer } from "../maps/baseLayer";
+import { createBaseTileLayer, type OsmBasemap } from "../maps/baseLayer";
 import { INode } from "../types";
+
+interface NodePosition {
+  longitude?: number;
+  latitude?: number;
+  longitude_i?: number;
+  latitude_i?: number;
+}
+
+interface NodeLocationData {
+  map_position?: [number, number];
+  position?: NodePosition;
+  last_seen?: string;
+  active?: boolean;
+  id?: string | number; // Allow both string and number to be safe
+  shortname?: string;
+  longname?: string;
+}
+
+type NodeWithLocationData = INode & NodeLocationData;
+
+type MapProvider = "osm" | "mapbox";
+
+const LS_KEYS = {
+  provider: "meshinfo.map.provider",
+  mapboxStyle: "meshinfo.map.mapboxStyle",
+  osmBasemap: "meshinfo.map.osmBasemap",
+};
+
+function readJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function toMapboxStyleUrl(style: string) {
+  return style.startsWith("mapbox://") ? style : `mapbox://styles/${style}`;
+}
+
+function num(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function getLonLat(node: INode): [number, number] | null {
+  const nodeWithLocation = node as NodeWithLocationData;
+
+  // Check map_position array first
+  const mp = nodeWithLocation.map_position;
+  if (Array.isArray(mp) && mp.length === 2) {
+    const lng = num(mp[0]);
+    const lat = num(mp[1]);
+    if (lng != null && lat != null) return [lng, lat];
+  }
+
+  // Check position object
+  const p = nodeWithLocation.position;
+  if (!p) return null;
+
+  // Float coordinates
+  const lngF = num(p.longitude);
+  const latF = num(p.latitude);
+  if (lngF != null && latF != null) return [lngF, latF];
+
+  // Meshtastic-style scaled integers
+  const lngI = num(p.longitude_i);
+  const latI = num(p.latitude_i);
+  if (lngI != null && latI != null) return [lngI / 10_000_000, latI / 10_000_000];
+
+  return null;
+}
+
+function isNodeOnline(node: INode): boolean {
+  const nodeWithStatus = node as NodeWithLocationData;
+  
+  const lastSeen = nodeWithStatus.last_seen;
+  if (lastSeen) {
+    const t = new Date(lastSeen).getTime();
+    if (!Number.isNaN(t)) {
+      const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+      return Date.now() - t < SIX_HOURS_MS;
+    }
+  }
+  return Boolean(nodeWithStatus.active);
+}
+
+function makeNodeGeoJSON(node: INode) {
+  const lonLat = getLonLat(node);
+  if (!lonLat) {
+    return { type: "FeatureCollection" as const, features: [] as any[] };
+  }
+
+  const nodeWithData = node as NodeWithLocationData;
+  const [lng, lat] = lonLat;
+  const online = isNodeOnline(node);
+
+  return {
+    type: "FeatureCollection" as const,
+    features: [
+      {
+        type: "Feature" as const,
+        id: nodeWithData.id ?? nodeWithData.shortname ?? "node",
+        properties: {
+          id: String(nodeWithData.id ?? ""), // Convert to string to ensure type safety
+          shortname: nodeWithData.shortname ?? "",
+          longname: nodeWithData.longname ?? "",
+          online,
+        },
+        geometry: {
+          type: "Point" as const,
+          coordinates: [lng, lat] as [number, number],
+        },
+      },
+    ],
+  };
+}
+
+function bumpOl(map: OlMap): () => void {
+  const safe = () => {
+    const el = map.getTargetElement?.();
+    if (!el || !el.isConnected) return false;
+    map.updateSize();
+    try {
+      map.renderSync();
+    } catch {
+    }
+    return true;
+  };
+
+  safe();
+
+  const raf = requestAnimationFrame(() => {
+    safe();
+  });
+
+  const t = window.setTimeout(() => {
+    safe();
+  }, 200);
+
+  return () => {
+    cancelAnimationFrame(raf);
+    window.clearTimeout(t);
+  };
+}
+
+function bumpMb(map: MbMap): () => void {
+  const safe = () => {
+    try {
+      map.resize();
+      map.triggerRepaint();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  safe();
+
+  const raf = requestAnimationFrame(() => {
+    safe();
+  });
+
+  const t = window.setTimeout(() => {
+    safe();
+  }, 200);
+
+  return () => {
+    cancelAnimationFrame(raf);
+    window.clearTimeout(t);
+  };
+}
 
 export const NodeMap = ({ node }: { node: INode }) => {
   const mapRef = useRef<HTMLDivElement>(null);
-  const [olMap, setMap] = useState<OlMap>();
 
-  const defaultStyle = new Style({
-    image: new Circle({
-      radius: 6,
-      fill: new Fill({
-        color: "rgba(0, 0, 240, 1)",
-      }),
-      stroke: new Stroke({
-        color: "white",
-        width: 2,
-      }),
-    }),
-  });
+  // Keep instances in refs (avoids state timing / re-render weirdness)
+  const olMapRef = useRef<OlMap | null>(null);
+  const olMarkerRef = useRef<Feature<Point> | null>(null);
+  const olMarkerSourceRef = useRef<VectorSource<Feature<Point>> | null>(null);
 
-  const offlineStyle = new Style({
-    image: new Circle({
-      radius: 6,
-      fill: new Fill({
-        color: "rgba(0, 0, 0, 0.50)",
-      }),
-      stroke: new Stroke({
-        color: "white",
-        width: 2,
-      }),
-    }),
-  });
+  const mbMapRef = useRef<MbMap | null>(null);
 
-  const onlineStyle = new Style({
-    image: new Circle({
-      radius: 6,
-      fill: new Fill({
-        color: "rgba(50, 240, 50, 1)",
-      }),
-      stroke: new Stroke({
-        color: "white",
-        width: 2,
-      }),
-    }),
-  });
+  // Cancel queued bumps
+  const cancelOlBumpRef = useRef<(() => void) | null>(null);
+  const cancelMbBumpRef = useRef<(() => void) | null>(null);
 
+  const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
+  const hasMapbox = Boolean(mapboxToken);
+
+  // Read preferences once per mount (mirrors Map.tsx)
+  const settings = useMemo(() => {
+    const storedProvider = readJson<MapProvider | null>(LS_KEYS.provider, null);
+    const provider: MapProvider =
+      storedProvider === "mapbox" && !hasMapbox ? "osm" : storedProvider ?? "osm";
+
+    const mapboxStyle =
+      readJson<string | null>(LS_KEYS.mapboxStyle, null) ??
+      (import.meta.env.VITE_MAPBOX_STYLE as string | undefined) ??
+      "mapbox/dark-v11";
+
+    const osmBasemap =
+      readJson<OsmBasemap | null>(LS_KEYS.osmBasemap, null) ?? "carto_dark";
+
+    return { provider, mapboxStyle, osmBasemap };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasMapbox]);
+
+  const usingMapbox = settings.provider === "mapbox" && hasMapbox;
+
+  // Styles
+  const defaultStyle = useMemo(
+    () =>
+      new Style({
+        image: new Circle({
+          radius: 6,
+          fill: new Fill({ color: "rgba(0, 0, 240, 1)" }),
+          stroke: new Stroke({ color: "white", width: 2 }),
+        }),
+      }),
+    []
+  );
+
+  const offlineStyle = useMemo(
+    () =>
+      new Style({
+        image: new Circle({
+          radius: 6,
+          fill: new Fill({ color: "rgba(0, 0, 0, 0.50)" }),
+          stroke: new Stroke({ color: "white", width: 2 }),
+        }),
+      }),
+    []
+  );
+
+  const onlineStyle = useMemo(
+    () =>
+      new Style({
+        image: new Circle({
+          radius: 6,
+          fill: new Fill({ color: "rgba(50, 240, 50, 1)" }),
+          stroke: new Stroke({ color: "white", width: 2 }),
+        }),
+      }),
+    []
+  );
+
+  // ---- Init / attach + update (Mapbox OR OpenLayers)
   useEffect(() => {
-    if (olMap) return;
-    if (!node.position || !mapRef.current) return;
+    const el = mapRef.current;
+    if (!el) return;
 
-    const tileLayer = createBaseTileLayer();
+    const lonLat = getLonLat(node);
 
-    // Only apply the "dark invert" filter for OSM (including mapbox-without-token fallback)
-    const provider = (import.meta.env.VITE_MAP_PROVIDER ?? "osm") as
-      | "osm"
-      | "mapbox";
-    const hasMapboxToken = Boolean(import.meta.env.VITE_MAPBOX_TOKEN);
-    const usingMapbox = provider === "mapbox" && hasMapboxToken;
+    cancelOlBumpRef.current?.();
+    cancelOlBumpRef.current = null;
+    cancelMbBumpRef.current?.();
+    cancelMbBumpRef.current = null;
 
-    if (
-      !usingMapbox &&
-      window.matchMedia &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches
-    ) {
-      tileLayer.on("prerender", (evt: RenderEvent) => {
-        if (evt.context) {
-          const context = evt.context as CanvasRenderingContext2D;
-          context.filter = "grayscale(80%) invert(100%) ";
-          context.globalCompositeOperation = "source-over";
+    // -----------------------
+    // Mapbox path
+    // -----------------------
+    if (usingMapbox) {
+      if (olMapRef.current) {
+        try {
+          olMapRef.current.setTarget(undefined);
+        } catch {
         }
-      });
+        olMapRef.current = null;
+        olMarkerRef.current = null;
+        olMarkerSourceRef.current = null;
+      }
 
-      tileLayer.on("postrender", (evt: RenderEvent) => {
-        if (evt.context) {
-          const context = evt.context as CanvasRenderingContext2D;
-          context.filter = "none";
+      if (!lonLat) {
+        return;
+      }
+
+      // Create or update mapbox map
+      const existing = mbMapRef.current;
+      if (!existing) {
+        el.innerHTML = "";
+
+        if (!mapboxgl.accessToken) {
+          mapboxgl.accessToken = mapboxToken!;
         }
-      });
+
+        const styleUrl = toMapboxStyleUrl(settings.mapboxStyle);
+
+        const map = new mapboxgl.Map({
+          container: el,
+          style: styleUrl,
+          center: lonLat,
+          zoom: 12,
+          attributionControl: true,
+        });
+
+        mbMapRef.current = map;
+        map.addControl(
+          new mapboxgl.NavigationControl({ showCompass: true }),
+          "top-left"
+        );
+
+        const ensureLayers = () => {
+          if (!map.getSource("node")) {
+            map.addSource("node", {
+              type: "geojson",
+              data: makeNodeGeoJSON(node),
+            });
+          }
+
+          if (!map.getLayer("node-circle")) {
+            map.addLayer({
+              id: "node-circle",
+              type: "circle",
+              source: "node",
+              paint: {
+                "circle-radius": 8,
+                "circle-color": [
+                  "case",
+                  ["boolean", ["get", "online"], false],
+                  "#32f032",
+                  "rgba(0,0,0,0.50)",
+                ],
+                "circle-stroke-width": 2,
+                "circle-stroke-color": "white",
+              },
+            });
+          }
+
+          if (!map.getLayer("node-label")) {
+            map.addLayer({
+              id: "node-label",
+              type: "symbol",
+              source: "node",
+              layout: {
+                "text-field": ["get", "shortname"],
+                "text-size": 13,
+                "text-offset": [0, 1.2],
+                "text-anchor": "top",
+                "text-optional": true,
+              },
+              paint: {
+                "text-color": "#ffffff",
+                "text-halo-color": "#000000",
+                "text-halo-width": 1.25,
+              },
+            });
+          }
+        };
+
+        // Ensure on initial style load + future style changes
+        map.on("style.load", ensureLayers);
+        map.once("load", () => {
+          ensureLayers();
+          cancelMbBumpRef.current?.();
+          cancelMbBumpRef.current = bumpMb(map);
+        });
+
+        cancelMbBumpRef.current = bumpMb(map);
+      } else {
+        const src = existing.getSource("node") as MbGeoJSONSource | undefined;
+        if (src) src.setData(makeNodeGeoJSON(node) as any);
+        existing.jumpTo({ center: lonLat }); // keep zoom
+        cancelMbBumpRef.current = bumpMb(existing);
+      }
+
+      return () => {
+        cancelMbBumpRef.current?.();
+        cancelMbBumpRef.current = null;
+      };
     }
 
-    const map = new OlMap({
-      layers: [tileLayer],
-      target: mapRef.current,
-      view: new View({
-        center: fromLonLat([node.position.longitude, node.position.latitude]),
-        zoom: 12,
-      }),
-    });
-    setMap(map);
+    // -----------------------
+    // OpenLayers path
+    // -----------------------
+    if (mbMapRef.current) {
+      try {
+        mbMapRef.current.remove();
+      } catch {
+      }
+      mbMapRef.current = null;
+    }
 
-    const features: Feature<Point>[] = [];
-    const feature = new Feature({
-      geometry: new Point(
-        fromLonLat([node.position.longitude, node.position.latitude])
-      ),
-      node,
-    });
+    if (!lonLat) return;
 
-    feature.setStyle(node.active ? onlineStyle : offlineStyle);
-    features.push(feature);
+    const existingOl = olMapRef.current;
 
-    const layer = new VectorLayer({
-      style: defaultStyle,
-      source: new VectorSource({
-        features,
-      }),
-    });
-    map.addLayer(layer);
+    if (!existingOl) {
+      // fresh container
+      el.innerHTML = "";
+
+      const base = createBaseTileLayer({
+        provider: "osm",
+        osmBasemap: settings.osmBasemap,
+      });
+
+      const map = new OlMap({
+        layers: [base],
+        target: el as HTMLElement,
+        view: new View({
+          center: fromLonLat(lonLat),
+          zoom: 12,
+        }),
+      });
+
+      // marker
+      const feature = new Feature({
+        geometry: new Point(fromLonLat(lonLat)),
+        node,
+      });
+      feature.setStyle(isNodeOnline(node) ? onlineStyle : offlineStyle);
+
+      const src = new VectorSource({ features: [feature] });
+      const layer = new VectorLayer({
+        style: defaultStyle,
+        source: src,
+      });
+      map.addLayer(layer);
+
+      olMapRef.current = map;
+      olMarkerRef.current = feature;
+      olMarkerSourceRef.current = src;
+
+      cancelOlBumpRef.current = bumpOl(map);
+    } else {
+      // If the target got lost (layout remounts), re-attach
+      const target = existingOl.getTarget();
+      if (target !== el) {
+        try {
+          existingOl.setTarget(el as HTMLElement);
+        } catch {
+        }
+      }
+
+      // Update marker + center
+      const f = olMarkerRef.current;
+      if (f) {
+        f.setGeometry(new Point(fromLonLat(lonLat)));
+        f.setStyle(isNodeOnline(node) ? onlineStyle : offlineStyle);
+      }
+
+      existingOl.getView().setCenter(fromLonLat(lonLat));
+      cancelOlBumpRef.current = bumpOl(existingOl);
+    }
 
     return () => {
-      map.setTarget(undefined);
+      cancelOlBumpRef.current?.();
+      cancelOlBumpRef.current = null;
     };
+  }, [
+    node,
+    usingMapbox,
+    mapboxToken,
+    settings.mapboxStyle,
+    settings.osmBasemap,
+    defaultStyle,
+    offlineStyle,
+    onlineStyle,
+  ]);
 
-    // only needs to run once
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Final cleanup on unmount
+  useEffect(() => {
+    return () => {
+      cancelOlBumpRef.current?.();
+      cancelOlBumpRef.current = null;
+      cancelMbBumpRef.current?.();
+      cancelMbBumpRef.current = null;
+
+      if (mbMapRef.current) {
+        try {
+          mbMapRef.current.remove();
+        } catch {
+        }
+        mbMapRef.current = null;
+      }
+      if (olMapRef.current) {
+        try {
+          olMapRef.current.setTarget(undefined);
+        } catch {
+        }
+        olMapRef.current = null;
+      }
+    };
   }, []);
 
   return (
@@ -129,7 +512,13 @@ export const NodeMap = ({ node }: { node: INode }) => {
       id="map"
       className="map"
       ref={mapRef}
-      style={{ height: "300px", width: "100%" }}
+      style={{
+        height: "300px",
+        width: "100%",
+        borderRadius: "12px",
+        overflow: "hidden",
+        background: "rgba(0,0,0,0.25)",
+      }}
     />
   );
 };
