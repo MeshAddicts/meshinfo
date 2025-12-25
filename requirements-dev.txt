@@ -1,15 +1,3 @@
-aiomqtt
-aiohttp
-jinja2
-scipy
-python-dotenv
-fastapi
-discord.py
-requests
-meshtastic
-cryptography
-protobuf
-uvicorn
+-r requirements.txt
 pytest
 pytest-cov
-httpx

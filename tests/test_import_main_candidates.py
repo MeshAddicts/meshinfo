@@ -1,29 +1,13 @@
-import importlib.util
+import ast
 from pathlib import Path
 
-CANDIDATES = [
-    Path("main.py"),
-    Path("app.py"),
-    Path("backend/main.py"),
-    Path("meshinfo/main.py"),
-]
-
-def _import_by_path(path: Path):
-    spec = importlib.util.spec_from_file_location(path.stem, path)
-    assert spec and spec.loader, f"Could not load spec for {path}"
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)  # type: ignore[attr-defined]
-    return mod
-
-def test_import_entrypoints_if_present():
+def test_main_py_has_async_main():
     repo_root = Path(__file__).resolve().parents[1]
-    found_any = False
+    main_py = repo_root / "main.py"
+    assert main_py.exists(), "main.py missing"
 
-    for rel in CANDIDATES:
-        p = repo_root / rel
-        if p.exists():
-            found_any = True
-            _import_by_path(p)
-
-    # If none of the candidates exist, don't fail—this is "best effort".
-    assert True if not found_any else True
+    tree = ast.parse(main_py.read_text(encoding="utf-8"))
+    assert any(
+        isinstance(n, ast.AsyncFunctionDef) and n.name == "main"
+        for n in tree.body
+    ), "main.py should define `async def main()`"
