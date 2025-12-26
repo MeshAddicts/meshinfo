@@ -10,7 +10,8 @@ WORKDIR /frontend
 
 ENV NODE_ENV=dev
 
-RUN npm install -g corepack --force
+RUN rm -f /usr/local/bin/yarn /usr/local/bin/yarnpkg
+RUN npm install -g corepack
 RUN corepack enable
 RUN yarn
 
