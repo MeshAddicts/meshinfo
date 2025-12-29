@@ -115,7 +115,7 @@ async def main() -> None:
 
     # Load persisted data and record startup time (not mqtt connect time)
     data.load()
-    startup_time = datetime.datetime.now(ZoneInfo(tz)).isoformat()
+    startup_time = datetime.datetime.now(ZoneInfo(tz))
     data.update("startup_time", startup_time)
     await data.save()
 
