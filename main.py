@@ -113,10 +113,13 @@ async def main() -> None:
         time.tzset()
     logger.info("Timezone set to: %s", tz)
 
-    # Load persisted data and record startup time (not mqtt connect time)
     data.load()
     startup_time = datetime.datetime.now(ZoneInfo(tz))
     data.update("startup_time", startup_time)
+
+    # Placeholder until MQTT connects; MQTT will overwrite on successful connect.
+    data.update("mqtt_connect_time", startup_time)
+
     await data.save()
 
     loop = asyncio.get_running_loop()
