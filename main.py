@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 def init_runtime() -> Tuple[Config, MemoryDataStore]:
-    """Initialize env/config/datastore (no network side-effects)."""
+    """Initialize env/config/datastore without making any network connections."""
     load_dotenv()
     config = Config.load()
     data = MemoryDataStore(config)
