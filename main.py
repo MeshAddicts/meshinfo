@@ -79,7 +79,7 @@ async def supervise(
             raise
 
         except Exception:
-            delay = min(base_delay * (2 ** max(0, attempt - 2)), max_delay)
+            delay = min(base_delay * (2 ** max(0, attempt - 1)), max_delay)
             logger.exception("%s crashed; restarting in %.1fs", name, delay)
             await asyncio.sleep(delay)
 
