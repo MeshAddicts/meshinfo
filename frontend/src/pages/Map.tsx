@@ -1071,24 +1071,49 @@ export function Map() {
         return;
       }
     }
-    if (!serverNode || !mapRef.current) return;
+    if (!mapRef.current) return;
 
     mapRef.current.innerHTML = "";
 
     const defaultPosition = { latitude: 38.5816, longitude: -121.4944 };
-    const serverPosition = serverNode.map_position
+
+    // Prefer serverNode if it has a position, otherwise fall back to any node with a position
+    const fallbackNodeWithPos =
+      serverNode?.map_position
+        ? serverNode
+        : Object.values(nodes).find((n) => n.map_position);
+
+    const centerPos = fallbackNodeWithPos?.map_position
       ? {
-          latitude: serverNode.map_position[1],
-          longitude: serverNode.map_position[0],
+          latitude: fallbackNodeWithPos.map_position[1],
+          longitude: fallbackNodeWithPos.map_position[0],
         }
       : defaultPosition;
 
-    const savedCenter = JSON.parse(localStorage.getItem("savedCenter") ?? "[]");
+    // Safer savedCenter parsing (avoid NaN / wrong shape)
+    let savedCenter: unknown = [];
+    try {
+      savedCenter = JSON.parse(localStorage.getItem("savedCenter") ?? "[]");
+    } catch {
+      savedCenter = [];
+    }
+
+    const saved = Array.isArray(savedCenter) ? savedCenter : [];
+    const savedLon = typeof saved[0] === "number" ? saved[0] : undefined;
+    const savedLat = typeof saved[1] === "number" ? saved[1] : undefined;
+
     const initialCenter = fromLonLat([
-      savedCenter[0] ?? serverPosition.longitude,
-      savedCenter[1] ?? serverPosition.latitude,
+      savedLon ?? centerPos.longitude,
+      savedLat ?? centerPos.latitude,
     ]);
-    const initialZoom = JSON.parse(localStorage.getItem("savedZoom") ?? "9.5");
+
+    let initialZoom = 9.5;
+    try {
+      const z = JSON.parse(localStorage.getItem("savedZoom") ?? "9.5");
+      if (typeof z === "number" && Number.isFinite(z)) initialZoom = z;
+    } catch {
+      // ignore
+    }
 
     const tileLayer = createBaseTileLayer({
       provider: "osm",
