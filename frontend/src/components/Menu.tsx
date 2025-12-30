@@ -19,7 +19,6 @@ export const Menu = ({
   onDarkChange: (dark: boolean) => void;
 }) => {
   const { data: config } = useGetConfigQuery();
-
   const [showMenu, setShowMenu] = useState(false);
 
   const handleDarkChange = (dark: boolean) => {
@@ -29,40 +28,142 @@ export const Menu = ({
 
   return (
     <>
+      {/* Mobile Hamburger Button */}
       <button
         type="button"
-        className={`fixed z-50 top-4 left-4 p-2 rounded-full hover:scale-110 transform transition-all duration-300 ${showMenu ? "bg-gray-100 dark:bg-gray-700" : "bg-gray-300 dark:bg-gray-800"}`}
+        className={`lg:hidden fixed z-50 top-4 left-4 p-2 rounded-lg shadow-lg backdrop-blur-sm border transition-all duration-200 ${
+          showMenu 
+            ? "bg-gray-800 dark:bg-gray-200 border-gray-600 dark:border-gray-400" 
+            : "bg-white/90 dark:bg-gray-800/90 border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700"
+        }`}
         onClick={() => setShowMenu(!showMenu)}
-        aria-label="Show/Hide Menu"
+        aria-label="Toggle Menu"
+        aria-expanded={showMenu}
       >
-        {showMenu ? (
-          <img
-            width="10"
-            height="14"
-            src={`${import.meta.env.BASE_URL}images/icons/close.svg`}
-            className="dark:invert"
-            alt="Close"
-          />
-        ) : (
-          <img
-            width="14"
-            src={`${import.meta.env.BASE_URL}images/icons/menu.svg`}
-            className="dark:invert"
-            alt="Menu"
-          />
-        )}
+        <div className="w-5 h-5 flex flex-col justify-center items-center">
+          {showMenu ? (
+            <svg 
+              className="w-4 h-4 text-white dark:text-gray-800" 
+              fill="none" 
+              stroke="currentColor" 
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          ) : (
+            <svg 
+              className="w-4 h-4 text-gray-700 dark:text-gray-200" 
+              fill="none" 
+              stroke="currentColor" 
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          )}
+        </div>
       </button>
 
+      {/* Mobile Backdrop */}
+      <div 
+        className={`lg:hidden fixed inset-0 bg-black/20 backdrop-blur-sm z-40 transition-opacity duration-200 ${
+          showMenu ? "opacity-100" : "opacity-0 pointer-events-none"
+        }`}
+        onClick={() => setShowMenu(false)}
+      />
+
+      {/* Navigation Panel */}
       <div
-        className={`w-full lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-60 lg:flex-col ${showMenu ? "" : "hidden"} dark:text-gray-100 z-0`}
+        className={`w-full lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-60 lg:flex-col ${
+          showMenu ? "" : "hidden"
+        } dark:text-gray-100 z-0 lg:z-50`}
       >
-        <div className="flex flex-col px-6 pb-4 overflow-y-auto bg-gray-300 dark:bg-gray-800 border-r-2 grow gap-y-5 border-r-cyan-600 pt-14 lg:pt-0">
+        {/* Mobile Drawer */}
+        <div className="lg:hidden fixed inset-y-0 left-0 z-50 w-80 max-w-[80vw] bg-white dark:bg-gray-900 shadow-xl border-r border-gray-200 dark:border-gray-700">
+          <div className="flex flex-col h-full overflow-hidden">
+            {/* Mobile Header */}
+            <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+              <div className="mb-2">
+                {config?.mesh?.name?.split(" ").map((word, index) => (
+                  <div
+                    className="text-xl font-bold dark:text-gray-50"
+                    key={`mobile-meshname-${index}`}
+                  >
+                    {word[0]}
+                    <span className="text-gray-500 dark:text-gray-400 font-normal">
+                      {word.slice(1)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              {config?.mesh?.description && (
+                <p className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
+                  {config.mesh.description}
+                </p>
+              )}
+            </div>
+
+            {/* Mobile Navigation */}
+            <div className="flex-1 overflow-y-auto px-2 py-3 space-y-1">
+              <div className="space-y-1">
+                <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 py-2">Mesh</h3>
+                <Link to="/chat" onClick={() => setShowMenu(false)} className="block">
+                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Chat</span>
+                  </div>
+                </Link>
+                <Link to="/map" onClick={() => setShowMenu(false)} className="block">
+                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Map</span>
+                  </div>
+                </Link>
+                <Link to="/nodes" onClick={() => setShowMenu(false)} className="block">
+                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Nodes</span>
+                  </div>
+                </Link>
+                <Link to="/neighbors" onClick={() => setShowMenu(false)} className="block">
+                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Node Neighbors</span>
+                  </div>
+                </Link>
+                <Link to="/stats" onClick={() => setShowMenu(false)} className="block">
+                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Stats</span>
+                  </div>
+                </Link>
+                <Link to="/telemetry" onClick={() => setShowMenu(false)} className="block">
+                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Telemetry</span>
+                  </div>
+                </Link>
+                <Link to="/traceroutes" onClick={() => setShowMenu(false)} className="block">
+                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Traceroutes</span>
+                  </div>
+                </Link>
+              </div>
+            </div>
+
+            {/* Mobile Footer */}
+            <div className="p-4 border-t border-gray-200 dark:border-gray-700">
+              <button
+                onClick={() => handleDarkChange(!isDark)}
+                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+              >
+                {isDark ? "🌞" : "🌙"}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Desktop Sidebar */}
+        <div className="hidden lg:flex lg:flex-col px-6 pb-4 overflow-y-auto bg-gray-300 dark:bg-gray-800 border-r-2 grow gap-y-5 border-r-cyan-600">
           <div className="flex items-center h-24 mt-4 shrink-0">
             <div className="text-2xl">
               {config?.mesh?.name?.split(" ").map((word, index) => (
                 <div
                   className="p-0 m-0 dark:text-gray-50"
-                  // eslint-disable-next-line react/no-array-index-key
                   key={`meshname-${index}`}
                 >
                   {word[0]}
@@ -104,19 +205,6 @@ export const Menu = ({
                 Chat
               </Link>
             </div>
-            {/* TODO <div className="mb-1">
-              <Link to="graph" relative="path">
-                <img
-                  src={`${import.meta.env.BASE_URL}images/icons/map.svg`}
-                  width="20"
-                  height="20"
-                  className="inline-block mr-2 dark:invert"
-                  alt="graph icon"
-                  style={{ verticalAlign: "middle" }}
-                />
-                Graph
-              </Link>
-            </div> */}
             <div className="mb-1">
               <Link
                 to="map"
@@ -238,7 +326,6 @@ export const Menu = ({
           <nav className="flex flex-col flex-1">
             <h3 className="font-bold">Tools</h3>
             {(config?.mesh?.tools ?? defaultTools).map((tool, index) => (
-              // eslint-disable-next-line react/no-array-index-key
               <div key={`tools-${index}`} className="mb-1">
                 <a
                   href={tool.url}
@@ -275,14 +362,6 @@ export const Menu = ({
               </a>
             </div>
           </nav>
-
-          <div className="flex-grow" />
-
-          {/*
-          TODO <div className="flex flex-col">
-            <div className="font-bold">Data Updated</div>
-            <div></div>
-          </div> */}
 
           <div className="flex-grow" />
 
