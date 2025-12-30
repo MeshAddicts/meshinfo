@@ -1654,7 +1654,7 @@ export function Map() {
       {/* Node Details Panel */}
       <div
         id="details"
-        className="hidden fixed top-4 right-4 z-[1050] w-80 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-900 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 max-h-[calc(100vh-2rem)] overflow-hidden"
+        className="hidden fixed top-4 right-4 z-[1050] w-80 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-900 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 max-h-[calc(100vh-2rem)] overflow-hidden flex flex-col"
       >
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
           <div className="flex-1 min-w-0">
@@ -1704,7 +1704,7 @@ export function Map() {
         </div>
         <div
           id="details-content"
-          className="p-4 overflow-y-auto max-h-96 text-sm text-gray-700 dark:text-gray-300"
+          className="p-4 overflow-y-auto min-h-0 flex-1 text-sm text-gray-700 dark:text-gray-300"
         />
       </div>
 
