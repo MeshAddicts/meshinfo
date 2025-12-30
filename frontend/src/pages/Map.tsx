@@ -460,20 +460,26 @@ export function Map() {
     if (!usingMapbox) return;
     if (mbMapRef.current) return;
     if (!mapRef.current) return;
-    if (!serverNode) return;
 
     const defaultPosition = { latitude: 38.5816, longitude: -121.4944 };
-    const serverPosition = serverNode.map_position
+
+    // Prefer serverNode if available, otherwise fall back to any node with a position
+    const fallbackNodeWithPos =
+      serverNode?.map_position
+        ? serverNode
+        : Object.values(nodesRef.current).find((n) => n.map_position);
+
+    const centerPos = fallbackNodeWithPos?.map_position
       ? {
-          latitude: serverNode.map_position[1],
-          longitude: serverNode.map_position[0],
+          latitude: fallbackNodeWithPos.map_position[1],
+          longitude: fallbackNodeWithPos.map_position[0],
         }
       : defaultPosition;
 
     const savedCenter = JSON.parse(localStorage.getItem("savedCenter") ?? "[]");
     const initialCenter: [number, number] = [
-      savedCenter[0] ?? serverPosition.longitude,
-      savedCenter[1] ?? serverPosition.latitude,
+      savedCenter[0] ?? centerPos.longitude,
+      savedCenter[1] ?? centerPos.latitude,
     ];
     const initialZoom = JSON.parse(localStorage.getItem("savedZoom") ?? "9.5");
 
