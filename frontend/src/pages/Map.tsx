@@ -60,9 +60,6 @@ function writeJson<T>(key: string, value: T) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch (err) {
-    // Log storage write failures (e.g., quota exceeded, storage disabled) instead of failing silently
-    // This keeps normal behavior unchanged while making issues diagnosable
-    // eslint-disable-next-line no-console
     console.warn("Failed to persist map setting to localStorage", { key, error: err });
   }
 }
@@ -244,7 +241,10 @@ function applyMapboxClusterVisibility(map: MbMap, enabled: boolean): void {
 
 export function Map() {
   const mapRef = useRef<HTMLDivElement>(null);
+
+  // Settings panel refs (panel + toggle button)
   const settingsPanelRef = useRef<HTMLDivElement>(null);
+  const settingsToggleRef = useRef<HTMLButtonElement>(null);
 
   // OL map state (OSM path)
   const [olMap, setOlMap] = useState<OlMap>();
@@ -266,7 +266,7 @@ export function Map() {
   const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
   const hasMapbox = Boolean(mapboxToken);
 
-  // ----- UI settings (persisted)
+  // ----- UI settings persistence
   const [provider, setProvider] = useState<MapProvider>(() => {
     const stored = readJson<MapProvider | null>(LS_KEYS.provider, null);
     if (stored) return stored === "mapbox" && !hasMapbox ? "osm" : stored;
@@ -299,7 +299,7 @@ export function Map() {
     return stored ?? true;
   });
 
-  // Settings panel visibility - NEW for mobile improvements
+  // Settings panel visibility
   const [settingsPanelOpen, setSettingsPanelOpen] = useState<boolean>(() => {
     const stored = readJson<boolean | null>(LS_KEYS.settingsPanelOpen, null);
     // Default to false on mobile, true on desktop
@@ -326,17 +326,20 @@ export function Map() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasMapbox]);
 
-  // Close settings panel when clicking outside (mobile only) - NEW
+  // Close settings panel when clicking outside (mobile only)
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (settingsPanelRef.current && !settingsPanelRef.current.contains(event.target as Node)) {
-        if (window.innerWidth < 1024) { // Only auto-close on mobile
-          setSettingsPanelOpen(false);
-        }
-      }
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+      if (window.innerWidth >= 1024) return; // desktop: ignore
+      const target = event.target as Node;
+
+      // allow clicks inside the panel OR on the toggle button
+      if (settingsPanelRef.current?.contains(target)) return;
+      if (settingsToggleRef.current?.contains(target)) return;
+
+      setSettingsPanelOpen(false);
     };
 
-    if (settingsPanelOpen) {
+    if (settingsPanelOpen && window.innerWidth < 1024) {
       document.addEventListener("mousedown", handleClickOutside);
       document.addEventListener("touchstart", handleClickOutside);
     }
@@ -1370,232 +1373,308 @@ export function Map() {
     <div className="h-screen relative">
       <div id="map" className="map" ref={mapRef} />
 
-      {/* Settings Toggle Button (Mobile Only) - NEW */}
-      <button
-        type="button"
-        onClick={() => setSettingsPanelOpen(!settingsPanelOpen)}
-        className={`lg:hidden fixed top-4 right-4 z-[1100] p-2 rounded-lg shadow-lg backdrop-blur-sm border transition-all duration-200 ${
-          settingsPanelOpen 
-            ? "bg-gray-800 dark:bg-gray-200 border-gray-600 dark:border-gray-400" 
-            : "bg-white/90 dark:bg-gray-800/90 border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700"
-        }`}
-        aria-label="Toggle Map Settings"
-        aria-expanded={settingsPanelOpen}
-      >
-        <div className="w-5 h-5 flex items-center justify-center">
-          {settingsPanelOpen ? (
-            <svg 
-              className="w-4 h-4 text-white dark:text-gray-800" 
-              fill="none" 
-              stroke="currentColor" 
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          ) : (
-            <svg 
-              className="w-4 h-4 text-gray-700 dark:text-gray-200" 
-              fill="none" 
-              stroke="currentColor" 
-              viewBox="0 0 24 24"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100-4m0 4v2m0-6V4" />
-            </svg>
-          )}
-        </div>
-      </button>
-
-      {/* Settings Panel - COMPLETELY REDESIGNED */}
-      <div
-        ref={settingsPanelRef}
-        className={`fixed z-[1100] transition-all duration-300 ease-in-out ${
-          // Desktop: Always visible on left, mobile: slide in from right
-          typeof window !== 'undefined' && window.innerWidth >= 1024
-            ? "left-2 top-1/2 -translate-y-1/2"
-            : `top-16 right-4 ${settingsPanelOpen ? "translate-x-0 opacity-100" : "translate-x-full opacity-0 pointer-events-none"}`
-        } 
-        w-64 max-w-[calc(100vw-2rem)] rounded-xl shadow-lg border border-gray-200/70 dark:border-gray-700/70 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md`}
-      >
-        <div className="p-4">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold text-gray-900 dark:text-gray-100">
-              Map Settings
-            </h3>
-            {/* Close button for mobile - NEW */}
-            <button
-              type="button"
-              onClick={() => setSettingsPanelOpen(false)}
-              className="lg:hidden p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-              aria-label="Close settings"
-            >
-              <svg className="w-4 h-4 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-
-          <div className="space-y-4 text-sm">
-            {/* Provider */}
-            <div>
-              <label htmlFor="provider-select" className="text-xs font-medium uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-2 block">
-                Provider
-              </label>
-              <select
-                id="provider-select"
-                aria-label="Map provider selection"
-                className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
-                value={provider}
-                onChange={(e) => setProvider(e.target.value as MapProvider)}
+      {/* Bottom-right anchor: Legend + Map Settings stacked */}
+      <div className="fixed bottom-4 right-4 z-[1100]">
+        {/* Mobile toggle sits with the panel */}
+        <button
+          ref={settingsToggleRef}
+          type="button"
+          onClick={() => setSettingsPanelOpen((v) => !v)}
+          className="lg:hidden mb-2 ml-auto block p-2 rounded-lg shadow-lg backdrop-blur-sm border transition-all duration-200
+                    bg-white/90 dark:bg-gray-800/90 border-gray-200 dark:border-gray-600
+                    hover:bg-gray-50 dark:hover:bg-gray-700"
+          aria-label="Toggle Map Settings"
+          aria-expanded={settingsPanelOpen}
+        >
+          <div className="w-5 h-5 flex items-center justify-center">
+            {settingsPanelOpen ? (
+              <svg
+                className="w-4 h-4 text-gray-700 dark:text-gray-200"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
               >
-                <option value="osm">OSM (OpenLayers)</option>
-                <option value="mapbox" disabled={!canUseMapbox}>
-                  Mapbox (GL JS){!canUseMapbox ? " — token not configured" : ""}
-                </option>
-              </select>
-            </div>
-
-            {/* Style/Basemap */}
-            {usingMapbox ? (
-              <div>
-                <label htmlFor="mapbox-style-select" className="text-xs font-medium uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-2 block">
-                  Mapbox Style
-                </label>
-                <select
-                  id="mapbox-style-select"
-                  aria-label="Mapbox map style selection"
-                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
-                  value={mapboxStyle}
-                  onChange={(e) => setMapboxStyle(e.target.value)}
-                >
-                  <option value="mapbox/dark-v11">Dark</option>
-                  <option value="mapbox/streets-v12">Streets</option>
-                  <option value="mapbox/satellite-streets-v12">Satellite Streets</option>
-                </select>
-              </div>
-            ) : (
-              <div>
-                <label htmlFor="osm-basemap-select" className="text-xs font-medium uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-2 block">
-                  OSM Basemap
-                </label>
-                <select
-                  id="osm-basemap-select"
-                  aria-label="OpenStreetMap basemap selection"
-                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
-                  value={osmBasemap}
-                  onChange={(e) => setOsmBasemap(e.target.value as OsmBasemap)}
-                >
-                  <option value="osm">OSM Standard</option>
-                  <option value="osm_hot">OSM HOT</option>
-                  <option value="carto_positron">Carto Positron (Light)</option>
-                  <option value="carto_dark">Carto Dark Matter (Dark)</option>
-                </select>
-              </div>
-            )}
-
-            {/* Last Seen Filter */}
-            <div>
-              <label htmlFor="recent-days-select" className="text-xs font-medium uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-2 block">
-                Show Last Seen
-              </label>
-              <select
-                id="recent-days-select"
-                aria-label="Filter nodes by last seen timeframe"
-                className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
-                value={recentDays}
-                onChange={(e) => setRecentDays(Number(e.target.value))}
-              >
-                <option value={30}>30 days</option>
-                <option value={14}>14 days</option>
-                <option value={7}>7 days</option>
-                <option value={5}>5 days</option>
-                <option value={3}>3 days</option>
-                <option value={1}>1 day</option>
-              </select>
-            </div>
-
-            {/* Clustering Toggle */}
-            <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
-              <div className="flex flex-col">
-                <label htmlFor="clustering-checkbox" className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                  Node Clustering
-                </label>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  {!usingMapbox ? "Mapbox only" : "Group nearby nodes"}
-                </p>
-              </div>
-              <div className="relative">
-                <input
-                  id="clustering-checkbox"
-                  type="checkbox"
-                  checked={clusterEnabled}
-                  onChange={(e) => setClusterEnabled(e.target.checked)}
-                  disabled={!usingMapbox}
-                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
-                  aria-label="Toggle node clustering (Mapbox only)"
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 18L18 6M6 6l12 12"
                 />
-              </div>
+              </svg>
+            ) : (
+              <svg
+                className="w-4 h-4 text-gray-700 dark:text-gray-200"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100-4m0 4v2m0-6V4"
+                />
+              </svg>
+            )}
+          </div>
+        </button>
+
+        {/* Map Settings (sits above legend) */}
+        <div
+          ref={settingsPanelRef}
+          className={`absolute right-0 bottom-full mb-2 w-64 max-w-[calc(100vw-2rem)] rounded-xl shadow-lg border border-gray-200/70 dark:border-gray-700/70 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md transition-all duration-300 ease-in-out
+            ${
+              settingsPanelOpen
+                ? "translate-y-0 opacity-100 pointer-events-auto"
+                : "translate-y-2 opacity-0 pointer-events-none"
+            }
+            lg:translate-y-0 lg:opacity-100 lg:pointer-events-auto`}
+        >
+          <div className="p-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-gray-900 dark:text-gray-100">
+                Map Settings
+              </h3>
+
+              {/* Close button for mobile */}
+              <button
+                type="button"
+                onClick={() => setSettingsPanelOpen(false)}
+                className="lg:hidden p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                aria-label="Close settings"
+              >
+                <svg
+                  className="w-4 h-4 text-gray-500 dark:text-gray-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
             </div>
 
-            {/* Info Note */}
-            {!canUseMapbox && (
-              <div className="text-xs text-gray-500 dark:text-gray-400 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
-                Mapbox features are disabled because <code className="bg-gray-200 dark:bg-gray-700 px-1 py-0.5 rounded text-xs">VITE_MAPBOX_TOKEN</code> is not configured.
+            <div className="space-y-4 text-sm">
+              {/* Provider */}
+              <div>
+                <label
+                  htmlFor="provider-select"
+                  className="text-xs font-medium uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-2 block"
+                >
+                  Provider
+                </label>
+                <select
+                  id="provider-select"
+                  aria-label="Map provider selection"
+                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
+                  value={provider}
+                  onChange={(e) => setProvider(e.target.value as MapProvider)}
+                >
+                  <option value="osm">OSM (OpenLayers)</option>
+                  <option value="mapbox" disabled={!canUseMapbox}>
+                    Mapbox (GL JS)
+                    {!canUseMapbox ? " — token not configured" : ""}
+                  </option>
+                </select>
               </div>
-            )}
+
+              {/* Style/Basemap */}
+              {usingMapbox ? (
+                <div>
+                  <label
+                    htmlFor="mapbox-style-select"
+                    className="text-xs font-medium uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-2 block"
+                  >
+                    Mapbox Style
+                  </label>
+                  <select
+                    id="mapbox-style-select"
+                    aria-label="Mapbox map style selection"
+                    className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
+                    value={mapboxStyle}
+                    onChange={(e) => setMapboxStyle(e.target.value)}
+                  >
+                    <option value="mapbox/dark-v11">Dark</option>
+                    <option value="mapbox/streets-v12">Streets</option>
+                    <option value="mapbox/satellite-streets-v12">
+                      Satellite Streets
+                    </option>
+                  </select>
+                </div>
+              ) : (
+                <div>
+                  <label
+                    htmlFor="osm-basemap-select"
+                    className="text-xs font-medium uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-2 block"
+                  >
+                    OSM Basemap
+                  </label>
+                  <select
+                    id="osm-basemap-select"
+                    aria-label="OpenStreetMap basemap selection"
+                    className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
+                    value={osmBasemap}
+                    onChange={(e) =>
+                      setOsmBasemap(e.target.value as OsmBasemap)
+                    }
+                  >
+                    <option value="osm">OSM Standard</option>
+                    <option value="osm_hot">OSM HOT</option>
+                    <option value="carto_positron">Carto Positron (Light)</option>
+                    <option value="carto_dark">Carto Dark Matter (Dark)</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Last Seen Filter */}
+              <div>
+                <label
+                  htmlFor="recent-days-select"
+                  className="text-xs font-medium uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-2 block"
+                >
+                  Show Last Seen
+                </label>
+                <select
+                  id="recent-days-select"
+                  aria-label="Filter nodes by last seen timeframe"
+                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
+                  value={recentDays}
+                  onChange={(e) => setRecentDays(Number(e.target.value))}
+                >
+                  <option value={30}>30 days</option>
+                  <option value={14}>14 days</option>
+                  <option value={7}>7 days</option>
+                  <option value={5}>5 days</option>
+                  <option value={3}>3 days</option>
+                  <option value={1}>1 day</option>
+                </select>
+              </div>
+
+              {/* Clustering Toggle */}
+              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
+                <div className="flex flex-col">
+                  <label
+                    htmlFor="clustering-checkbox"
+                    className="text-sm font-medium text-gray-900 dark:text-gray-100"
+                  >
+                    Node Clustering
+                  </label>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {!usingMapbox ? "Mapbox only" : "Group nearby nodes"}
+                  </p>
+                </div>
+                <div className="relative">
+                  <input
+                    id="clustering-checkbox"
+                    type="checkbox"
+                    checked={clusterEnabled}
+                    onChange={(e) => setClusterEnabled(e.target.checked)}
+                    disabled={!usingMapbox}
+                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                    aria-label="Toggle node clustering (Mapbox only)"
+                  />
+                </div>
+              </div>
+
+              {/* Info Note */}
+              {!canUseMapbox && (
+                <div className="text-xs text-gray-500 dark:text-gray-400 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
+                  Mapbox features are disabled because{" "}
+                  <code className="bg-gray-200 dark:bg-gray-700 px-1 py-0.5 rounded text-xs">
+                    VITE_MAPBOX_TOKEN
+                  </code>{" "}
+                  is not configured.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Legend (anchored bottom-right) */}
+        <div
+          id="legend"
+          className="bg-white/95 dark:bg-gray-900/95 backdrop-blur-md rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 p-3"
+        >
+          <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">
+            Legend
+          </div>
+          <div className="space-y-1 text-xs text-gray-600 dark:text-gray-300">
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-1 bg-green-400 rounded-full" />
+              <span>Heard A Neighbor</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-1 bg-blue-400 rounded-full" />
+              <span>Heard By Neighbor</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-1 bg-purple-400 rounded-full" />
+              <span>Mutual Connection</span>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Node Details Panel - IMPROVED positioning */}
-      <div id="details" className="hidden fixed top-4 right-4 lg:right-72 z-[1050] w-80 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-900 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 max-h-[calc(100vh-2rem)] overflow-hidden">
+      {/* Node Details Panel */}
+      <div
+        id="details"
+        className="hidden fixed top-4 right-4 z-[1050] w-80 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-900 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 max-h-[calc(100vh-2rem)] overflow-hidden"
+      >
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
           <div className="flex-1 min-w-0">
-            <div id="details-title" className="text-lg font-semibold text-gray-900 dark:text-gray-100 truncate">
+            <div
+              id="details-title"
+              className="text-lg font-semibold text-gray-900 dark:text-gray-100 truncate"
+            >
               NODE NAME
             </div>
-            <div id="details-subtitle" className="text-sm text-gray-500 dark:text-gray-400 truncate">
+            <div
+              id="details-subtitle"
+              className="text-sm text-gray-500 dark:text-gray-400 truncate"
+            >
               NODE
             </div>
           </div>
-          <button 
+          <button
             onClick={() => {
               const panel = document.getElementById("details");
               if (panel) {
                 panel.classList.add("hidden");
                 clearDetailsPanel();
                 // Clear any selected nodes and links
-                const linksSource = mbMapRef.current?.getSource("links") as MbGeoJSONSource | undefined;
+                const linksSource = mbMapRef.current?.getSource(
+                  "links"
+                ) as MbGeoJSONSource | undefined;
                 linksSource?.setData(emptyLineFeatureCollection());
               }
             }}
             className="ml-3 p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
             aria-label="Close details"
           >
-            <svg className="w-4 h-4 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            <svg
+              className="w-4 h-4 text-gray-500 dark:text-gray-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M6 18L18 6M6 6l12 12"
+              />
             </svg>
           </button>
         </div>
-        <div id="details-content" className="p-4 overflow-y-auto max-h-96 text-sm text-gray-700 dark:text-gray-300" />
-      </div>
-
-      {/* Legend - IMPROVED styling */}
-      <div id="legend" className="fixed bottom-4 right-4 z-[1000] bg-white/95 dark:bg-gray-900/95 backdrop-blur-md rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 p-3">
-        <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">Legend</div>
-        <div className="space-y-1 text-xs text-gray-600 dark:text-gray-300">
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-1 bg-green-400 rounded-full" />
-            <span>Heard A Neighbor</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-1 bg-blue-400 rounded-full" />
-            <span>Heard By Neighbor</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-1 bg-purple-400 rounded-full" />
-            <span>Mutual Connection</span>
-          </div>
-        </div>
+        <div
+          id="details-content"
+          className="p-4 overflow-y-auto max-h-96 text-sm text-gray-700 dark:text-gray-300"
+        />
       </div>
 
       <style>
