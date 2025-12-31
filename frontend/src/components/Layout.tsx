@@ -61,8 +61,8 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
       <Menu isDark={isDark} onDarkChange={(dark) => setIsDark(dark)} />
 
       <div
-        className={`lg:pl-60 dark:bg-gray-950 dark:text-gray-100 pt-14 lg:pt-0
-          ${isMap ? "h-full overflow-hidden" : ""}`}
+        className={`lg:pl-60 dark:bg-gray-950 dark:text-gray-100 lg:pt-0
+          ${isMap ? "pt-0 h-full overflow-hidden" : "pt-14"}`}
       >
         <main className={isMap ? "h-full" : "py-1"}>
           <div
