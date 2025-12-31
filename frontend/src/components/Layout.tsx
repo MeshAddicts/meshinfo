@@ -6,6 +6,7 @@ import { Menu } from "./Menu";
 export const Layout = ({ children }: { children: React.ReactNode }) => {
   const { pathname } = useLocation();
   const [isDark, setIsDark] = useState(false);
+  const isMap = pathname === "/map";
 
   // make sure the root element is updated with the dark class
   //  move this out eventually
@@ -56,15 +57,16 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   return (
-    <div>
+    <div className={isMap ? "h-[100dvh] overflow-hidden" : ""}>
       <Menu isDark={isDark} onDarkChange={(dark) => setIsDark(dark)} />
 
       <div
-        className={`lg:pl-60 dark:bg-gray-950 dark:text-gray-100 ${pathname === "/map" ? "h-screen" : ""} pt-14 lg:pt-0`}
+        className={`lg:pl-60 dark:bg-gray-950 dark:text-gray-100 pt-14 lg:pt-0
+          ${isMap ? "h-full overflow-hidden" : ""}`}
       >
-        <main className={`${pathname === "/map" ? "h-screen" : "py-1 "}`}>
+        <main className={isMap ? "h-full" : "py-1"}>
           <div
-            className={`w-full ${pathname === "/map" ? "h-screen" : "px-4 py-2 sm:px-6 sm:py-2 lg:px-6 lg:py-2"}`}
+            className={`w-full ${isMap ? "h-full" : "px-4 py-2 sm:px-6 sm:py-2 lg:px-6 lg:py-2"}`}
           >
             {children}
           </div>
