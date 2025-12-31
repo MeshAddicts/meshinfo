@@ -424,10 +424,51 @@ export function Map() {
     const { nodePanel, nodeTitle, nodeSubtitle, nodeContent } = getDetailsDom();
     if (!nodePanel || !nodeTitle || !nodeSubtitle || !nodeContent) return;
 
-    nodeTitle.innerHTML = "";
-    nodeSubtitle.innerHTML = "";
+    nodeTitle.textContent = "";
+    nodeSubtitle.textContent = "";
     nodeContent.innerHTML = "";
+
+    nodePanel.classList.add("hidden");
   }
+
+  function clearMapboxSelectionAndOverlays() {
+  const map = mbMapRef.current;
+  const selectedId = mbSelectedIdRef.current;
+
+  if (map && selectedId) {
+    // Clear selection ring (feature-state) for both sources (clustered + plain)
+    try {
+      if (map.getSource("nodes_clustered")) {
+        map.setFeatureState(
+          { source: "nodes_clustered", id: selectedId },
+          { selected: false }
+        );
+      }
+    } catch {}
+
+    try {
+      if (map.getSource("nodes_plain")) {
+        map.setFeatureState(
+          { source: "nodes_plain", id: selectedId },
+          { selected: false }
+        );
+      }
+    } catch {}
+  }
+
+  mbSelectedIdRef.current = null;
+
+  // Clear link lines if present
+  if (map) {
+    try {
+      const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
+      linksSource?.setData(emptyLineFeatureCollection());
+    } catch {}
+  }
+
+  // Hide + clear the panel
+  clearDetailsPanel();
+}
 
   // ----------------------------
   // Provider switching cleanup
@@ -958,10 +999,7 @@ export function Map() {
           map.queryRenderedFeatures(e.point, { layers: ["clusters"] }).length > 0;
         if (hitNode || hitCluster) return;
 
-        clearSelected();
-        clearDetailsPanel();
-        const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
-        linksSource?.setData(emptyLineFeatureCollection());
+        clearMapboxSelectionAndOverlays();
       });
     };
 
@@ -1206,9 +1244,7 @@ export function Map() {
       neighborLayers.length = 0;
 
       if (map.hasFeatureAtPixel(event.pixel) !== true) {
-        nodeTitle.innerHTML = "";
-        nodeSubtitle.innerHTML = "";
-        nodeContent.innerHTML = "";
+        clearDetailsPanel();
         return;
       }
 
@@ -1654,7 +1690,11 @@ export function Map() {
       {/* Node Details Panel */}
       <div
         id="details"
-        className="hidden fixed top-4 right-4 z-[1050] w-80 max-w-[calc(100vw-2rem)] bg-white dark:bg-gray-900 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 max-h-[calc(100vh-2rem)] overflow-hidden flex flex-col"
+        className="hidden fixed top-2 right-2 z-[1050]
+           w-[92vw] sm:w-80 max-w-[calc(100vw-1rem)]
+           bg-white dark:bg-gray-900 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700
+           max-h-[60vh] sm:max-h-[calc(100vh-2rem)]
+           overflow-hidden flex flex-col"
       >
         <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
           <div className="flex-1 min-w-0">
@@ -1673,16 +1713,7 @@ export function Map() {
           </div>
           <button
             onClick={() => {
-              const panel = document.getElementById("details");
-              if (panel) {
-                panel.classList.add("hidden");
-                clearDetailsPanel();
-                // Clear any selected nodes and links
-                const linksSource = mbMapRef.current?.getSource(
-                  "links"
-                ) as MbGeoJSONSource | undefined;
-                linksSource?.setData(emptyLineFeatureCollection());
-              }
+              clearMapboxSelectionAndOverlays();
             }}
             className="ml-3 p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
             aria-label="Close details"
