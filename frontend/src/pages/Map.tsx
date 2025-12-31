@@ -606,9 +606,10 @@ export function Map() {
       localStorage.setItem("savedZoom", map.getZoom().toString());
     });
 
+    const isMobile = window.innerWidth < 1024;
     map.addControl(
       new mapboxgl.NavigationControl({ showCompass: true }),
-      "top-left"
+      isMobile ? "top-right" : "top-left"
     );
 
     const ensureSourcesAndLayers = () => {
@@ -993,7 +994,7 @@ export function Map() {
       // Clicking empty space clears
       map.on("click", (e) => {
         const hitNode =
-          map.queryRenderedFeatures(e.point, { layers: ["unclustered-nodes", "plain-nodes"] })
+          map.queryRenderedFeatures(e.point, { layers: ["unclustered-nodes", "plain-nodes", "unclustered-labels", "plain-labels"], })
             .length > 0;
         const hitCluster =
           map.queryRenderedFeatures(e.point, { layers: ["clusters"] }).length > 0;
@@ -1437,8 +1438,8 @@ export function Map() {
   const usingMapbox = provider === "mapbox" && canUseMapbox;
 
   return (
-    <div className="h-screen relative">
-      <div id="map" className="map" ref={mapRef} />
+  <div className="relative w-full h-full min-h-0 overflow-hidden overscroll-none">
+    <div id="map" ref={mapRef} className="absolute inset-0" />
 
       {/* Bottom-right anchor: Legend + Map Settings stacked */}
       <div className="fixed bottom-4 right-4 z-[1100]">
@@ -1741,7 +1742,7 @@ export function Map() {
 
       <style>
         {`
-          #map { height: 100%; width: 100%; }
+          #map { position: absolute; inset: 0; }
         `}
       </style>
     </div>
