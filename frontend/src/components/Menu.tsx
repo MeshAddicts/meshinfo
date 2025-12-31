@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { useGetConfigQuery } from "../slices/apiSlice";
@@ -20,6 +20,17 @@ export const Menu = ({
 }) => {
   const { data: config } = useGetConfigQuery();
   const [showMenu, setShowMenu] = useState(false);
+
+  useEffect(() => {
+    if (!showMenu) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowMenu(false);
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [showMenu]);
 
   const handleDarkChange = (dark: boolean) => {
     onDarkChange(dark);

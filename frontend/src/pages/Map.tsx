@@ -350,6 +350,19 @@ export function Map() {
     };
   }, [settingsPanelOpen]);
 
+  // Close settings panel on Escape (mobile only, matches click-outside behavior)
+  useEffect(() => {
+    if (!settingsPanelOpen) return;
+    if (window.innerWidth >= 1024) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSettingsPanelOpen(false);
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [settingsPanelOpen]);
+
   // ----------------------------
   // Nodes normalization
   // ----------------------------
