@@ -435,40 +435,40 @@ export function Map() {
   const map = mbMapRef.current;
   const selectedId = mbSelectedIdRef.current;
 
-  if (map && selectedId) {
-    // Clear selection ring (feature-state) for both sources (clustered + plain)
-    try {
-      if (map.getSource("nodes_clustered")) {
-        map.setFeatureState(
-          { source: "nodes_clustered", id: selectedId },
-          { selected: false }
-        );
-      }
-    } catch {}
+    if (map && selectedId) {
+      // Clear selection ring (feature-state) for both sources (clustered + plain)
+      try {
+        if (map.getSource("nodes_clustered")) {
+          map.setFeatureState(
+            { source: "nodes_clustered", id: selectedId },
+            { selected: false }
+          );
+        }
+      } catch {}
 
-    try {
-      if (map.getSource("nodes_plain")) {
-        map.setFeatureState(
-          { source: "nodes_plain", id: selectedId },
-          { selected: false }
-        );
-      }
-    } catch {}
+      try {
+        if (map.getSource("nodes_plain")) {
+          map.setFeatureState(
+            { source: "nodes_plain", id: selectedId },
+            { selected: false }
+          );
+        }
+      } catch {}
+    }
+
+    mbSelectedIdRef.current = null;
+
+    // Clear link lines if present
+    if (map) {
+      try {
+        const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
+        linksSource?.setData(emptyLineFeatureCollection());
+      } catch {}
+    }
+
+    // Hide + clear the panel
+    clearDetailsPanel();
   }
-
-  mbSelectedIdRef.current = null;
-
-  // Clear link lines if present
-  if (map) {
-    try {
-      const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
-      linksSource?.setData(emptyLineFeatureCollection());
-    } catch {}
-  }
-
-  // Hide + clear the panel
-  clearDetailsPanel();
-}
 
   // ----------------------------
   // Provider switching cleanup
