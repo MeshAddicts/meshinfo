@@ -4,6 +4,7 @@ import copy
 from datetime import datetime, timedelta
 import glob
 import json
+import logging
 import os
 import shutil
 from zoneinfo import ZoneInfo
@@ -13,7 +14,11 @@ from data_renderer import DataRenderer
 from encoders import _JSONDecoder
 from models.node import Node
 from static_html_renderer import StaticHTMLRenderer
+from storage.db.postgres import PostgresStorage
 import utils
+
+logger = logging.getLogger(__name__)
+
 
 class MemoryDataStore:
   def __init__(self, config):
@@ -34,6 +39,9 @@ class MemoryDataStore:
     self.telemetry_by_node: dict = {}
     self.traceroutes: list = []
     self.traceroutes_by_node: dict = {}
+    
+    # Initialize Postgres storage
+    self.pg_storage = PostgresStorage(config)
 
   def update(self, key, value):
     self.__dict__[key] = value
@@ -62,8 +70,32 @@ class MemoryDataStore:
     n['since'] = datetime.now().astimezone(ZoneInfo(self.config['server']['timezone'])) - n['last_seen']
     n['last_seen'] = datetime.now().astimezone(ZoneInfo(self.config['server']['timezone']))
     self.nodes[id] = n
+    
+    # Real-time write to Postgres if enabled (dual-write pattern)
+    if 'postgres' in self.config.get('storage', {}).get('write_to', []):
+      import asyncio
+      try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+          asyncio.create_task(self.pg_storage.write_node(id, n))
+        else:
+          loop.run_until_complete(self.pg_storage.write_node(id, n))
+      except Exception as e:
+        logger.error(f"Failed to write node {id} to Postgres (non-blocking): {e}")
 
   def load(self):
+    # Determine read source from config
+    read_from = self.config.get('storage', {}).get('read_from', 'json')
+    
+    if read_from == 'postgres':
+      logger.info("Loading data from PostgreSQL")
+      self._load_from_postgres()
+    else:
+      logger.info("Loading data from JSON files")
+      self._load_from_json()
+
+  def _load_from_json(self):
+    """Load data from JSON files (existing implementation)."""
     try:
       nodes = self.load_json_file(f"{self.config['paths']['data']}/nodes.json")
       if nodes is not None:
@@ -154,6 +186,40 @@ class MemoryDataStore:
     except FileNotFoundError:
         self.traceroutes = []
         self.traceroutes_by_node = {}
+
+  def _load_from_postgres(self):
+    """Load data from PostgreSQL."""
+    import asyncio
+    
+    try:
+      loop = asyncio.get_event_loop()
+      if not loop.is_running():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+      
+      # Connect to Postgres
+      loop.run_until_complete(self.pg_storage.connect())
+      loop.run_until_complete(self.pg_storage.ensure_schema())
+      
+      # Load all data from Postgres
+      self.nodes = loop.run_until_complete(self.pg_storage.load_nodes())
+      self.chat = loop.run_until_complete(self.pg_storage.load_chat())
+      self.telemetry, self.telemetry_by_node = loop.run_until_complete(self.pg_storage.load_telemetry())
+      self.traceroutes, self.traceroutes_by_node = loop.run_until_complete(self.pg_storage.load_traceroutes())
+      
+      # Ensure default nodes exist
+      if self.config['server']['node_id'] not in self.nodes:
+        self.nodes[self.config['server']['node_id']] = Node.default_node(self.config['server']['node_id'])
+      self.nodes['ffffffff'] = Node.default_node('ffffffff')
+      
+      print(f"Loaded {len(self.nodes)} nodes from PostgreSQL")
+      print(f"Loaded {sum(len(ch['messages']) for ch in self.chat['channels'].values())} chat messages from PostgreSQL")
+      print(f"Loaded {len(self.telemetry)} telemetry records from PostgreSQL")
+      print(f"Loaded {len(self.traceroutes)} traceroutes from PostgreSQL")
+      
+    except Exception as e:
+      logger.error(f"Failed to load from PostgreSQL, falling back to JSON: {e}")
+      self._load_from_json()
 
   def load_json_file(self, filename):
     if os.path.exists(filename):

@@ -440,6 +440,10 @@ class MQTT:
         if 'payload' in msg:
             self.data.telemetry.insert(0, msg)
             self.data.telemetry_by_node[id].insert(0, msg)
+            
+            # Real-time write to Postgres if enabled
+            if 'postgres' in self.config.get('storage', {}).get('write_to', []):
+                await self.data.pg_storage.write_telemetry(msg)
 
         await self.data.save()
 
@@ -472,6 +476,10 @@ class MQTT:
         if 'sender' in msg:
             chat['sender'] = msg['sender']
         self.data.chat['channels'][str(msg['channel'])]['messages'].insert(0, chat)
+        
+        # Real-time write to Postgres if enabled
+        if 'postgres' in self.config.get('storage', {}).get('write_to', []):
+            await self.data.pg_storage.write_chat_message(chat)
 
         node = self.data.find_node_by_hex_id(msg['from'])
         # TODO: Replace with something more configurable
@@ -503,11 +511,17 @@ class MQTT:
             else:
                 msg['route_ids'].append(r)
 
+        id = msg['from']
         if id in self.data.traceroutes_by_node:
             self.data.traceroutes_by_node[id].insert(0, msg)
         else:
             self.data.traceroutes_by_node[id] = [msg]
         self.data.traceroutes.insert(0, msg)
+        
+        # Real-time write to Postgres if enabled
+        if 'postgres' in self.config.get('storage', {}).get('write_to', []):
+            await self.data.pg_storage.write_traceroute(msg)
+        
         await self.data.save()
 
     ### helpers

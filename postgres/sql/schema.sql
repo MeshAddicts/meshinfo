@@ -1,0 +1,191 @@
+-- Comprehensive Postgres Schema for MeshInfo
+-- This schema stores all data from the JSON files with proper relational structure
+
+-- Nodes table - stores basic node information
+CREATE TABLE IF NOT EXISTS nodes (
+    id VARCHAR(8) PRIMARY KEY,  -- 8 hex character node ID
+    longname VARCHAR(255),
+    shortname VARCHAR(10),
+    hardware VARCHAR(50),
+    role INTEGER,
+    active BOOLEAN DEFAULT TRUE,
+    tc2_bbs BOOLEAN DEFAULT FALSE,
+    last_seen TIMESTAMP WITH TIME ZONE,
+    since_seconds REAL,  -- Duration in seconds since last seen
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_nodes_active ON nodes(active);
+CREATE INDEX IF NOT EXISTS idx_nodes_last_seen ON nodes(last_seen);
+
+-- Node positions table - stores position/location data
+CREATE TABLE IF NOT EXISTS node_positions (
+    id SERIAL PRIMARY KEY,
+    node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE CASCADE,
+    latitude_i INTEGER,  -- Latitude in integer format (degrees * 10000000)
+    longitude_i INTEGER, -- Longitude in integer format (degrees * 10000000)
+    altitude INTEGER,
+    time INTEGER,
+    precision_bits INTEGER,
+    geocoded JSONB,  -- Geocoded address information
+    last_geocoding TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_node_positions_node_id ON node_positions(node_id);
+CREATE INDEX IF NOT EXISTS idx_node_positions_created_at ON node_positions(created_at DESC);
+
+-- Node neighbor info table - stores neighbor relationships
+CREATE TABLE IF NOT EXISTS node_neighborinfo (
+    id SERIAL PRIMARY KEY,
+    node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE CASCADE,
+    node_broadcast_interval_secs INTEGER,
+    neighbors JSONB,  -- Array of neighbor objects
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_node_neighborinfo_node_id ON node_neighborinfo(node_id);
+
+-- Node telemetry current - stores the most recent telemetry per node
+CREATE TABLE IF NOT EXISTS node_telemetry_current (
+    id SERIAL PRIMARY KEY,
+    node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE CASCADE,
+    battery_level INTEGER,
+    voltage REAL,
+    channel_utilization REAL,
+    air_util_tx REAL,
+    uptime_seconds INTEGER,
+    temperature REAL,
+    relative_humidity REAL,
+    barometric_pressure REAL,
+    gas_resistance REAL,
+    iaq INTEGER,
+    distance REAL,
+    lux REAL,
+    white_lux REAL,
+    ir_lux REAL,
+    uv_lux REAL,
+    wind_direction INTEGER,
+    wind_speed REAL,
+    weight REAL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(node_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_node_telemetry_current_node_id ON node_telemetry_current(node_id);
+
+-- Telemetry history table - stores all telemetry messages
+CREATE TABLE IF NOT EXISTS telemetry (
+    id BIGSERIAL PRIMARY KEY,
+    from_node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE CASCADE,
+    to_node_id VARCHAR(8),
+    sender_node_id VARCHAR(8),
+    message_id BIGINT,
+    channel INTEGER,
+    packet_id BIGINT,
+    hops_away INTEGER,
+    rssi INTEGER,
+    snr REAL,
+    timestamp BIGINT,
+    rx_time TIMESTAMP WITH TIME ZONE,
+    payload JSONB,  -- Complete telemetry payload
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_telemetry_from_node_id ON telemetry(from_node_id);
+CREATE INDEX IF NOT EXISTS idx_telemetry_created_at ON telemetry(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_telemetry_rx_time ON telemetry(rx_time DESC);
+
+-- Chat channels table
+CREATE TABLE IF NOT EXISTS chat_channels (
+    id VARCHAR(10) PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Insert default channel
+INSERT INTO chat_channels (id, name) VALUES ('0', 'General') ON CONFLICT (id) DO NOTHING;
+
+-- Chat messages table
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id BIGINT PRIMARY KEY,
+    from_node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE SET NULL,
+    to_node_id VARCHAR(8),
+    sender_node_id VARCHAR(8),
+    channel_id VARCHAR(10) REFERENCES chat_channels(id),
+    text TEXT,
+    timestamp BIGINT,
+    rx_time TIMESTAMP WITH TIME ZONE,
+    hops_away INTEGER,
+    rssi INTEGER,
+    snr REAL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_channel_id ON chat_messages(channel_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_from_node_id ON chat_messages(from_node_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_created_at ON chat_messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_timestamp ON chat_messages(timestamp DESC);
+
+-- Traceroutes table
+CREATE TABLE IF NOT EXISTS traceroutes (
+    id BIGSERIAL PRIMARY KEY,
+    from_node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE CASCADE,
+    to_node_id VARCHAR(8),
+    sender_node_id VARCHAR(8),
+    message_id BIGINT,
+    channel INTEGER,
+    packet_id BIGINT,
+    hops_away INTEGER,
+    rssi INTEGER,
+    snr REAL,
+    timestamp BIGINT,
+    rx_time TIMESTAMP WITH TIME ZONE,
+    route JSONB,  -- Array of route node IDs
+    route_ids JSONB,  -- Array of resolved route IDs
+    payload JSONB,  -- Complete traceroute payload
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_traceroutes_from_node_id ON traceroutes(from_node_id);
+CREATE INDEX IF NOT EXISTS idx_traceroutes_to_node_id ON traceroutes(to_node_id);
+CREATE INDEX IF NOT EXISTS idx_traceroutes_created_at ON traceroutes(created_at DESC);
+
+-- MQTT messages table (optional, for debugging)
+CREATE TABLE IF NOT EXISTS mqtt_messages (
+    id BIGSERIAL PRIMARY KEY,
+    topic TEXT,
+    payload TEXT,
+    qos INTEGER,
+    retain BOOLEAN,
+    timestamp BIGINT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_mqtt_messages_created_at ON mqtt_messages(created_at DESC);
+
+-- Create a function to update the updated_at timestamp
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+-- Create triggers for updated_at
+CREATE TRIGGER update_nodes_updated_at BEFORE UPDATE ON nodes
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_node_positions_updated_at BEFORE UPDATE ON node_positions
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_node_neighborinfo_updated_at BEFORE UPDATE ON node_neighborinfo
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_node_telemetry_current_updated_at BEFORE UPDATE ON node_telemetry_current
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
