@@ -121,7 +121,22 @@ Update `config.json` to write to both backends:
 - Spot-check the API to ensure data is identical
 - Compare record counts between JSON and PostgreSQL
 
-### Step 6: Switch to PostgreSQL Reads (Optional)
+### Step 6: Switch to PostgreSQL Reads
+
+Once confident in data consistency, switch to direct PostgreSQL queries:
+```json
+{
+  "storage": {
+    "read_from": "postgres",
+    "write_to": ["json", "postgres"]
+  }
+}
+```
+
+**Important**: When `read_from: "postgres"`, the API queries PostgreSQL directly without loading data into memory. This provides:
+- Lower memory footprint
+- Always up-to-date data from the database
+- Better scalability for large datasets
 
 Once confident in data consistency:
 ```json
@@ -138,23 +153,24 @@ Once confident in data consistency:
 ### Write Flow
 
 1. MQTT message received
-2. Data stored in memory (MemoryDataStore)
+2. Data stored in memory (MemoryDataStore) for internal use
 3. **Real-time write to PostgreSQL** (non-blocking, errors logged)
 4. Periodic write to JSON files (every 300 seconds by default)
 
 ### Read Flow (JSON mode)
 
 1. Application starts
-2. Data loaded from JSON files
-3. Data stored in memory
-4. API serves from memory
+2. Data loaded from JSON files into memory
+3. API serves from in-memory data structures
+4. Fast response times with full dataset in RAM
 
 ### Read Flow (PostgreSQL mode)
 
 1. Application starts
-2. Data loaded from PostgreSQL
-3. Data stored in memory
-4. API serves from memory
+2. PostgreSQL connection established (no data loaded into memory)
+3. **API queries PostgreSQL directly** for each request
+4. Lower memory footprint, always current data
+5. Efficient queries with proper indexing
 
 ### Error Handling
 

@@ -188,7 +188,7 @@ class MemoryDataStore:
         self.traceroutes_by_node = {}
 
   def _load_from_postgres(self):
-    """Load data from PostgreSQL."""
+    """Initialize PostgreSQL connection but don't load data into memory."""
     import asyncio
     
     try:
@@ -201,24 +201,28 @@ class MemoryDataStore:
       loop.run_until_complete(self.pg_storage.connect())
       loop.run_until_complete(self.pg_storage.ensure_schema())
       
-      # Load all data from Postgres
-      self.nodes = loop.run_until_complete(self.pg_storage.load_nodes())
-      self.chat = loop.run_until_complete(self.pg_storage.load_chat())
-      self.telemetry, self.telemetry_by_node = loop.run_until_complete(self.pg_storage.load_telemetry())
-      self.traceroutes, self.traceroutes_by_node = loop.run_until_complete(self.pg_storage.load_traceroutes())
+      # Initialize empty data structures (data will be queried directly from Postgres)
+      self.nodes = {}
+      self.chat = {'channels': {'0': {'name': 'General', 'messages': []}}}
+      self.telemetry = []
+      self.telemetry_by_node = {}
+      self.traceroutes = []
+      self.traceroutes_by_node = {}
       
-      # Ensure default nodes exist
+      # Ensure default nodes exist in Postgres
       if self.config['server']['node_id'] not in self.nodes:
-        self.nodes[self.config['server']['node_id']] = Node.default_node(self.config['server']['node_id'])
-      self.nodes['ffffffff'] = Node.default_node('ffffffff')
+        default_node = Node.default_node(self.config['server']['node_id'])
+        self.nodes[self.config['server']['node_id']] = default_node
+        loop.run_until_complete(self.pg_storage.write_node(self.config['server']['node_id'], default_node))
       
-      print(f"Loaded {len(self.nodes)} nodes from PostgreSQL")
-      print(f"Loaded {sum(len(ch['messages']) for ch in self.chat['channels'].values())} chat messages from PostgreSQL")
-      print(f"Loaded {len(self.telemetry)} telemetry records from PostgreSQL")
-      print(f"Loaded {len(self.traceroutes)} traceroutes from PostgreSQL")
+      broadcast_node = Node.default_node('ffffffff')
+      self.nodes['ffffffff'] = broadcast_node
+      loop.run_until_complete(self.pg_storage.write_node('ffffffff', broadcast_node))
+      
+      print(f"PostgreSQL mode: Data will be queried directly from database")
       
     except Exception as e:
-      logger.error(f"Failed to load from PostgreSQL, falling back to JSON: {e}")
+      logger.error(f"Failed to initialize PostgreSQL connection, falling back to JSON: {e}")
       self._load_from_json()
 
   def load_json_file(self, filename):

@@ -578,3 +578,422 @@ class PostgresStorage:
         except Exception as e:
             logger.error(f"Failed to load traceroutes from PostgreSQL: {e}")
             return [], {}
+
+    # ============================================================================
+    # DIRECT QUERY OPERATIONS - For API endpoints when reading from Postgres
+    # ============================================================================
+
+    async def query_nodes_filtered(
+        self, 
+        days_limit: int = 7,
+        node_ids: Optional[List[str]] = None,
+        longname_filter: Optional[str] = None,
+        shortname_filter: Optional[str] = None,
+        status_filter: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Query nodes with filters directly from PostgreSQL.
+        
+        Args:
+            days_limit: Only return nodes seen within this many days
+            node_ids: Filter by specific node IDs
+            longname_filter: Filter by longname substring (case-insensitive)
+            shortname_filter: Filter by shortname substring (case-insensitive)
+            status_filter: Filter by status ("online" or "offline")
+        
+        Returns:
+            Dict mapping node_id to node data
+        """
+        if not self.enabled or not self.pool:
+            return {}
+
+        try:
+            async with self.pool.acquire() as conn:
+                # Build WHERE clause
+                where_parts = []
+                params = []
+                param_num = 1
+
+                # Days filter
+                if days_limit:
+                    where_parts.append(f"last_seen >= NOW() - INTERVAL '{days_limit} days'")
+
+                # Node IDs filter
+                if node_ids:
+                    placeholders = ','.join([f'${i}' for i in range(param_num, param_num + len(node_ids))])
+                    where_parts.append(f"id IN ({placeholders})")
+                    params.extend(node_ids)
+                    param_num += len(node_ids)
+
+                # Longname filter
+                if longname_filter:
+                    where_parts.append(f"LOWER(longname) LIKE ${param_num}")
+                    params.append(f"%{longname_filter.lower()}%")
+                    param_num += 1
+
+                # Shortname filter
+                if shortname_filter:
+                    where_parts.append(f"LOWER(shortname) LIKE ${param_num}")
+                    params.append(f"%{shortname_filter.lower()}%")
+                    param_num += 1
+
+                # Status filter
+                if status_filter == "online":
+                    where_parts.append("active = TRUE")
+                elif status_filter == "offline":
+                    where_parts.append("active = FALSE")
+
+                where_clause = " AND ".join(where_parts) if where_parts else "TRUE"
+                
+                # Query nodes
+                nodes = {}
+                query = f"SELECT * FROM nodes WHERE {where_clause}"
+                rows = await conn.fetch(query, *params)
+                
+                for row in rows:
+                    node_id = row['id']
+                    nodes[node_id] = {
+                        'id': node_id,
+                        'longname': row['longname'],
+                        'shortname': row['shortname'],
+                        'hardware': row['hardware'],
+                        'role': row['role'],
+                        'active': row['active'],
+                        'tc2_bbs': row.get('tc2_bbs', False),
+                        'last_seen': row['last_seen'].isoformat() if row['last_seen'] else None,
+                        'since': datetime.timedelta(seconds=row['since_seconds']) if row['since_seconds'] else None,
+                        'position': None,
+                        'neighborinfo': None,
+                        'telemetry': None
+                    }
+
+                # Load related data for returned nodes
+                if nodes:
+                    node_ids_list = list(nodes.keys())
+                    
+                    # Load positions
+                    position_query = """
+                        SELECT DISTINCT ON (node_id) *
+                        FROM node_positions
+                        WHERE node_id = ANY($1)
+                        ORDER BY node_id, created_at DESC
+                    """
+                    position_rows = await conn.fetch(position_query, node_ids_list)
+                    
+                    for row in position_rows:
+                        node_id = row['node_id']
+                        if node_id in nodes:
+                            nodes[node_id]['position'] = {
+                                'latitude_i': row['latitude_i'],
+                                'longitude_i': row['longitude_i'],
+                                'altitude': row['altitude'],
+                                'time': row['time'],
+                                'precision_bits': row['precision_bits'],
+                                'geocoded': json.loads(row['geocoded']) if row['geocoded'] else None,
+                                'last_geocoding': row['last_geocoding'].isoformat() if row['last_geocoding'] else None
+                            }
+
+                    # Load neighborinfo
+                    neighbor_query = """
+                        SELECT DISTINCT ON (node_id) *
+                        FROM node_neighborinfo
+                        WHERE node_id = ANY($1)
+                        ORDER BY node_id, created_at DESC
+                    """
+                    neighbor_rows = await conn.fetch(neighbor_query, node_ids_list)
+                    
+                    for row in neighbor_rows:
+                        node_id = row['node_id']
+                        if node_id in nodes:
+                            nodes[node_id]['neighborinfo'] = {
+                                'node_broadcast_interval_secs': row['node_broadcast_interval_secs'],
+                                'neighbors': json.loads(row['neighbors']) if row['neighbors'] else []
+                            }
+
+                    # Load current telemetry
+                    telemetry_query = "SELECT * FROM node_telemetry_current WHERE node_id = ANY($1)"
+                    telemetry_rows = await conn.fetch(telemetry_query, node_ids_list)
+                    
+                    for row in telemetry_rows:
+                        node_id = row['node_id']
+                        if node_id in nodes:
+                            telemetry = {}
+                            for field in ['battery_level', 'voltage', 'channel_utilization', 'air_util_tx',
+                                        'uptime_seconds', 'temperature', 'relative_humidity', 
+                                        'barometric_pressure', 'gas_resistance', 'iaq', 'distance',
+                                        'lux', 'white_lux', 'ir_lux', 'uv_lux', 'wind_direction',
+                                        'wind_speed', 'weight']:
+                                if row[field] is not None:
+                                    telemetry[field] = row[field]
+                            nodes[node_id]['telemetry'] = telemetry if telemetry else None
+
+                return nodes
+
+        except Exception as e:
+            logger.error(f"Failed to query nodes from PostgreSQL: {e}")
+            return {}
+
+    async def query_node_by_id(self, node_id: str) -> Optional[Dict[str, Any]]:
+        """Query a single node by ID directly from PostgreSQL."""
+        nodes = await self.query_nodes_filtered(days_limit=None, node_ids=[node_id])
+        return nodes.get(node_id)
+
+    async def query_node_telemetry(self, node_id: str, limit: int = 1000) -> List[Dict[str, Any]]:
+        """Query telemetry for a specific node."""
+        if not self.enabled or not self.pool:
+            return []
+
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT * FROM telemetry
+                    WHERE from_node_id = $1
+                    ORDER BY created_at DESC
+                    LIMIT $2
+                """, node_id, limit)
+
+                telemetry = []
+                for row in rows:
+                    telemetry.append({
+                        'from': row['from_node_id'],
+                        'to': row['to_node_id'],
+                        'sender': row['sender_node_id'],
+                        'id': row['message_id'],
+                        'channel': row['channel'],
+                        'packet_id': row['packet_id'],
+                        'hops_away': row['hops_away'],
+                        'rssi': row['rssi'],
+                        'snr': row['snr'],
+                        'timestamp': row['timestamp'],
+                        'payload': json.loads(row['payload']) if row['payload'] else {}
+                    })
+                
+                return telemetry
+
+        except Exception as e:
+            logger.error(f"Failed to query telemetry from PostgreSQL: {e}")
+            return []
+
+    async def query_node_texts(self, node_id: str) -> List[Dict[str, Any]]:
+        """Query text messages for a specific node."""
+        if not self.enabled or not self.pool:
+            return []
+
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT * FROM chat_messages
+                    WHERE from_node_id = $1 OR to_node_id = $1
+                    ORDER BY created_at DESC
+                    LIMIT 1000
+                """, node_id)
+
+                texts = []
+                for row in rows:
+                    texts.append({
+                        'id': row['id'],
+                        'from': row['from_node_id'],
+                        'to': row['to_node_id'],
+                        'sender': row['sender_node_id'],
+                        'channel': row['channel_id'] or '0',
+                        'text': row['text'],
+                        'timestamp': row['timestamp'],
+                        'hops_away': row['hops_away'],
+                        'rssi': row['rssi'],
+                        'snr': row['snr']
+                    })
+                
+                return texts
+
+        except Exception as e:
+            logger.error(f"Failed to query texts from PostgreSQL: {e}")
+            return []
+
+    async def query_node_traceroutes(self, node_id: str) -> List[Dict[str, Any]]:
+        """Query traceroutes for a specific node."""
+        if not self.enabled or not self.pool:
+            return []
+
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT * FROM traceroutes
+                    WHERE from_node_id = $1 OR to_node_id = $1
+                    ORDER BY created_at DESC
+                    LIMIT 1000
+                """, node_id)
+
+                traceroutes = []
+                for row in rows:
+                    traceroutes.append({
+                        'from': row['from_node_id'],
+                        'to': row['to_node_id'],
+                        'sender': row['sender_node_id'],
+                        'id': row['message_id'],
+                        'channel': row['channel'],
+                        'packet_id': row['packet_id'],
+                        'hops_away': row['hops_away'],
+                        'rssi': row['rssi'],
+                        'snr': row['snr'],
+                        'timestamp': row['timestamp'],
+                        'route': json.loads(row['route']) if row['route'] else [],
+                        'route_ids': json.loads(row['route_ids']) if row['route_ids'] else [],
+                        'payload': json.loads(row['payload']) if row['payload'] else {}
+                    })
+                
+                return traceroutes
+
+        except Exception as e:
+            logger.error(f"Failed to query traceroutes from PostgreSQL: {e}")
+            return []
+
+    async def query_all_chat(self, limit: int = 10000) -> Dict[str, Any]:
+        """Query all chat channels and messages."""
+        if not self.enabled or not self.pool:
+            return {'channels': {'0': {'name': 'General', 'messages': []}}}
+
+        try:
+            async with self.pool.acquire() as conn:
+                chat = {'channels': {}}
+
+                # Load channels
+                channel_rows = await conn.fetch("SELECT * FROM chat_channels ORDER BY id")
+                for row in channel_rows:
+                    chat['channels'][row['id']] = {
+                        'name': row['name'],
+                        'messages': []
+                    }
+
+                # Load messages
+                message_rows = await conn.fetch("""
+                    SELECT * FROM chat_messages
+                    ORDER BY created_at DESC
+                    LIMIT $1
+                """, limit)
+
+                for row in message_rows:
+                    channel_id = row['channel_id'] or '0'
+                    if channel_id not in chat['channels']:
+                        chat['channels'][channel_id] = {
+                            'name': f'Channel {channel_id}',
+                            'messages': []
+                        }
+                    
+                    chat['channels'][channel_id]['messages'].append({
+                        'id': row['id'],
+                        'from': row['from_node_id'],
+                        'to': row['to_node_id'],
+                        'sender': row['sender_node_id'],
+                        'channel': channel_id,
+                        'text': row['text'],
+                        'timestamp': row['timestamp'],
+                        'hops_away': row['hops_away'],
+                        'rssi': row['rssi'],
+                        'snr': row['snr']
+                    })
+
+                return chat
+
+        except Exception as e:
+            logger.error(f"Failed to query chat from PostgreSQL: {e}")
+            return {'channels': {'0': {'name': 'General', 'messages': []}}}
+
+    async def query_all_telemetry(self, limit: int = 1000) -> List[Dict[str, Any]]:
+        """Query all telemetry records."""
+        if not self.enabled or not self.pool:
+            return []
+
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT * FROM telemetry
+                    ORDER BY created_at DESC
+                    LIMIT $1
+                """, limit)
+
+                telemetry = []
+                for row in rows:
+                    telemetry.append({
+                        'from': row['from_node_id'],
+                        'to': row['to_node_id'],
+                        'sender': row['sender_node_id'],
+                        'id': row['message_id'],
+                        'channel': row['channel'],
+                        'packet_id': row['packet_id'],
+                        'hops_away': row['hops_away'],
+                        'rssi': row['rssi'],
+                        'snr': row['snr'],
+                        'timestamp': row['timestamp'],
+                        'payload': json.loads(row['payload']) if row['payload'] else {}
+                    })
+                
+                return telemetry
+
+        except Exception as e:
+            logger.error(f"Failed to query telemetry from PostgreSQL: {e}")
+            return []
+
+    async def query_all_traceroutes(self, limit: int = 1000) -> List[Dict[str, Any]]:
+        """Query all traceroutes."""
+        if not self.enabled or not self.pool:
+            return []
+
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT * FROM traceroutes
+                    ORDER BY created_at DESC
+                    LIMIT $1
+                """, limit)
+
+                traceroutes = []
+                for row in rows:
+                    traceroutes.append({
+                        'from': row['from_node_id'],
+                        'to': row['to_node_id'],
+                        'sender': row['sender_node_id'],
+                        'id': row['message_id'],
+                        'channel': row['channel'],
+                        'packet_id': row['packet_id'],
+                        'hops_away': row['hops_away'],
+                        'rssi': row['rssi'],
+                        'snr': row['snr'],
+                        'timestamp': row['timestamp'],
+                        'route': json.loads(row['route']) if row['route'] else [],
+                        'route_ids': json.loads(row['route_ids']) if row['route_ids'] else [],
+                        'payload': json.loads(row['payload']) if row['payload'] else {}
+                    })
+                
+                return traceroutes
+
+        except Exception as e:
+            logger.error(f"Failed to query traceroutes from PostgreSQL: {e}")
+            return []
+
+    async def query_stats(self) -> Dict[str, int]:
+        """Query statistics from PostgreSQL."""
+        if not self.enabled or not self.pool:
+            return {}
+
+        try:
+            async with self.pool.acquire() as conn:
+                stats = {}
+                
+                # Count nodes
+                stats['total_nodes'] = await conn.fetchval("SELECT COUNT(*) FROM nodes")
+                stats['active_nodes'] = await conn.fetchval("SELECT COUNT(*) FROM nodes WHERE active = TRUE")
+                
+                # Count messages
+                stats['total_chat'] = await conn.fetchval("SELECT COUNT(*) FROM chat_messages WHERE channel_id = '0'")
+                stats['total_telemetry'] = await conn.fetchval("SELECT COUNT(*) FROM telemetry")
+                stats['total_traceroutes'] = await conn.fetchval("SELECT COUNT(*) FROM traceroutes")
+                
+                # Messages and MQTT messages not stored in Postgres (in-memory only)
+                stats['total_messages'] = 0
+                stats['total_mqtt_messages'] = 0
+                
+                return stats
+
+        except Exception as e:
+            logger.error(f"Failed to query stats from PostgreSQL: {e}")
+            return {}
