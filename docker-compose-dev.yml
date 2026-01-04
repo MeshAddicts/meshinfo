@@ -69,3 +69,6 @@ services:
       - caddy
       - postgres
       - mqtt
+
+volumes:
+  meshinfo_pgdata:

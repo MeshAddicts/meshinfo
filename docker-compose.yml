@@ -30,6 +30,7 @@ services:
     volumes:
       - ./config.json:/app/config.json
       - ./output:/app/output
+      - ./postgres:/app/postgres:ro
     environment:
       - PYTHONUNBUFFERED=1
     ports:
@@ -69,3 +70,6 @@ services:
     depends_on:
       - meshinfo
       - frontend
+
+volumes:
+  meshinfo_pgdata:
