@@ -170,7 +170,6 @@ class PostgresStorage:
                     since = node_data.get('since')
                     since_seconds = since.total_seconds() if since else None
 
-                    # Patch #2: coerce types safely
                     longname = node_data.get('longname')
                     if longname is not None and not isinstance(longname, str):
                         longname = str(longname)
@@ -183,11 +182,18 @@ class PostgresStorage:
                     if hardware is not None and not isinstance(hardware, str):
                         hardware = str(hardware)
 
-                    role = node_data.get('role', 0)
-                    if role is None:
-                        role = 0
-                    elif isinstance(role, str) and role.isdigit():
-                        role = int(role)
+                    role = node_data.get("role")
+                    role_raw = role
+                    if isinstance(role, str):
+                        role = int(role) if role.isdigit() else None
+                    elif role is not None and not isinstance(role, int):
+                        try:
+                            role = int(role)
+                        except (TypeError, ValueError):
+                            role = None
+
+                    if role is None and role_raw not in (None, "", 0):
+                        logger.debug("Invalid role %r for node %s; storing NULL", role_raw, node_id_norm)
 
                     await conn.execute("""
                         INSERT INTO nodes (id, longname, shortname, hardware, role, active, tc2_bbs, last_seen, since_seconds)
