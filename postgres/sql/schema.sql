@@ -177,15 +177,25 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
--- Create triggers for updated_at
-CREATE TRIGGER update_nodes_updated_at BEFORE UPDATE ON nodes
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+-- Create triggers for updated_at (idempotent)
 
-CREATE TRIGGER update_node_positions_updated_at BEFORE UPDATE ON node_positions
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_nodes_updated_at ON nodes;
+CREATE TRIGGER update_nodes_updated_at
+BEFORE UPDATE ON nodes
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_node_neighborinfo_updated_at BEFORE UPDATE ON node_neighborinfo
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_node_positions_updated_at ON node_positions;
+CREATE TRIGGER update_node_positions_updated_at
+BEFORE UPDATE ON node_positions
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_node_telemetry_current_updated_at BEFORE UPDATE ON node_telemetry_current
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+DROP TRIGGER IF EXISTS update_node_neighborinfo_updated_at ON node_neighborinfo;
+CREATE TRIGGER update_node_neighborinfo_updated_at
+BEFORE UPDATE ON node_neighborinfo
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_node_telemetry_current_updated_at ON node_telemetry_current;
+CREATE TRIGGER update_node_telemetry_current_updated_at
+BEFORE UPDATE ON node_telemetry_current
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+

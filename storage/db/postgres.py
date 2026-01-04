@@ -10,7 +10,7 @@ import asyncpg
 import datetime
 import json
 import logging
-from typing import Optional, Dict, List, Any
+from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
@@ -27,10 +27,13 @@ class PostgresStorage:
         self.pool: Optional[asyncpg.Pool] = None
         self.timezone = config['server']['timezone']
 
+        # Optional: enable to make migrations "honest" (fail fast / count failures correctly)
+        self.raise_on_write_error = bool(self.pg_config.get("raise_on_write_error", False))
+
     async def connect(self) -> bool:
         """
         Establish connection pool to PostgreSQL.
-        
+
         Returns:
             bool: True if connection successful, False otherwise
         """
@@ -76,6 +79,59 @@ class PostgresStorage:
                 logger.info("PostgreSQL schema verified/created")
         except Exception as e:
             logger.error(f"Failed to ensure schema: {e}")
+            if self.raise_on_write_error:
+                raise
+
+    def _normalize_node_id(self, value: Any) -> Optional[str]:
+        """
+        Normalize node ids to the 8-char lowercase hex string used by the schema.
+        Accepts int (uint32), decimal strings, hex strings, and strings with leading '!'.
+        """
+        if value is None:
+            return None
+
+        if isinstance(value, int):
+            return f"{value & 0xFFFFFFFF:08x}"
+
+        if isinstance(value, str):
+            v = value.strip()
+            if v.startswith("!"):
+                v = v[1:]
+            if v.startswith("0x") or v.startswith("0X"):
+                try:
+                    return f"{int(v, 16) & 0xFFFFFFFF:08x}"
+                except ValueError:
+                    return None
+            if v.isdigit():
+                return f"{int(v) & 0xFFFFFFFF:08x}"
+
+            v = v.lower()
+            if all(c in "0123456789abcdef" for c in v):
+                if len(v) < 8:
+                    v = v.zfill(8)
+                if len(v) == 8:
+                    return v
+
+        return None
+
+    async def _ensure_node_stub(self, conn: asyncpg.Connection, node_id: Any) -> Optional[str]:
+        """
+        Ensure a node row exists for FK constraints. Creates a stub if missing.
+        Returns normalized node_id (or None if not representable).
+        """
+        nid = self._normalize_node_id(node_id)
+        if not nid:
+            return None
+
+        await conn.execute(
+            """
+            INSERT INTO nodes (id, active)
+            VALUES ($1, FALSE)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            nid
+        )
+        return nid
 
     # ============================================================================
     # WRITE OPERATIONS - Real-time writes for dual-write pattern
@@ -84,9 +140,9 @@ class PostgresStorage:
     async def write_node(self, node_id: str, node_data: Dict[str, Any]):
         """
         Write/update a node to PostgreSQL in real-time.
-        
+
         Args:
-            node_id: 8-character hex node ID
+            node_id: node id (any supported form; will be normalized)
             node_data: Complete node data dictionary
         """
         if not self.enabled or not self.pool:
@@ -95,10 +151,17 @@ class PostgresStorage:
         try:
             async with self.pool.acquire() as conn:
                 async with conn.transaction():
-                    # Upsert main node data
+                    node_id_norm = await self._ensure_node_stub(conn, node_id)
+                    if not node_id_norm:
+                        logger.warning(f"write_node: could not normalize node_id={node_id!r}, skipping")
+                        return
+
                     last_seen = node_data.get('last_seen')
                     if isinstance(last_seen, str):
-                        last_seen_ts = datetime.datetime.fromisoformat(last_seen)
+                        try:
+                            last_seen_ts = datetime.datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
+                        except Exception:
+                            last_seen_ts = None
                     elif isinstance(last_seen, datetime.datetime):
                         last_seen_ts = last_seen
                     else:
@@ -106,6 +169,25 @@ class PostgresStorage:
 
                     since = node_data.get('since')
                     since_seconds = since.total_seconds() if since else None
+
+                    # Patch #2: coerce types safely
+                    longname = node_data.get('longname')
+                    if longname is not None and not isinstance(longname, str):
+                        longname = str(longname)
+
+                    shortname = node_data.get('shortname')
+                    if shortname is not None and not isinstance(shortname, str):
+                        shortname = str(shortname)
+
+                    hardware = node_data.get('hardware')
+                    if hardware is not None and not isinstance(hardware, str):
+                        hardware = str(hardware)
+
+                    role = node_data.get('role', 0)
+                    if role is None:
+                        role = 0
+                    elif isinstance(role, str) and role.isdigit():
+                        role = int(role)
 
                     await conn.execute("""
                         INSERT INTO nodes (id, longname, shortname, hardware, role, active, tc2_bbs, last_seen, since_seconds)
@@ -120,32 +202,41 @@ class PostgresStorage:
                             last_seen = EXCLUDED.last_seen,
                             since_seconds = EXCLUDED.since_seconds,
                             updated_at = NOW()
-                    """, node_id, node_data.get('longname'), node_data.get('shortname'),
-                         node_data.get('hardware'), node_data.get('role', 0),
-                         node_data.get('active', False), node_data.get('tc2_bbs', False),
-                         last_seen_ts, since_seconds)
+                    """,
+                        node_id_norm,
+                        longname,
+                        shortname,
+                        hardware,
+                        role,
+                        node_data.get('active', False),
+                        node_data.get('tc2_bbs', False),
+                        last_seen_ts,
+                        since_seconds
+                    )
 
-                    # Handle position data
                     if node_data.get('position'):
-                        await self._write_node_position(conn, node_id, node_data['position'])
+                        await self._write_node_position(conn, node_id_norm, node_data['position'])
 
-                    # Handle neighborinfo
                     if node_data.get('neighborinfo'):
-                        await self._write_node_neighborinfo(conn, node_id, node_data['neighborinfo'])
+                        await self._write_node_neighborinfo(conn, node_id_norm, node_data['neighborinfo'])
 
-                    # Handle telemetry (current state only)
                     if node_data.get('telemetry'):
-                        await self._write_node_telemetry_current(conn, node_id, node_data['telemetry'])
+                        await self._write_node_telemetry_current(conn, node_id_norm, node_data['telemetry'])
 
         except Exception as e:
-            logger.error(f"Failed to write node {node_id} to PostgreSQL: {e}")
+            logger.error(f"Failed to write node to PostgreSQL: {e}")
+            if self.raise_on_write_error:
+                raise
 
     async def _write_node_position(self, conn, node_id: str, position: Dict[str, Any]):
         """Write node position data."""
         geocoded = json.dumps(position.get('geocoded')) if position.get('geocoded') else None
         last_geocoding = position.get('last_geocoding')
         if isinstance(last_geocoding, str):
-            last_geocoding = datetime.datetime.fromisoformat(last_geocoding)
+            try:
+                last_geocoding = datetime.datetime.fromisoformat(last_geocoding.replace("Z", "+00:00"))
+            except Exception:
+                last_geocoding = None
 
         await conn.execute("""
             INSERT INTO node_positions (node_id, latitude_i, longitude_i, altitude, time, precision_bits, geocoded, last_geocoding)
@@ -157,7 +248,7 @@ class PostgresStorage:
     async def _write_node_neighborinfo(self, conn, node_id: str, neighborinfo: Dict[str, Any]):
         """Write node neighborinfo data."""
         neighbors_json = json.dumps(neighborinfo.get('neighbors', []))
-        
+
         await conn.execute("""
             INSERT INTO node_neighborinfo (node_id, node_broadcast_interval_secs, neighbors)
             VALUES ($1, $2, $3)
@@ -203,21 +294,48 @@ class PostgresStorage:
              telemetry.get('wind_direction'), telemetry.get('wind_speed'),
              telemetry.get('weight'))
 
-    async def write_telemetry(self, telemetry_msg: Dict[str, Any]):
+    async def write_telemetry(self, *args, **kwargs):
         """
         Write telemetry message to history table.
-        
+
+        Supports:
+          - write_telemetry(telemetry_msg)
+          - write_telemetry(node_id, telemetry_msg)   (node_id is ignored; msg drives DB fields)
+
         Args:
-            telemetry_msg: Complete telemetry message from MQTT
+            telemetry_msg: Complete telemetry message from MQTT/JSON migration
         """
         if not self.enabled or not self.pool:
             return
 
+        telemetry_msg: Optional[Dict[str, Any]] = None
+
+        if len(args) >= 2 and isinstance(args[1], dict):
+            telemetry_msg = args[1]
+        elif len(args) == 1 and isinstance(args[0], dict):
+            telemetry_msg = args[0]
+        elif "telemetry_msg" in kwargs and isinstance(kwargs["telemetry_msg"], dict):
+            telemetry_msg = kwargs["telemetry_msg"]
+        elif "telemetry" in kwargs and isinstance(kwargs["telemetry"], dict):
+            telemetry_msg = kwargs["telemetry"]
+
+        if telemetry_msg is None:
+            raise ValueError("write_telemetry: telemetry message not provided / not a dict")
+
         try:
             async with self.pool.acquire() as conn:
+                from_id = await self._ensure_node_stub(conn, telemetry_msg.get('from'))
+                if not from_id:
+                    logger.warning(f"write_telemetry: missing/invalid from={telemetry_msg.get('from')!r}, skipping")
+                    return
+
+                sender_id = await self._ensure_node_stub(conn, telemetry_msg.get('sender'))
+                to_id = await self._ensure_node_stub(conn, telemetry_msg.get('to'))
+
                 payload_json = json.dumps(telemetry_msg.get('payload', {}))
+
                 rx_time = None
-                if 'timestamp' in telemetry_msg:
+                if 'timestamp' in telemetry_msg and telemetry_msg['timestamp'] is not None:
                     rx_time = datetime.datetime.fromtimestamp(
                         telemetry_msg['timestamp'] / 1000,
                         tz=ZoneInfo(self.timezone)
@@ -229,42 +347,84 @@ class PostgresStorage:
                         packet_id, hops_away, rssi, snr, timestamp, rx_time, payload
                     )
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                """, telemetry_msg.get('from'), telemetry_msg.get('to'),
-                     telemetry_msg.get('sender'), telemetry_msg.get('id'),
-                     telemetry_msg.get('channel'), telemetry_msg.get('packet_id'),
-                     telemetry_msg.get('hops_away'), telemetry_msg.get('rssi'),
-                     telemetry_msg.get('snr'), telemetry_msg.get('timestamp'),
-                     rx_time, payload_json)
+                """,
+                    from_id,
+                    to_id,
+                    sender_id,
+                    telemetry_msg.get('id'),
+                    telemetry_msg.get('channel'),
+                    telemetry_msg.get('packet_id'),
+                    telemetry_msg.get('hops_away'),
+                    telemetry_msg.get('rssi'),
+                    telemetry_msg.get('snr'),
+                    telemetry_msg.get('timestamp'),
+                    rx_time,
+                    payload_json
+                )
 
         except Exception as e:
             logger.error(f"Failed to write telemetry to PostgreSQL: {e}")
+            if self.raise_on_write_error:
+                raise
 
-    async def write_chat_message(self, chat_msg: Dict[str, Any]):
+    async def write_chat_message(self, *args, **kwargs):
         """
         Write chat message to PostgreSQL.
-        
+
+        Supports:
+          - write_chat_message(chat_msg)
+          - write_chat_message(message_id, chat_msg)  (migrator form)
+
         Args:
             chat_msg: Chat message dictionary
         """
         if not self.enabled or not self.pool:
             return
 
+        chat_msg: Optional[Dict[str, Any]] = None
+        message_id: Any = None
+
+        if len(args) >= 2 and isinstance(args[1], dict):
+            message_id = args[0]
+            chat_msg = args[1]
+        elif len(args) == 1 and isinstance(args[0], dict):
+            chat_msg = args[0]
+        elif "chat_msg" in kwargs and isinstance(kwargs["chat_msg"], dict):
+            chat_msg = kwargs["chat_msg"]
+        elif "message" in kwargs and isinstance(kwargs["message"], dict):
+            chat_msg = kwargs["message"]
+
+        if chat_msg is None:
+            raise ValueError("write_chat_message: chat message not provided / not a dict")
+
+        # If migrator passed id separately, ensure it exists in dict
+        if message_id is not None and chat_msg.get("id") is None:
+            chat_msg = dict(chat_msg)
+            chat_msg["id"] = message_id
+
         try:
             async with self.pool.acquire() as conn:
                 async with conn.transaction():
+                    from_id = await self._ensure_node_stub(conn, chat_msg.get('from'))
+                    if not from_id:
+                        logger.warning(f"write_chat_message: missing/invalid from={chat_msg.get('from')!r}, skipping")
+                        return
+
+                    sender_id = await self._ensure_node_stub(conn, chat_msg.get('sender'))
+                    to_id = await self._ensure_node_stub(conn, chat_msg.get('to'))
+
                     # Ensure channel exists
                     channel_id = str(chat_msg.get('channel', '0'))
                     channel_name = f"Channel {channel_id}" if channel_id != '0' else 'General'
-                    
+
                     await conn.execute("""
                         INSERT INTO chat_channels (id, name)
                         VALUES ($1, $2)
                         ON CONFLICT (id) DO NOTHING
                     """, channel_id, channel_name)
 
-                    # Insert message
                     rx_time = None
-                    if 'timestamp' in chat_msg:
+                    if 'timestamp' in chat_msg and chat_msg['timestamp'] is not None:
                         rx_time = datetime.datetime.fromtimestamp(
                             chat_msg['timestamp'] / 1000,
                             tz=ZoneInfo(self.timezone)
@@ -277,32 +437,77 @@ class PostgresStorage:
                         )
                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                         ON CONFLICT (id) DO NOTHING
-                    """, chat_msg.get('id'), chat_msg.get('from'), chat_msg.get('to'),
-                         chat_msg.get('sender'), channel_id, chat_msg.get('text'),
-                         chat_msg.get('timestamp'), rx_time, chat_msg.get('hops_away'),
-                         chat_msg.get('rssi'), chat_msg.get('snr'))
+                    """,
+                        chat_msg.get('id'),
+                        from_id,
+                        to_id,
+                        sender_id,
+                        channel_id,
+                        chat_msg.get('text'),
+                        chat_msg.get('timestamp'),
+                        rx_time,
+                        chat_msg.get('hops_away'),
+                        chat_msg.get('rssi'),
+                        chat_msg.get('snr')
+                    )
 
         except Exception as e:
             logger.error(f"Failed to write chat message to PostgreSQL: {e}")
+            if self.raise_on_write_error:
+                raise
 
-    async def write_traceroute(self, traceroute_msg: Dict[str, Any]):
+    async def write_traceroute(self, *args, **kwargs):
         """
         Write traceroute to PostgreSQL.
-        
+
+        Supports:
+          - write_traceroute(traceroute_msg)
+          - write_traceroute(from_id, traceroute_msg)  (migrator form; from_id ignored if msg has from)
+
         Args:
             traceroute_msg: Traceroute message dictionary
         """
         if not self.enabled or not self.pool:
             return
 
+        traceroute_msg: Optional[Dict[str, Any]] = None
+        forced_from_id: Any = None
+
+        if len(args) >= 2 and isinstance(args[1], dict):
+            forced_from_id = args[0]
+            traceroute_msg = args[1]
+        elif len(args) == 1 and isinstance(args[0], dict):
+            traceroute_msg = args[0]
+        elif "traceroute_msg" in kwargs and isinstance(kwargs["traceroute_msg"], dict):
+            traceroute_msg = kwargs["traceroute_msg"]
+        elif "traceroute" in kwargs and isinstance(kwargs["traceroute"], dict):
+            traceroute_msg = kwargs["traceroute"]
+
+        if traceroute_msg is None:
+            raise ValueError("write_traceroute: traceroute message not provided / not a dict")
+
+        # Prefer msg['from'], but allow migrator to pass it separately
+        if traceroute_msg.get("from") is None and forced_from_id is not None:
+            traceroute_msg = dict(traceroute_msg)
+            traceroute_msg["from"] = forced_from_id
+
         try:
             async with self.pool.acquire() as conn:
+                from_id = await self._ensure_node_stub(conn, traceroute_msg.get('from'))
+                if not from_id:
+                    logger.warning(f"write_traceroute: missing/invalid from={traceroute_msg.get('from')!r}, skipping")
+                    return
+
+                # Prefer stubs (safer if schema uses FKs); allow NULL if missing/invalid
+                to_id = await self._ensure_node_stub(conn, traceroute_msg.get('to')) if traceroute_msg.get('to') else None
+                sender_id = await self._ensure_node_stub(conn, traceroute_msg.get('sender')) if traceroute_msg.get('sender') else None
+
                 payload_json = json.dumps(traceroute_msg.get('payload', {}))
                 route_json = json.dumps(traceroute_msg.get('route', []))
                 route_ids_json = json.dumps(traceroute_msg.get('route_ids', []))
-                
+
                 rx_time = None
-                if 'timestamp' in traceroute_msg:
+                if 'timestamp' in traceroute_msg and traceroute_msg['timestamp'] is not None:
                     rx_time = datetime.datetime.fromtimestamp(
                         traceroute_msg['timestamp'] / 1000,
                         tz=ZoneInfo(self.timezone)
@@ -315,15 +520,18 @@ class PostgresStorage:
                         route, route_ids, payload
                     )
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-                """, traceroute_msg.get('from'), traceroute_msg.get('to'),
-                     traceroute_msg.get('sender'), traceroute_msg.get('id'),
-                     traceroute_msg.get('channel'), traceroute_msg.get('packet_id'),
-                     traceroute_msg.get('hops_away'), traceroute_msg.get('rssi'),
-                     traceroute_msg.get('snr'), traceroute_msg.get('timestamp'),
-                     rx_time, route_json, route_ids_json, payload_json)
+                """,
+                    from_id, to_id, sender_id, traceroute_msg.get('id'),
+                    traceroute_msg.get('channel'), traceroute_msg.get('packet_id'),
+                    traceroute_msg.get('hops_away'), traceroute_msg.get('rssi'),
+                    traceroute_msg.get('snr'), traceroute_msg.get('timestamp'),
+                    rx_time, route_json, route_ids_json, payload_json
+                )
 
         except Exception as e:
             logger.error(f"Failed to write traceroute to PostgreSQL: {e}")
+            if self.raise_on_write_error:
+                raise
 
     # ============================================================================
     # READ OPERATIONS - Load data from PostgreSQL matching JSON structure
@@ -354,7 +562,7 @@ class PostgresStorage:
                         'hardware': row['hardware'],
                         'role': row['role'],
                         'active': row['active'],
-                        'tc2_bbs': row.get('tc2_bbs', False),
+                        'tc2_bbs': row['tc2_bbs'],
                         'last_seen': row['last_seen'].isoformat() if row['last_seen'] else None,
                         'since': datetime.timedelta(seconds=row['since_seconds']) if row['since_seconds'] else None,
                         'position': None,
