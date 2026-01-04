@@ -82,10 +82,13 @@ class PostgresStorage:
             if self.raise_on_write_error:
                 raise
 
+    from typing import Any, Optional
+
     def _normalize_node_id(self, value: Any) -> Optional[str]:
         """
         Normalize node ids to the 8-char lowercase hex string used by the schema.
         Accepts int (uint32), decimal strings, hex strings, and strings with leading '!'.
+        Rejects hex strings longer than 8 chars (avoids silent truncation/collisions).
         """
         if value is None:
             return None
@@ -95,22 +98,31 @@ class PostgresStorage:
 
         if isinstance(value, str):
             v = value.strip()
+            if not v:
+                return None
+
             if v.startswith("!"):
-                v = v[1:]
-            if v.startswith("0x") or v.startswith("0X"):
+                v = v[1:].strip()
+                if not v:
+                    return None
+
+            if v.startswith(("0x", "0X")):
                 try:
                     return f"{int(v, 16) & 0xFFFFFFFF:08x}"
                 except ValueError:
                     return None
+
             if v.isdigit():
                 return f"{int(v) & 0xFFFFFFFF:08x}"
 
             v = v.lower()
             if all(c in "0123456789abcdef" for c in v):
                 if len(v) < 8:
-                    v = v.zfill(8)
+                    return v.zfill(8)
                 if len(v) == 8:
                     return v
+                # Explicit: too long to be a uint32 / schema node id
+                return None
 
         return None
 
