@@ -312,40 +312,38 @@ class PostgresStorage:
              telemetry.get('wind_direction'), telemetry.get('wind_speed'),
              telemetry.get('weight'))
 
-    async def write_telemetry(self, *args, **kwargs):
+    async def write_telemetry(self, node_id: str, telemetry_msg: Dict[str, Any]) -> None:
         """
         Write telemetry message to history table.
 
-        Supports:
-          - write_telemetry(telemetry_msg)
-          - write_telemetry(node_id, telemetry_msg)   (node_id is ignored; msg drives DB fields)
-
         Args:
-            telemetry_msg: Complete telemetry message from MQTT/JSON migration
+            node_id: from-node id (any supported form; will be normalized)
+            telemetry_msg: Telemetry message dictionary
         """
         if not self.enabled or not self.pool:
             return
 
-        telemetry_msg: Optional[Dict[str, Any]] = None
-
-        if len(args) >= 2 and isinstance(args[1], dict):
-            telemetry_msg = args[1]
-        elif len(args) == 1 and isinstance(args[0], dict):
-            telemetry_msg = args[0]
-        elif "telemetry_msg" in kwargs and isinstance(kwargs["telemetry_msg"], dict):
-            telemetry_msg = kwargs["telemetry_msg"]
-        elif "telemetry" in kwargs and isinstance(kwargs["telemetry"], dict):
-            telemetry_msg = kwargs["telemetry"]
-
-        if telemetry_msg is None:
-            raise ValueError("write_telemetry: telemetry message not provided / not a dict")
+        if not isinstance(node_id, str) or not node_id:
+            raise ValueError("write_telemetry: node_id must be a non-empty string")
+        if not isinstance(telemetry_msg, dict):
+            raise ValueError("write_telemetry: telemetry_msg must be a dict")
 
         try:
             async with self.pool.acquire() as conn:
-                from_id = await self._ensure_node_stub(conn, telemetry_msg.get('from'))
+                # Canonical: explicit node_id is authoritative for from_node_id
+                from_id = await self._ensure_node_stub(conn, node_id)
                 if not from_id:
-                    logger.warning(f"write_telemetry: missing/invalid from={telemetry_msg.get('from')!r}, skipping")
+                    logger.warning(f"write_telemetry: could not normalize node_id={node_id!r}, skipping")
                     return
+
+                msg_from = telemetry_msg.get("from")
+                if msg_from is not None:
+                    msg_from_norm = await self._ensure_node_stub(conn, msg_from)
+                    if msg_from_norm and msg_from_norm != from_id:
+                        logger.debug(
+                            "write_telemetry: msg['from']=%r (norm=%s) != explicit node_id=%r (norm=%s); using explicit",
+                            msg_from, msg_from_norm, node_id, from_id
+                        )
 
                 sender_id = await self._ensure_node_stub(conn, telemetry_msg.get('sender'))
                 to_id = await self._ensure_node_stub(conn, telemetry_msg.get('to'))
@@ -385,48 +383,43 @@ class PostgresStorage:
             if self.raise_on_write_error:
                 raise
 
-    async def write_chat_message(self, *args, **kwargs):
+    async def write_chat_message(self, node_id: str, chat_msg: Dict[str, Any]) -> None:
         """
         Write chat message to PostgreSQL.
 
-        Supports:
-          - write_chat_message(chat_msg)
-          - write_chat_message(message_id, chat_msg)  (migrator form)
-
         Args:
+            node_id: from-node id (any supported form; will be normalized)
             chat_msg: Chat message dictionary
         """
         if not self.enabled or not self.pool:
             return
 
-        chat_msg: Optional[Dict[str, Any]] = None
-        message_id: Any = None
+        if not isinstance(node_id, str) or not node_id:
+            raise ValueError("write_chat_message: node_id must be a non-empty string")
+        if not isinstance(chat_msg, dict):
+            raise ValueError("write_chat_message: chat_msg must be a dict")
 
-        if len(args) >= 2 and isinstance(args[1], dict):
-            message_id = args[0]
-            chat_msg = args[1]
-        elif len(args) == 1 and isinstance(args[0], dict):
-            chat_msg = args[0]
-        elif "chat_msg" in kwargs and isinstance(kwargs["chat_msg"], dict):
-            chat_msg = kwargs["chat_msg"]
-        elif "message" in kwargs and isinstance(kwargs["message"], dict):
-            chat_msg = kwargs["message"]
-
-        if chat_msg is None:
-            raise ValueError("write_chat_message: chat message not provided / not a dict")
-
-        # If migrator passed id separately, ensure it exists in dict
-        if message_id is not None and chat_msg.get("id") is None:
-            chat_msg = dict(chat_msg)
-            chat_msg["id"] = message_id
+        if chat_msg.get("id") is None:
+            logger.warning("write_chat_message: missing id in chat_msg; skipping insert")
+            return
 
         try:
             async with self.pool.acquire() as conn:
                 async with conn.transaction():
-                    from_id = await self._ensure_node_stub(conn, chat_msg.get('from'))
+                    # Canonical: explicit node_id is authoritative for from_node_id
+                    from_id = await self._ensure_node_stub(conn, node_id)
                     if not from_id:
-                        logger.warning(f"write_chat_message: missing/invalid from={chat_msg.get('from')!r}, skipping")
+                        logger.warning(f"write_chat_message: could not normalize node_id={node_id!r}, skipping")
                         return
+
+                    msg_from = chat_msg.get("from")
+                    if msg_from is not None:
+                        msg_from_norm = await self._ensure_node_stub(conn, msg_from)
+                        if msg_from_norm and msg_from_norm != from_id:
+                            logger.debug(
+                                "write_chat_message: msg['from']=%r (norm=%s) != explicit node_id=%r (norm=%s); using explicit",
+                                msg_from, msg_from_norm, node_id, from_id
+                            )
 
                     sender_id = await self._ensure_node_stub(conn, chat_msg.get('sender'))
                     to_id = await self._ensure_node_stub(conn, chat_msg.get('to'))
@@ -474,47 +467,38 @@ class PostgresStorage:
             if self.raise_on_write_error:
                 raise
 
-    async def write_traceroute(self, *args, **kwargs):
+    async def write_traceroute(self, node_id: str, traceroute_msg: Dict[str, Any]) -> None:
         """
         Write traceroute to PostgreSQL.
 
-        Supports:
-          - write_traceroute(traceroute_msg)
-          - write_traceroute(from_id, traceroute_msg)  (migrator form; from_id ignored if msg has from)
-
         Args:
+            node_id: from-node id (any supported form; will be normalized)
             traceroute_msg: Traceroute message dictionary
         """
         if not self.enabled or not self.pool:
             return
 
-        traceroute_msg: Optional[Dict[str, Any]] = None
-        forced_from_id: Any = None
-
-        if len(args) >= 2 and isinstance(args[1], dict):
-            forced_from_id = args[0]
-            traceroute_msg = args[1]
-        elif len(args) == 1 and isinstance(args[0], dict):
-            traceroute_msg = args[0]
-        elif "traceroute_msg" in kwargs and isinstance(kwargs["traceroute_msg"], dict):
-            traceroute_msg = kwargs["traceroute_msg"]
-        elif "traceroute" in kwargs and isinstance(kwargs["traceroute"], dict):
-            traceroute_msg = kwargs["traceroute"]
-
-        if traceroute_msg is None:
-            raise ValueError("write_traceroute: traceroute message not provided / not a dict")
-
-        # Prefer msg['from'], but allow migrator to pass it separately
-        if traceroute_msg.get("from") is None and forced_from_id is not None:
-            traceroute_msg = dict(traceroute_msg)
-            traceroute_msg["from"] = forced_from_id
+        if not isinstance(node_id, str) or not node_id:
+            raise ValueError("write_traceroute: node_id must be a non-empty string")
+        if not isinstance(traceroute_msg, dict):
+            raise ValueError("write_traceroute: traceroute_msg must be a dict")
 
         try:
             async with self.pool.acquire() as conn:
-                from_id = await self._ensure_node_stub(conn, traceroute_msg.get('from'))
+                # Canonical: explicit node_id is authoritative for from_node_id
+                from_id = await self._ensure_node_stub(conn, node_id)
                 if not from_id:
-                    logger.warning(f"write_traceroute: missing/invalid from={traceroute_msg.get('from')!r}, skipping")
+                    logger.warning(f"write_traceroute: could not normalize node_id={node_id!r}, skipping")
                     return
+
+                msg_from = traceroute_msg.get("from")
+                if msg_from is not None:
+                    msg_from_norm = await self._ensure_node_stub(conn, msg_from)
+                    if msg_from_norm and msg_from_norm != from_id:
+                        logger.debug(
+                            "write_traceroute: msg['from']=%r (norm=%s) != explicit node_id=%r (norm=%s); using explicit",
+                            msg_from, msg_from_norm, node_id, from_id
+                        )
 
                 # Prefer stubs (safer if schema uses FKs); allow NULL if missing/invalid
                 to_id = await self._ensure_node_stub(conn, traceroute_msg.get('to')) if traceroute_msg.get('to') else None
