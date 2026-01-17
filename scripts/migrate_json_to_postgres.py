@@ -123,65 +123,80 @@ class JSONToPostgresMigration:
     async def migrate_chat(self):
         """Migrate chat.json to PostgreSQL."""
         logger.info("Migrating chat messages...")
-        
+
         chat_data = self.load_json_file("chat.json")
         if not chat_data:
             logger.warning("No chat.json file found or file is empty")
             return
-        
+
         count = 0
         for channel_id, channel_data in chat_data.get('channels', {}).items():
             for message in channel_data.get('messages', []):
                 try:
-                    await self.pg_storage.write_chat_message(message)
+                    from_id = message.get("from")
+                    if not isinstance(from_id, str) or not from_id:
+                        logger.warning(f"Skipping chat message {message.get('id')}: missing/invalid from={from_id!r}")
+                        continue
+
+                    await self.pg_storage.write_chat_message(from_id, message)
                     count += 1
                     if count % 100 == 0:
                         logger.info(f"Migrated {count} chat messages...")
                 except Exception as e:
                     logger.error(f"Failed to migrate chat message {message.get('id')}: {e}")
-        
+
         logger.info(f"Successfully migrated {count} chat messages")
 
     async def migrate_telemetry(self):
         """Migrate telemetry.json to PostgreSQL."""
         logger.info("Migrating telemetry...")
-        
+
         telemetry = self.load_json_file("telemetry.json")
         if not telemetry:
             logger.warning("No telemetry.json file found or file is empty")
             return
-        
+
         count = 0
         for msg in telemetry:
             try:
-                await self.pg_storage.write_telemetry(msg)
+                from_id = msg.get("from")
+                if not isinstance(from_id, str) or not from_id:
+                    logger.warning(f"Skipping telemetry record: missing/invalid from={from_id!r}")
+                    continue
+
+                await self.pg_storage.write_telemetry(from_id, msg)
                 count += 1
                 if count % 100 == 0:
                     logger.info(f"Migrated {count} telemetry records...")
             except Exception as e:
                 logger.error(f"Failed to migrate telemetry: {e}")
-        
+
         logger.info(f"Successfully migrated {count} telemetry records")
 
     async def migrate_traceroutes(self):
         """Migrate traceroutes.json to PostgreSQL."""
         logger.info("Migrating traceroutes...")
-        
+
         traceroutes = self.load_json_file("traceroutes.json")
         if not traceroutes:
             logger.warning("No traceroutes.json file found or file is empty")
             return
-        
+
         count = 0
         for msg in traceroutes:
             try:
-                await self.pg_storage.write_traceroute(msg)
+                from_id = msg.get("from")
+                if not isinstance(from_id, str) or not from_id:
+                    logger.warning(f"Skipping traceroute record: missing/invalid from={from_id!r}")
+                    continue
+
+                await self.pg_storage.write_traceroute(from_id, msg)
                 count += 1
                 if count % 100 == 0:
                     logger.info(f"Migrated {count} traceroutes...")
             except Exception as e:
                 logger.error(f"Failed to migrate traceroute: {e}")
-        
+
         logger.info(f"Successfully migrated {count} traceroutes")
 
 

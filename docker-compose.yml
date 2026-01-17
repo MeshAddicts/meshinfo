@@ -1,11 +1,19 @@
 services:
   postgres:
-    image: postgres:latest
-    volumes:
-      - ./postgres/data:/var/lib/postgresql
+    image: postgres:16
     environment:
-      - POSTGRES_PASSWORD=password
-    restart: "no"
+      POSTGRES_DB: meshinfo
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - meshinfo_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d meshinfo"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   mqtt:
     container_name: mqtt
@@ -22,6 +30,7 @@ services:
     volumes:
       - ./config.json:/app/config.json
       - ./output:/app/output
+      - ./postgres:/app/postgres:ro
     environment:
       - PYTHONUNBUFFERED=1
     ports:
@@ -61,3 +70,6 @@ services:
     depends_on:
       - meshinfo
       - frontend
+
+volumes:
+  meshinfo_pgdata:

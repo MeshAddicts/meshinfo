@@ -443,7 +443,7 @@ class MQTT:
             
             # Real-time write to Postgres if enabled
             if 'postgres' in self.config.get('storage', {}).get('write_to', []):
-                await self.data.pg_storage.write_telemetry(msg)
+                await self.data.pg_storage.write_telemetry(id, msg)
 
         await self.data.save()
 
@@ -479,7 +479,7 @@ class MQTT:
         
         # Real-time write to Postgres if enabled
         if 'postgres' in self.config.get('storage', {}).get('write_to', []):
-            await self.data.pg_storage.write_chat_message(chat)
+            await self.data.pg_storage.write_chat_message(chat['from'], chat)
 
         node = self.data.find_node_by_hex_id(msg['from'])
         # TODO: Replace with something more configurable
@@ -520,7 +520,7 @@ class MQTT:
         
         # Real-time write to Postgres if enabled
         if 'postgres' in self.config.get('storage', {}).get('write_to', []):
-            await self.data.pg_storage.write_traceroute(msg)
+            await self.data.pg_storage.write_traceroute(id, msg)
         
         await self.data.save()
 

@@ -12,12 +12,21 @@ services:
     restart: always
 
   postgres:
-    image: postgres:latest
-    volumes:
-      - ./postgres/data:/var/lib/postgresql/data
+    image: postgres:16
     environment:
-      - POSTGRES_PASSWORD=password
-    restart: no
+      POSTGRES_DB: meshinfo
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - meshinfo_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d meshinfo"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
 
   mqtt:
     container_name: mqtt
@@ -50,13 +59,20 @@ services:
       - ./output:/app/output
       - ./templates:/app/templates
       - ./spa:/app/spa
+      - ./postgres:/app/postgres:ro
     ports:
       - 9000:9000
     environment:
-      - PYTHONUNBUFFERED=1
-      - ALLOW_ORIGINS=*
+      - PYTHONUNBUFFERED="1"
+      - ALLOW_ORIGINS="*""
     restart: always
     depends_on:
-      - caddy
-      - postgres
-      - mqtt
+      caddy:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      mqtt:
+        condition: service_started
+
+volumes:
+  meshinfo_pgdata:
