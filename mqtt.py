@@ -229,8 +229,10 @@ class MQTT:
                     try:
                         env = telemetry_pb2.Telemetry().FromString(mp.decoded.payload)
                         out = json.loads(MessageToJson(env, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
-                        if 'rx_time' in outs:
-                            out['timestamp'] = datetime.datetime.fromtimestamp(outs['rx_time'] / 1000).astimezone(ZoneInfo(self.config['server']['timezone']))
+                        if 'timestamp' in outs and outs['timestamp'] is not None:
+                            out['timestamp'] = datetime.datetime.fromtimestamp(int(outs['timestamp'])).astimezone(
+                                ZoneInfo(self.config['server']['timezone'])
+                            )
                         outs["type"] = "telemetry"
                         if 'device_metrics' in out:
                             outs["payload"] = out['device_metrics']
