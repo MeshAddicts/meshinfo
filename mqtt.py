@@ -119,18 +119,25 @@ class MQTT:
                 outs['topic'] = msg.topic.value
 
                 if mp.decoded.portnum == portnums_pb2.TEXT_MESSAGE_APP:
+                    payload_bytes = bytes(mp.decoded.payload)
                     try:
-                        text = mp.decoded.payload.decode("utf-8")
-                        payload = { "text": text }
+                        text = payload_bytes.decode("utf-8")
                         outs["type"] = "text"
-                        outs["payload"] = payload
+                        outs["payload"] = {"text": text}
                         if self.config['debug']:
                             print(f"Decoded protobuf message: text: {outs}")
                         await self.handle_text(outs)
-                    except UnicodeDecodeError as e:
-                        print(f"*** Unicode decoding error: text: {str(e)}")
-                    except DecodeError as e:
-                        print(f"*** Protobuf decode error: text: {str(e)}")
+
+                    except UnicodeDecodeError:
+                        outs["type"] = "text_binary"
+                        outs["payload"] = {
+                            "text_b64": base64.b64encode(payload_bytes).decode("ascii"),
+                            "len": len(payload_bytes),
+                        }
+                        if self.config['debug']:
+                            print(f"Decoded protobuf message: text_binary: {outs}")
+                        # log it, but don't treat as chat text
+                        await self.handle_log(outs)
 
                 elif mp.decoded.portnum == portnums_pb2.MAP_REPORT_APP:
                     try:
