@@ -10,6 +10,7 @@ import asyncpg
 import datetime
 import json
 import logging
+import base64
 from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
@@ -144,6 +145,20 @@ class PostgresStorage:
             nid
         )
         return nid
+    
+    def _ts_to_dt(self, ts: Any) -> Optional[datetime.datetime]:
+        if ts is None:
+            return None
+        try:
+            t = int(ts)
+        except (TypeError, ValueError):
+            return None
+
+        # Heuristic: milliseconds are ~1.7e12 today; seconds are ~1.7e9
+        if t > 10_000_000_000:
+            t = t / 1000.0
+
+        return datetime.datetime.fromtimestamp(t, tz=ZoneInfo(self.timezone))
 
     # ============================================================================
     # WRITE OPERATIONS - Real-time writes for dual-write pattern
@@ -350,12 +365,7 @@ class PostgresStorage:
 
                 payload_json = json.dumps(telemetry_msg.get('payload', {}))
 
-                rx_time = None
-                if 'timestamp' in telemetry_msg and telemetry_msg['timestamp'] is not None:
-                    rx_time = datetime.datetime.fromtimestamp(
-                        telemetry_msg['timestamp'] / 1000,
-                        tz=ZoneInfo(self.timezone)
-                    )
+                rx_time = self._ts_to_dt(telemetry_msg.get("timestamp"))
 
                 await conn.execute("""
                     INSERT INTO telemetry (
@@ -434,12 +444,7 @@ class PostgresStorage:
                         ON CONFLICT (id) DO NOTHING
                     """, channel_id, channel_name)
 
-                    rx_time = None
-                    if 'timestamp' in chat_msg and chat_msg['timestamp'] is not None:
-                        rx_time = datetime.datetime.fromtimestamp(
-                            chat_msg['timestamp'] / 1000,
-                            tz=ZoneInfo(self.timezone)
-                        )
+                    rx_time = self._ts_to_dt(chat_msg.get("timestamp"))
 
                     await conn.execute("""
                         INSERT INTO chat_messages (
@@ -508,12 +513,7 @@ class PostgresStorage:
                 route_json = json.dumps(traceroute_msg.get('route', []))
                 route_ids_json = json.dumps(traceroute_msg.get('route_ids', []))
 
-                rx_time = None
-                if 'timestamp' in traceroute_msg and traceroute_msg['timestamp'] is not None:
-                    rx_time = datetime.datetime.fromtimestamp(
-                        traceroute_msg['timestamp'] / 1000,
-                        tz=ZoneInfo(self.timezone)
-                    )
+                rx_time = self._ts_to_dt(traceroute_msg.get("timestamp"))
 
                 await conn.execute("""
                     INSERT INTO traceroutes (
@@ -534,6 +534,97 @@ class PostgresStorage:
             logger.error(f"Failed to write traceroute to PostgreSQL: {e}")
             if self.raise_on_write_error:
                 raise
+    
+    def _coerce_mqtt_payload_text(self, value: Any) -> Optional[str]:
+        """
+        Convert MQTT payload/message content into a text blob suitable for mqtt_messages.payload.
+
+        - dict/list -> JSON string
+        - bytes -> utf-8 if possible, else base64 with "b64:" prefix
+        - str -> as-is
+        - other -> str(...)
+        """
+        if value is None:
+            return None
+
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False, default=str)
+
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            b = bytes(value)
+            try:
+                return b.decode("utf-8")
+            except UnicodeDecodeError:
+                return "b64:" + base64.b64encode(b).decode("ascii")
+
+        if isinstance(value, str):
+            return value
+
+        return str(value)
+
+    async def write_mqtt_message(self, mqtt_msg: Any) -> None:
+        """
+        Write a raw MQTT message (or decoded/log dict) into mqtt_messages.
+
+        Expected table columns:
+          topic (text), payload (text), qos (int), retain (bool), timestamp (bigint), created_at (timestamptz default now())
+        """
+        if not self.enabled or not self.pool:
+            return
+
+        if isinstance(mqtt_msg, dict):
+            topic = mqtt_msg.get("topic")
+            qos = mqtt_msg.get("qos")
+            retain = mqtt_msg.get("retain")
+            ts = mqtt_msg.get("timestamp")
+
+            clean = dict(mqtt_msg)
+            clean.pop("decoded", None)
+            clean.pop("encrypted", None)
+            payload_text = self._coerce_mqtt_payload_text(clean)
+        else:
+            topic_obj = getattr(mqtt_msg, "topic", None)
+            topic = getattr(topic_obj, "value", None) if topic_obj is not None else None
+            if topic is None and topic_obj is not None:
+                topic = str(topic_obj)
+
+            qos = getattr(mqtt_msg, "qos", None)
+            retain = getattr(mqtt_msg, "retain", None)
+            ts = getattr(mqtt_msg, "timestamp", None)
+            payload_text = self._coerce_mqtt_payload_text(getattr(mqtt_msg, "payload", None))
+
+        if topic is not None and not isinstance(topic, str):
+            topic = str(topic)
+
+        try:
+            qos_i = int(qos) if qos is not None else None
+        except (TypeError, ValueError):
+            qos_i = None
+
+        retain_b = bool(retain) if retain is not None else None
+
+        try:
+            ts_i = int(ts) if ts is not None else None
+        except (TypeError, ValueError):
+            ts_i = None
+
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO mqtt_messages (topic, payload, qos, retain, timestamp)
+                    VALUES ($1, $2, $3, $4, $5)
+                    """,
+                    topic,
+                    payload_text,
+                    qos_i,
+                    retain_b,
+                    ts_i,
+                )
+        except Exception as e:
+            logger.error(f"Failed to write mqtt message to PostgreSQL: {e}")
+            if self.raise_on_write_error:
+                raise    
 
     # ============================================================================
     # READ OPERATIONS - Load data from PostgreSQL matching JSON structure

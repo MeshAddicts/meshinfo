@@ -117,20 +117,29 @@ class MQTT:
                 outs['snr'] = mp.rx_snr
                 outs['timestamp'] = mp.rx_time
                 outs['topic'] = msg.topic.value
+                outs["qos"] = getattr(msg, "qos", None)
+                outs["retain"] = getattr(msg, "retain", None)
 
                 if mp.decoded.portnum == portnums_pb2.TEXT_MESSAGE_APP:
+                    payload_bytes = bytes(mp.decoded.payload)
                     try:
-                        text = mp.decoded.payload.decode("utf-8")
-                        payload = { "text": text }
+                        text = payload_bytes.decode("utf-8")
                         outs["type"] = "text"
-                        outs["payload"] = payload
+                        outs["payload"] = {"text": text}
                         if self.config['debug']:
                             print(f"Decoded protobuf message: text: {outs}")
                         await self.handle_text(outs)
-                    except UnicodeDecodeError as e:
-                        print(f"*** Unicode decoding error: text: {str(e)}")
-                    except DecodeError as e:
-                        print(f"*** Protobuf decode error: text: {str(e)}")
+
+                    except UnicodeDecodeError:
+                        outs["type"] = "text_binary"
+                        outs["payload"] = {
+                            "text_b64": base64.b64encode(payload_bytes).decode("ascii"),
+                            "len": len(payload_bytes),
+                        }
+                        if self.config['debug']:
+                            print(f"Decoded protobuf message: text_binary: {outs}")
+                        # log it, but don't treat as chat text
+                        await self.handle_log(outs)
 
                 elif mp.decoded.portnum == portnums_pb2.MAP_REPORT_APP:
                     try:
@@ -229,8 +238,10 @@ class MQTT:
                     try:
                         env = telemetry_pb2.Telemetry().FromString(mp.decoded.payload)
                         out = json.loads(MessageToJson(env, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
-                        if 'rx_time' in outs:
-                            out['timestamp'] = datetime.datetime.fromtimestamp(outs['rx_time'] / 1000).astimezone(ZoneInfo(self.config['server']['timezone']))
+                        if 'timestamp' in outs and outs['timestamp'] is not None:
+                            out['timestamp'] = datetime.datetime.fromtimestamp(int(outs['timestamp'])).astimezone(
+                                ZoneInfo(self.config['server']['timezone'])
+                            )
                         outs["type"] = "telemetry"
                         if 'device_metrics' in out:
                             outs["payload"] = out['device_metrics']
@@ -275,6 +286,8 @@ class MQTT:
                         decoded = msg.payload.decode("utf-8")
                         j = json.loads(decoded, cls=_JSONDecoder)
                         j['topic'] = msg.topic.value
+                        j["qos"] = getattr(msg, "qos", None)
+                        j["retain"] = getattr(msg, "retain", None)
 
                         await self.handle_log(j)
 
@@ -328,15 +341,26 @@ class MQTT:
         topic = msg['topic'] if 'topic' in msg else 'unknown'
         if self.config['debug']:
             print(f"MQTT >> {topic} -- {msg}")
+
         self.data.mqtt_messages.append(msg)
+
         clean_msg = msg.copy()
-        if 'decoded' in clean_msg:
-            del clean_msg['decoded']
-        if 'encrypted' in clean_msg:
-            del clean_msg['encrypted']
+        clean_msg.pop("decoded", None)
+        clean_msg.pop("encrypted", None)
+
         self.data.messages.append(clean_msg)
+
+        # Real-time write to Postgres if enabled (raw MQTT log table)
+        if 'postgres' in self.config.get('storage', {}).get('write_to', []):
+            try:
+                await self.data.pg_storage.write_mqtt_message(clean_msg)
+            except Exception as e:
+                print(f"*** Failed to write mqtt_message to postgres: {e}")
+                if self.config.get('debug'):
+                    traceback.print_exc()
+
         with open(f'{self.config["paths"]["data"]}/message-log.jsonl', 'a', encoding='utf-8') as f:
-            f.write(f"{msg}\n")
+            f.write(json.dumps(clean_msg, ensure_ascii=False, default=str) + "\n")
 
     async def handle_neighborinfo(self, msg):
         msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
