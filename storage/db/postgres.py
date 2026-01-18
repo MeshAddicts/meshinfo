@@ -144,6 +144,20 @@ class PostgresStorage:
             nid
         )
         return nid
+    
+    def _ts_to_dt(self, ts: Any) -> Optional[datetime.datetime]:
+        if ts is None:
+            return None
+        try:
+            t = int(ts)
+        except (TypeError, ValueError):
+            return None
+
+        # Heuristic: milliseconds are ~1.7e12 today; seconds are ~1.7e9
+        if t > 10_000_000_000:
+            t = t / 1000.0
+
+        return datetime.datetime.fromtimestamp(t, tz=ZoneInfo(self.timezone))
 
     # ============================================================================
     # WRITE OPERATIONS - Real-time writes for dual-write pattern
@@ -350,12 +364,7 @@ class PostgresStorage:
 
                 payload_json = json.dumps(telemetry_msg.get('payload', {}))
 
-                rx_time = None
-                if 'timestamp' in telemetry_msg and telemetry_msg['timestamp'] is not None:
-                    rx_time = datetime.datetime.fromtimestamp(
-                        telemetry_msg['timestamp'] / 1000,
-                        tz=ZoneInfo(self.timezone)
-                    )
+                rx_time = self._ts_to_dt(telemetry_msg.get("timestamp"))
 
                 await conn.execute("""
                     INSERT INTO telemetry (
@@ -434,12 +443,7 @@ class PostgresStorage:
                         ON CONFLICT (id) DO NOTHING
                     """, channel_id, channel_name)
 
-                    rx_time = None
-                    if 'timestamp' in chat_msg and chat_msg['timestamp'] is not None:
-                        rx_time = datetime.datetime.fromtimestamp(
-                            chat_msg['timestamp'] / 1000,
-                            tz=ZoneInfo(self.timezone)
-                        )
+                    rx_time = self._ts_to_dt(chat_msg.get("timestamp"))
 
                     await conn.execute("""
                         INSERT INTO chat_messages (
@@ -508,12 +512,7 @@ class PostgresStorage:
                 route_json = json.dumps(traceroute_msg.get('route', []))
                 route_ids_json = json.dumps(traceroute_msg.get('route_ids', []))
 
-                rx_time = None
-                if 'timestamp' in traceroute_msg and traceroute_msg['timestamp'] is not None:
-                    rx_time = datetime.datetime.fromtimestamp(
-                        traceroute_msg['timestamp'] / 1000,
-                        tz=ZoneInfo(self.timezone)
-                    )
+                rx_time = self._ts_to_dt(traceroute_msg.get("timestamp"))
 
                 await conn.execute("""
                     INSERT INTO traceroutes (
