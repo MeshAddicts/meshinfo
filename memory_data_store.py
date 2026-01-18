@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import asyncio
 import copy
 from datetime import datetime, timedelta
 import glob
@@ -42,6 +43,40 @@ class MemoryDataStore:
     
     # Initialize Postgres storage
     self.pg_storage = PostgresStorage(config)
+
+  def __deepcopy__(self, memo):
+    """
+    Custom deepcopy to avoid copying non-copyable runtime objects (e.g., asyncpg buffers
+    held by PostgresStorage / pools / connections). Renderers only need the in-memory
+    data snapshot, not the live DB connection.
+    """
+    cls = self.__class__
+    result = cls.__new__(cls)
+    memo[id(self)] = result
+
+    for k, v in self.__dict__.items():
+      # Never deepcopy PostgresStorage (it can contain asyncpg internals)
+      if k == "pg_storage":
+        setattr(result, k, None)
+        continue
+
+      # Skip deepcopy for asyncpg internals if they somehow land on the store
+      mod = type(v).__module__
+      if isinstance(mod, str) and mod.startswith("asyncpg"):
+        setattr(result, k, None)
+        continue
+
+      # Skip common non-copyable runtime objects
+      try:
+        if isinstance(v, (asyncio.Lock, asyncio.Event, asyncio.Task, logging.Logger)):
+          setattr(result, k, v)
+          continue
+      except Exception:
+        pass
+
+      setattr(result, k, copy.deepcopy(v, memo))
+
+    return result
 
   def update(self, key, value):
     self.__dict__[key] = value
