@@ -10,6 +10,7 @@ import asyncpg
 import datetime
 import json
 import logging
+import base64
 from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo
 
@@ -533,6 +534,97 @@ class PostgresStorage:
             logger.error(f"Failed to write traceroute to PostgreSQL: {e}")
             if self.raise_on_write_error:
                 raise
+    
+    def _coerce_mqtt_payload_text(self, value: Any) -> Optional[str]:
+        """
+        Convert MQTT payload/message content into a text blob suitable for mqtt_messages.payload.
+
+        - dict/list -> JSON string
+        - bytes -> utf-8 if possible, else base64 with "b64:" prefix
+        - str -> as-is
+        - other -> str(...)
+        """
+        if value is None:
+            return None
+
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False, default=str)
+
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            b = bytes(value)
+            try:
+                return b.decode("utf-8")
+            except UnicodeDecodeError:
+                return "b64:" + base64.b64encode(b).decode("ascii")
+
+        if isinstance(value, str):
+            return value
+
+        return str(value)
+
+    async def write_mqtt_message(self, mqtt_msg: Any) -> None:
+        """
+        Write a raw MQTT message (or decoded/log dict) into mqtt_messages.
+
+        Expected table columns:
+          topic (text), payload (text), qos (int), retain (bool), timestamp (bigint), created_at (timestamptz default now())
+        """
+        if not self.enabled or not self.pool:
+            return
+
+        if isinstance(mqtt_msg, dict):
+            topic = mqtt_msg.get("topic")
+            qos = mqtt_msg.get("qos")
+            retain = mqtt_msg.get("retain")
+            ts = mqtt_msg.get("timestamp")
+
+            clean = dict(mqtt_msg)
+            clean.pop("decoded", None)
+            clean.pop("encrypted", None)
+            payload_text = self._coerce_mqtt_payload_text(clean)
+        else:
+            topic_obj = getattr(mqtt_msg, "topic", None)
+            topic = getattr(topic_obj, "value", None) if topic_obj is not None else None
+            if topic is None and topic_obj is not None:
+                topic = str(topic_obj)
+
+            qos = getattr(mqtt_msg, "qos", None)
+            retain = getattr(mqtt_msg, "retain", None)
+            ts = getattr(mqtt_msg, "timestamp", None)
+            payload_text = self._coerce_mqtt_payload_text(getattr(mqtt_msg, "payload", None))
+
+        if topic is not None and not isinstance(topic, str):
+            topic = str(topic)
+
+        try:
+            qos_i = int(qos) if qos is not None else None
+        except (TypeError, ValueError):
+            qos_i = None
+
+        retain_b = bool(retain) if retain is not None else None
+
+        try:
+            ts_i = int(ts) if ts is not None else None
+        except (TypeError, ValueError):
+            ts_i = None
+
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO mqtt_messages (topic, payload, qos, retain, timestamp)
+                    VALUES ($1, $2, $3, $4, $5)
+                    """,
+                    topic,
+                    payload_text,
+                    qos_i,
+                    retain_b,
+                    ts_i,
+                )
+        except Exception as e:
+            logger.error(f"Failed to write mqtt message to PostgreSQL: {e}")
+            if self.raise_on_write_error:
+                raise    
 
     # ============================================================================
     # READ OPERATIONS - Load data from PostgreSQL matching JSON structure
