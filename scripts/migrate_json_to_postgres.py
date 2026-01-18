@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import sys
+import hashlib
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -49,6 +50,32 @@ class JSONToPostgresMigration:
         if os.path.exists(filepath):
             with open(filepath, "r", encoding='utf-8') as f:
                 return json.load(f, cls=_JSONDecoder)
+        return None
+
+    def _normalize_node_id(self, value):
+        """Normalize node ids to 8-char lowercase hex string (strip leading '!')."""
+        if not isinstance(value, str):
+            return None
+        v = value.strip()
+        if not v:
+            return None
+        if v.startswith("!"):
+            v = v[1:].strip()
+        if len(v) != 8:
+            return None
+        return v.lower()
+
+    def _as_int(self, value):
+        """Convert value to int if it looks like an integer; otherwise None."""
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            s = value.strip()
+            if s.isdigit():
+                try:
+                    return int(s)
+                except Exception:
+                    return None
         return None
 
     async def migrate(self):
@@ -129,10 +156,22 @@ class JSONToPostgresMigration:
             logger.warning("No chat.json file found or file is empty")
             return
 
+        # chat.json is known to contain duplicate message ids; dedupe in-memory for cleaner results/logging
+        seen_ids = set()
+        skipped_dupes = 0
+
         count = 0
         for channel_id, channel_data in chat_data.get('channels', {}).items():
             for message in channel_data.get('messages', []):
                 try:
+                    mid = message.get("id")
+                    if mid is not None:
+                        key = str(mid)
+                        if key in seen_ids:
+                            skipped_dupes += 1
+                            continue
+                        seen_ids.add(key)
+
                     from_id = message.get("from")
                     if not isinstance(from_id, str) or not from_id:
                         logger.warning(f"Skipping chat message {message.get('id')}: missing/invalid from={from_id!r}")
@@ -145,7 +184,7 @@ class JSONToPostgresMigration:
                 except Exception as e:
                     logger.error(f"Failed to migrate chat message {message.get('id')}: {e}")
 
-        logger.info(f"Successfully migrated {count} chat messages")
+        logger.info(f"Successfully migrated {count} chat messages (skipped {skipped_dupes} duplicate ids in chat.json)")
 
     async def migrate_telemetry(self):
         """Migrate telemetry.json to PostgreSQL."""
@@ -156,6 +195,10 @@ class JSONToPostgresMigration:
             logger.warning("No telemetry.json file found or file is empty")
             return
 
+        # Dedupe within telemetry.json by (from_node_id, message_id). packet_id is a fallback if message_id missing.
+        seen = set()
+        skipped_dupes = 0
+
         count = 0
         for msg in telemetry:
             try:
@@ -164,6 +207,30 @@ class JSONToPostgresMigration:
                     logger.warning(f"Skipping telemetry record: missing/invalid from={from_id!r}")
                     continue
 
+                from_norm = self._normalize_node_id(from_id)
+
+                # The JSON 'id' maps to DB column telemetry.message_id (bigint)
+                message_id = self._as_int(msg.get("id"))
+
+                # Some payloads may have packet_id too; use as fallback key
+                packet_id = (
+                    self._as_int(msg.get("packet_id"))
+                    or self._as_int(msg.get("packetId"))
+                    or self._as_int(msg.get("packetID"))
+                )
+
+                dedupe_key = None
+                if from_norm and message_id is not None:
+                    dedupe_key = ("mid", from_norm, message_id)
+                elif from_norm and packet_id is not None:
+                    dedupe_key = ("pid", from_norm, packet_id)
+
+                if dedupe_key is not None:
+                    if dedupe_key in seen:
+                        skipped_dupes += 1
+                        continue
+                    seen.add(dedupe_key)
+
                 await self.pg_storage.write_telemetry(from_id, msg)
                 count += 1
                 if count % 100 == 0:
@@ -171,7 +238,7 @@ class JSONToPostgresMigration:
             except Exception as e:
                 logger.error(f"Failed to migrate telemetry: {e}")
 
-        logger.info(f"Successfully migrated {count} telemetry records")
+        logger.info(f"Successfully migrated {count} telemetry records (skipped {skipped_dupes} duplicate records in telemetry.json)")
 
     async def migrate_traceroutes(self):
         """Migrate traceroutes.json to PostgreSQL."""
@@ -182,6 +249,10 @@ class JSONToPostgresMigration:
             logger.warning("No traceroutes.json file found or file is empty")
             return
 
+        # Dedupe within traceroutes.json by (from_node_id, message_id). packet_id is a fallback if message_id missing.
+        seen = set()
+        skipped_dupes = 0
+
         count = 0
         for msg in traceroutes:
             try:
@@ -190,6 +261,29 @@ class JSONToPostgresMigration:
                     logger.warning(f"Skipping traceroute record: missing/invalid from={from_id!r}")
                     continue
 
+                from_norm = self._normalize_node_id(from_id)
+
+                # The JSON 'id' maps to DB column traceroutes.message_id (bigint)
+                message_id = self._as_int(msg.get("id"))
+
+                packet_id = (
+                    self._as_int(msg.get("packet_id"))
+                    or self._as_int(msg.get("packetId"))
+                    or self._as_int(msg.get("packetID"))
+                )
+
+                dedupe_key = None
+                if from_norm and message_id is not None:
+                    dedupe_key = ("mid", from_norm, message_id)
+                elif from_norm and packet_id is not None:
+                    dedupe_key = ("pid", from_norm, packet_id)
+
+                if dedupe_key is not None:
+                    if dedupe_key in seen:
+                        skipped_dupes += 1
+                        continue
+                    seen.add(dedupe_key)
+
                 await self.pg_storage.write_traceroute(from_id, msg)
                 count += 1
                 if count % 100 == 0:
@@ -197,7 +291,7 @@ class JSONToPostgresMigration:
             except Exception as e:
                 logger.error(f"Failed to migrate traceroute: {e}")
 
-        logger.info(f"Successfully migrated {count} traceroutes")
+        logger.info(f"Successfully migrated {count} traceroutes (skipped {skipped_dupes} duplicate records in traceroutes.json)")
 
 
 async def main():
@@ -239,6 +333,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logger.info("Migration cancelled by user")
         sys.exit(1)
-    except Exception as e:
+    except Exception:
         logger.exception("Migration failed with unexpected error")
         sys.exit(1)
