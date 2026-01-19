@@ -18,7 +18,6 @@ import json
 import logging
 import os
 import sys
-from zoneinfo import ZoneInfo
 
 # Add parent directory to path to import project modules
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
