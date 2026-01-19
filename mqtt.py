@@ -278,45 +278,44 @@ class MQTT:
                 await self.prune_expired_nodes()
 
         elif self.config['broker']['decoders']['json']['enabled']:
-            if self.config['broker']['decoders']['json']['enabled']:
-                if '/2/json' in msg.topic.value:
-                    if self.config['debug']:
-                        print(f"Received a JSON message: {msg.topic} {msg.payload}")
-                    try:
-                        decoded = msg.payload.decode("utf-8")
-                        j = json.loads(decoded, cls=_JSONDecoder)
-                        j['topic'] = msg.topic.value
-                        j["qos"] = getattr(msg, "qos", None)
-                        j["retain"] = getattr(msg, "retain", None)
+            if '/2/json' in msg.topic.value:
+                if self.config['debug']:
+                    print(f"Received a JSON message: {msg.topic} {msg.payload}")
+                try:
+                    decoded = msg.payload.decode("utf-8")
+                    j = json.loads(decoded, cls=_JSONDecoder)
+                    j['topic'] = msg.topic.value
+                    j["qos"] = getattr(msg, "qos", None)
+                    j["retain"] = getattr(msg, "retain", None)
 
-                        await self.handle_log(j)
+                    await self.handle_log(j)
 
-                        if j['type'] == "neighborinfo":
-                            await self.handle_neighborinfo(j)
-                        if j['type'] == "nodeinfo":
-                            await self.handle_nodeinfo(j)
-                        if j['type'] == "position":
-                            await self.handle_position(j)
-                        if j['type'] == "telemetry":
-                            await self.handle_telemetry(j)
-                        if j['type'] == "text":
-                            await self.handle_text(j)
-                        if j['type'] == "traceroute":
-                            if 'route' in j['payload']:
-                                route = []
-                                for r in j['payload']['route']:
-                                    node = self.data.find_node_by_longname(r)
-                                    if node is not None:
-                                        id = node['id']
-                                    else:
-                                        id = None
-                                    route.append(id)
-                                j['route'] = route
-                            await self.handle_traceroute(j)
-                        await self.prune_expired_nodes()
-                    except Exception as e:
-                        print(e)
-                        traceback.print_exc()
+                    if j['type'] == "neighborinfo":
+                        await self.handle_neighborinfo(j)
+                    if j['type'] == "nodeinfo":
+                        await self.handle_nodeinfo(j)
+                    if j['type'] == "position":
+                        await self.handle_position(j)
+                    if j['type'] == "telemetry":
+                        await self.handle_telemetry(j)
+                    if j['type'] == "text":
+                        await self.handle_text(j)
+                    if j['type'] == "traceroute":
+                        if 'route' in j['payload']:
+                            route = []
+                            for r in j['payload']['route']:
+                                node = self.data.find_node_by_longname(r)
+                                if node is not None:
+                                    id = node['id']
+                                else:
+                                    id = None
+                                route.append(id)
+                            j['route'] = route
+                        await self.handle_traceroute(j)
+                    await self.prune_expired_nodes()
+                except Exception as e:
+                    print(e)
+                    traceback.print_exc()
 
     async def publish(self, client, topic, msg):
         result = await client.publish(topic, msg)
