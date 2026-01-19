@@ -138,16 +138,6 @@ Once confident in data consistency, switch to direct PostgreSQL queries:
 - Always up-to-date data from the database
 - Better scalability for large datasets
 
-Once confident in data consistency:
-```json
-{
-  "storage": {
-    "read_from": "postgres",
-    "write_to": ["json", "postgres"]
-  }
-}
-```
-
 ## Architecture
 
 ### Write Flow

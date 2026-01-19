@@ -147,7 +147,7 @@ class API:
                         elif status == "offline":
                             nodes_to_keep = []
                             for id in nodes:
-                                if nodes[id]["active"]:
+                                if not nodes[id]["active"]:
                                     nodes_to_keep.append(id)
                             nodes = { k: v for k, v in nodes.items() if k in nodes_to_keep }
 
