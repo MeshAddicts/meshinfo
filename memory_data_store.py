@@ -71,8 +71,14 @@ class MemoryDataStore:
         if isinstance(v, (asyncio.Lock, asyncio.Event, asyncio.Task, logging.Logger)):
           setattr(result, k, v)
           continue
-      except Exception:
-        pass
+      except Exception as exc:
+        # If runtime/types differ, don't block deepcopy.
+        logger.debug(
+          "MemoryDataStore.__deepcopy__: isinstance() guard failed for key %r (type=%s): %s",
+          k, type(v),
+          exc,
+          exc_info=True,
+        )
 
       setattr(result, k, copy.deepcopy(v, memo))
 
