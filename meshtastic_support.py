@@ -78,6 +78,7 @@ class HardwareModel(Enum):
   HELTEC_MESH_NODE_T114 = 69
   SENSECAP_INDICATOR = 70
   TRACKER_T1000_E = 71
+  # Hardware models 72-80 are reserved in the Meshtastic protocol
   SEEED_XIAO_S3 = 81
   WISMESH_TAP = 84
   XIAO_NRF52_KIT = 88
@@ -126,7 +127,7 @@ HARDWARE_PHOTOS = {
   HardwareModel.XIAO_NRF52_KIT: "seeed_xiao_nrf52_kit.svg",
   HardwareModel.THINKNODE_M1: "thinknode_m1.svg",
   HardwareModel.THINKNODE_M2: "thinknode_m2.svg",
-  HardwareModel.THINKNODE_M5: "thinknode_m1.svg",
+  HardwareModel.THINKNODE_M5: "thinknode_m1.svg",  # M5 uses same image as M1 per device_hardware.json
   HardwareModel.MUZI_BASE: "muzi_base.svg",
   HardwareModel.HELTEC_MESH_POCKET: "heltec_mesh_pocket.svg",
   HardwareModel.SEEED_SOLAR_NODE: "seeed_solar.svg",

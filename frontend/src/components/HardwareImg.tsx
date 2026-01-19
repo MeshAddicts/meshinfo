@@ -14,7 +14,7 @@ export const HardwareImg = ({ model }: { model: number }) => {
   if (!image) return <></>;
 
   // Determine if it's an SVG, WebP, or PNG based on file extension
-  const extension = image.split('.').pop()?.toLowerCase();
+  const extension = image?.split('.').pop()?.toLowerCase();
   const isSvg = extension === 'svg';
 
   return (
