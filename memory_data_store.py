@@ -224,7 +224,6 @@ class MemoryDataStore:
 
   def _load_from_postgres(self):
     """Initialize PostgreSQL connection but don't load data into memory."""
-    import asyncio
     
     try:
       loop = asyncio.get_event_loop()
