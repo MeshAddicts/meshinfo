@@ -18,7 +18,6 @@ import json
 import logging
 import os
 import sys
-import hashlib
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
