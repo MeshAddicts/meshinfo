@@ -952,8 +952,17 @@ class PostgresStorage:
                 param_num = 1
 
                 # Days filter
-                if days_limit:
-                    where_parts.append(f"last_seen >= NOW() - INTERVAL '{days_limit} days'")
+                if days_limit is not None:
+                    try:
+                        days_int = int(days_limit)
+                    except (TypeError, ValueError):
+                        logger.warning("Invalid days_limit value %r provided; ignoring days filter.", days_limit)
+                    else:
+                        if days_int > 0:
+                            where_parts.append(f"last_seen >= NOW() - ${param_num} * INTERVAL '1 day'")
+                            params.append(days_int)
+                            param_num += 1
+                        # days_int <= 0 => treat as "no days filter"
 
                 # Node IDs filter
                 if node_ids:
