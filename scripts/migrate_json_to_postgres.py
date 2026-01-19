@@ -18,7 +18,6 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime
 from zoneinfo import ZoneInfo
 
 # Add parent directory to path to import project modules
