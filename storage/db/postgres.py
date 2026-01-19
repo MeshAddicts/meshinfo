@@ -262,8 +262,9 @@ class PostgresStorage:
                 raise
 
     async def _write_node_position(self, conn, node_id: str, position: Dict[str, Any]):
-        """Write node position data."""
+        """Write/replace node position data (latest only)."""
         geocoded = json.dumps(position.get('geocoded')) if position.get('geocoded') else None
+
         last_geocoding = position.get('last_geocoding')
         if isinstance(last_geocoding, str):
             try:
@@ -271,12 +272,47 @@ class PostgresStorage:
             except Exception:
                 last_geocoding = None
 
+        pos_time = position.get('time')
+        if isinstance(pos_time, str):
+            try:
+                pos_time = int(pos_time)
+            except Exception:
+                pos_time = None
+        elif pos_time is not None and not isinstance(pos_time, int):
+            try:
+                pos_time = int(pos_time)
+            except Exception:
+                pos_time = None
+
         await conn.execute("""
-            INSERT INTO node_positions (node_id, latitude_i, longitude_i, altitude, time, precision_bits, geocoded, last_geocoding)
+            INSERT INTO node_positions (
+                node_id, latitude_i, longitude_i, altitude, time, precision_bits, geocoded, last_geocoding
+            )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        """, node_id, position.get('latitude_i'), position.get('longitude_i'),
-             position.get('altitude'), position.get('time'), position.get('precision_bits'),
-             geocoded, last_geocoding)
+            ON CONFLICT (node_id) DO UPDATE SET
+                latitude_i = EXCLUDED.latitude_i,
+                longitude_i = EXCLUDED.longitude_i,
+                altitude = EXCLUDED.altitude,
+                time = EXCLUDED.time,
+                precision_bits = EXCLUDED.precision_bits,
+                geocoded = EXCLUDED.geocoded,
+                last_geocoding = EXCLUDED.last_geocoding
+            WHERE
+                -- normal case: only accept newer-or-equal timestamps
+                (EXCLUDED.time IS NOT NULL AND (node_positions.time IS NULL OR EXCLUDED.time >= node_positions.time))
+                OR
+                -- if both are NULL, allow the update
+                (EXCLUDED.time IS NULL AND node_positions.time IS NULL)
+        """,
+            node_id,
+            position.get('latitude_i'),
+            position.get('longitude_i'),
+            position.get('altitude'),
+            pos_time,
+            position.get('precision_bits'),
+            geocoded,
+            last_geocoding
+        )
 
     async def _write_node_neighborinfo(self, conn, node_id: str, neighborinfo: Dict[str, Any]):
         """Write node neighborinfo data."""

@@ -19,10 +19,10 @@ CREATE TABLE IF NOT EXISTS nodes (
 CREATE INDEX IF NOT EXISTS idx_nodes_active ON nodes(active);
 CREATE INDEX IF NOT EXISTS idx_nodes_last_seen ON nodes(last_seen);
 
--- Node positions table - stores position/location data
+-- Node positions table - stores ONLY the most recent position per node (latest-only)
 CREATE TABLE IF NOT EXISTS node_positions (
     id SERIAL PRIMARY KEY,
-    node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE CASCADE,
+    node_id VARCHAR(8) NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
     latitude_i INTEGER,  -- Latitude in integer format (degrees * 10000000)
     longitude_i INTEGER, -- Longitude in integer format (degrees * 10000000)
     altitude INTEGER,
@@ -31,11 +31,12 @@ CREATE TABLE IF NOT EXISTS node_positions (
     geocoded JSONB,  -- Geocoded address information
     last_geocoding TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT node_positions_node_id_unique UNIQUE (node_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_node_positions_node_id ON node_positions(node_id);
-CREATE INDEX IF NOT EXISTS idx_node_positions_created_at ON node_positions(created_at DESC);
+-- With UNIQUE(node_id), Postgres creates a unique index automatically.
+CREATE INDEX IF NOT EXISTS idx_node_positions_updated_at ON node_positions(updated_at DESC);
 
 -- Node neighbor info table - stores neighbor relationships
 CREATE TABLE IF NOT EXISTS node_neighborinfo (
