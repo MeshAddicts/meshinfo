@@ -315,16 +315,35 @@ class PostgresStorage:
         )
 
     async def _write_node_neighborinfo(self, conn, node_id: str, neighborinfo: Dict[str, Any]):
-        """Write node neighborinfo data."""
-        neighbors_json = json.dumps(neighborinfo.get('neighbors', []))
+        """Write node neighborinfo data (latest snapshot per node) + optional history snapshots."""
+        neighbors_json = json.dumps(neighborinfo.get("neighbors", []), ensure_ascii=False)
 
         await conn.execute("""
-            INSERT INTO node_neighborinfo (node_id, node_broadcast_interval_secs, neighbors)
-            VALUES ($1, $2, $3)
-        """, node_id, neighborinfo.get('node_broadcast_interval_secs'), neighbors_json)
+            WITH upsert AS (
+                INSERT INTO node_neighborinfo (node_id, node_broadcast_interval_secs, neighbors)
+                VALUES ($1, $2, $3::jsonb)
+                ON CONFLICT (node_id) DO UPDATE SET
+                    node_broadcast_interval_secs = EXCLUDED.node_broadcast_interval_secs,
+                    neighbors = EXCLUDED.neighbors
+                WHERE
+                    node_neighborinfo.node_broadcast_interval_secs IS DISTINCT FROM EXCLUDED.node_broadcast_interval_secs
+                    OR node_neighborinfo.neighbors IS DISTINCT FROM EXCLUDED.neighbors
+                RETURNING 1
+            )
+            INSERT INTO node_neighborinfo_history (node_id, neighbors)
+            SELECT $1, $3::jsonb
+            WHERE EXISTS (SELECT 1 FROM upsert);
+        """, node_id, neighborinfo.get("node_broadcast_interval_secs"), neighbors_json)
 
     async def _write_node_telemetry_current(self, conn, node_id: str, telemetry: Dict[str, Any]):
-        """Write current node telemetry state."""
+        """Write current node telemetry state (latest snapshot per node)."""
+
+        # Normalize + ensure FK target exists
+        node_norm = await self._ensure_node_stub(conn, node_id)
+        if not node_norm:
+            logger.warning("_write_node_telemetry_current: could not normalize node_id=%r; skipping", node_id)
+            return
+
         await conn.execute("""
             INSERT INTO node_telemetry_current (
                 node_id, battery_level, voltage, channel_utilization, air_util_tx,
@@ -353,15 +372,46 @@ class PostgresStorage:
                 wind_speed = EXCLUDED.wind_speed,
                 weight = EXCLUDED.weight,
                 updated_at = NOW()
-        """, node_id, telemetry.get('battery_level'), telemetry.get('voltage'),
-             telemetry.get('channel_utilization'), telemetry.get('air_util_tx'),
-             telemetry.get('uptime_seconds'), telemetry.get('temperature'),
-             telemetry.get('relative_humidity'), telemetry.get('barometric_pressure'),
-             telemetry.get('gas_resistance'), telemetry.get('iaq'),
-             telemetry.get('distance'), telemetry.get('lux'), telemetry.get('white_lux'),
-             telemetry.get('ir_lux'), telemetry.get('uv_lux'),
-             telemetry.get('wind_direction'), telemetry.get('wind_speed'),
-             telemetry.get('weight'))
+            WHERE
+                node_telemetry_current.battery_level IS DISTINCT FROM EXCLUDED.battery_level
+                OR node_telemetry_current.voltage IS DISTINCT FROM EXCLUDED.voltage
+                OR node_telemetry_current.channel_utilization IS DISTINCT FROM EXCLUDED.channel_utilization
+                OR node_telemetry_current.air_util_tx IS DISTINCT FROM EXCLUDED.air_util_tx
+                OR node_telemetry_current.uptime_seconds IS DISTINCT FROM EXCLUDED.uptime_seconds
+                OR node_telemetry_current.temperature IS DISTINCT FROM EXCLUDED.temperature
+                OR node_telemetry_current.relative_humidity IS DISTINCT FROM EXCLUDED.relative_humidity
+                OR node_telemetry_current.barometric_pressure IS DISTINCT FROM EXCLUDED.barometric_pressure
+                OR node_telemetry_current.gas_resistance IS DISTINCT FROM EXCLUDED.gas_resistance
+                OR node_telemetry_current.iaq IS DISTINCT FROM EXCLUDED.iaq
+                OR node_telemetry_current.distance IS DISTINCT FROM EXCLUDED.distance
+                OR node_telemetry_current.lux IS DISTINCT FROM EXCLUDED.lux
+                OR node_telemetry_current.white_lux IS DISTINCT FROM EXCLUDED.white_lux
+                OR node_telemetry_current.ir_lux IS DISTINCT FROM EXCLUDED.ir_lux
+                OR node_telemetry_current.uv_lux IS DISTINCT FROM EXCLUDED.uv_lux
+                OR node_telemetry_current.wind_direction IS DISTINCT FROM EXCLUDED.wind_direction
+                OR node_telemetry_current.wind_speed IS DISTINCT FROM EXCLUDED.wind_speed
+                OR node_telemetry_current.weight IS DISTINCT FROM EXCLUDED.weight
+        """,
+            node_norm,
+            telemetry.get("battery_level"),
+            telemetry.get("voltage"),
+            telemetry.get("channel_utilization"),
+            telemetry.get("air_util_tx"),
+            telemetry.get("uptime_seconds"),
+            telemetry.get("temperature"),
+            telemetry.get("relative_humidity"),
+            telemetry.get("barometric_pressure"),
+            telemetry.get("gas_resistance"),
+            telemetry.get("iaq"),
+            telemetry.get("distance"),
+            telemetry.get("lux"),
+            telemetry.get("white_lux"),
+            telemetry.get("ir_lux"),
+            telemetry.get("uv_lux"),
+            telemetry.get("wind_direction"),
+            telemetry.get("wind_speed"),
+            telemetry.get("weight"),
+        )
 
     async def write_telemetry(self, node_id: str, telemetry_msg: Dict[str, Any]) -> None:
         """
@@ -403,17 +453,28 @@ class PostgresStorage:
 
                 rx_time = self._ts_to_dt(telemetry_msg.get("timestamp"))
 
+                msg_id = telemetry_msg.get('id')
+                if msg_id is None:
+                    logger.warning("write_telemetry: missing telemetry_msg['id']; skipping insert")
+                    return
+                try:
+                    msg_id = int(msg_id)
+                except (TypeError, ValueError):
+                    logger.warning("write_telemetry: invalid telemetry_msg['id']=%r; skipping insert", msg_id)
+                    return
+
                 await conn.execute("""
                     INSERT INTO telemetry (
                         from_node_id, to_node_id, sender_node_id, message_id, channel,
                         packet_id, hops_away, rssi, snr, timestamp, rx_time, payload
                     )
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    ON CONFLICT (from_node_id, message_id) DO NOTHING
                 """,
                     from_id,
                     to_id,
                     sender_id,
-                    telemetry_msg.get('id'),
+                    msg_id,
                     telemetry_msg.get('channel'),
                     telemetry_msg.get('packet_id'),
                     telemetry_msg.get('hops_away'),
@@ -551,6 +612,16 @@ class PostgresStorage:
 
                 rx_time = self._ts_to_dt(traceroute_msg.get("timestamp"))
 
+                msg_id = traceroute_msg.get('id')
+                if msg_id is None:
+                    logger.warning("write_traceroute: missing traceroute_msg['id']; skipping insert")
+                    return
+                try:
+                    msg_id = int(msg_id)
+                except (TypeError, ValueError):
+                    logger.warning("write_traceroute: invalid traceroute_msg['id']=%r; skipping insert", msg_id)
+                    return
+
                 await conn.execute("""
                     INSERT INTO traceroutes (
                         from_node_id, to_node_id, sender_node_id, message_id, channel,
@@ -558,8 +629,9 @@ class PostgresStorage:
                         route, route_ids, payload
                     )
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                    ON CONFLICT (from_node_id, message_id) DO NOTHING
                 """,
-                    from_id, to_id, sender_id, traceroute_msg.get('id'),
+                    from_id, to_id, sender_id, msg_id,
                     traceroute_msg.get('channel'), traceroute_msg.get('packet_id'),
                     traceroute_msg.get('hops_away'), traceroute_msg.get('rssi'),
                     traceroute_msg.get('snr'), traceroute_msg.get('timestamp'),

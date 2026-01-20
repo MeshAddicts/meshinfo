@@ -38,22 +38,21 @@ CREATE TABLE IF NOT EXISTS node_positions (
 -- With UNIQUE(node_id), Postgres creates a unique index automatically.
 CREATE INDEX IF NOT EXISTS idx_node_positions_updated_at ON node_positions(updated_at DESC);
 
--- Node neighbor info table - stores neighbor relationships
+-- Node neighbor info table - stores neighbor relationships (latest-only per node)
 CREATE TABLE IF NOT EXISTS node_neighborinfo (
     id SERIAL PRIMARY KEY,
-    node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE CASCADE,
+    node_id VARCHAR(8) NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
     node_broadcast_interval_secs INTEGER,
     neighbors JSONB,  -- Array of neighbor objects
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT node_neighborinfo_node_id_key UNIQUE (node_id)
 );
-
-CREATE INDEX IF NOT EXISTS idx_node_neighborinfo_node_id ON node_neighborinfo(node_id);
 
 -- Node telemetry current - stores the most recent telemetry per node
 CREATE TABLE IF NOT EXISTS node_telemetry_current (
     id SERIAL PRIMARY KEY,
-    node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE CASCADE,
+    node_id VARCHAR(8) NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
     battery_level INTEGER,
     voltage REAL,
     channel_utilization REAL,
@@ -77,15 +76,13 @@ CREATE TABLE IF NOT EXISTS node_telemetry_current (
     UNIQUE(node_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_node_telemetry_current_node_id ON node_telemetry_current(node_id);
-
 -- Telemetry history table - stores all telemetry messages
 CREATE TABLE IF NOT EXISTS telemetry (
     id BIGSERIAL PRIMARY KEY,
-    from_node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE CASCADE,
-    to_node_id VARCHAR(8),
-    sender_node_id VARCHAR(8),
-    message_id BIGINT,
+    from_node_id VARCHAR(8) NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    to_node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE SET NULL,
+    sender_node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE SET NULL,
+    message_id BIGINT NOT NULL,
     channel INTEGER,
     packet_id BIGINT,
     hops_away INTEGER,
@@ -94,7 +91,8 @@ CREATE TABLE IF NOT EXISTS telemetry (
     timestamp BIGINT,
     rx_time TIMESTAMP WITH TIME ZONE,
     payload JSONB,  -- Complete telemetry payload
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT telemetry_from_node_id_message_id_key UNIQUE (from_node_id, message_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_telemetry_from_node_id ON telemetry(from_node_id);
@@ -115,8 +113,8 @@ INSERT INTO chat_channels (id, name) VALUES ('0', 'General') ON CONFLICT (id) DO
 CREATE TABLE IF NOT EXISTS chat_messages (
     id BIGINT PRIMARY KEY,
     from_node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE SET NULL,
-    to_node_id VARCHAR(8),
-    sender_node_id VARCHAR(8),
+    to_node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE SET NULL,
+    sender_node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE SET NULL,
     channel_id VARCHAR(10) REFERENCES chat_channels(id),
     text TEXT,
     timestamp BIGINT,
@@ -135,10 +133,10 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_timestamp ON chat_messages(timestam
 -- Traceroutes table
 CREATE TABLE IF NOT EXISTS traceroutes (
     id BIGSERIAL PRIMARY KEY,
-    from_node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE CASCADE,
-    to_node_id VARCHAR(8),
-    sender_node_id VARCHAR(8),
-    message_id BIGINT,
+    from_node_id VARCHAR(8) NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    to_node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE SET NULL,
+    sender_node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE SET NULL,
+    message_id BIGINT NOT NULL,
     channel INTEGER,
     packet_id BIGINT,
     hops_away INTEGER,
@@ -149,7 +147,8 @@ CREATE TABLE IF NOT EXISTS traceroutes (
     route JSONB,  -- Array of route node IDs
     route_ids JSONB,  -- Array of resolved route IDs
     payload JSONB,  -- Complete traceroute payload
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT traceroutes_from_node_id_message_id_key UNIQUE (from_node_id, message_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_traceroutes_from_node_id ON traceroutes(from_node_id);
@@ -168,6 +167,28 @@ CREATE TABLE IF NOT EXISTS mqtt_messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_mqtt_messages_created_at ON mqtt_messages(created_at DESC);
+
+-- Neighbor snapshot history table (currently unused, for time-lapse update later on)
+CREATE TABLE IF NOT EXISTS node_neighborinfo_history (
+  id BIGSERIAL PRIMARY KEY,
+  node_id VARCHAR(8) NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+  rx_time TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  neighbors JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_neighborinfo_hist_node_time
+  ON node_neighborinfo_history (node_id, rx_time DESC);
+
+CREATE INDEX IF NOT EXISTS idx_neighborinfo_hist_rx_time
+  ON node_neighborinfo_history (rx_time DESC);
+
+-- Optional: pinned for later scheduling
+CREATE OR REPLACE FUNCTION prune_neighborinfo_history(p_days INT DEFAULT 30)
+RETURNS VOID AS $$
+  DELETE FROM node_neighborinfo_history
+  WHERE rx_time < NOW() - (p_days || ' days')::INTERVAL;
+$$ LANGUAGE sql;
 
 -- Create a function to update the updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -199,4 +220,3 @@ DROP TRIGGER IF EXISTS update_node_telemetry_current_updated_at ON node_telemetr
 CREATE TRIGGER update_node_telemetry_current_updated_at
 BEFORE UPDATE ON node_telemetry_current
 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
