@@ -113,6 +113,16 @@ async def main() -> None:
         time.tzset()
     logger.info("Timezone set to: %s", tz)
 
+    # Initialize Postgres if enabled
+    if config.get('storage', {}).get('postgres', {}).get('enabled', False):
+        logger.info("Initializing PostgreSQL connection...")
+        connected = await data.pg_storage.connect()
+        if connected:
+            await data.pg_storage.ensure_schema()
+            logger.info("PostgreSQL initialized successfully")
+        else:
+            logger.warning("PostgreSQL connection failed, continuing with JSON only")
+
     data.load()
     startup_time = datetime.datetime.now(ZoneInfo(tz))
     data.update("startup_time", startup_time)
@@ -170,6 +180,11 @@ async def main() -> None:
             t.cancel()
         if background_tasks:
             await asyncio.gather(*background_tasks, return_exceptions=True)
+        
+        # Close Postgres connection
+        if config.get('storage', {}).get('postgres', {}).get('enabled', False):
+            await data.pg_storage.close()
+        
         logger.info("Shutdown complete")
 
 
