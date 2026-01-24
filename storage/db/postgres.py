@@ -413,82 +413,88 @@ class PostgresStorage:
             telemetry.get("weight"),
         )
 
-    async def write_telemetry(self, node_id: str, telemetry_msg: Dict[str, Any]) -> None:
-        """
-        Write telemetry message to history table.
+async def write_telemetry(self, node_id: str, telemetry_msg: Dict[str, Any]) -> None:
+    if not self.enabled or not self.pool:
+        return
+    if not isinstance(node_id, str) or not node_id:
+        raise ValueError("write_telemetry: node_id must be a non-empty string")
+    if not isinstance(telemetry_msg, dict):
+        raise ValueError("write_telemetry: telemetry_msg must be a dict")
 
-        Args:
-            node_id: from-node id (any supported form; will be normalized)
-            telemetry_msg: Telemetry message dictionary
-        """
-        if not self.enabled or not self.pool:
-            return
+    try:
+        async with self.pool.acquire() as conn:
+            # Prefer the packet's real sender when available
+            msg_from = telemetry_msg.get("from")
+            from_candidate = msg_from if msg_from is not None else node_id
 
-        if not isinstance(node_id, str) or not node_id:
-            raise ValueError("write_telemetry: node_id must be a non-empty string")
-        if not isinstance(telemetry_msg, dict):
-            raise ValueError("write_telemetry: telemetry_msg must be a dict")
+            from_id = await self._ensure_node_stub(conn, from_candidate)
+            if not from_id:
+                logger.warning(
+                    "write_telemetry: could not normalize from_candidate=%r (msg_from=%r node_id=%r); skipping",
+                    from_candidate, msg_from, node_id
+                )
+                return
 
-        try:
-            async with self.pool.acquire() as conn:
-                # Canonical: explicit node_id is authoritative for from_node_id
-                from_id = await self._ensure_node_stub(conn, node_id)
-                if not from_id:
-                    logger.warning(f"write_telemetry: could not normalize node_id={node_id!r}, skipping")
-                    return
-
-                msg_from = telemetry_msg.get("from")
-                if msg_from is not None:
-                    msg_from_norm = await self._ensure_node_stub(conn, msg_from)
-                    if msg_from_norm and msg_from_norm != from_id:
-                        logger.debug(
-                            "write_telemetry: msg['from']=%r (norm=%s) != explicit node_id=%r (norm=%s); using explicit",
-                            msg_from, msg_from_norm, node_id, from_id
-                        )
-
-                sender_id = await self._ensure_node_stub(conn, telemetry_msg.get('sender'))
-                to_id = await self._ensure_node_stub(conn, telemetry_msg.get('to'))
-
-                payload_json = json.dumps(telemetry_msg.get('payload', {}))
-
-                rx_time = self._ts_to_dt(telemetry_msg.get("timestamp"))
-
-                msg_id = telemetry_msg.get('id')
-                if msg_id is None:
-                    logger.warning("write_telemetry: missing telemetry_msg['id']; skipping insert")
-                    return
-                try:
-                    msg_id = int(msg_id)
-                except (TypeError, ValueError):
-                    logger.warning("write_telemetry: invalid telemetry_msg['id']=%r; skipping insert", msg_id)
-                    return
-
-                await conn.execute("""
-                    INSERT INTO telemetry (
-                        from_node_id, to_node_id, sender_node_id, message_id, channel,
-                        packet_id, hops_away, rssi, snr, timestamp, rx_time, payload
-                    )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                    ON CONFLICT (from_node_id, message_id) DO NOTHING
-                """,
-                    from_id,
-                    to_id,
-                    sender_id,
-                    msg_id,
-                    telemetry_msg.get('channel'),
-                    telemetry_msg.get('packet_id'),
-                    telemetry_msg.get('hops_away'),
-                    telemetry_msg.get('rssi'),
-                    telemetry_msg.get('snr'),
-                    telemetry_msg.get('timestamp'),
-                    rx_time,
-                    payload_json
+            # Optional: normalize node_id for debugging mismatch
+            node_id_norm = await self._ensure_node_stub(conn, node_id)
+            if node_id_norm and node_id_norm != from_id:
+                logger.debug(
+                    "write_telemetry: packet from=%r (norm=%s) differs from caller node_id=%r (norm=%s) — using packet sender",
+                    msg_from, from_id, node_id, node_id_norm
                 )
 
-        except Exception as e:
-            logger.error(f"Failed to write telemetry to PostgreSQL: {e}")
-            if self.raise_on_write_error:
-                raise
+            sender_id = await self._ensure_node_stub(conn, telemetry_msg.get("sender"))
+            to_id     = await self._ensure_node_stub(conn, telemetry_msg.get("to"))
+
+            payload_obj = telemetry_msg.get("payload") or {}
+            payload_json = json.dumps(payload_obj, ensure_ascii=False)
+
+            # Prefer rx_time if present, else timestamp
+            ts = telemetry_msg.get("rx_time")
+            if ts is None:
+                ts = telemetry_msg.get("timestamp")
+            rx_time = self._ts_to_dt(ts)
+
+            msg_id = telemetry_msg.get("id")
+            if msg_id is None:
+                logger.warning("write_telemetry: missing telemetry_msg['id']; skipping insert")
+                return
+            try:
+                msg_id = int(msg_id)
+            except (TypeError, ValueError):
+                logger.warning("write_telemetry: invalid telemetry_msg['id']=%r; skipping insert", msg_id)
+                return
+
+            row = await conn.fetchrow("""
+                INSERT INTO telemetry (
+                    from_node_id, to_node_id, sender_node_id, message_id, channel,
+                    packet_id, hops_away, rssi, snr, timestamp, rx_time, payload
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                ON CONFLICT (from_node_id, message_id) DO NOTHING
+                RETURNING 1
+            """,
+                from_id,
+                to_id,
+                sender_id,
+                msg_id,
+                telemetry_msg.get("channel"),
+                telemetry_msg.get("packet_id"),
+                telemetry_msg.get("hops_away"),
+                telemetry_msg.get("rssi"),
+                telemetry_msg.get("snr"),
+                telemetry_msg.get("timestamp"),
+                rx_time,
+                payload_json
+            )
+
+            if row is None:
+                logger.debug("write_telemetry: conflict-skip from_node_id=%s message_id=%s", from_id, msg_id)
+
+    except Exception as e:
+        logger.error(f"Failed to write telemetry to PostgreSQL: {e}")
+        if self.raise_on_write_error:
+            raise
 
     async def write_chat_message(self, node_id: str, chat_msg: Dict[str, Any]) -> None:
         """
