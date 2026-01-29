@@ -91,5 +91,19 @@
       }
     }
   },
+  "storage": {
+    "read_from": "json",
+    "write_to": ["json", "postgres"],
+    "postgres": {
+      "enabled": false,
+      "host": "postgres",
+      "port": 5432,
+      "database": "meshinfo",
+      "username": "postgres",
+      "password": "password",
+      "min_pool_size": 5,
+      "max_pool_size": 20
+    }
+  },
   "debug": false
 }

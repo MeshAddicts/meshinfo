@@ -43,6 +43,7 @@ const LS_KEYS = {
   osmBasemap: "meshinfo.map.osmBasemap",
   recentDays: "meshinfo.map.recentDays",
   clusterEnabled: "meshinfo.map.clusterEnabled",
+  settingsPanelOpen: "meshinfo.map.settingsPanelOpen",
 };
 
 function readJson<T>(key: string, fallback: T): T {
@@ -59,9 +60,6 @@ function writeJson<T>(key: string, value: T) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch (err) {
-    // Log storage write failures (e.g., quota exceeded, storage disabled) instead of failing silently
-    // This keeps normal behavior unchanged while making issues diagnosable
-    // eslint-disable-next-line no-console
     console.warn("Failed to persist map setting to localStorage", { key, error: err });
   }
 }
@@ -244,6 +242,10 @@ function applyMapboxClusterVisibility(map: MbMap, enabled: boolean): void {
 export function Map() {
   const mapRef = useRef<HTMLDivElement>(null);
 
+  // Settings panel refs (panel + toggle button)
+  const settingsPanelRef = useRef<HTMLDivElement>(null);
+  const settingsToggleRef = useRef<HTMLButtonElement>(null);
+
   // OL map state (OSM path)
   const [olMap, setOlMap] = useState<OlMap>();
   const olBaseLayerRef = useRef<ReturnType<typeof createBaseTileLayer> | null>(
@@ -264,7 +266,7 @@ export function Map() {
   const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
   const hasMapbox = Boolean(mapboxToken);
 
-  // ----- UI settings (persisted)
+  // ----- UI settings persistence
   const [provider, setProvider] = useState<MapProvider>(() => {
     const stored = readJson<MapProvider | null>(LS_KEYS.provider, null);
     if (stored) return stored === "mapbox" && !hasMapbox ? "osm" : stored;
@@ -297,6 +299,13 @@ export function Map() {
     return stored ?? true;
   });
 
+  // Settings panel visibility
+  const [settingsPanelOpen, setSettingsPanelOpen] = useState<boolean>(() => {
+    const stored = readJson<boolean | null>(LS_KEYS.settingsPanelOpen, null);
+    // Default to false on mobile, true on desktop
+    return stored ?? (typeof window !== 'undefined' && window.innerWidth >= 1024);
+  });
+
   // persist settings
   useEffect(() => writeJson(LS_KEYS.provider, provider), [provider]);
   useEffect(() => writeJson(LS_KEYS.mapboxStyle, mapboxStyle), [mapboxStyle]);
@@ -306,12 +315,53 @@ export function Map() {
     () => writeJson(LS_KEYS.clusterEnabled, clusterEnabled),
     [clusterEnabled]
   );
+  useEffect(
+    () => writeJson(LS_KEYS.settingsPanelOpen, settingsPanelOpen),
+    [settingsPanelOpen]
+  );
 
   // If token disappears / not configured, force provider to osm
   useEffect(() => {
     if (provider === "mapbox" && !hasMapbox) setProvider("osm");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasMapbox]);
+
+  // Close settings panel when clicking outside (mobile only)
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+      if (window.innerWidth >= 1024) return; // desktop: ignore
+      const target = event.target as Node;
+
+      // allow clicks inside the panel OR on the toggle button
+      if (settingsPanelRef.current?.contains(target)) return;
+      if (settingsToggleRef.current?.contains(target)) return;
+
+      setSettingsPanelOpen(false);
+    };
+
+    if (settingsPanelOpen && window.innerWidth < 1024) {
+      document.addEventListener("mousedown", handleClickOutside);
+      document.addEventListener("touchstart", handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
+  }, [settingsPanelOpen]);
+
+  // Close settings panel on Escape (mobile only, matches click-outside behavior)
+  useEffect(() => {
+    if (!settingsPanelOpen) return;
+    if (window.innerWidth >= 1024) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSettingsPanelOpen(false);
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [settingsPanelOpen]);
 
   // ----------------------------
   // Nodes normalization
@@ -387,9 +437,50 @@ export function Map() {
     const { nodePanel, nodeTitle, nodeSubtitle, nodeContent } = getDetailsDom();
     if (!nodePanel || !nodeTitle || !nodeSubtitle || !nodeContent) return;
 
-    nodeTitle.innerHTML = "";
-    nodeSubtitle.innerHTML = "";
+    nodeTitle.textContent = "";
+    nodeSubtitle.textContent = "";
     nodeContent.innerHTML = "";
+
+    nodePanel.classList.add("hidden");
+  }
+
+  function clearMapboxSelectionAndOverlays() {
+  const map = mbMapRef.current;
+  const selectedId = mbSelectedIdRef.current;
+
+    if (map && selectedId) {
+      // Clear selection ring (feature-state) for both sources (clustered + plain)
+      try {
+        if (map.getSource("nodes_clustered")) {
+          map.setFeatureState(
+            { source: "nodes_clustered", id: selectedId },
+            { selected: false }
+          );
+        }
+      } catch {}
+
+      try {
+        if (map.getSource("nodes_plain")) {
+          map.setFeatureState(
+            { source: "nodes_plain", id: selectedId },
+            { selected: false }
+          );
+        }
+      } catch {}
+    }
+
+    mbSelectedIdRef.current = null;
+
+    // Clear link lines if present
+    if (map) {
+      try {
+        const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
+        linksSource?.setData(emptyLineFeatureCollection());
+      } catch {}
+    }
+
+    // Hide + clear the panel
+    clearDetailsPanel();
   }
 
   // ----------------------------
@@ -423,20 +514,26 @@ export function Map() {
     if (!usingMapbox) return;
     if (mbMapRef.current) return;
     if (!mapRef.current) return;
-    if (!serverNode) return;
 
     const defaultPosition = { latitude: 38.5816, longitude: -121.4944 };
-    const serverPosition = serverNode.map_position
+
+    // Prefer serverNode if available, otherwise fall back to any node with a position
+    const fallbackNodeWithPos =
+      serverNode?.map_position
+        ? serverNode
+        : Object.values(nodesRef.current).find((n) => n.map_position);
+
+    const centerPos = fallbackNodeWithPos?.map_position
       ? {
-          latitude: serverNode.map_position[1],
-          longitude: serverNode.map_position[0],
+          latitude: fallbackNodeWithPos.map_position[1],
+          longitude: fallbackNodeWithPos.map_position[0],
         }
       : defaultPosition;
 
     const savedCenter = JSON.parse(localStorage.getItem("savedCenter") ?? "[]");
     const initialCenter: [number, number] = [
-      savedCenter[0] ?? serverPosition.longitude,
-      savedCenter[1] ?? serverPosition.latitude,
+      savedCenter[0] ?? centerPos.longitude,
+      savedCenter[1] ?? centerPos.latitude,
     ];
     const initialZoom = JSON.parse(localStorage.getItem("savedZoom") ?? "9.5");
 
@@ -522,9 +619,10 @@ export function Map() {
       localStorage.setItem("savedZoom", map.getZoom().toString());
     });
 
+    const isMobile = window.innerWidth < 1024;
     map.addControl(
       new mapboxgl.NavigationControl({ showCompass: true }),
-      "top-left"
+      isMobile ? "top-right" : "top-left"
     );
 
     const ensureSourcesAndLayers = () => {
@@ -909,16 +1007,13 @@ export function Map() {
       // Clicking empty space clears
       map.on("click", (e) => {
         const hitNode =
-          map.queryRenderedFeatures(e.point, { layers: ["unclustered-nodes", "plain-nodes"] })
+          map.queryRenderedFeatures(e.point, { layers: ["unclustered-nodes", "plain-nodes", "unclustered-labels", "plain-labels"], })
             .length > 0;
         const hitCluster =
           map.queryRenderedFeatures(e.point, { layers: ["clusters"] }).length > 0;
         if (hitNode || hitCluster) return;
 
-        clearSelected();
-        clearDetailsPanel();
-        const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
-        linksSource?.setData(emptyLineFeatureCollection());
+        clearMapboxSelectionAndOverlays();
       });
     };
 
@@ -1028,24 +1123,49 @@ export function Map() {
         return;
       }
     }
-    if (!serverNode || !mapRef.current) return;
+    if (!mapRef.current) return;
 
     mapRef.current.innerHTML = "";
 
     const defaultPosition = { latitude: 38.5816, longitude: -121.4944 };
-    const serverPosition = serverNode.map_position
+
+    // Prefer serverNode if it has a position, otherwise fall back to any node with a position
+    const fallbackNodeWithPos =
+      serverNode?.map_position
+        ? serverNode
+        : Object.values(nodes).find((n) => n.map_position);
+
+    const centerPos = fallbackNodeWithPos?.map_position
       ? {
-          latitude: serverNode.map_position[1],
-          longitude: serverNode.map_position[0],
+          latitude: fallbackNodeWithPos.map_position[1],
+          longitude: fallbackNodeWithPos.map_position[0],
         }
       : defaultPosition;
 
-    const savedCenter = JSON.parse(localStorage.getItem("savedCenter") ?? "[]");
+    // Safer savedCenter parsing (avoid NaN / wrong shape)
+    let savedCenter: unknown = [];
+    try {
+      savedCenter = JSON.parse(localStorage.getItem("savedCenter") ?? "[]");
+    } catch {
+      savedCenter = [];
+    }
+
+    const saved = Array.isArray(savedCenter) ? savedCenter : [];
+    const savedLon = typeof saved[0] === "number" ? saved[0] : undefined;
+    const savedLat = typeof saved[1] === "number" ? saved[1] : undefined;
+
     const initialCenter = fromLonLat([
-      savedCenter[0] ?? serverPosition.longitude,
-      savedCenter[1] ?? serverPosition.latitude,
+      savedLon ?? centerPos.longitude,
+      savedLat ?? centerPos.latitude,
     ]);
-    const initialZoom = JSON.parse(localStorage.getItem("savedZoom") ?? "9.5");
+
+    let initialZoom = 9.5;
+    try {
+      const z = JSON.parse(localStorage.getItem("savedZoom") ?? "9.5");
+      if (typeof z === "number" && Number.isFinite(z)) initialZoom = z;
+    } catch {
+      // ignore
+    }
 
     const tileLayer = createBaseTileLayer({
       provider: "osm",
@@ -1138,9 +1258,7 @@ export function Map() {
       neighborLayers.length = 0;
 
       if (map.hasFeatureAtPixel(event.pixel) !== true) {
-        nodeTitle.innerHTML = "";
-        nodeSubtitle.innerHTML = "";
-        nodeContent.innerHTML = "";
+        clearDetailsPanel();
         return;
       }
 
@@ -1333,153 +1451,313 @@ export function Map() {
   const usingMapbox = provider === "mapbox" && canUseMapbox;
 
   return (
-    <div className="h-screen relative">
-      <div id="map" className="map" ref={mapRef} />
+  <div className="relative w-full h-full min-h-0 overflow-hidden overscroll-none">
+    <div id="map" ref={mapRef} className="absolute inset-0" />
 
+      {/* Bottom-right anchor: Legend + Map Settings stacked */}
+      <div className="fixed bottom-4 right-4 z-[1100]">
+        {/* Mobile toggle sits with the panel */}
+        <button
+          ref={settingsToggleRef}
+          type="button"
+          onClick={() => setSettingsPanelOpen((v) => !v)}
+          className="lg:hidden mb-2 ml-auto block p-2 rounded-lg shadow-lg backdrop-blur-sm border transition-all duration-200
+                    bg-white/90 dark:bg-gray-800/90 border-gray-200 dark:border-gray-600
+                    hover:bg-gray-50 dark:hover:bg-gray-700"
+          aria-label="Toggle Map Settings"
+          aria-expanded={settingsPanelOpen}
+        >
+          <div className="w-5 h-5 flex items-center justify-center">
+            {settingsPanelOpen ? (
+              <svg
+                className="w-4 h-4 text-gray-700 dark:text-gray-200"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            ) : (
+              <svg
+                className="w-4 h-4 text-gray-700 dark:text-gray-200"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100-4m0 4v2m0-6V4"
+                />
+              </svg>
+            )}
+          </div>
+        </button>
+
+        {/* Map Settings (sits above legend) */}
+        <div
+          ref={settingsPanelRef}
+          className={`absolute right-0 bottom-full mb-2 w-64 max-w-[calc(100vw-2rem)] rounded-xl shadow-lg border border-gray-200/70 dark:border-gray-700/70 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md transition-all duration-300 ease-in-out
+            ${
+              settingsPanelOpen
+                ? "translate-y-0 opacity-100 pointer-events-auto"
+                : "translate-y-2 opacity-0 pointer-events-none"
+            }
+            lg:translate-y-0 lg:opacity-100 lg:pointer-events-auto`}
+        >
+          <div className="p-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-gray-900 dark:text-gray-100">
+                Map Settings
+              </h3>
+
+              {/* Close button for mobile */}
+              <button
+                type="button"
+                onClick={() => setSettingsPanelOpen(false)}
+                className="lg:hidden p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                aria-label="Close settings"
+              >
+                <svg
+                  className="w-4 h-4 text-gray-500 dark:text-gray-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
+            </div>
+
+            <div className="space-y-4 text-sm">
+              {/* Provider */}
+              <div>
+                <label
+                  htmlFor="provider-select"
+                  className="text-xs font-medium uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-2 block"
+                >
+                  Provider
+                </label>
+                <select
+                  id="provider-select"
+                  aria-label="Map provider selection"
+                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
+                  value={provider}
+                  onChange={(e) => setProvider(e.target.value as MapProvider)}
+                >
+                  <option value="osm">OSM (OpenLayers)</option>
+                  <option value="mapbox" disabled={!canUseMapbox}>
+                    Mapbox (GL JS)
+                    {!canUseMapbox ? " — token not configured" : ""}
+                  </option>
+                </select>
+              </div>
+
+              {/* Style/Basemap */}
+              {usingMapbox ? (
+                <div>
+                  <label
+                    htmlFor="mapbox-style-select"
+                    className="text-xs font-medium uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-2 block"
+                  >
+                    Mapbox Style
+                  </label>
+                  <select
+                    id="mapbox-style-select"
+                    aria-label="Mapbox map style selection"
+                    className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
+                    value={mapboxStyle}
+                    onChange={(e) => setMapboxStyle(e.target.value)}
+                  >
+                    <option value="mapbox/dark-v11">Dark</option>
+                    <option value="mapbox/streets-v12">Streets</option>
+                    <option value="mapbox/satellite-streets-v12">
+                      Satellite Streets
+                    </option>
+                  </select>
+                </div>
+              ) : (
+                <div>
+                  <label
+                    htmlFor="osm-basemap-select"
+                    className="text-xs font-medium uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-2 block"
+                  >
+                    OSM Basemap
+                  </label>
+                  <select
+                    id="osm-basemap-select"
+                    aria-label="OpenStreetMap basemap selection"
+                    className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
+                    value={osmBasemap}
+                    onChange={(e) =>
+                      setOsmBasemap(e.target.value as OsmBasemap)
+                    }
+                  >
+                    <option value="osm">OSM Standard</option>
+                    <option value="osm_hot">OSM HOT</option>
+                    <option value="carto_positron">Carto Positron (Light)</option>
+                    <option value="carto_dark">Carto Dark Matter (Dark)</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Last Seen Filter */}
+              <div>
+                <label
+                  htmlFor="recent-days-select"
+                  className="text-xs font-medium uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-2 block"
+                >
+                  Show Last Seen
+                </label>
+                <select
+                  id="recent-days-select"
+                  aria-label="Filter nodes by last seen timeframe"
+                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
+                  value={recentDays}
+                  onChange={(e) => setRecentDays(Number(e.target.value))}
+                >
+                  <option value={30}>30 days</option>
+                  <option value={14}>14 days</option>
+                  <option value={7}>7 days</option>
+                  <option value={5}>5 days</option>
+                  <option value={3}>3 days</option>
+                  <option value={1}>1 day</option>
+                </select>
+              </div>
+
+              {/* Clustering Toggle */}
+              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
+                <div className="flex flex-col">
+                  <label
+                    htmlFor="clustering-checkbox"
+                    className="text-sm font-medium text-gray-900 dark:text-gray-100"
+                  >
+                    Node Clustering
+                  </label>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {!usingMapbox ? "Mapbox only" : "Group nearby nodes"}
+                  </p>
+                </div>
+                <div className="relative">
+                  <input
+                    id="clustering-checkbox"
+                    type="checkbox"
+                    checked={clusterEnabled}
+                    onChange={(e) => setClusterEnabled(e.target.checked)}
+                    disabled={!usingMapbox}
+                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                    aria-label="Toggle node clustering (Mapbox only)"
+                  />
+                </div>
+              </div>
+
+              {/* Info Note */}
+              {!canUseMapbox && (
+                <div className="text-xs text-gray-500 dark:text-gray-400 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
+                  Mapbox features are disabled because{" "}
+                  <code className="bg-gray-200 dark:bg-gray-700 px-1 py-0.5 rounded text-xs">
+                    VITE_MAPBOX_TOKEN
+                  </code>{" "}
+                  is not configured.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Legend (anchored bottom-right) */}
+        <div
+          id="legend"
+          className="bg-white/95 dark:bg-gray-900/95 backdrop-blur-md rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 p-3"
+        >
+          <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">
+            Legend
+          </div>
+          <div className="space-y-1 text-xs text-gray-600 dark:text-gray-300">
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-1 bg-green-400 rounded-full" />
+              <span>Heard A Neighbor</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-1 bg-blue-400 rounded-full" />
+              <span>Heard By Neighbor</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-1 bg-purple-400 rounded-full" />
+              <span>Mutual Connection</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Node Details Panel */}
       <div
-        id="map-settings"
-        role="region"
-        aria-label="Map Settings"
-        className="absolute left-2 top-1/2 -translate-y-1/2 z-[1100] w-56 rounded-xl shadow-lg border border-gray-200/70 dark:border-gray-700/70 bg-white/90 dark:bg-black/70 backdrop-blur p-3"
+        id="details"
+        className="hidden fixed top-2 right-2 z-[1050]
+           w-[92vw] sm:w-80 max-w-[calc(100vw-1rem)]
+           bg-white dark:bg-gray-900 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700
+           max-h-[60vh] sm:max-h-[calc(100vh-2rem)]
+           overflow-hidden flex flex-col"
       >
-        <div className="font-semibold text-sm mb-2 dark:text-gray-100">
-          Map Settings
-        </div>
-
-        <div className="space-y-3 text-sm">
-          <div>
-            <label htmlFor="provider-select" className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-1 block">
-              Provider
-            </label>
-            <select
-              id="provider-select"
-              aria-label="Map provider selection"
-              className="w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-black px-2 py-1 dark:text-gray-100"
-              value={provider}
-              onChange={(e) => setProvider(e.target.value as MapProvider)}
+        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+          <div className="flex-1 min-w-0">
+            <div
+              id="details-title"
+              className="text-lg font-semibold text-gray-900 dark:text-gray-100 truncate"
             >
-              <option value="osm">OSM (OpenLayers)</option>
-              <option value="mapbox" disabled={!canUseMapbox}>
-                Mapbox (GL JS){!canUseMapbox ? " — token not configured" : ""}
-              </option>
-            </select>
-          </div>
-
-          {usingMapbox ? (
-            <div>
-              <label htmlFor="mapbox-style-select" className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-1 block">
-                Mapbox style
-              </label>
-              <select
-                id="mapbox-style-select"
-                aria-label="Mapbox map style selection"
-                className="w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-black px-2 py-1 dark:text-gray-100"
-                value={mapboxStyle}
-                onChange={(e) => setMapboxStyle(e.target.value)}
-              >
-                <option value="mapbox/dark-v11">Dark</option>
-                <option value="mapbox/streets-v12">Streets</option>
-                <option value="mapbox/satellite-streets-v12">Satellite Streets</option>
-              </select>
+              NODE NAME
             </div>
-          ) : (
-            <div>
-              <label htmlFor="osm-basemap-select" className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-1 block">
-                OSM basemap
-              </label>
-              <select
-                id="osm-basemap-select"
-                aria-label="OpenStreetMap basemap selection"
-                className="w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-black px-2 py-1 dark:text-gray-100"
-                value={osmBasemap}
-                onChange={(e) => setOsmBasemap(e.target.value as OsmBasemap)}
-              >
-                <option value="osm">OSM Standard</option>
-                <option value="osm_hot">OSM HOT</option>
-                <option value="carto_positron">Carto Positron (Light)</option>
-                <option value="carto_dark">Carto Dark Matter (Dark)</option>
-              </select>
-            </div>
-          )}
-
-          <div>
-            <label htmlFor="recent-days-select" className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-1 block">
-              Last seen
-            </label>
-            <select
-              id="recent-days-select"
-              aria-label="Filter nodes by last seen timeframe"
-              className="w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-black px-2 py-1 dark:text-gray-100"
-              value={recentDays}
-              onChange={(e) => setRecentDays(Number(e.target.value))}
+            <div
+              id="details-subtitle"
+              className="text-sm text-gray-500 dark:text-gray-400 truncate"
             >
-              <option value={30}>30 days</option>
-              <option value={14}>14 days</option>
-              <option value={7}>7 days</option>
-              <option value={5}>5 days</option>
-              <option value={3}>3 days</option>
-              <option value={1}>1 day</option>
-            </select>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <label htmlFor="clustering-checkbox" className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-300">
-              Clustering
-            </label>
-            <input
-              id="clustering-checkbox"
-              type="checkbox"
-              checked={clusterEnabled}
-              onChange={(e) => setClusterEnabled(e.target.checked)}
-              disabled={!usingMapbox}
-              className="h-4 w-4"
-              aria-label="Toggle node clustering (Mapbox only)"
-              title={!usingMapbox ? "Clustering is Mapbox-only (for now)" : ""}
-            />
-          </div>
-
-          {!canUseMapbox && (
-            <div className="text-xs text-gray-600 dark:text-gray-300">
-              Mapbox is disabled because <code>VITE_MAPBOX_TOKEN</code> is not set.
+              NODE
             </div>
-          )}
-        </div>
-      </div>
-
-      <div id="details" className="p-4 bg-white dark:bg-black hidden">
-        <div className="flex items-center w-full justify-items-stretch">
-          <div id="details-title" className="flex-auto text-lg text-start">
-            NODE NAME
           </div>
-          <div id="details-subtitle" className="flex-auto ml-4 text-sm text-end">
-            NODE
-          </div>
+          <button
+            onClick={() => {
+              clearMapboxSelectionAndOverlays();
+            }}
+            className="ml-3 p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            aria-label="Close details"
+          >
+            <svg
+              className="w-4 h-4 text-gray-500 dark:text-gray-400"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M6 18L18 6M6 6l12 12"
+              />
+            </svg>
+          </button>
         </div>
-        <div id="details-content" className="align-items-center" />
-      </div>
-
-      <div id="legend" className="p-2 bg-white dark:bg-black">
-        <div className="text-lg">LEGEND</div>
-        <div className="align-items-center">
-          <div className="inline-block w-12 h-1 bg-green-400" /> Heard A Neighbor
-        </div>
-        <div>
-          <div className="inline-block w-12 h-1 bg-blue-400" /> Heard By Neighbor
-        </div>
-        <div>
-          <div className="inline-block w-12 h-1 bg-purple-400" /> Both Heard Each Other
-        </div>
+        <div
+          id="details-content"
+          className="p-4 overflow-y-auto min-h-0 flex-1 text-sm text-gray-700 dark:text-gray-300"
+        />
       </div>
 
       <style>
         {`
-          #map { height: 100%; width: 100%; }
-          #legend { position: absolute; bottom: 10px; right: 10px; z-index: 1000; }
-          #details { position: absolute; top: 10px; right: 10px; z-index: 1000; }
+          #map { position: absolute; inset: 0; }
         `}
       </style>
     </div>
   );
 }
-
-

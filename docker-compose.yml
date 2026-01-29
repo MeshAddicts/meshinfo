@@ -1,11 +1,20 @@
 services:
   postgres:
-    image: postgres:latest
-    volumes:
-      - ./postgres/data:/var/lib/postgresql
+    image: postgres:16
+    restart: unless-stopped
     environment:
-      - POSTGRES_PASSWORD=password
-    restart: "no"
+      POSTGRES_DB: meshinfo
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - meshinfo_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d meshinfo"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   mqtt:
     container_name: mqtt
@@ -15,18 +24,19 @@ services:
     volumes:
       - ./mosquitto/data:/mosquitto/data:rw
       - ./mosquitto/config:/mosquitto/config:rw
-    restart: always
+    restart: unless-stopped
 
   meshinfo:
     image: ghcr.io/meshaddicts/meshinfo:latest
     volumes:
       - ./config.json:/app/config.json
       - ./output:/app/output
+      - ./postgres:/app/postgres:ro
     environment:
       - PYTHONUNBUFFERED=1
     ports:
       - 9000:9000
-    restart: always
+    restart: unless-stopped
     depends_on:
       - postgres
       - mqtt
@@ -41,7 +51,7 @@ services:
 
     environment:
       NODE_ENV: production
-    restart: always
+    restart: unless-stopped
 
   caddy:
     build:
@@ -57,7 +67,10 @@ services:
       - ./public/images:/srv/images
     environment:
       - CADDY_AGREE=true
-    restart: always
+    restart: unless-stopped
     depends_on:
       - meshinfo
       - frontend
+
+volumes:
+  meshinfo_pgdata:
