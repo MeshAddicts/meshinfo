@@ -47,11 +47,11 @@
     "eslint-plugin-react-refresh": "^0.4.6",
     "eslint-plugin-simple-import-sort": "^12.1.0",
     "eslint-plugin-sort-keys-fix": "^1.1.2",
+    "jsdom": "^24.0.0",
     "prettier": "^3.3.1",
     "typescript": "^5.2.2",
     "vite": "^5.4.21",
-    "vitest": "^2.0.0",
-    "jsdom": "^24.0.0"
+    "vitest": "^2.0.0"
   },
   "packageManager": "yarn@4.2.2",
   "engines": {
