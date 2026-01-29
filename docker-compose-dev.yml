@@ -13,6 +13,7 @@ services:
 
   postgres:
     image: postgres:16
+    restart: always
     environment:
       POSTGRES_DB: meshinfo
       POSTGRES_USER: postgres
