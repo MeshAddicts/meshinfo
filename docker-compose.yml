@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:16
-    restart: always
+    restart: unless-stopped
     environment:
       POSTGRES_DB: meshinfo
       POSTGRES_USER: postgres
@@ -24,7 +24,7 @@ services:
     volumes:
       - ./mosquitto/data:/mosquitto/data:rw
       - ./mosquitto/config:/mosquitto/config:rw
-    restart: always
+    restart: unless-stopped
 
   meshinfo:
     image: ghcr.io/meshaddicts/meshinfo:latest
@@ -36,7 +36,7 @@ services:
       - PYTHONUNBUFFERED=1
     ports:
       - 9000:9000
-    restart: always
+    restart: unless-stopped
     depends_on:
       - postgres
       - mqtt
@@ -51,7 +51,7 @@ services:
 
     environment:
       NODE_ENV: production
-    restart: always
+    restart: unless-stopped
 
   caddy:
     build:
@@ -67,7 +67,7 @@ services:
       - ./public/images:/srv/images
     environment:
       - CADDY_AGREE=true
-    restart: always
+    restart: unless-stopped
     depends_on:
       - meshinfo
       - frontend
