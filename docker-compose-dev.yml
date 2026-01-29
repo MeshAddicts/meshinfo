@@ -1,4 +1,4 @@
-unless-stoppedservices:
+services:
   caddy:
     image: caddy:latest
     ports:
