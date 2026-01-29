@@ -9,11 +9,11 @@ services:
       - ./public/images:/srv/images
     environment:
       - CADDY_AGREE=true
-    restart: always
+    restart: unless-stopped
 
   postgres:
     image: postgres:16
-    restart: always
+    restart: unless-stopped
     environment:
       POSTGRES_DB: meshinfo
       POSTGRES_USER: postgres
@@ -37,7 +37,7 @@ services:
     volumes:
       - ./mosquitto/data:/mosquitto/data:rw
       - ./mosquitto/config:/mosquitto/config:rw
-    restart: always
+    restart: unless-stopped
 
   frontend:
     build:
@@ -49,7 +49,7 @@ services:
       - VITE_API_BASE_URL=/api
       - VITE_API_PROXY_TARGET=http://meshinfo:9000
       - NODE_ENV=dev
-    restart: always
+    restart: unless-stopped
 
   meshinfo:
     build:
@@ -66,7 +66,7 @@ services:
     environment:
       - PYTHONUNBUFFERED="1"
       - ALLOW_ORIGINS="*""
-    restart: always
+    restart: unless-stopped
     depends_on:
       caddy:
         condition: service_started
