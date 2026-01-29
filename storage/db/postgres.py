@@ -414,8 +414,16 @@ class PostgresStorage:
         )
 
     async def write_telemetry(self, node_id: str, telemetry_msg: Dict[str, Any]) -> None:
+        """
+        Write telemetry message to history table.
+
+        Args:
+            node_id: from-node id (any supported form; will be normalized)
+            telemetry_msg: Telemetry message dictionary
+        """
         if not self.enabled or not self.pool:
             return
+
         if not isinstance(node_id, str) or not node_id:
             raise ValueError("write_telemetry: node_id must be a non-empty string")
         if not isinstance(telemetry_msg, dict):
@@ -423,30 +431,29 @@ class PostgresStorage:
 
         try:
             async with self.pool.acquire() as conn:
-                # Prefer the packet's real sender when available
-                msg_from = telemetry_msg.get("from")
-                from_candidate = msg_from if msg_from is not None else node_id
-
-                from_id = await self._ensure_node_stub(conn, from_candidate)
+                # Canonical: explicit node_id is authoritative for from_node_id
+                from_id = await self._ensure_node_stub(conn, node_id)
                 if not from_id:
-                    logger.warning(
-                        "write_telemetry: could not normalize from_candidate=%r (msg_from=%r node_id=%r); skipping",
-                        from_candidate, msg_from, node_id
-                    )
+                    logger.warning(f"write_telemetry: could not normalize node_id={node_id!r}, skipping")
                     return
 
-                sender_id = await self._ensure_node_stub(conn, telemetry_msg.get("sender"))
-                to_id     = await self._ensure_node_stub(conn, telemetry_msg.get("to"))
+                msg_from = telemetry_msg.get("from")
+                if msg_from is not None:
+                    msg_from_norm = await self._ensure_node_stub(conn, msg_from)
+                    if msg_from_norm and msg_from_norm != from_id:
+                        logger.debug(
+                            "write_telemetry: msg['from']=%r (norm=%s) != explicit node_id=%r (norm=%s); using explicit",
+                            msg_from, msg_from_norm, node_id, from_id
+                        )
 
-                payload_obj = telemetry_msg.get("payload") or {}
-                payload_json = json.dumps(payload_obj, ensure_ascii=False)
+                sender_id = await self._ensure_node_stub(conn, telemetry_msg.get('sender'))
+                to_id = await self._ensure_node_stub(conn, telemetry_msg.get('to'))
 
-                ts = telemetry_msg.get("rx_time")
-                if ts is None:
-                    ts = telemetry_msg.get("timestamp")
-                rx_time = self._ts_to_dt(ts)
+                payload_json = json.dumps(telemetry_msg.get('payload', {}))
 
-                msg_id = telemetry_msg.get("id")
+                rx_time = self._ts_to_dt(telemetry_msg.get("timestamp"))
+
+                msg_id = telemetry_msg.get('id')
                 if msg_id is None:
                     logger.warning("write_telemetry: missing telemetry_msg['id']; skipping insert")
                     return
@@ -456,39 +463,41 @@ class PostgresStorage:
                     logger.warning("write_telemetry: invalid telemetry_msg['id']=%r; skipping insert", msg_id)
                     return
 
-                row = await conn.fetchrow("""
+                await conn.execute("""
                     INSERT INTO telemetry (
                         from_node_id, to_node_id, sender_node_id, message_id, channel,
                         packet_id, hops_away, rssi, snr, timestamp, rx_time, payload
                     )
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                     ON CONFLICT (from_node_id, message_id) DO NOTHING
-                    RETURNING 1
                 """,
                     from_id,
                     to_id,
                     sender_id,
                     msg_id,
-                    telemetry_msg.get("channel"),
-                    telemetry_msg.get("packet_id"),
-                    telemetry_msg.get("hops_away"),
-                    telemetry_msg.get("rssi"),
-                    telemetry_msg.get("snr"),
-                    telemetry_msg.get("timestamp"),
+                    telemetry_msg.get('channel'),
+                    telemetry_msg.get('packet_id'),
+                    telemetry_msg.get('hops_away'),
+                    telemetry_msg.get('rssi'),
+                    telemetry_msg.get('snr'),
+                    telemetry_msg.get('timestamp'),
                     rx_time,
                     payload_json
                 )
-
-                if row is None:
-                    logger.debug("write_telemetry: conflict-skip from_node_id=%s message_id=%s", from_id, msg_id)
 
         except Exception as e:
             logger.error(f"Failed to write telemetry to PostgreSQL: {e}")
             if self.raise_on_write_error:
                 raise
 
-
     async def write_chat_message(self, node_id: str, chat_msg: Dict[str, Any]) -> None:
+        """
+        Write chat message to PostgreSQL.
+
+        Args:
+            node_id: from-node id (any supported form; will be normalized)
+            chat_msg: Chat message dictionary
+        """
         if not self.enabled or not self.pool:
             return
 
@@ -504,16 +513,27 @@ class PostgresStorage:
         try:
             async with self.pool.acquire() as conn:
                 async with conn.transaction():
+                    # Canonical: explicit node_id is authoritative for from_node_id
                     from_id = await self._ensure_node_stub(conn, node_id)
                     if not from_id:
                         logger.warning(f"write_chat_message: could not normalize node_id={node_id!r}, skipping")
                         return
 
+                    msg_from = chat_msg.get("from")
+                    if msg_from is not None:
+                        msg_from_norm = await self._ensure_node_stub(conn, msg_from)
+                        if msg_from_norm and msg_from_norm != from_id:
+                            logger.debug(
+                                "write_chat_message: msg['from']=%r (norm=%s) != explicit node_id=%r (norm=%s); using explicit",
+                                msg_from, msg_from_norm, node_id, from_id
+                            )
+
                     sender_id = await self._ensure_node_stub(conn, chat_msg.get('sender'))
                     to_id = await self._ensure_node_stub(conn, chat_msg.get('to'))
 
-                    channel_id = str(chat_msg.get('channel', chat_msg.get('channel_id', '0')))
-                    channel_name = "General" if channel_id == "0" else f"Channel {channel_id}"
+                    # Ensure channel exists
+                    channel_id = str(chat_msg.get('channel', '0'))
+                    channel_name = f"Channel {channel_id}" if channel_id != '0' else 'General'
 
                     await conn.execute("""
                         INSERT INTO chat_channels (id, name)
@@ -549,8 +569,14 @@ class PostgresStorage:
             if self.raise_on_write_error:
                 raise
 
-
     async def write_traceroute(self, node_id: str, traceroute_msg: Dict[str, Any]) -> None:
+        """
+        Write traceroute to PostgreSQL.
+
+        Args:
+            node_id: from-node id (any supported form; will be normalized)
+            traceroute_msg: Traceroute message dictionary
+        """
         if not self.enabled or not self.pool:
             return
 
@@ -561,17 +587,28 @@ class PostgresStorage:
 
         try:
             async with self.pool.acquire() as conn:
+                # Canonical: explicit node_id is authoritative for from_node_id
                 from_id = await self._ensure_node_stub(conn, node_id)
                 if not from_id:
                     logger.warning(f"write_traceroute: could not normalize node_id={node_id!r}, skipping")
                     return
 
+                msg_from = traceroute_msg.get("from")
+                if msg_from is not None:
+                    msg_from_norm = await self._ensure_node_stub(conn, msg_from)
+                    if msg_from_norm and msg_from_norm != from_id:
+                        logger.debug(
+                            "write_traceroute: msg['from']=%r (norm=%s) != explicit node_id=%r (norm=%s); using explicit",
+                            msg_from, msg_from_norm, node_id, from_id
+                        )
+
+                # Prefer stubs (safer if schema uses FKs); allow NULL if missing/invalid
                 to_id = await self._ensure_node_stub(conn, traceroute_msg.get('to')) if traceroute_msg.get('to') else None
                 sender_id = await self._ensure_node_stub(conn, traceroute_msg.get('sender')) if traceroute_msg.get('sender') else None
 
-                payload_json = json.dumps(traceroute_msg.get('payload', {}), ensure_ascii=False)
-                route_json = json.dumps(traceroute_msg.get('route', []), ensure_ascii=False)
-                route_ids_json = json.dumps(traceroute_msg.get('route_ids', []), ensure_ascii=False)
+                payload_json = json.dumps(traceroute_msg.get('payload', {}))
+                route_json = json.dumps(traceroute_msg.get('route', []))
+                route_ids_json = json.dumps(traceroute_msg.get('route_ids', []))
 
                 rx_time = self._ts_to_dt(traceroute_msg.get("timestamp"))
 
