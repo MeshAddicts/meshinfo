@@ -88,6 +88,24 @@ const renderHighlightedText = (text: string, query: string) => {
   });
 };
 
+// ---- Commit 6: Export helpers
+const downloadBlob = (blob: Blob, filename: string) => {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
+
+const csvEscape = (v: any) => {
+  const s = String(v ?? "");
+  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+};
+
 export const Chat = () => {
   const { data: chat, dataUpdatedAt, isFetching, refetch } = useGetChatsQuery();
   const { data: nodes = {} } = useGetNodesQuery();
@@ -98,6 +116,10 @@ export const Chat = () => {
   // UI state
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  // Commit 6: export menu
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
 
   // Search input
   const urlQ = searchParams.get("q") ?? "";
@@ -440,16 +462,28 @@ export const Chat = () => {
     const chips: Array<{ label: string; clear: () => void }> = [];
 
     if (urlRange !== "24h")
-      chips.push({ label: `Range: ${urlRange}`, clear: () => setParam("r", undefined, "push") });
+      chips.push({
+        label: `Range: ${urlRange}`,
+        clear: () => setParam("r", undefined, "push"),
+      });
 
     if (urlType !== "all")
-      chips.push({ label: `Type: ${urlType === "bc" ? "BC" : "DM"}`, clear: () => setParam("t", undefined, "push") });
+      chips.push({
+        label: `Type: ${urlType === "bc" ? "BC" : "DM"}`,
+        clear: () => setParam("t", undefined, "push"),
+      });
 
     if (typeof urlHopsMin === "number")
-      chips.push({ label: `Hops ≥ ${urlHopsMin}`, clear: () => setParam("hmin", undefined, "push") });
+      chips.push({
+        label: `Hops ≥ ${urlHopsMin}`,
+        clear: () => setParam("hmin", undefined, "push"),
+      });
 
     if (typeof urlHopsMax === "number")
-      chips.push({ label: `Hops ≤ ${urlHopsMax}`, clear: () => setParam("hmax", undefined, "push") });
+      chips.push({
+        label: `Hops ≤ ${urlHopsMax}`,
+        clear: () => setParam("hmax", undefined, "push"),
+      });
 
     if (urlFrom.trim())
       chips.push({
@@ -459,7 +493,11 @@ export const Chat = () => {
 
     if (urlTo.trim())
       chips.push({
-        label: `To: ${isBroadcast(urlTo) ? "ALL" : ((nodes as any)[urlTo]?.shortname ?? urlTo)}`,
+        label: `To: ${
+          isBroadcast(urlTo)
+            ? "ALL"
+            : (nodes as any)[urlTo]?.shortname ?? urlTo
+        }`,
         clear: () => setParam("to", undefined, "push"),
       });
 
@@ -470,18 +508,30 @@ export const Chat = () => {
       });
 
     if (onlyUnknownEndpoints)
-      chips.push({ label: "Unknown endpoints", clear: () => setParam("unk", undefined, "push") });
+      chips.push({
+        label: "Unknown endpoints",
+        clear: () => setParam("unk", undefined, "push"),
+      });
 
     if (requireVia)
-      chips.push({ label: "Require via", clear: () => setParam("hv", undefined, "push") });
+      chips.push({
+        label: "Require via",
+        clear: () => setParam("hv", undefined, "push"),
+      });
 
     if (urlQ.trim())
-      chips.push({ label: `Search: "${urlQ.trim()}"`, clear: () => setParam("q", undefined, "push") });
+      chips.push({
+        label: `Search: "${urlQ.trim()}"`,
+        clear: () => setParam("q", undefined, "push"),
+      });
 
     // focus is already shown as a bar; keep chips list clean by not duplicating it
 
     if (urlSort !== "desc")
-      chips.push({ label: "Sort: oldest", clear: () => setParam("s", undefined, "push") });
+      chips.push({
+        label: "Sort: oldest",
+        clear: () => setParam("s", undefined, "push"),
+      });
 
     return chips;
   }, [
@@ -497,6 +547,7 @@ export const Chat = () => {
     urlQ,
     urlSort,
     nodes,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     setParam,
   ]);
 
@@ -536,6 +587,7 @@ export const Chat = () => {
 
   // Node chip
   const applyFocus = (nodeId: string) => {
+    if (!nodeId || nodeId === "ffffffff") return;
     setParams(
       [
         { key: "node", value: nodeId },
@@ -628,11 +680,14 @@ export const Chat = () => {
     for (const m of messages as any[]) {
       const from = String(m.from ?? "");
       const to = String(m.to ?? "");
-      if (from && from !== "ffffffff") counts.set(from, (counts.get(from) ?? 0) + 1);
-      if (to && to !== "ffffffff") counts.set(to, (counts.get(to) ?? 0) + 1);
+      if (from && from !== "ffffffff")
+        counts.set(from, (counts.get(from) ?? 0) + 1);
+      if (to && to !== "ffffffff")
+        counts.set(to, (counts.get(to) ?? 0) + 1);
       const via = Array.isArray(m.sender) ? m.sender.map(String) : [];
       for (const v of via) {
-        if (v && v !== "ffffffff") counts.set(v, (counts.get(v) ?? 0) + 1);
+        if (v && v !== "ffffffff")
+          counts.set(v, (counts.get(v) ?? 0) + 1);
       }
     }
     return [...counts.entries()]
@@ -651,7 +706,9 @@ export const Chat = () => {
       long: String(n?.longname ?? ""),
     }));
     return all
-      .filter((x) => (`${x.id} ${x.short} ${x.long}`).toLowerCase().includes(q))
+      .filter((x) =>
+        (`${x.id} ${x.short} ${x.long}`).toLowerCase().includes(q)
+      )
       .slice(0, 12);
   }, [nodes, focusPickerDeferred]);
 
@@ -735,12 +792,30 @@ export const Chat = () => {
     el.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [urlMsg, messages.length, selectedChannel]);
 
-  // ---- Keyboard shortcuts (Commit 5)
+  // ---- Commit 6: export menu click-outside
+  useEffect(() => {
+    if (!exportOpen) return;
+
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (exportMenuRef.current && !exportMenuRef.current.contains(t)) {
+        setExportOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [exportOpen]);
+
+  // ---- Keyboard shortcuts (Commit 5 + Commit 6)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase();
       const isTypingContext =
-        tag === "input" || tag === "textarea" || (e.target as any)?.isContentEditable;
+        tag === "input" ||
+        tag === "textarea" ||
+        (e.target as any)?.isContentEditable;
 
       // / focuses search (but not while typing)
       if (!isTypingContext && e.key === "/") {
@@ -750,12 +825,17 @@ export const Chat = () => {
       }
 
       if (e.key === "Escape") {
-        // close drawer first
+        // close filters first
         if (filtersOpen) {
           setFiltersOpen(false);
           return;
         }
-        // then close message details
+        // then export menu
+        if (exportOpen) {
+          setExportOpen(false);
+          return;
+        }
+        // then message details
         if (urlMsg) {
           setParam("msg", undefined, "push");
         }
@@ -764,7 +844,7 @@ export const Chat = () => {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [filtersOpen, urlMsg]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filtersOpen, exportOpen, urlMsg]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Advanced filter helper: node search for drawer
   const DrawerNodeSearch = ({
@@ -880,8 +960,97 @@ export const Chat = () => {
     );
   };
 
+  // ---- Commit 6: Export rows + handlers (exports current view)
+  const exportRows = useMemo(() => {
+    const ch = selectedChannel ?? "";
+    return (messages as any[]).map((m) => {
+      const fromId = String(m.from ?? "");
+      const toId = String(m.to ?? "");
+      const viaIds = Array.isArray(m.sender) ? m.sender.map(String) : [];
+
+      return {
+        channel: ch,
+        message_id: String(m.id ?? ""),
+        timestamp_unix: Number(m.timestamp ?? 0),
+        timestamp: m.timestamp ? new Date(m.timestamp * 1000).toISOString() : "",
+        from: fromId,
+        from_short: (nodes as any)[fromId]?.shortname ?? "UNK",
+        to: toId,
+        to_short: isBroadcast(toId) ? "ALL" : ((nodes as any)[toId]?.shortname ?? "UNK"),
+        hops: Number(m.hops_away ?? 0),
+        via_ids: viaIds.join(","),
+        via_short: viaIds.map((id) => (nodes as any)[id]?.shortname ?? "UNK").join(","),
+        text: String(m.text ?? ""),
+      };
+    });
+  }, [messages, nodes, selectedChannel]);
+
+  const doExportJson = () => {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      channel: selectedChannel ?? "",
+      channelLabel: selectedChannel ? channelLabel(selectedChannel) : "",
+      params: Object.fromEntries(searchParams.entries()),
+      count: exportRows.length,
+      rows: exportRows,
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    downloadBlob(blob, `chat_export_${selectedChannel ?? "ch"}_${Date.now()}.json`);
+    setExportOpen(false);
+  };
+
+  const doExportCsv = () => {
+    const cols = [
+      "channel",
+      "message_id",
+      "timestamp_unix",
+      "timestamp",
+      "from",
+      "from_short",
+      "to",
+      "to_short",
+      "hops",
+      "via_ids",
+      "via_short",
+      "text",
+    ] as const;
+
+    const header = cols.join(",");
+    const lines = exportRows.map((r) =>
+      cols.map((c) => csvEscape((r as any)[c])).join(",")
+    );
+
+    const csv = [header, ...lines].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    downloadBlob(blob, `chat_export_${selectedChannel ?? "ch"}_${Date.now()}.csv`);
+    setExportOpen(false);
+  };
+
+  // ---- Commit 6: Route helpers (details pane)
+  const routeLabel = (id: string) => {
+    if (!id || id === "ffffffff") return "ALL";
+    return (nodes as any)[id]?.shortname ?? id;
+  };
+
+  const copyRoute = async (m: any) => {
+    const from = routeLabel(String(m.from ?? ""));
+    const to = routeLabel(String(m.to ?? ""));
+    const via = Array.isArray(m.sender)
+      ? m.sender.map((x: any) => routeLabel(String(x)))
+      : [];
+    const chain = [from, ...via, to].join(" -> ");
+    try {
+      await navigator.clipboard.writeText(chain);
+    } catch {
+      // ignore
+    }
+  };
+
   return (
-    <div className="w-full">
+    <div className="w-full h-[calc(100vh-0px)] overflow-hidden flex flex-col">
       {/* Filters Drawer (Commit 5) */}
       {filtersOpen ? (
         <div className="fixed inset-0 z-40">
@@ -948,7 +1117,9 @@ export const Chat = () => {
                         Min
                       </div>
                       <select
-                        value={typeof urlHopsMin === "number" ? String(urlHopsMin) : ""}
+                        value={
+                          typeof urlHopsMin === "number" ? String(urlHopsMin) : ""
+                        }
                         onChange={(e) => {
                           const v = e.target.value;
                           setParam("hmin", v || undefined, "push");
@@ -956,8 +1127,10 @@ export const Chat = () => {
                         className="mt-1 w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100"
                       >
                         <option value="">any</option>
-                        {[0,1,2,3,4,5,6,7,8,9,10].map((n) => (
-                          <option key={`hmin-${n}`} value={String(n)}>{n}</option>
+                        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                          <option key={`hmin-${n}`} value={String(n)}>
+                            {n}
+                          </option>
                         ))}
                       </select>
                     </div>
@@ -966,7 +1139,9 @@ export const Chat = () => {
                         Max
                       </div>
                       <select
-                        value={typeof urlHopsMax === "number" ? String(urlHopsMax) : ""}
+                        value={
+                          typeof urlHopsMax === "number" ? String(urlHopsMax) : ""
+                        }
                         onChange={(e) => {
                           const v = e.target.value;
                           setParam("hmax", v || undefined, "push");
@@ -974,8 +1149,10 @@ export const Chat = () => {
                         className="mt-1 w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100"
                       >
                         <option value="">any</option>
-                        {[0,1,2,3,4,5,6,7,8,9,10].map((n) => (
-                          <option key={`hmax-${n}`} value={String(n)}>{n}</option>
+                        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                          <option key={`hmax-${n}`} value={String(n)}>
+                            {n}
+                          </option>
                         ))}
                       </select>
                     </div>
@@ -1018,7 +1195,8 @@ export const Chat = () => {
                 </div>
 
                 <div className="text-xs text-gray-500 dark:text-gray-400">
-                  Keyboard: <b>/</b> focus search, <b>Esc</b> close filters/details.
+                  Keyboard: <b>/</b> focus search, <b>Esc</b> close
+                  filters/details/export.
                 </div>
               </div>
             </div>
@@ -1027,7 +1205,7 @@ export const Chat = () => {
       ) : null}
 
       {/* Sticky top area */}
-      <div className="sticky top-0 z-20 bg-white/90 dark:bg-gray-900/85 backdrop-blur border-b border-gray-200 dark:border-gray-800">
+      <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur border-b border-gray-200 dark:border-gray-800">
         <div className="mx-auto max-w-[1600px] px-3 sm:px-5 py-3">
           {/* Title row */}
           <div className="flex items-start justify-between gap-3">
@@ -1061,6 +1239,37 @@ export const Chat = () => {
             </div>
 
             <div className="flex items-center gap-2">
+              {/* Commit 6: Export dropdown */}
+              <div className="relative" ref={exportMenuRef}>
+                <button
+                  type="button"
+                  className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                  onClick={() => setExportOpen((v) => !v)}
+                  title="Export the current view (filters applied)"
+                >
+                  Export
+                </button>
+
+                {exportOpen ? (
+                  <div className="absolute right-0 mt-2 w-48 rounded-md border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-lg overflow-hidden z-30">
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800/40"
+                      onClick={doExportCsv}
+                    >
+                      Download CSV
+                    </button>
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800/40"
+                      onClick={doExportJson}
+                    >
+                      Download JSON
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+
               <button
                 type="button"
                 className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
@@ -1306,487 +1515,592 @@ export const Chat = () => {
         </div>
       </div>
 
-      {/* Main explorer body */}
-      <div className="mx-auto max-w-[1600px] px-3 sm:px-5 py-4">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {/* Message list pane */}
-          <div className="lg:col-span-2">
-            <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm">
-              <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex items-center justify-between">
-                <div className="text-sm text-gray-800 dark:text-gray-200">
-                  {selectedChannel ? (
-                    <>
-                      <span className="font-semibold">
-                        {channelLabel(selectedChannel)}
-                      </span>{" "}
-                      <span className="text-xs text-gray-500 dark:text-gray-400">
-                        (Channel {selectedChannel})
-                      </span>
-                      <span className="ml-3 text-xs text-gray-500 dark:text-gray-400">
-                        total {totalMessages.toLocaleString()}
-                      </span>
-                    </>
-                  ) : (
-                    "No channel selected"
-                  )}
+      {/* Main explorer body (scroll fix: internal panes scroll, not whole page) */}
+      <div className="flex-1 overflow-hidden">
+        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 py-4 h-full">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-full min-h-0">
+            {/* Message list pane */}
+            <div className="lg:col-span-2 min-h-0 flex flex-col">
+              <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col min-h-0">
+                <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex items-center justify-between">
+                  <div className="text-sm text-gray-800 dark:text-gray-200">
+                    {selectedChannel ? (
+                      <>
+                        <span className="font-semibold">
+                          {channelLabel(selectedChannel)}
+                        </span>{" "}
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                          (Channel {selectedChannel})
+                        </span>
+                        <span className="ml-3 text-xs text-gray-500 dark:text-gray-400">
+                          total {totalMessages.toLocaleString()}
+                        </span>
+                      </>
+                    ) : (
+                      "No channel selected"
+                    )}
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    showing{" "}
+                    <span className="font-medium">
+                      {messages.length.toLocaleString()}
+                    </span>
+                  </div>
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">
-                  showing{" "}
-                  <span className="font-medium">
-                    {messages.length.toLocaleString()}
-                  </span>
-                </div>
-              </div>
 
-              <div ref={listTopRef} className="h-[calc(100vh-220px)] overflow-y-auto">
-                <ul className="divide-y divide-gray-200 dark:divide-gray-800">
-                  {messages.map((m: any, idx: number) => {
-                    const fromId = String(m.from ?? "");
-                    const toId = String(m.to ?? "");
-                    const msgId = String(m.id ?? `${idx}`);
-                    const isSelected = urlMsg && msgId === String(urlMsg);
+                <div
+                  ref={listTopRef}
+                  className="flex-1 overflow-y-auto min-h-0"
+                >
+                  <ul className="divide-y divide-gray-200 dark:divide-gray-800">
+                    {messages.map((m: any, idx: number) => {
+                      const fromId = String(m.from ?? "");
+                      const toId = String(m.to ?? "");
+                      const msgId = String(m.id ?? `${idx}`);
+                      const isSelected = urlMsg && msgId === String(urlMsg);
 
-                    const fromNode = (nodes as any)[fromId] || null;
-                    const viaNodes = Array.isArray(m.sender)
-                      ? m.sender.map((sid: string) => (nodes as any)[sid]).filter(Boolean)
-                      : [];
-
-                    const distanceFromSender =
-                      fromNode && viaNodes.length
-                        ? viaNodes
-                            .filter((s: any) => s.position)
-                            .map((s: any) => calculateDistanceBetweenNodes(fromNode, s))
+                      const fromNode = (nodes as any)[fromId] || null;
+                      const viaNodes = Array.isArray(m.sender)
+                        ? m.sender
+                            .map((sid: string) => (nodes as any)[sid])
                             .filter(Boolean)
                         : [];
 
-                    const dxStr = distanceFromSender?.length
-                      ? distanceFromSender.map((d: any) => `${d} km`).join(", ")
-                      : "";
+                      const distanceFromSender =
+                        fromNode && viaNodes.length
+                          ? viaNodes
+                              .filter((s: any) => s.position)
+                              .map((s: any) =>
+                                calculateDistanceBetweenNodes(fromNode, s)
+                              )
+                              .filter(Boolean)
+                          : [];
 
-                    const focusId = urlNode.trim();
-                    const viaIds = Array.isArray(m.sender) ? m.sender.map(String) : [];
-                    const thisInFocus =
-                      focusId &&
-                      (fromId === focusId ||
-                        toId === focusId ||
-                        (urlFocus === "any" && viaIds.includes(focusId)));
+                      const dxStr = distanceFromSender?.length
+                        ? distanceFromSender
+                            .map((d: any) => `${d} km`)
+                            .join(", ")
+                        : "";
 
-                    return (
-                      <li
-                        id={`msg-${msgId}`}
-                        key={`msg-${msgId}-${idx}`}
-                        className={[
-                          "px-4 py-3 cursor-pointer transition outline-none",
-                          isSelected
-                            ? "bg-indigo-50/70 dark:bg-indigo-900/20 ring-1 ring-indigo-400/30"
-                            : "hover:bg-gray-50 dark:hover:bg-gray-900/30",
-                          thisInFocus ? "ring-1 ring-indigo-400/15" : "",
-                        ].join(" ")}
-                        onClick={() => setParam("msg", msgId, "push")}
-                        role="button"
-                        tabIndex={0}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <NodeChip
-                              nodeId={fromId}
-                              fallback="UNK"
-                              titlePrefix="From"
-                              compact
-                              stopPropagation
-                              onFocus={(id) => applyFocus(id)}
-                            />
-                            <span className="text-gray-400">→</span>
-                            {isBroadcast(toId) ? (
-                              <span className="rounded-md px-2 py-0.5 text-[11px] font-medium bg-gray-200/60 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300">
-                                ALL
-                              </span>
-                            ) : (
+                      const focusId = urlNode.trim();
+                      const viaIds = Array.isArray(m.sender)
+                        ? m.sender.map(String)
+                        : [];
+                      const thisInFocus =
+                        focusId &&
+                        (fromId === focusId ||
+                          toId === focusId ||
+                          (urlFocus === "any" && viaIds.includes(focusId)));
+
+                      return (
+                        <li
+                          id={`msg-${msgId}`}
+                          key={`msg-${msgId}-${idx}`}
+                          className={[
+                            "px-4 py-3 cursor-pointer transition outline-none",
+                            isSelected
+                              ? "bg-indigo-50/70 dark:bg-indigo-900/20 ring-1 ring-indigo-400/30"
+                              : "hover:bg-gray-50 dark:hover:bg-gray-900/30",
+                            thisInFocus ? "ring-1 ring-indigo-400/15" : "",
+                          ].join(" ")}
+                          onClick={() => setParam("msg", msgId, "push")}
+                          role="button"
+                          tabIndex={0}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex flex-wrap items-center gap-2">
                               <NodeChip
-                                nodeId={toId}
+                                nodeId={fromId}
                                 fallback="UNK"
-                                titlePrefix="To"
+                                titlePrefix="From"
                                 compact
                                 stopPropagation
                                 onFocus={(id) => applyFocus(id)}
                               />
-                            )}
+                              <span className="text-gray-400">→</span>
+                              {isBroadcast(toId) ? (
+                                <span className="rounded-md px-2 py-0.5 text-[11px] font-medium bg-gray-200/60 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300">
+                                  ALL
+                                </span>
+                              ) : (
+                                <NodeChip
+                                  nodeId={toId}
+                                  fallback="UNK"
+                                  titlePrefix="To"
+                                  compact
+                                  stopPropagation
+                                  onFocus={(id) => applyFocus(id)}
+                                />
+                              )}
 
-                            <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
-                              hops {m.hops_away ?? 0}
-                            </span>
-
-                            {!isBroadcast(toId) ? (
-                              <span className="rounded-full px-2 py-0.5 text-[11px] bg-indigo-100/70 dark:bg-indigo-800/30 text-indigo-900 dark:text-indigo-100">
-                                DM
+                              <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
+                                hops {m.hops_away ?? 0}
                               </span>
+
+                              {!isBroadcast(toId) ? (
+                                <span className="rounded-full px-2 py-0.5 text-[11px] bg-indigo-100/70 dark:bg-indigo-800/30 text-indigo-900 dark:text-indigo-100">
+                                  DM
+                                </span>
+                              ) : (
+                                <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
+                                  BC
+                                </span>
+                              )}
+
+                              {dxStr ? (
+                                <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
+                                  dx {dxStr}
+                                </span>
+                              ) : null}
+                            </div>
+
+                            <div className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                              {formatTimestamp(m.timestamp) || "Unknown"}
+                            </div>
+                          </div>
+
+                          <div className="mt-2 text-sm text-gray-900 dark:text-gray-100 whitespace-pre-wrap break-words">
+                            {renderHighlightedText(String(m.text ?? ""), urlQ)}
+                          </div>
+
+                          <div className="mt-2 text-xs text-gray-600 dark:text-gray-400">
+                            via:{" "}
+                            {viaNodes.length ? (
+                              viaNodes.map((s: any, i: number) => (
+                                <span key={`via-${msgId}-${s.id}-${i}`}>
+                                  <Link
+                                    to={`/nodes/${s.id}`}
+                                    className="underline hover:no-underline"
+                                    title={`${s.id} / ${s.longname}`}
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    {s.shortname ?? "UNK"}
+                                  </Link>
+                                  {i < viaNodes.length - 1 ? ", " : ""}
+                                </span>
+                              ))
                             ) : (
-                              <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
-                                BC
-                              </span>
+                              <span className="text-gray-500">UNK</span>
                             )}
-
-                            {dxStr ? (
-                              <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
-                                dx {dxStr}
-                              </span>
-                            ) : null}
                           </div>
+                        </li>
+                      );
+                    })}
 
-                          <div className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
-                            {formatTimestamp(m.timestamp) || "Unknown"}
+                    {messages.length === 0 ? (
+                      <li className="px-4 py-8">
+                        <div className="text-sm text-gray-700 dark:text-gray-200 font-medium">
+                          No messages match your current filters.
+                        </div>
+                        <div className="mt-4 flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            className="rounded-md px-3 py-2 text-sm bg-indigo-600 text-white hover:bg-indigo-700 transition"
+                            onClick={clearFilters}
+                          >
+                            Clear filters
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                            onClick={() => setParam("r", "all", "push")}
+                          >
+                            Set range: all
+                          </button>
+                          <div className="text-xs text-gray-500 dark:text-gray-400">
+                            Tip: open Filters for from/to/via/hops flags.
                           </div>
-                        </div>
-
-                        <div className="mt-2 text-sm text-gray-900 dark:text-gray-100 whitespace-pre-wrap break-words">
-                          {renderHighlightedText(String(m.text ?? ""), urlQ)}
-                        </div>
-
-                        <div className="mt-2 text-xs text-gray-600 dark:text-gray-400">
-                          via:{" "}
-                          {viaNodes.length ? (
-                            viaNodes.map((s: any, i: number) => (
-                              <span key={`via-${msgId}-${s.id}-${i}`}>
-                                <Link
-                                  to={`/nodes/${s.id}`}
-                                  className="underline hover:no-underline"
-                                  title={`${s.id} / ${s.longname}`}
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  {s.shortname ?? "UNK"}
-                                </Link>
-                                {i < viaNodes.length - 1 ? ", " : ""}
-                              </span>
-                            ))
-                          ) : (
-                            <span className="text-gray-500">UNK</span>
-                          )}
                         </div>
                       </li>
-                    );
-                  })}
+                    ) : null}
+                  </ul>
+                </div>
+              </div>
+            </div>
 
-                  {messages.length === 0 ? (
-                    <li className="px-4 py-8">
+            {/* Right column: Focus panel + Details panel */}
+            <div className="lg:col-span-1 flex flex-col gap-4 min-h-0 h-full">
+              {/* Focus panel */}
+              <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col max-h-[40vh] min-h-0">
+                <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex items-center justify-between">
+                  <div className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                    Node focus
+                  </div>
+                  {urlNode.trim() ? (
+                    <button
+                      type="button"
+                      className="text-xs underline hover:no-underline text-gray-600 dark:text-gray-300"
+                      onClick={clearFocus}
+                    >
+                      clear
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="p-4 flex-1 overflow-y-auto min-h-0">
+                  {!urlNode.trim() ? (
+                    <>
                       <div className="text-sm text-gray-700 dark:text-gray-200 font-medium">
-                        No messages match your current filters.
+                        Focus a node
                       </div>
-                      <div className="mt-4 flex flex-wrap items-center gap-2">
+                      <div className="mt-2">
+                        <input
+                          value={focusPicker}
+                          onChange={(e) => setFocusPicker(e.target.value)}
+                          placeholder="Type 2+ chars… (id, shortname, longname)"
+                          className="w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+                        />
+                      </div>
+
+                      {focusMatches.length > 0 ? (
+                        <div className="mt-2 rounded-md border border-gray-200 dark:border-gray-800 overflow-hidden">
+                          <ul className="divide-y divide-gray-200 dark:divide-gray-800 max-h-64 overflow-y-auto">
+                            {focusMatches.map((m) => (
+                              <li
+                                key={`match-${m.id}`}
+                                className="px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-900/30 cursor-pointer"
+                                onClick={() => applyFocus(m.id)}
+                                role="button"
+                                tabIndex={0}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="text-gray-900 dark:text-gray-100 font-medium">
+                                    {m.short || "UNK"}
+                                  </div>
+                                  <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">
+                                    {m.id}
+                                  </div>
+                                </div>
+                                <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                                  {m.long || "Unknown"}
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : (
+                        <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                          Tip: type “fr”, “nb99”, “7cf6e06c”, etc.
+                        </div>
+                      )}
+
+                      {frequentNodes.length > 0 ? (
+                        <div className="mt-4">
+                          <div className="text-xs text-gray-500 dark:text-gray-400">
+                            Frequent in current view
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {frequentNodes.map((x) => (
+                              <button
+                                key={`freq-${x.nodeId}`}
+                                type="button"
+                                className="rounded-md px-2 py-1 text-xs border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                                onClick={() => applyFocus(x.nodeId)}
+                                title={`${x.nodeId} (${x.count})`}
+                              >
+                                {(nodes as any)[x.nodeId]?.shortname ?? "UNK"}{" "}
+                                <span className="opacity-70">({x.count})</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                            {focusNodeObj?.shortname ?? "UNK"}{" "}
+                            <span className="text-xs text-gray-500 dark:text-gray-400 font-normal">
+                              {focusNodeObj?.longname ?? urlNode}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-xs text-gray-500 dark:text-gray-400 font-mono">
+                            {urlNode}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Link
+                            to={`/nodes/${urlNode}`}
+                            className="text-xs underline hover:no-underline text-gray-700 dark:text-gray-200"
+                          >
+                            open
+                          </Link>
+                          <button
+                            type="button"
+                            className="text-xs underline hover:no-underline text-gray-700 dark:text-gray-200"
+                            onClick={async () => {
+                              try {
+                                await navigator.clipboard.writeText(urlNode);
+                              } catch {
+                                // no-op
+                              }
+                            }}
+                            title="Copy node id"
+                          >
+                            copy id
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-2 gap-2">
+                        <div className="rounded-md border border-gray-200 dark:border-gray-800 p-2">
+                          <div className="text-xs text-gray-500 dark:text-gray-400">
+                            Messages
+                          </div>
+                          <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                            {focusStats?.total ?? 0}
+                          </div>
+                        </div>
+                        <div className="rounded-md border border-gray-200 dark:border-gray-800 p-2">
+                          <div className="text-xs text-gray-500 dark:text-gray-400">
+                            In / Out
+                          </div>
+                          <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                            {(focusStats?.inbound ?? 0).toLocaleString()} /{" "}
+                            {(focusStats?.outbound ?? 0).toLocaleString()}
+                          </div>
+                        </div>
+                      </div>
+
+                      {focusStats?.hopsChips?.length ? (
+                        <div className="mt-4">
+                          <div className="text-xs text-gray-500 dark:text-gray-400">
+                            Hops distribution
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {focusStats.hopsChips.map((h) => (
+                              <span
+                                key={`hop-${h.hops}`}
+                                className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200"
+                                title={`${h.count} messages`}
+                              >
+                                {h.hops} hops: {h.count}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Details pane */}
+              <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex-1 min-h-0 flex flex-col">
+                <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex items-center justify-between">
+                  <div className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                    Message details
+                  </div>
+                  {urlMsg ? (
+                    <button
+                      type="button"
+                      className="text-xs underline hover:no-underline text-gray-600 dark:text-gray-300"
+                      onClick={() => setParam("msg", undefined, "push")}
+                    >
+                      close
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="flex-1 overflow-y-auto min-h-0">
+                  {!urlMsg ? (
+                    <div className="px-4 py-6 text-sm text-gray-600 dark:text-gray-400">
+                      <div className="font-medium text-gray-700 dark:text-gray-200">
+                        Click a message
+                      </div>
+                      <div className="mt-1">
+                        Select a message on the left to inspect route, hops, and nodes.
+                      </div>
+                      <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
+                        Pro tip: click the ⊙ next to a node to focus it.
+                      </div>
+                    </div>
+                  ) : !selectedMessage ? (
+                    <div className="px-4 py-6 text-sm text-gray-600 dark:text-gray-400">
+                      <div className="font-medium text-gray-700 dark:text-gray-200">
+                        Message not in current view
+                      </div>
+                      <div className="mt-1">
+                        It may be filtered out by range/type/hops/focus or advanced filters.
+                      </div>
+                      <div className="mt-4 flex gap-2">
                         <button
                           type="button"
                           className="rounded-md px-3 py-2 text-sm bg-indigo-600 text-white hover:bg-indigo-700 transition"
-                          onClick={clearFilters}
+                          onClick={() => setParam("msg", undefined, "push")}
                         >
-                          Clear filters
+                          Clear selection
                         </button>
                         <button
                           type="button"
                           className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                          onClick={() => setParam("r", "all", "push")}
+                          onClick={clearFilters}
                         >
-                          Set range: all
+                          Clear filters
                         </button>
-                        <div className="text-xs text-gray-500 dark:text-gray-400">
-                          Tip: open Filters for from/to/via/hops flags.
-                        </div>
                       </div>
-                    </li>
-                  ) : null}
-                </ul>
-              </div>
-            </div>
-          </div>
-
-          {/* Right column: Focus panel + Details panel */}
-          <div className="lg:col-span-1 flex flex-col gap-4 min-h-0">
-            {/* Focus panel */}
-            <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm">
-              <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex items-center justify-between">
-                <div className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                  Node focus
-                </div>
-                {urlNode.trim() ? (
-                  <button
-                    type="button"
-                    className="text-xs underline hover:no-underline text-gray-600 dark:text-gray-300"
-                    onClick={clearFocus}
-                  >
-                    clear
-                  </button>
-                ) : null}
-              </div>
-
-              <div className="p-4">
-                {!urlNode.trim() ? (
-                  <>
-                    <div className="text-sm text-gray-700 dark:text-gray-200 font-medium">
-                      Focus a node
                     </div>
-                    <div className="mt-2">
-                      <input
-                        value={focusPicker}
-                        onChange={(e) => setFocusPicker(e.target.value)}
-                        placeholder="Type 2+ chars… (id, shortname, longname)"
-                        className="w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
-                      />
-                    </div>
-
-                    {focusMatches.length > 0 ? (
-                      <div className="mt-2 rounded-md border border-gray-200 dark:border-gray-800 overflow-hidden">
-                        <ul className="divide-y divide-gray-200 dark:divide-gray-800 max-h-64 overflow-y-auto">
-                          {focusMatches.map((m) => (
-                            <li
-                              key={`match-${m.id}`}
-                              className="px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-900/30 cursor-pointer"
-                              onClick={() => applyFocus(m.id)}
-                              role="button"
-                              tabIndex={0}
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="text-gray-900 dark:text-gray-100 font-medium">
-                                  {m.short || "UNK"}
-                                </div>
-                                <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">
-                                  {m.id}
-                                </div>
-                              </div>
-                              <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                                {m.long || "Unknown"}
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ) : (
-                      <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                        Tip: type “fr”, “nb99”, “7cf6e06c”, etc.
-                      </div>
-                    )}
-
-                    {frequentNodes.length > 0 ? (
-                      <div className="mt-4">
+                  ) : (
+                    <div className="px-4 py-5 space-y-4">
+                      <div className="flex items-center justify-between">
                         <div className="text-xs text-gray-500 dark:text-gray-400">
-                          Frequent in current view
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {frequentNodes.map((x) => (
-                            <button
-                              key={`freq-${x.nodeId}`}
-                              type="button"
-                              className="rounded-md px-2 py-1 text-xs border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                              onClick={() => applyFocus(x.nodeId)}
-                              title={`${x.nodeId} (${x.count})`}
-                            >
-                              {(nodes as any)[x.nodeId]?.shortname ?? "UNK"}{" "}
-                              <span className="opacity-70">({x.count})</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                  </>
-                ) : (
-                  <>
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                          {focusNodeObj?.shortname ?? "UNK"}{" "}
-                          <span className="text-xs text-gray-500 dark:text-gray-400 font-normal">
-                            {focusNodeObj?.longname ?? urlNode}
+                          ID:{" "}
+                          <span className="font-mono text-gray-700 dark:text-gray-200">
+                            {String(selectedMessage.id)}
                           </span>
                         </div>
-                        <div className="mt-1 text-xs text-gray-500 dark:text-gray-400 font-mono">
-                          {urlNode}
+                        <div className="text-xs text-gray-500 dark:text-gray-400">
+                          {formatTimestamp(selectedMessage.timestamp) ||
+                            String(selectedMessage.timestamp)}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Link
-                          to={`/nodes/${urlNode}`}
-                          className="text-xs underline hover:no-underline text-gray-700 dark:text-gray-200"
-                        >
-                          open
-                        </Link>
+
+                      <div>
+                        <div className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                          Text
+                        </div>
+                        <div className="mt-2 whitespace-pre-wrap break-words rounded-md border border-gray-200 dark:border-gray-800 p-3 bg-white dark:bg-gray-900/30 text-sm text-gray-900 dark:text-gray-100">
+                          {renderHighlightedText(
+                            String(selectedMessage.text ?? ""),
+                            urlQ
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Commit 6: Route visualization */}
+                      <div>
+                        <div className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                          Route
+                        </div>
+
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <NodeChip
+                            nodeId={String(selectedMessage.from ?? "")}
+                            fallback="UNK"
+                            titlePrefix="From"
+                            compact
+                            stopPropagation
+                            onFocus={(id) => applyFocus(id)}
+                          />
+
+                          <span className="text-gray-400">→</span>
+
+                          {Array.isArray(selectedMessage.sender) &&
+                          selectedMessage.sender.length ? (
+                            selectedMessage.sender.map((sid: any, idx: number) => (
+                              <span
+                                key={`route-via-${String(sid)}-${idx}`}
+                                className="inline-flex items-center gap-2"
+                              >
+                                <NodeChip
+                                  nodeId={String(sid)}
+                                  fallback="UNK"
+                                  titlePrefix="Via"
+                                  compact
+                                  stopPropagation
+                                  onFocus={(id) => applyFocus(id)}
+                                />
+                                <span className="text-gray-400">→</span>
+                              </span>
+                            ))
+                          ) : (
+                            <>
+                              <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
+                                via UNK
+                              </span>
+                              <span className="text-gray-400">→</span>
+                            </>
+                          )}
+
+                          {isBroadcast(String(selectedMessage.to ?? "")) ? (
+                            <span className="rounded-md px-2 py-0.5 text-[11px] font-medium bg-gray-200/60 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300">
+                              ALL
+                            </span>
+                          ) : (
+                            <NodeChip
+                              nodeId={String(selectedMessage.to ?? "")}
+                              fallback="UNK"
+                              titlePrefix="To"
+                              compact
+                              stopPropagation
+                              onFocus={(id) => applyFocus(id)}
+                            />
+                          )}
+
+                          <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
+                            hops {selectedMessage.hops_away ?? 0}
+                          </span>
+                        </div>
+
+                        <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                          {routeLabel(String(selectedMessage.from ?? ""))}{" "}
+                          {"->"}{" "}
+                          {Array.isArray(selectedMessage.sender) &&
+                          selectedMessage.sender.length
+                            ? selectedMessage.sender
+                                .map((x: any) => routeLabel(String(x)))
+                                .join(" -> ")
+                            : "UNK"}{" "}
+                          {"->"}{" "}
+                          {routeLabel(String(selectedMessage.to ?? ""))}
+                        </div>
+                      </div>
+
+                      <div className="pt-2 flex flex-wrap gap-2">
                         <button
                           type="button"
-                          className="text-xs underline hover:no-underline text-gray-700 dark:text-gray-200"
+                          className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
                           onClick={async () => {
                             try {
-                              await navigator.clipboard.writeText(urlNode);
+                              await navigator.clipboard.writeText(
+                                String(selectedMessage.text ?? "")
+                              );
                             } catch {
                               // no-op
                             }
                           }}
-                          title="Copy node id"
                         >
-                          copy id
+                          Copy text
+                        </button>
+
+                        <button
+                          type="button"
+                          className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                          onClick={() => copyRoute(selectedMessage)}
+                          title="Copy route chain"
+                        >
+                          Copy route
+                        </button>
+
+                        <button
+                          type="button"
+                          className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                          onClick={() => applyFocus(String(selectedMessage.from))}
+                          title="Focus sender"
+                          disabled={!String(selectedMessage.from ?? "").trim() || isBroadcast(String(selectedMessage.from))}
+                        >
+                          Focus from
+                        </button>
+
+                        <button
+                          type="button"
+                          className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                          onClick={() => applyFocus(String(selectedMessage.to))}
+                          title="Focus recipient"
+                          disabled={isBroadcast(String(selectedMessage.to))}
+                        >
+                          Focus to
                         </button>
                       </div>
                     </div>
-
-                    <div className="mt-4 grid grid-cols-2 gap-2">
-                      <div className="rounded-md border border-gray-200 dark:border-gray-800 p-2">
-                        <div className="text-xs text-gray-500 dark:text-gray-400">
-                          Messages
-                        </div>
-                        <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                          {focusStats?.total ?? 0}
-                        </div>
-                      </div>
-                      <div className="rounded-md border border-gray-200 dark:border-gray-800 p-2">
-                        <div className="text-xs text-gray-500 dark:text-gray-400">
-                          In / Out
-                        </div>
-                        <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                          {(focusStats?.inbound ?? 0).toLocaleString()} /{" "}
-                          {(focusStats?.outbound ?? 0).toLocaleString()}
-                        </div>
-                      </div>
-                    </div>
-
-                    {focusStats?.hopsChips?.length ? (
-                      <div className="mt-4">
-                        <div className="text-xs text-gray-500 dark:text-gray-400">
-                          Hops distribution
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {focusStats.hopsChips.map((h) => (
-                            <span
-                              key={`hop-${h.hops}`}
-                              className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200"
-                              title={`${h.count} messages`}
-                            >
-                              {h.hops} hops: {h.count}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Details pane */}
-            <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex-1 min-h-0">
-              <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex items-center justify-between">
-                <div className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                  Message details
+                  )}
                 </div>
-                {urlMsg ? (
-                  <button
-                    type="button"
-                    className="text-xs underline hover:no-underline text-gray-600 dark:text-gray-300"
-                    onClick={() => setParam("msg", undefined, "push")}
-                  >
-                    close
-                  </button>
-                ) : null}
               </div>
 
-              <div className="h-full overflow-y-auto">
-                {!urlMsg ? (
-                  <div className="px-4 py-6 text-sm text-gray-600 dark:text-gray-400">
-                    <div className="font-medium text-gray-700 dark:text-gray-200">
-                      Click a message
-                    </div>
-                    <div className="mt-1">
-                      Select a message on the left to inspect route, hops, and nodes.
-                    </div>
-                    <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
-                      Pro tip: click the ⊙ next to a node to focus it.
-                    </div>
-                  </div>
-                ) : !selectedMessage ? (
-                  <div className="px-4 py-6 text-sm text-gray-600 dark:text-gray-400">
-                    <div className="font-medium text-gray-700 dark:text-gray-200">
-                      Message not in current view
-                    </div>
-                    <div className="mt-1">
-                      It may be filtered out by range/type/hops/focus or advanced filters.
-                    </div>
-                    <div className="mt-4 flex gap-2">
-                      <button
-                        type="button"
-                        className="rounded-md px-3 py-2 text-sm bg-indigo-600 text-white hover:bg-indigo-700 transition"
-                        onClick={() => setParam("msg", undefined, "push")}
-                      >
-                        Clear selection
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                        onClick={clearFilters}
-                      >
-                        Clear filters
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="px-4 py-5 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="text-xs text-gray-500 dark:text-gray-400">
-                        ID:{" "}
-                        <span className="font-mono text-gray-700 dark:text-gray-200">
-                          {String(selectedMessage.id)}
-                        </span>
-                      </div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">
-                        {formatTimestamp(selectedMessage.timestamp) ||
-                          String(selectedMessage.timestamp)}
-                      </div>
-                    </div>
-
-                    <div>
-                      <div className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                        Text
-                      </div>
-                      <div className="mt-2 whitespace-pre-wrap break-words rounded-md border border-gray-200 dark:border-gray-800 p-3 bg-white dark:bg-gray-900/30 text-sm text-gray-900 dark:text-gray-100">
-                        {renderHighlightedText(String(selectedMessage.text ?? ""), urlQ)}
-                      </div>
-                    </div>
-
-                    <div className="pt-2 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                        onClick={async () => {
-                          try {
-                            await navigator.clipboard.writeText(
-                              String(selectedMessage.text ?? "")
-                            );
-                          } catch {
-                            // no-op
-                          }
-                        }}
-                      >
-                        Copy text
-                      </button>
-
-                      <button
-                        type="button"
-                        className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                        onClick={() => applyFocus(String(selectedMessage.from))}
-                        title="Focus sender"
-                      >
-                        Focus from
-                      </button>
-
-                      <button
-                        type="button"
-                        className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                        onClick={() => applyFocus(String(selectedMessage.to))}
-                        title="Focus recipient"
-                        disabled={isBroadcast(selectedMessage.to)}
-                      >
-                        Focus to
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
+              {/* Commit 6 complete: export + route viz + scroll fix */}
             </div>
-
-            {/* Commit 6 next: export + route viz */}
           </div>
         </div>
       </div>
