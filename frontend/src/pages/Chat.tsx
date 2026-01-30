@@ -14,6 +14,7 @@ type FocusMode = "endpoints" | "any";
 type MsgType = "all" | "bc" | "dm";
 type RangeKey = "1h" | "24h" | "7d" | "all";
 type SortKey = "desc" | "asc";
+type NavMode = "replace" | "push";
 
 const isBroadcast = (to?: string) => !to || to === "ffffffff";
 
@@ -22,6 +23,14 @@ const clampInt = (v: string | null, min: number, max: number) => {
   const n = Number.parseInt(v, 10);
   if (Number.isNaN(n)) return undefined;
   return Math.max(min, Math.min(max, n));
+};
+
+// Default URL param values (we will *remove* these from the URL for canonical links)
+const DEFAULT_PARAM: Record<string, string> = {
+  r: "24h",
+  t: "all",
+  s: "desc",
+  focus: "endpoints",
 };
 
 export const Chat = () => {
@@ -64,9 +73,15 @@ export const Chat = () => {
   const urlHopsMax = clampInt(searchParams.get("hmax"), 0, 10);
   const urlMsg = searchParams.get("msg") ?? "";
 
-  // Local input state (so typing is smooth)
+  // Local input state (typing is smooth)
   const [qInput, setQInput] = useState(urlQ);
   const qDeferred = useDeferredValue(qInput);
+
+  // Tiny toast for “copied”
+  const [copied, setCopied] = useState(false);
+
+  // Height polish: keep explorer panes scrollable
+  const paneHeightClass = "h-[calc(100vh-220px)]";
 
   // Keep local input synced if user navigates via back/forward
   useEffect(() => {
@@ -74,14 +89,51 @@ export const Chat = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlQ]);
 
-  // Select default channel in URL once channels load
+  // ---- Param helpers (canonical + history semantics)
+  const setParam = (key: string, value?: string, mode: NavMode = "replace") => {
+    const next = new URLSearchParams(searchParams);
+
+    const v = value?.trim();
+    const defaultForKey = DEFAULT_PARAM[key];
+
+    if (!v) {
+      next.delete(key);
+    } else if (defaultForKey && v === defaultForKey) {
+      // keep URLs clean: omit default values
+      next.delete(key);
+    } else {
+      next.set(key, v);
+    }
+
+    setSearchParams(next, { replace: mode === "replace" });
+  };
+
+  const setParams = (
+    updates: Array<{ key: string; value?: string }>,
+    mode: NavMode = "replace"
+  ) => {
+    const next = new URLSearchParams(searchParams);
+
+    for (const u of updates) {
+      const v = u.value?.trim();
+      const defaultForKey = DEFAULT_PARAM[u.key];
+
+      if (!v) next.delete(u.key);
+      else if (defaultForKey && v === defaultForKey) next.delete(u.key);
+      else next.set(u.key, v);
+    }
+
+    setSearchParams(next, { replace: mode === "replace" });
+  };
+
+  // Ensure ch is present and valid (canonical safety)
   useEffect(() => {
     if (channels.length === 0) return;
-    if (!urlCh) {
+    const valid = urlCh && channels.some(([id]) => id === urlCh);
+    if (!valid) {
       const firstId = channels[0][0];
-      const next = new URLSearchParams(searchParams);
-      next.set("ch", firstId);
-      setSearchParams(next, { replace: true });
+      // replace so this doesn’t create a weird history entry on load
+      setParams([{ key: "ch", value: firstId }], "replace");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channels.length, urlCh]);
@@ -96,21 +148,10 @@ export const Chat = () => {
     return (chat?.channels as any)?.[selectedChannel];
   }, [chat?.channels, selectedChannel]);
 
-  // Helper to set URL params safely
-  const setParam = (key: string, value?: string, replace = true) => {
-    const next = new URLSearchParams(searchParams);
-    if (!value) next.delete(key);
-    else next.set(key, value);
-    setSearchParams(next, { replace });
-  };
-
-  // Update URL q from deferred input (so it’s not on every keystroke)
+  // Update URL q from deferred input (replace, don’t spam history)
   useEffect(() => {
     if ((searchParams.get("q") ?? "") === qDeferred) return;
-    const next = new URLSearchParams(searchParams);
-    if (qDeferred.trim().length === 0) next.delete("q");
-    else next.set("q", qDeferred);
-    setSearchParams(next, { replace: true });
+    setParam("q", qDeferred, "replace");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qDeferred]);
 
@@ -209,7 +250,7 @@ export const Chat = () => {
 
   const totalMessages = selectedChannelObj?.totalMessages ?? 0;
 
-  // Active filter counting + clear behavior (Commit 2 polish)
+  // Active filter counting + clear behavior
   const activeFilterCount = useMemo(() => {
     let n = 0;
     if (urlQ.trim()) n += 1;
@@ -223,6 +264,7 @@ export const Chat = () => {
   }, [urlQ, urlRange, urlType, urlHopsMax, urlNode, urlFocus, urlSort]);
 
   const clearFilters = () => {
+    // push: clearing filters should be a user action you can go “Back” from
     const next = new URLSearchParams(searchParams);
     // keep ch
     next.delete("q");
@@ -233,8 +275,17 @@ export const Chat = () => {
     next.delete("r");
     next.delete("s");
     next.delete("msg");
-    // Reset range and sort to defaults by absence (24h/desc)
-    setSearchParams(next, { replace: true });
+    setSearchParams(next, { replace: false });
+  };
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // ignore
+    }
   };
 
   const focusHint = useMemo(() => {
@@ -247,7 +298,7 @@ export const Chat = () => {
     return parts.length ? parts.join(", ") : "no filters";
   }, [urlQ, urlType, urlRange, urlHopsMax, urlNode]);
 
-  // Node chip UI helper
+  // Node chip
   const NodeChip = ({
     nodeId,
     fallback,
@@ -312,10 +363,6 @@ export const Chat = () => {
     );
   };
 
-  // Height polish: keep explorer panes scrollable
-  // Adjust this if your app already constrains height; it’s safe as-is.
-  const paneHeightClass = "h-[calc(100vh-220px)]"; // tuned for your sticky header
-
   return (
     <div className="w-full">
       {/* Sticky top area */}
@@ -347,13 +394,15 @@ export const Chat = () => {
               </div>
             </div>
 
-            {/* Compact summary / future toolbar space */}
-            <div className="hidden md:flex items-center gap-2">
-              {selectedChannel ? (
-                <span className="text-xs text-gray-500 dark:text-gray-400">
-                  Preset: <span className="font-medium">{channelShort(selectedChannel)}</span>
-                </span>
-              ) : null}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                onClick={copyLink}
+                title="Copy a shareable link (includes filters/focus/selection)"
+              >
+                {copied ? "Copied!" : "Copy link"}
+              </button>
             </div>
           </div>
 
@@ -372,8 +421,14 @@ export const Chat = () => {
                       : "bg-transparent text-gray-700 dark:text-gray-200 border-gray-300/60 dark:border-gray-600/60 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
                   ].join(" ")}
                   onClick={() => {
-                    setParam("ch", id);
-                    setParam("msg", undefined);
+                    // push: switching preset is navigational (Back should return)
+                    setParams(
+                      [
+                        { key: "ch", value: id },
+                        { key: "msg", value: undefined }, // clear selection
+                      ],
+                      "push"
+                    );
                   }}
                   title={`Channel ${id}`}
                 >
@@ -419,7 +474,7 @@ export const Chat = () => {
                         ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
                         : "bg-transparent text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
                     ].join(" ")}
-                    onClick={() => setParam("r", rk)}
+                    onClick={() => setParam("r", rk, "push")}
                     title={`Range ${rk}`}
                   >
                     {rk}
@@ -430,7 +485,7 @@ export const Chat = () => {
               {/* Type */}
               <select
                 value={urlType}
-                onChange={(e) => setParam("t", e.target.value)}
+                onChange={(e) => setParam("t", e.target.value, "push")}
                 className="rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100"
                 title="Message type"
               >
@@ -442,7 +497,7 @@ export const Chat = () => {
               {/* Focus mode */}
               <select
                 value={urlFocus}
-                onChange={(e) => setParam("focus", e.target.value)}
+                onChange={(e) => setParam("focus", e.target.value, "push")}
                 className="rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100"
                 title="Node focus mode"
               >
@@ -455,8 +510,7 @@ export const Chat = () => {
                 value={typeof urlHopsMax === "number" ? String(urlHopsMax) : ""}
                 onChange={(e) => {
                   const v = e.target.value;
-                  if (!v) setParam("hmax", undefined);
-                  else setParam("hmax", v);
+                  setParam("hmax", v || undefined, "push");
                 }}
                 className="rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100"
                 title="Max hops"
@@ -473,7 +527,7 @@ export const Chat = () => {
               <button
                 type="button"
                 className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                onClick={() => setParam("s", urlSort === "desc" ? "asc" : "desc")}
+                onClick={() => setParam("s", urlSort === "desc" ? "asc" : "desc", "push")}
                 title="Toggle sort"
               >
                 {urlSort === "desc" ? "Newest" : "Oldest"}
@@ -482,7 +536,9 @@ export const Chat = () => {
               {/* Active filters summary */}
               <div className="flex items-center gap-2">
                 <span className="text-xs text-gray-500 dark:text-gray-400">
-                  {activeFilterCount > 0 ? `${activeFilterCount} filter${activeFilterCount > 1 ? "s" : ""}` : "no filters"}
+                  {activeFilterCount > 0
+                    ? `${activeFilterCount} filter${activeFilterCount > 1 ? "s" : ""}`
+                    : "no filters"}
                 </span>
                 {activeFilterCount > 0 ? (
                   <button
@@ -523,7 +579,7 @@ export const Chat = () => {
                 <button
                   type="button"
                   className="rounded-md px-2 py-1 text-sm border border-indigo-400/50 dark:border-indigo-600/50 text-indigo-900 dark:text-indigo-100 hover:bg-indigo-100/60 dark:hover:bg-indigo-900/30 transition"
-                  onClick={() => setParam("node", undefined)}
+                  onClick={() => setParams([{ key: "node", value: undefined }, { key: "msg", value: undefined }], "push")}
                 >
                   clear
                 </button>
@@ -587,9 +643,7 @@ export const Chat = () => {
                         : [];
 
                     const dxStr = distanceFromSender?.length
-                      ? distanceFromSender
-                          .map((d: any) => `${d} km`)
-                          .join(", ")
+                      ? distanceFromSender.map((d: any) => `${d} km`).join(", ")
                       : "";
 
                     const thisInFocus =
@@ -610,11 +664,11 @@ export const Chat = () => {
                             : "hover:bg-gray-50 dark:hover:bg-gray-900/30",
                           thisInFocus ? "ring-1 ring-indigo-400/20" : "",
                         ].join(" ")}
-                        onClick={() => setParam("msg", msgId)}
+                        onClick={() => setParam("msg", msgId, "push")}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
-                            setParam("msg", msgId);
+                            setParam("msg", msgId, "push");
                           }
                         }}
                         role="button"
@@ -628,7 +682,7 @@ export const Chat = () => {
                               titlePrefix="From"
                               compact
                               stopPropagation
-                              onFocus={(id) => setParam("node", id)}
+                              onFocus={(id) => setParam("node", id, "push")}
                             />
                             <span className="text-gray-400">→</span>
                             {isBroadcast(toId) ? (
@@ -642,11 +696,10 @@ export const Chat = () => {
                                 titlePrefix="To"
                                 compact
                                 stopPropagation
-                                onFocus={(id) => setParam("node", id)}
+                                onFocus={(id) => setParam("node", id, "push")}
                               />
                             )}
 
-                            {/* badges */}
                             <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
                               hops {m.hops_away ?? 0}
                             </span>
@@ -718,7 +771,7 @@ export const Chat = () => {
                         <button
                           type="button"
                           className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                          onClick={() => setParam("r", "all")}
+                          onClick={() => setParam("r", "all", "push")}
                           title="Show all time"
                         >
                           Set range: all
@@ -745,7 +798,7 @@ export const Chat = () => {
                   <button
                     type="button"
                     className="text-xs underline hover:no-underline text-gray-600 dark:text-gray-300"
-                    onClick={() => setParam("msg", undefined)}
+                    onClick={() => setParam("msg", undefined, "push")}
                   >
                     close
                   </button>
@@ -802,7 +855,7 @@ export const Chat = () => {
                             nodeId={String(selectedMessage.from)}
                             compact
                             stopPropagation
-                            onFocus={(id) => setParam("node", id)}
+                            onFocus={(id) => setParam("node", id, "push")}
                           />
                         </div>
 
@@ -819,7 +872,7 @@ export const Chat = () => {
                               nodeId={String(selectedMessage.to)}
                               compact
                               stopPropagation
-                              onFocus={(id) => setParam("node", id)}
+                              onFocus={(id) => setParam("node", id, "push")}
                             />
                           )}
                         </div>
@@ -837,7 +890,7 @@ export const Chat = () => {
                                   nodeId={String(sid)}
                                   compact
                                   stopPropagation
-                                  onFocus={(id) => setParam("node", id)}
+                                  onFocus={(id) => setParam("node", id, "push")}
                                 />
                               ))
                             ) : (
@@ -877,7 +930,7 @@ export const Chat = () => {
                       <button
                         type="button"
                         className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                        onClick={() => setParam("node", String(selectedMessage.from))}
+                        onClick={() => setParam("node", String(selectedMessage.from), "push")}
                         title="Focus sender"
                       >
                         Focus from
@@ -886,7 +939,7 @@ export const Chat = () => {
                       <button
                         type="button"
                         className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                        onClick={() => setParam("node", String(selectedMessage.to))}
+                        onClick={() => setParam("node", String(selectedMessage.to), "push")}
                         title="Focus recipient"
                         disabled={isBroadcast(selectedMessage.to)}
                       >
@@ -898,7 +951,7 @@ export const Chat = () => {
               </div>
             </div>
 
-            {/* Commit 3+ will evolve this into filters drawer, focused node summary, etc. */}
+            {/* Commit 4+ will evolve this into filters drawer + focused node summary */}
           </div>
         </div>
       </div>
