@@ -33,13 +33,62 @@ const parseEnum = <T extends string>(
   return (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
 };
 
-export function useChatSearchParams(args?: { channels?: Array<[string, any]> }) {
-  const channels = args?.channels ?? [];
+export type ChatViewParam = { key: string; aliases?: string[] };
+
+export function useChatSearchParams(args?: {
+  views?: ChatViewParam[];
+  defaultCh?: string;
+}) {
+  const views = args?.views ?? [];
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // ---- URL param-backed state (validated)
-  const urlCh = searchParams.get("ch") ?? "";
+  const rawCh = (searchParams.get("ch") ?? "").trim();
 
+  const defaultCh = useMemo(() => {
+    const d = (args?.defaultCh ?? "").trim();
+    if (d) return d;
+    return views[0]?.key ?? "";
+  }, [args?.defaultCh, views]);
+
+  const aliasToKey = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const v of views) {
+      const k = (v.key ?? "").trim();
+      if (!k) continue;
+      m.set(k.toLowerCase(), k);
+      for (const a of v.aliases ?? []) {
+        const aa = (a ?? "").trim();
+        if (!aa) continue;
+        m.set(aa.toLowerCase(), k);
+      }
+    }
+    return m;
+  }, [views]);
+
+  const urlCh = useMemo(() => {
+    if (!defaultCh) return rawCh; // fallback (shouldn’t happen)
+    if (!rawCh) return defaultCh;
+
+    const mapped = aliasToKey.get(rawCh.toLowerCase());
+    return mapped ?? defaultCh;
+  }, [rawCh, aliasToKey, defaultCh]);
+
+  // Canonicalize ch in the URL (also fixes invalid ch to default)
+  useEffect(() => {
+    if (!defaultCh) return;
+
+    const desired = urlCh || defaultCh;
+    const current = (searchParams.get("ch") ?? "").trim();
+
+    if (current !== desired) {
+      const next = new URLSearchParams(searchParams);
+      next.set("ch", desired);
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlCh, defaultCh]);
+
+  // ---- URL param-backed state (validated)
   const urlQ = searchParams.get("q") ?? "";
 
   const urlRange = parseEnum<RangeKey>(
@@ -93,13 +142,9 @@ export function useChatSearchParams(args?: { channels?: Array<[string, any]> }) 
       const v = value?.trim();
       const defaultForKey = DEFAULT_PARAM[key];
 
-      if (!v) {
-        next.delete(key);
-      } else if (defaultForKey && v === defaultForKey) {
-        next.delete(key);
-      } else {
-        next.set(key, v);
-      }
+      if (!v) next.delete(key);
+      else if (defaultForKey && v === defaultForKey) next.delete(key);
+      else next.set(key, v);
 
       setSearchParams(next, { replace: mode === "replace" });
     },
@@ -151,19 +196,7 @@ export function useChatSearchParams(args?: { channels?: Array<[string, any]> }) 
     setSearchParams(next, { replace: false });
   }, [searchParams, setSearchParams]);
 
-  // Ensure ch is present and valid (canonical safety)
-  useEffect(() => {
-    if (!channels || channels.length === 0) return;
-
-    const valid = !!urlCh && channels.some(([id]) => id === urlCh);
-    if (!valid) {
-      const firstId = channels[0][0];
-      setParams([{ key: "ch", value: firstId }], "replace");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channels.length, urlCh]);
-
-  // If node is not set, don’t keep focus/dir around in URL (clean canonical links)
+  // If node is not set, don’t keep focus/dir around in URL
   useEffect(() => {
     if (urlNode?.trim()) return;
 
@@ -187,7 +220,7 @@ export function useChatSearchParams(args?: { channels?: Array<[string, any]> }) 
       searchParams,
 
       // parsed
-      urlCh,
+      urlCh, // now canonical key (e.g., "mediumfast")
       urlQ,
       urlRange,
       urlType,
