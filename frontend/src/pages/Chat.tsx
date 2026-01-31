@@ -4,8 +4,10 @@ import {
   useState,
   useDeferredValue,
   useRef,
+  forwardRef,
 } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 import { formatTimestamp } from "../utils/formatTimestamp";
 
 import { HeardBy } from "../components/HeardBy";
@@ -97,7 +99,8 @@ const downloadBlob = (blob: Blob, filename: string) => {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
+  // give the browser a tick to start reading the blob before revoking
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
 const csvEscape = (v: any) => {
@@ -105,6 +108,205 @@ const csvEscape = (v: any) => {
   if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 };
+
+const VirtuosoScroller = forwardRef<HTMLDivElement, any>(function VirtuosoScroller(
+  props,
+  ref
+) {
+  return (
+    <div
+      {...props}
+      ref={ref}
+      className={[
+        props.className ?? "",
+        "h-full min-h-0 overflow-y-auto",
+      ].join(" ")}
+    />
+  );
+});
+
+function NodeChip({
+  nodeId,
+  nodes,
+  fallback,
+  onFocus,
+  titlePrefix,
+  compact,
+  stopPropagation,
+}: {
+  nodeId: string;
+  nodes: any;
+  fallback?: string;
+  onFocus?: (id: string) => void;
+  titlePrefix?: string;
+  compact?: boolean;
+  stopPropagation?: boolean;
+}) {
+  const n = nodes?.[nodeId];
+  const short = n?.shortname ?? fallback ?? "UNK";
+  const long = n?.longname ?? "Unknown";
+  const title = `${titlePrefix ? `${titlePrefix}: ` : ""}${nodeId} / ${long}`;
+  const base =
+    "inline-flex items-center rounded-md font-medium border border-transparent hover:border-gray-300/40 dark:hover:border-gray-600/40 transition";
+  const pad = compact ? "px-2 py-0.5 text-[11px]" : "px-2.5 py-1 text-xs";
+  const bg =
+    "bg-gray-200/60 dark:bg-gray-700/50 text-gray-900 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700";
+
+  return (
+    <span className="inline-flex items-center gap-1">
+      {nodeId && nodeId !== "ffffffff" ? (
+        <Link
+          to={`/nodes/${nodeId}`}
+          className={`${base} ${pad} ${bg}`}
+          title={title}
+          onClick={(e) => {
+            if (stopPropagation) e.stopPropagation();
+          }}
+        >
+          {short}
+        </Link>
+      ) : (
+        <span
+          className={`${base} ${pad} bg-gray-200/60 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300`}
+          title={title}
+        >
+          {short}
+        </span>
+      )}
+
+      {onFocus && nodeId && nodeId !== "ffffffff" ? (
+        <button
+          type="button"
+          className="rounded-md px-2 py-0.5 text-[11px] font-semibold border border-gray-300/60 dark:border-gray-600/60 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+          onClick={(e) => {
+            e.stopPropagation();
+            onFocus(nodeId);
+          }}
+          title="Focus this node"
+        >
+          ⊙
+        </button>
+      ) : null}
+    </span>
+  );
+}
+
+function DrawerNodeSearch({
+  label,
+  paramKey,
+  currentValue,
+  placeholder,
+  allowAll,
+  nodes,
+  setParam,
+}: {
+  label: string;
+  paramKey: string;
+  currentValue: string;
+  placeholder: string;
+  allowAll?: boolean;
+  nodes: any;
+  setParam: (key: string, value?: string, mode?: "replace" | "push") => void;
+}) {
+  const [q, setQ] = useState("");
+  const qDef = useDeferredValue(q);
+
+  const matches = useMemo(() => {
+    const s = qDef.trim().toLowerCase();
+    if (s.length < 2) return [];
+    const all = Object.entries(nodes as any).map(([id, n]: any) => ({
+      id: String(id),
+      short: String(n?.shortname ?? ""),
+      long: String(n?.longname ?? ""),
+    }));
+    return all
+      .filter((x) => (`${x.id} ${x.short} ${x.long}`).toLowerCase().includes(s))
+      .slice(0, 10);
+  }, [nodes, qDef]);
+
+  const setValue = (v?: string) => {
+    setParam(paramKey, v, "push");
+    setQ("");
+  };
+
+  return (
+    <div>
+      <div className="text-xs text-gray-500 dark:text-gray-400">{label}</div>
+      <div className="mt-1 flex items-center gap-2">
+        {currentValue ? (
+          <span className="inline-flex items-center gap-2 rounded-md border border-gray-200 dark:border-gray-800 px-2 py-1 text-sm">
+            <span className="font-medium text-gray-900 dark:text-gray-100">
+              {allowAll && isBroadcast(currentValue)
+                ? "ALL"
+                : (nodes as any)[currentValue]?.shortname ?? "UNK"}
+            </span>
+            <span className="text-xs text-gray-500 dark:text-gray-400 font-mono">
+              {currentValue}
+            </span>
+            <button
+              type="button"
+              className="text-xs underline hover:no-underline"
+              onClick={() => setValue(undefined)}
+            >
+              clear
+            </button>
+          </span>
+        ) : (
+          <span className="text-xs text-gray-500 dark:text-gray-400">none</span>
+        )}
+      </div>
+
+      <div className="mt-2">
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder={placeholder}
+          className="w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+        />
+      </div>
+
+      {allowAll ? (
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="rounded-md px-2 py-1 text-xs border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+            onClick={() => setValue("ffffffff")}
+          >
+            Set to ALL
+          </button>
+        </div>
+      ) : null}
+
+      {matches.length > 0 ? (
+        <div className="mt-2 rounded-md border border-gray-200 dark:border-gray-800 overflow-hidden">
+          <ul className="divide-y divide-gray-200 dark:divide-gray-800 max-h-56 overflow-y-auto">
+            {matches.map((m) => (
+              <li
+                key={`drawer-${paramKey}-${m.id}`}
+                className="px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-900/30 cursor-pointer"
+                onClick={() => setValue(m.id)}
+                role="button"
+                tabIndex={0}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-gray-900 dark:text-gray-100 font-medium">
+                    {m.short || "UNK"}
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">
+                    {m.id}
+                  </div>
+                </div>
+                <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                  {m.long || "Unknown"}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 export const Chat = () => {
   const { data: chat, dataUpdatedAt, isFetching, refetch } = useGetChatsQuery();
@@ -130,9 +332,6 @@ export const Chat = () => {
   // Focus picker input
   const [focusPicker, setFocusPicker] = useState("");
   const focusPickerDeferred = useDeferredValue(focusPicker);
-
-  // Scroll-to-selected
-  const listTopRef = useRef<HTMLDivElement | null>(null);
 
   // ---- Channel list (filtered by config display list if provided)
   const channels = useMemo(() => {
@@ -777,20 +976,25 @@ export const Chat = () => {
     };
   }, [messages, urlNode]);
 
-  // ---- Scroll selected message into view (shared links)
+  // Virtualize message list
+  const virtuosoRef = useRef<VirtuosoHandle | null>(null);
+
+  // ---- Commit 8: Scroll selected message into view (works with virtualization)
   useEffect(() => {
     if (!urlMsg) return;
-    const id = `msg-${String(urlMsg)}`;
-    const el = document.getElementById(id);
-    if (!el) {
-      const t = window.setTimeout(() => {
-        const el2 = document.getElementById(id);
-        if (el2) el2.scrollIntoView({ block: "center", behavior: "smooth" });
-      }, 50);
-      return () => window.clearTimeout(t);
-    }
-    el.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [urlMsg, messages.length, selectedChannel]);
+
+    const idx = (messages as any[]).findIndex(
+      (m: any) => String(m.id) === String(urlMsg)
+    );
+    if (idx < 0) return;
+
+    virtuosoRef.current?.scrollToIndex({
+      index: idx,
+      align: "center",
+      behavior: "smooth",
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlMsg, messages, selectedChannel]);
 
   // ---- Commit 6: export menu click-outside
   useEffect(() => {
@@ -844,7 +1048,8 @@ export const Chat = () => {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [filtersOpen, exportOpen, urlMsg]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtersOpen, exportOpen, urlMsg]);
 
   // Advanced filter helper: node search for drawer
   const DrawerNodeSearch = ({
@@ -976,14 +1181,26 @@ export const Chat = () => {
         from: fromId,
         from_short: (nodes as any)[fromId]?.shortname ?? "UNK",
         to: toId,
-        to_short: isBroadcast(toId) ? "ALL" : ((nodes as any)[toId]?.shortname ?? "UNK"),
+        to_short: isBroadcast(toId)
+          ? "ALL"
+          : (nodes as any)[toId]?.shortname ?? "UNK",
         hops: Number(m.hops_away ?? 0),
         via_ids: viaIds.join(","),
-        via_short: viaIds.map((id) => (nodes as any)[id]?.shortname ?? "UNK").join(","),
+        via_short: viaIds
+          .map((id) => (nodes as any)[id]?.shortname ?? "UNK")
+          .join(","),
         text: String(m.text ?? ""),
       };
     });
   }, [messages, nodes, selectedChannel]);
+
+  const exportFilenameBase = useMemo(() => {
+    const ch = selectedChannel ?? "ch";
+    const short = selectedChannel ? channelShort(selectedChannel) : ch;
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    // keep it simple + stable
+    return `chat_${short || ch}_${ts}`;
+  }, [selectedChannel, channelShort]);
 
   const doExportJson = () => {
     const payload = {
@@ -996,9 +1213,10 @@ export const Chat = () => {
     };
 
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
-      type: "application/json",
+      type: "application/json;charset=utf-8",
     });
-    downloadBlob(blob, `chat_export_${selectedChannel ?? "ch"}_${Date.now()}.json`);
+
+    downloadBlob(blob, `${exportFilenameBase}.json`);
     setExportOpen(false);
   };
 
@@ -1023,9 +1241,11 @@ export const Chat = () => {
       cols.map((c) => csvEscape((r as any)[c])).join(",")
     );
 
-    const csv = [header, ...lines].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    downloadBlob(blob, `chat_export_${selectedChannel ?? "ch"}_${Date.now()}.csv`);
+    // BOM + CRLF to play nice with Excel
+    const csv = "\ufeff" + [header, ...lines].join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+
+    downloadBlob(blob, `${exportFilenameBase}.csv`);
     setExportOpen(false);
   };
 
@@ -1091,6 +1311,8 @@ export const Chat = () => {
                     paramKey="from"
                     currentValue={urlFrom}
                     placeholder="Type 2+ chars to filter sender…"
+                    nodes={nodes}
+                    setParam={setParam}
                   />
                   <DrawerNodeSearch
                     label="To"
@@ -1098,12 +1320,16 @@ export const Chat = () => {
                     currentValue={urlTo}
                     placeholder="Type 2+ chars to filter recipient…"
                     allowAll
+                    nodes={nodes}
+                    setParam={setParam}
                   />
                   <DrawerNodeSearch
                     label="Via contains"
                     paramKey="via"
                     currentValue={urlVia}
                     placeholder="Type 2+ chars to require a specific via…"
+                    nodes={nodes}
+                    setParam={setParam}
                   />
                 </div>
 
@@ -1251,17 +1477,38 @@ export const Chat = () => {
                 </button>
 
                 {exportOpen ? (
-                  <div className="absolute right-0 mt-2 w-48 rounded-md border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-lg overflow-hidden z-30">
+                  <div className="absolute right-0 mt-2 w-56 rounded-md border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-lg overflow-hidden z-30">
+                    <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">
+                      Exporting{" "}
+                      <span className="font-medium">
+                        {exportRows.length.toLocaleString()}
+                      </span>{" "}
+                      row(s)
+                    </div>
+
                     <button
                       type="button"
-                      className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800/40"
+                      disabled={exportRows.length === 0}
+                      className={[
+                        "w-full text-left px-3 py-2 text-sm",
+                        exportRows.length === 0
+                          ? "opacity-50 cursor-not-allowed"
+                          : "hover:bg-gray-50 dark:hover:bg-gray-800/40",
+                      ].join(" ")}
                       onClick={doExportCsv}
                     >
                       Download CSV
                     </button>
+
                     <button
                       type="button"
-                      className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800/40"
+                      disabled={exportRows.length === 0}
+                      className={[
+                        "w-full text-left px-3 py-2 text-sm",
+                        exportRows.length === 0
+                          ? "opacity-50 cursor-not-allowed"
+                          : "hover:bg-gray-50 dark:hover:bg-gray-800/40",
+                      ].join(" ")}
                       onClick={doExportJson}
                     >
                       Download JSON
@@ -1515,14 +1762,13 @@ export const Chat = () => {
         </div>
       </div>
 
-      {/* Main explorer body (scroll fix: internal panes scroll, not whole page) */}
-      <div className="flex-1 overflow-hidden">
-        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 py-4 h-full">
+      {/* Main explorer body */}
+      <div className="flex-1 overflow-hidden flex flex-col">
+        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 py-4 flex-1 min-h-0 w-full">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-full min-h-0">
             {/* Message list pane */}
             <div className="lg:col-span-2 min-h-0 flex flex-col">
-              <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col min-h-0">
-                <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex items-center justify-between">
+              <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col min-h-0 flex-1">                <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex items-center justify-between">
                   <div className="text-sm text-gray-800 dark:text-gray-200">
                     {selectedChannel ? (
                       <>
@@ -1548,172 +1794,181 @@ export const Chat = () => {
                   </div>
                 </div>
 
-                <div
-                  ref={listTopRef}
-                  className="flex-1 overflow-y-auto min-h-0"
-                >
-                  <ul className="divide-y divide-gray-200 dark:divide-gray-800">
-                    {messages.map((m: any, idx: number) => {
-                      const fromId = String(m.from ?? "");
-                      const toId = String(m.to ?? "");
-                      const msgId = String(m.id ?? `${idx}`);
-                      const isSelected = urlMsg && msgId === String(urlMsg);
-
-                      const fromNode = (nodes as any)[fromId] || null;
-                      const viaNodes = Array.isArray(m.sender)
-                        ? m.sender
-                            .map((sid: string) => (nodes as any)[sid])
-                            .filter(Boolean)
-                        : [];
-
-                      const distanceFromSender =
-                        fromNode && viaNodes.length
-                          ? viaNodes
-                              .filter((s: any) => s.position)
-                              .map((s: any) =>
-                                calculateDistanceBetweenNodes(fromNode, s)
-                              )
-                              .filter(Boolean)
-                          : [];
-
-                      const dxStr = distanceFromSender?.length
-                        ? distanceFromSender
-                            .map((d: any) => `${d} km`)
-                            .join(", ")
-                        : "";
-
-                      const focusId = urlNode.trim();
-                      const viaIds = Array.isArray(m.sender)
-                        ? m.sender.map(String)
-                        : [];
-                      const thisInFocus =
-                        focusId &&
-                        (fromId === focusId ||
-                          toId === focusId ||
-                          (urlFocus === "any" && viaIds.includes(focusId)));
-
-                      return (
-                        <li
-                          id={`msg-${msgId}`}
-                          key={`msg-${msgId}-${idx}`}
-                          className={[
-                            "px-4 py-3 cursor-pointer transition outline-none",
-                            isSelected
-                              ? "bg-indigo-50/70 dark:bg-indigo-900/20 ring-1 ring-indigo-400/30"
-                              : "hover:bg-gray-50 dark:hover:bg-gray-900/30",
-                            thisInFocus ? "ring-1 ring-indigo-400/15" : "",
-                          ].join(" ")}
-                          onClick={() => setParam("msg", msgId, "push")}
-                          role="button"
-                          tabIndex={0}
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  {messages.length === 0 ? (
+                    <div className="px-4 py-8">
+                      <div className="text-sm text-gray-700 dark:text-gray-200 font-medium">
+                        No messages match your current filters.
+                      </div>
+                      <div className="mt-4 flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          className="rounded-md px-3 py-2 text-sm bg-indigo-600 text-white hover:bg-indigo-700 transition"
+                          onClick={clearFilters}
                         >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <NodeChip
-                                nodeId={fromId}
-                                fallback="UNK"
-                                titlePrefix="From"
-                                compact
-                                stopPropagation
-                                onFocus={(id) => applyFocus(id)}
-                              />
-                              <span className="text-gray-400">→</span>
-                              {isBroadcast(toId) ? (
-                                <span className="rounded-md px-2 py-0.5 text-[11px] font-medium bg-gray-200/60 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300">
-                                  ALL
-                                </span>
-                              ) : (
-                                <NodeChip
-                                  nodeId={toId}
-                                  fallback="UNK"
-                                  titlePrefix="To"
-                                  compact
-                                  stopPropagation
-                                  onFocus={(id) => applyFocus(id)}
-                                />
-                              )}
-
-                              <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
-                                hops {m.hops_away ?? 0}
-                              </span>
-
-                              {!isBroadcast(toId) ? (
-                                <span className="rounded-full px-2 py-0.5 text-[11px] bg-indigo-100/70 dark:bg-indigo-800/30 text-indigo-900 dark:text-indigo-100">
-                                  DM
-                                </span>
-                              ) : (
-                                <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
-                                  BC
-                                </span>
-                              )}
-
-                              {dxStr ? (
-                                <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
-                                  dx {dxStr}
-                                </span>
-                              ) : null}
-                            </div>
-
-                            <div className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
-                              {formatTimestamp(m.timestamp) || "Unknown"}
-                            </div>
-                          </div>
-
-                          <div className="mt-2 text-sm text-gray-900 dark:text-gray-100 whitespace-pre-wrap break-words">
-                            {renderHighlightedText(String(m.text ?? ""), urlQ)}
-                          </div>
-
-                          <div className="mt-2 text-xs text-gray-600 dark:text-gray-400">
-                            via:{" "}
-                            {viaNodes.length ? (
-                              viaNodes.map((s: any, i: number) => (
-                                <span key={`via-${msgId}-${s.id}-${i}`}>
-                                  <Link
-                                    to={`/nodes/${s.id}`}
-                                    className="underline hover:no-underline"
-                                    title={`${s.id} / ${s.longname}`}
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    {s.shortname ?? "UNK"}
-                                  </Link>
-                                  {i < viaNodes.length - 1 ? ", " : ""}
-                                </span>
-                              ))
-                            ) : (
-                              <span className="text-gray-500">UNK</span>
-                            )}
-                          </div>
-                        </li>
-                      );
-                    })}
-
-                    {messages.length === 0 ? (
-                      <li className="px-4 py-8">
-                        <div className="text-sm text-gray-700 dark:text-gray-200 font-medium">
-                          No messages match your current filters.
+                          Clear filters
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                          onClick={() => setParam("r", "all", "push")}
+                        >
+                          Set range: all
+                        </button>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">
+                          Tip: open Filters for from/to/via/hops flags.
                         </div>
-                        <div className="mt-4 flex flex-wrap items-center gap-2">
-                          <button
-                            type="button"
-                            className="rounded-md px-3 py-2 text-sm bg-indigo-600 text-white hover:bg-indigo-700 transition"
-                            onClick={clearFilters}
-                          >
-                            Clear filters
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                            onClick={() => setParam("r", "all", "push")}
-                          >
-                            Set range: all
-                          </button>
-                          <div className="text-xs text-gray-500 dark:text-gray-400">
-                            Tip: open Filters for from/to/via/hops flags.
-                          </div>
-                        </div>
-                      </li>
-                    ) : null}
-                  </ul>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="h-full min-h-0 flex flex-col overflow-hidden">
+                      <Virtuoso
+                        key={selectedChannel ?? "ch"}
+                        ref={virtuosoRef}
+                        style={{ flex: 1, minHeight: 0, height: "100%" }}
+                        totalCount={messages.length}
+                        computeItemKey={(index) => {
+                          const m: any = (messages as any[])[index];
+                          return `${selectedChannel ?? "ch"}-${String(m?.id ?? index)}`;
+                        }}
+                        itemContent={(index) => {
+                          const m: any = (messages as any[])[index];
+
+                          const fromId = String(m.from ?? "");
+                          const toId = String(m.to ?? "");
+                          const msgId = String(m.id ?? `${index}`);
+                          const isSelected = urlMsg && msgId === String(urlMsg);
+
+                          const fromNode = (nodes as any)[fromId] || null;
+
+                          const viaIds = Array.isArray(m.sender)
+                            ? m.sender.map((x: any) => String(x))
+                            : [];
+                          const viaNodes = viaIds
+                            .map((sid) => (nodes as any)[sid])
+                            .filter(Boolean);
+
+                          // tighter guard: never call distance calc unless both sides have position
+                          const distanceFromSender =
+                            fromNode?.position && viaNodes.length
+                              ? viaNodes
+                                  .filter((s: any) => s?.position)
+                                  .map((s: any) =>
+                                    calculateDistanceBetweenNodes(fromNode, s)
+                                  )
+                                  .filter(Boolean)
+                              : [];
+
+                          const dxStr = distanceFromSender?.length
+                            ? distanceFromSender
+                                .map((d: any) => `${d} km`)
+                                .join(", ")
+                            : "";
+
+                          const focusId = urlNode.trim();
+                          const thisInFocus =
+                            focusId &&
+                            (fromId === focusId ||
+                              toId === focusId ||
+                              (urlFocus === "any" && viaIds.includes(focusId)));
+
+                          return (
+                            <div
+                              id={`msg-${msgId}`}
+                              className={[
+                                "px-4 py-3 cursor-pointer transition outline-none border-b border-gray-200 dark:border-gray-800",
+                                isSelected
+                                  ? "bg-indigo-50/70 dark:bg-indigo-900/20 ring-1 ring-indigo-400/30"
+                                  : "hover:bg-gray-50 dark:hover:bg-gray-900/30",
+                                thisInFocus ? "ring-1 ring-indigo-400/15" : "",
+                              ].join(" ")}
+                              onClick={() => setParam("msg", msgId, "push")}
+                              role="button"
+                              tabIndex={0}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <NodeChip
+                                    nodeId={fromId}
+                                    fallback="UNK"
+                                    titlePrefix="From"
+                                    compact
+                                    stopPropagation
+                                    onFocus={(id) => applyFocus(id)}
+                                  />
+                                  <span className="text-gray-400">→</span>
+
+                                  {isBroadcast(toId) ? (
+                                    <span className="rounded-md px-2 py-0.5 text-[11px] font-medium bg-gray-200/60 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300">
+                                      ALL
+                                    </span>
+                                  ) : (
+                                    <NodeChip
+                                      nodeId={toId}
+                                      fallback="UNK"
+                                      titlePrefix="To"
+                                      compact
+                                      stopPropagation
+                                      onFocus={(id) => applyFocus(id)}
+                                    />
+                                  )}
+
+                                  <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
+                                    hops {m.hops_away ?? 0}
+                                  </span>
+
+                                  {!isBroadcast(toId) ? (
+                                    <span className="rounded-full px-2 py-0.5 text-[11px] bg-indigo-100/70 dark:bg-indigo-800/30 text-indigo-900 dark:text-indigo-100">
+                                      DM
+                                    </span>
+                                  ) : (
+                                    <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
+                                      BC
+                                    </span>
+                                  )}
+
+                                  {dxStr ? (
+                                    <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
+                                      dx {dxStr}
+                                    </span>
+                                  ) : null}
+                                </div>
+
+                                <div className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                                  {formatTimestamp(m.timestamp) || "Unknown"}
+                                </div>
+                              </div>
+
+                              <div className="mt-2 text-sm text-gray-900 dark:text-gray-100 whitespace-pre-wrap break-words">
+                                {renderHighlightedText(String(m.text ?? ""), urlQ)}
+                              </div>
+
+                              <div className="mt-2 text-xs text-gray-600 dark:text-gray-400">
+                                via:{" "}
+                                {viaNodes.length ? (
+                                  viaNodes.map((s: any, i: number) => (
+                                    <span key={`via-${msgId}-${s.id}-${i}`}>
+                                      <Link
+                                        to={`/nodes/${s.id}`}
+                                        className="underline hover:no-underline"
+                                        title={`${s.id} / ${s.longname}`}
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        {s.shortname ?? "UNK"}
+                                      </Link>
+                                      {i < viaNodes.length - 1 ? ", " : ""}
+                                    </span>
+                                  ))
+                                ) : (
+                                  <span className="text-gray-500">UNK</span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        }}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -2079,7 +2334,10 @@ export const Chat = () => {
                           className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
                           onClick={() => applyFocus(String(selectedMessage.from))}
                           title="Focus sender"
-                          disabled={!String(selectedMessage.from ?? "").trim() || isBroadcast(String(selectedMessage.from))}
+                          disabled={
+                            !String(selectedMessage.from ?? "").trim() ||
+                            isBroadcast(String(selectedMessage.from))
+                          }
                         >
                           Focus from
                         </button>
@@ -2098,8 +2356,6 @@ export const Chat = () => {
                   )}
                 </div>
               </div>
-
-              {/* Commit 6 complete: export + route viz + scroll fix */}
             </div>
           </div>
         </div>
