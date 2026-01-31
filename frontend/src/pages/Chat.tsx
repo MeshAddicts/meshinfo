@@ -4,11 +4,9 @@ import {
   useState,
   useDeferredValue,
   useRef,
-  forwardRef,
 } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
-import { formatTimestamp } from "../utils/formatTimestamp";
+import { VirtuosoHandle } from "react-virtuoso";
 
 import { HeardBy } from "../components/HeardBy";
 import {
@@ -16,297 +14,26 @@ import {
   useGetConfigQuery,
   useGetNodesQuery,
 } from "../slices/apiSlice";
-import { calculateDistanceBetweenNodes } from "../utils/getDistanceBetweenTwoNodes";
 
-type FocusMode = "endpoints" | "any";
-type MsgType = "all" | "bc" | "dm";
-type RangeKey = "1h" | "24h" | "7d" | "all";
-type SortKey = "desc" | "asc";
-type DirKey = "both" | "in" | "out";
-type NavMode = "replace" | "push";
+import {
+  DEFAULT_PARAM,
+  DirKey,
+  FocusMode,
+  MsgType,
+  NavMode,
+  RangeKey,
+  SortKey,
+  clampInt,
+  csvEscape,
+  downloadBlob,
+  isBroadcast,
+} from "./chat/chatUtils";
 
-const isBroadcast = (to?: string) => !to || to === "ffffffff";
-
-const clampInt = (v: string | null, min: number, max: number) => {
-  if (!v) return undefined;
-  const n = Number.parseInt(v, 10);
-  if (Number.isNaN(n)) return undefined;
-  return Math.max(min, Math.min(max, n));
-};
-
-// Default URL param values (we will *remove* these from the URL for canonical links)
-const DEFAULT_PARAM: Record<string, string> = {
-  r: "24h",
-  t: "all",
-  s: "desc",
-  focus: "endpoints",
-  dir: "both",
-};
-
-const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-const buildHighlightTokens = (query: string) => {
-  const raw = (query ?? "").trim();
-  if (!raw) return [];
-  // multi-word highlighting, avoid tiny tokens
-  const tokens = raw
-    .split(/\s+/)
-    .map((t) => t.trim())
-    .filter((t) => t.length >= 2)
-    .slice(0, 6); // cap tokens for perf
-  // de-dupe
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const t of tokens) {
-    const k = t.toLowerCase();
-    if (!seen.has(k)) {
-      seen.add(k);
-      out.push(t);
-    }
-  }
-  return out;
-};
-
-const renderHighlightedText = (text: string, query: string) => {
-  const tokens = buildHighlightTokens(query);
-  if (!tokens.length) return text;
-
-  const tokenSet = new Set(tokens.map((t) => t.toLowerCase()));
-  const re = new RegExp(`(${tokens.map(escapeRegExp).join("|")})`, "gi");
-  const parts = String(text ?? "").split(re);
-
-  return parts.map((p, i) => {
-    if (tokenSet.has(p.toLowerCase())) {
-      return (
-        <mark
-          key={`hl-${i}`}
-          className="rounded px-0.5 bg-yellow-200/70 dark:bg-yellow-400/20 text-gray-900 dark:text-yellow-100"
-        >
-          {p}
-        </mark>
-      );
-    }
-    return <span key={`hl-${i}`}>{p}</span>;
-  });
-};
-
-// ---- Commit 6: Export helpers
-const downloadBlob = (blob: Blob, filename: string) => {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  // give the browser a tick to start reading the blob before revoking
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-};
-
-const csvEscape = (v: any) => {
-  const s = String(v ?? "");
-  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-};
-
-const VirtuosoScroller = forwardRef<HTMLDivElement, any>(function VirtuosoScroller(
-  props,
-  ref
-) {
-  return (
-    <div
-      {...props}
-      ref={ref}
-      className={[
-        props.className ?? "",
-        "h-full min-h-0 overflow-y-auto",
-      ].join(" ")}
-    />
-  );
-});
-
-function NodeChip({
-  nodeId,
-  nodes,
-  fallback,
-  onFocus,
-  titlePrefix,
-  compact,
-  stopPropagation,
-}: {
-  nodeId: string;
-  nodes: any;
-  fallback?: string;
-  onFocus?: (id: string) => void;
-  titlePrefix?: string;
-  compact?: boolean;
-  stopPropagation?: boolean;
-}) {
-  const n = nodes?.[nodeId];
-  const short = n?.shortname ?? fallback ?? "UNK";
-  const long = n?.longname ?? "Unknown";
-  const title = `${titlePrefix ? `${titlePrefix}: ` : ""}${nodeId} / ${long}`;
-  const base =
-    "inline-flex items-center rounded-md font-medium border border-transparent hover:border-gray-300/40 dark:hover:border-gray-600/40 transition";
-  const pad = compact ? "px-2 py-0.5 text-[11px]" : "px-2.5 py-1 text-xs";
-  const bg =
-    "bg-gray-200/60 dark:bg-gray-700/50 text-gray-900 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700";
-
-  return (
-    <span className="inline-flex items-center gap-1">
-      {nodeId && nodeId !== "ffffffff" ? (
-        <Link
-          to={`/nodes/${nodeId}`}
-          className={`${base} ${pad} ${bg}`}
-          title={title}
-          onClick={(e) => {
-            if (stopPropagation) e.stopPropagation();
-          }}
-        >
-          {short}
-        </Link>
-      ) : (
-        <span
-          className={`${base} ${pad} bg-gray-200/60 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300`}
-          title={title}
-        >
-          {short}
-        </span>
-      )}
-
-      {onFocus && nodeId && nodeId !== "ffffffff" ? (
-        <button
-          type="button"
-          className="rounded-md px-2 py-0.5 text-[11px] font-semibold border border-gray-300/60 dark:border-gray-600/60 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-          onClick={(e) => {
-            e.stopPropagation();
-            onFocus(nodeId);
-          }}
-          title="Focus this node"
-        >
-          ⊙
-        </button>
-      ) : null}
-    </span>
-  );
-}
-
-function DrawerNodeSearch({
-  label,
-  paramKey,
-  currentValue,
-  placeholder,
-  allowAll,
-  nodes,
-  setParam,
-}: {
-  label: string;
-  paramKey: string;
-  currentValue: string;
-  placeholder: string;
-  allowAll?: boolean;
-  nodes: any;
-  setParam: (key: string, value?: string, mode?: "replace" | "push") => void;
-}) {
-  const [q, setQ] = useState("");
-  const qDef = useDeferredValue(q);
-
-  const matches = useMemo(() => {
-    const s = qDef.trim().toLowerCase();
-    if (s.length < 2) return [];
-    const all = Object.entries(nodes as any).map(([id, n]: any) => ({
-      id: String(id),
-      short: String(n?.shortname ?? ""),
-      long: String(n?.longname ?? ""),
-    }));
-    return all
-      .filter((x) => (`${x.id} ${x.short} ${x.long}`).toLowerCase().includes(s))
-      .slice(0, 10);
-  }, [nodes, qDef]);
-
-  const setValue = (v?: string) => {
-    setParam(paramKey, v, "push");
-    setQ("");
-  };
-
-  return (
-    <div>
-      <div className="text-xs text-gray-500 dark:text-gray-400">{label}</div>
-      <div className="mt-1 flex items-center gap-2">
-        {currentValue ? (
-          <span className="inline-flex items-center gap-2 rounded-md border border-gray-200 dark:border-gray-800 px-2 py-1 text-sm">
-            <span className="font-medium text-gray-900 dark:text-gray-100">
-              {allowAll && isBroadcast(currentValue)
-                ? "ALL"
-                : (nodes as any)[currentValue]?.shortname ?? "UNK"}
-            </span>
-            <span className="text-xs text-gray-500 dark:text-gray-400 font-mono">
-              {currentValue}
-            </span>
-            <button
-              type="button"
-              className="text-xs underline hover:no-underline"
-              onClick={() => setValue(undefined)}
-            >
-              clear
-            </button>
-          </span>
-        ) : (
-          <span className="text-xs text-gray-500 dark:text-gray-400">none</span>
-        )}
-      </div>
-
-      <div className="mt-2">
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder={placeholder}
-          className="w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
-        />
-      </div>
-
-      {allowAll ? (
-        <div className="mt-2 flex flex-wrap gap-2">
-          <button
-            type="button"
-            className="rounded-md px-2 py-1 text-xs border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-            onClick={() => setValue("ffffffff")}
-          >
-            Set to ALL
-          </button>
-        </div>
-      ) : null}
-
-      {matches.length > 0 ? (
-        <div className="mt-2 rounded-md border border-gray-200 dark:border-gray-800 overflow-hidden">
-          <ul className="divide-y divide-gray-200 dark:divide-gray-800 max-h-56 overflow-y-auto">
-            {matches.map((m) => (
-              <li
-                key={`drawer-${paramKey}-${m.id}`}
-                className="px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-900/30 cursor-pointer"
-                onClick={() => setValue(m.id)}
-                role="button"
-                tabIndex={0}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-gray-900 dark:text-gray-100 font-medium">
-                    {m.short || "UNK"}
-                  </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">
-                    {m.id}
-                  </div>
-                </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                  {m.long || "Unknown"}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-    </div>
-  );
-}
+import { FiltersDrawer } from "./chat/FiltersDrawer";
+import { ExportMenu } from "./chat/ExportMenu";
+import { MessageList } from "./chat/MessageList";
+import { FocusPanel } from "./chat/FocusPanel";
+import { DetailsPanel } from "./chat/DetailsPanel";
 
 export const Chat = () => {
   const { data: chat, dataUpdatedAt, isFetching, refetch } = useGetChatsQuery();
@@ -319,7 +46,7 @@ export const Chat = () => {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // Commit 6: export menu
+  // Export menu
   const [exportOpen, setExportOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -343,7 +70,7 @@ export const Chat = () => {
     return entries;
   }, [chat?.channels, config?.broker?.channels?.display]);
 
-  // ---- Channel metadata for pretty labels + tooltips
+  // ---- Channel metadata
   const channelMeta = (config?.broker?.channels as any)?.meta ?? {};
   const channelLabel = (id: string) =>
     channelMeta?.[id]?.label ? String(channelMeta[id].label) : `Channel ${id}`;
@@ -380,7 +107,7 @@ export const Chat = () => {
   const urlDir = (searchParams.get("dir") as DirKey) ?? "both";
   const urlMsg = searchParams.get("msg") ?? "";
 
-  // Advanced filters (Commit 5)
+  // Advanced filters
   const urlFrom = searchParams.get("from") ?? "";
   const urlTo = searchParams.get("to") ?? "";
   const urlVia = searchParams.get("via") ?? "";
@@ -402,13 +129,9 @@ export const Chat = () => {
     const v = value?.trim();
     const defaultForKey = DEFAULT_PARAM[key];
 
-    if (!v) {
-      next.delete(key);
-    } else if (defaultForKey && v === defaultForKey) {
-      next.delete(key);
-    } else {
-      next.set(key, v);
-    }
+    if (!v) next.delete(key);
+    else if (defaultForKey && v === defaultForKey) next.delete(key);
+    else next.set(key, v);
 
     setSearchParams(next, { replace: mode === "replace" });
   };
@@ -431,7 +154,7 @@ export const Chat = () => {
     setSearchParams(next, { replace: mode === "replace" });
   };
 
-  // Ensure ch is present and valid (canonical safety)
+  // Ensure ch is present and valid
   useEffect(() => {
     if (channels.length === 0) return;
     const valid = urlCh && channels.some(([id]) => id === urlCh);
@@ -442,7 +165,7 @@ export const Chat = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channels.length, urlCh]);
 
-  // If node is not set, don’t keep focus/dir around in URL (clean canonical links)
+  // If node is not set, don’t keep focus/dir around in URL
   useEffect(() => {
     if (urlNode?.trim()) return;
     const hasFocus = searchParams.has("focus");
@@ -459,7 +182,7 @@ export const Chat = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlNode]);
 
-  // Update URL q from deferred input (replace, don’t spam history)
+  // Update URL q from deferred input
   useEffect(() => {
     if ((searchParams.get("q") ?? "") === qDeferred) return;
     setParam("q", qDeferred, "replace");
@@ -475,6 +198,8 @@ export const Chat = () => {
     if (!selectedChannel) return undefined;
     return (chat?.channels as any)?.[selectedChannel];
   }, [chat?.channels, selectedChannel]);
+
+  const totalMessages = selectedChannelObj?.totalMessages ?? 0;
 
   // Range threshold
   const nowSec = Math.floor(Date.now() / 1000);
@@ -492,7 +217,7 @@ export const Chat = () => {
     }
   }, [nowSec, urlRange]);
 
-  // Messages (filtered + sorted in memo)
+  // Messages (filtered + sorted)
   const messages = useMemo(() => {
     if (!selectedChannel) return [];
     const channelObj = (chat?.channels as any)?.[selectedChannel];
@@ -500,23 +225,19 @@ export const Chat = () => {
 
     let msgs = [...channelObj.messages];
 
-    // Range
     if (rangeThreshold) {
       msgs = msgs.filter((m: any) => (m.timestamp ?? 0) >= rangeThreshold);
     }
 
-    // Type
     if (urlType === "bc") msgs = msgs.filter((m: any) => isBroadcast(m.to));
     if (urlType === "dm") msgs = msgs.filter((m: any) => !isBroadcast(m.to));
 
-    // Require via
     if (requireVia) {
       msgs = msgs.filter(
         (m: any) => Array.isArray(m.sender) && m.sender.length > 0
       );
     }
 
-    // Hops min/max
     if (typeof urlHopsMin === "number") {
       msgs = msgs.filter((m: any) => (m.hops_away ?? 0) >= urlHopsMin);
     }
@@ -524,7 +245,6 @@ export const Chat = () => {
       msgs = msgs.filter((m: any) => (m.hops_away ?? 0) <= urlHopsMax);
     }
 
-    // Endpoint filters
     if (urlFrom.trim()) {
       msgs = msgs.filter((m: any) => String(m.from ?? "") === urlFrom.trim());
     }
@@ -538,7 +258,6 @@ export const Chat = () => {
       );
     }
 
-    // Unknown endpoints toggle
     if (onlyUnknownEndpoints) {
       msgs = msgs.filter((m: any) => {
         const from = String(m.from ?? "");
@@ -549,7 +268,6 @@ export const Chat = () => {
       });
     }
 
-    // Search text
     const q = (urlQ ?? "").trim().toLowerCase();
     if (q.length > 0) {
       msgs = msgs.filter((m: any) =>
@@ -557,7 +275,6 @@ export const Chat = () => {
       );
     }
 
-    // Node focus + direction
     const focusNode = urlNode.trim();
     if (focusNode.length > 0) {
       msgs = msgs.filter((m: any) => {
@@ -584,7 +301,6 @@ export const Chat = () => {
       });
     }
 
-    // Sort
     msgs.sort((a: any, b: any) => {
       const at = a.timestamp ?? 0;
       const bt = b.timestamp ?? 0;
@@ -612,17 +328,12 @@ export const Chat = () => {
     requireVia,
   ]);
 
-  // Selected message (details pane)
   const selectedMessage = useMemo(() => {
     if (!urlMsg) return undefined;
     return messages.find((m: any) => String(m.id) === String(urlMsg));
   }, [messages, urlMsg]);
 
-  const focusNodeObj = urlNode ? (nodes as any)[urlNode] : null;
-
-  const totalMessages = selectedChannelObj?.totalMessages ?? 0;
-
-  // Active filter count + chips
+  // Active filter count
   const activeFilterCount = useMemo(() => {
     let n = 0;
     if (urlQ.trim()) n += 1;
@@ -724,8 +435,6 @@ export const Chat = () => {
         clear: () => setParam("q", undefined, "push"),
       });
 
-    // focus is already shown as a bar; keep chips list clean by not duplicating it
-
     if (urlSort !== "desc")
       chips.push({
         label: "Sort: oldest",
@@ -733,26 +442,11 @@ export const Chat = () => {
       });
 
     return chips;
-  }, [
-    urlRange,
-    urlType,
-    urlHopsMin,
-    urlHopsMax,
-    urlFrom,
-    urlTo,
-    urlVia,
-    onlyUnknownEndpoints,
-    requireVia,
-    urlQ,
-    urlSort,
-    nodes,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    setParam,
-  ]);
+  }, [urlRange, urlType, urlHopsMin, urlHopsMax, urlFrom, urlTo, urlVia, onlyUnknownEndpoints, requireVia, urlQ, urlSort, nodes]);
 
   const clearFilters = () => {
     const next = new URLSearchParams(searchParams);
-    // keep ch
     next.delete("q");
     next.delete("node");
     next.delete("focus");
@@ -762,7 +456,6 @@ export const Chat = () => {
     next.delete("s");
     next.delete("msg");
 
-    // commit 5 filters
     next.delete("from");
     next.delete("to");
     next.delete("via");
@@ -784,7 +477,6 @@ export const Chat = () => {
     }
   };
 
-  // Node chip
   const applyFocus = (nodeId: string) => {
     if (!nodeId || nodeId === "ffffffff") return;
     setParams(
@@ -809,84 +501,17 @@ export const Chat = () => {
     );
   };
 
-  const NodeChip = ({
-    nodeId,
-    fallback,
-    onFocus,
-    titlePrefix,
-    compact,
-    stopPropagation,
-  }: {
-    nodeId: string;
-    fallback?: string;
-    onFocus?: (id: string) => void;
-    titlePrefix?: string;
-    compact?: boolean;
-    stopPropagation?: boolean;
-  }) => {
-    const n = (nodes as any)[nodeId];
-    const short = n?.shortname ?? fallback ?? "UNK";
-    const long = n?.longname ?? "Unknown";
-    const title = `${titlePrefix ? `${titlePrefix}: ` : ""}${nodeId} / ${long}`;
-    const base =
-      "inline-flex items-center rounded-md font-medium border border-transparent hover:border-gray-300/40 dark:hover:border-gray-600/40 transition";
-    const pad = compact ? "px-2 py-0.5 text-[11px]" : "px-2.5 py-1 text-xs";
-    const bg =
-      "bg-gray-200/60 dark:bg-gray-700/50 text-gray-900 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700";
-
-    return (
-      <span className="inline-flex items-center gap-1">
-        {nodeId && nodeId !== "ffffffff" ? (
-          <Link
-            to={`/nodes/${nodeId}`}
-            className={`${base} ${pad} ${bg}`}
-            title={title}
-            onClick={(e) => {
-              if (stopPropagation) e.stopPropagation();
-            }}
-          >
-            {short}
-          </Link>
-        ) : (
-          <span
-            className={`${base} ${pad} bg-gray-200/60 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300`}
-            title={title}
-          >
-            {short}
-          </span>
-        )}
-
-        {onFocus && nodeId && nodeId !== "ffffffff" ? (
-          <button
-            type="button"
-            className="rounded-md px-2 py-0.5 text-[11px] font-semibold border border-gray-300/60 dark:border-gray-600/60 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-            onClick={(e) => {
-              e.stopPropagation();
-              onFocus(nodeId);
-            }}
-            title="Focus this node"
-          >
-            ⊙
-          </button>
-        ) : null}
-      </span>
-    );
-  };
-
-  // Frequent node suggestions when not focused
+  // Frequent nodes
   const frequentNodes = useMemo(() => {
     const counts = new Map<string, number>();
     for (const m of messages as any[]) {
       const from = String(m.from ?? "");
       const to = String(m.to ?? "");
-      if (from && from !== "ffffffff")
-        counts.set(from, (counts.get(from) ?? 0) + 1);
-      if (to && to !== "ffffffff")
-        counts.set(to, (counts.get(to) ?? 0) + 1);
+      if (from && from !== "ffffffff") counts.set(from, (counts.get(from) ?? 0) + 1);
+      if (to && to !== "ffffffff") counts.set(to, (counts.get(to) ?? 0) + 1);
       const via = Array.isArray(m.sender) ? m.sender.map(String) : [];
       for (const v of via) {
-        if (v && v !== "ffffffff")
-          counts.set(v, (counts.get(v) ?? 0) + 1);
+        if (v && v !== "ffffffff") counts.set(v, (counts.get(v) ?? 0) + 1);
       }
     }
     return [...counts.entries()]
@@ -905,13 +530,11 @@ export const Chat = () => {
       long: String(n?.longname ?? ""),
     }));
     return all
-      .filter((x) =>
-        (`${x.id} ${x.short} ${x.long}`).toLowerCase().includes(q)
-      )
+      .filter((x) => (`${x.id} ${x.short} ${x.long}`).toLowerCase().includes(q))
       .slice(0, 12);
   }, [nodes, focusPickerDeferred]);
 
-  // ---- Focus analytics (computed from *current displayed message set*)
+  // Focus stats
   const focusStats = useMemo(() => {
     if (!urlNode.trim()) return null;
 
@@ -964,71 +587,59 @@ export const Chat = () => {
       .sort((a, b) => a[0] - b[0])
       .map(([h, c]) => ({ hops: h, count: c }));
 
-    return {
-      total,
-      inbound,
-      outbound,
-      broadcast,
-      direct,
-      viaOnly,
-      topPeers,
-      hopsChips,
-    };
+    return { total, inbound, outbound, broadcast, direct, viaOnly, topPeers, hopsChips };
   }, [messages, urlNode]);
 
-  // Virtualize message list
+  // Virtualized list ref
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
 
-  // ---- Commit 8: Scroll selected message into view (works with virtualization)
-    const pendingScrollRef = useRef<string | null>(null);
+  // Scroll selected message into view (Commit 8)
+  const pendingScrollRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!urlMsg) {
+      pendingScrollRef.current = null;
+      return;
+    }
 
-    useEffect(() => {
-      if (!urlMsg) {
-        pendingScrollRef.current = null;
-        return;
-      }
+    const idx = (messages as any[]).findIndex(
+      (m: any) => String(m.id) === String(urlMsg)
+    );
+    if (idx < 0) {
+      pendingScrollRef.current = null;
+      return;
+    }
 
-      const idx = (messages as any[]).findIndex(
-        (m: any) => String(m.id) === String(urlMsg)
+    pendingScrollRef.current = urlMsg;
+
+    const attempts = [50, 150, 400, 800];
+    const timers: ReturnType<typeof setTimeout>[] = [];
+
+    for (const delay of attempts) {
+      timers.push(
+        setTimeout(() => {
+          if (pendingScrollRef.current !== urlMsg) return;
+
+          const currentIdx = (messages as any[]).findIndex(
+            (m: any) => String(m.id) === String(urlMsg)
+          );
+          if (currentIdx < 0) return;
+
+          virtuosoRef.current?.scrollToIndex({
+            index: currentIdx,
+            align: "center",
+            behavior: "smooth",
+          });
+        }, delay)
       );
-      if (idx < 0) {
-        pendingScrollRef.current = null;
-        return;
-      }
+    }
 
-      // Store it so we can retry after Virtuoso is ready
-      pendingScrollRef.current = urlMsg;
+    return () => {
+      timers.forEach(clearTimeout);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlMsg, messages, selectedChannel]);
 
-      // Attempt scroll with increasing delays to give Virtuoso time to measure
-      const attempts = [50, 150, 400, 800];
-      const timers: ReturnType<typeof setTimeout>[] = [];
-
-      for (const delay of attempts) {
-        timers.push(
-          setTimeout(() => {
-            if (pendingScrollRef.current !== urlMsg) return;
-
-            const currentIdx = (messages as any[]).findIndex(
-              (m: any) => String(m.id) === String(urlMsg)
-            );
-            if (currentIdx < 0) return;
-
-            virtuosoRef.current?.scrollToIndex({
-              index: currentIdx,
-              align: "center",
-              behavior: "smooth",
-            });
-          }, delay)
-        );
-      }
-
-      return () => {
-        timers.forEach(clearTimeout);
-      };
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [urlMsg, messages, selectedChannel]);
-
-  // ---- Commit 6: export menu click-outside
+  // Export menu click-outside
   useEffect(() => {
     if (!exportOpen) return;
 
@@ -1044,7 +655,7 @@ export const Chat = () => {
     return () => window.removeEventListener("mousedown", onDown);
   }, [exportOpen]);
 
-  // ---- Keyboard shortcuts (Commit 5 + Commit 6)
+  // Keyboard shortcuts
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase();
@@ -1053,7 +664,6 @@ export const Chat = () => {
         tag === "textarea" ||
         (e.target as any)?.isContentEditable;
 
-      // / focuses search (but not while typing)
       if (!isTypingContext && e.key === "/") {
         e.preventDefault();
         searchInputRef.current?.focus();
@@ -1061,17 +671,14 @@ export const Chat = () => {
       }
 
       if (e.key === "Escape") {
-        // close filters first
         if (filtersOpen) {
           setFiltersOpen(false);
           return;
         }
-        // then export menu
         if (exportOpen) {
           setExportOpen(false);
           return;
         }
-        // then message details
         if (urlMsg) {
           setParam("msg", undefined, "push");
         }
@@ -1083,121 +690,7 @@ export const Chat = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtersOpen, exportOpen, urlMsg]);
 
-  // Advanced filter helper: node search for drawer
-  const DrawerNodeSearch = ({
-    label,
-    paramKey,
-    currentValue,
-    placeholder,
-    allowAll,
-  }: {
-    label: string;
-    paramKey: string;
-    currentValue: string;
-    placeholder: string;
-    allowAll?: boolean;
-  }) => {
-    const [q, setQ] = useState("");
-    const qDef = useDeferredValue(q);
-
-    const matches = useMemo(() => {
-      const s = qDef.trim().toLowerCase();
-      if (s.length < 2) return [];
-      const all = Object.entries(nodes as any).map(([id, n]: any) => ({
-        id: String(id),
-        short: String(n?.shortname ?? ""),
-        long: String(n?.longname ?? ""),
-      }));
-      return all
-        .filter((x) => (`${x.id} ${x.short} ${x.long}`).toLowerCase().includes(s))
-        .slice(0, 10);
-    }, [nodes, qDef]);
-
-    const setValue = (v?: string) => {
-      setParam(paramKey, v, "push");
-      setQ("");
-    };
-
-    return (
-      <div>
-        <div className="text-xs text-gray-500 dark:text-gray-400">{label}</div>
-        <div className="mt-1 flex items-center gap-2">
-          {currentValue ? (
-            <span className="inline-flex items-center gap-2 rounded-md border border-gray-200 dark:border-gray-800 px-2 py-1 text-sm">
-              <span className="font-medium text-gray-900 dark:text-gray-100">
-                {allowAll && isBroadcast(currentValue)
-                  ? "ALL"
-                  : (nodes as any)[currentValue]?.shortname ?? "UNK"}
-              </span>
-              <span className="text-xs text-gray-500 dark:text-gray-400 font-mono">
-                {currentValue}
-              </span>
-              <button
-                type="button"
-                className="text-xs underline hover:no-underline"
-                onClick={() => setValue(undefined)}
-              >
-                clear
-              </button>
-            </span>
-          ) : (
-            <span className="text-xs text-gray-500 dark:text-gray-400">none</span>
-          )}
-        </div>
-
-        <div className="mt-2">
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder={placeholder}
-            className="w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
-          />
-        </div>
-
-        {allowAll ? (
-          <div className="mt-2 flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="rounded-md px-2 py-1 text-xs border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-              onClick={() => setValue("ffffffff")}
-            >
-              Set to ALL
-            </button>
-          </div>
-        ) : null}
-
-        {matches.length > 0 ? (
-          <div className="mt-2 rounded-md border border-gray-200 dark:border-gray-800 overflow-hidden">
-            <ul className="divide-y divide-gray-200 dark:divide-gray-800 max-h-56 overflow-y-auto">
-              {matches.map((m) => (
-                <li
-                  key={`drawer-${paramKey}-${m.id}`}
-                  className="px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-900/30 cursor-pointer"
-                  onClick={() => setValue(m.id)}
-                  role="button"
-                  tabIndex={0}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-gray-900 dark:text-gray-100 font-medium">
-                      {m.short || "UNK"}
-                    </div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">
-                      {m.id}
-                    </div>
-                  </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                    {m.long || "Unknown"}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-      </div>
-    );
-  };
-
-  // ---- Commit 6: Export rows + handlers (exports current view)
+  // ---- Export rows + handlers (Commit 6)
   const exportRows = useMemo(() => {
     const ch = selectedChannel ?? "";
     return (messages as any[]).map((m) => {
@@ -1213,14 +706,10 @@ export const Chat = () => {
         from: fromId,
         from_short: (nodes as any)[fromId]?.shortname ?? "UNK",
         to: toId,
-        to_short: isBroadcast(toId)
-          ? "ALL"
-          : (nodes as any)[toId]?.shortname ?? "UNK",
+        to_short: isBroadcast(toId) ? "ALL" : (nodes as any)[toId]?.shortname ?? "UNK",
         hops: Number(m.hops_away ?? 0),
         via_ids: viaIds.join(","),
-        via_short: viaIds
-          .map((id) => (nodes as any)[id]?.shortname ?? "UNK")
-          .join(","),
+        via_short: viaIds.map((id) => (nodes as any)[id]?.shortname ?? "UNK").join(","),
         text: String(m.text ?? ""),
       };
     });
@@ -1230,7 +719,6 @@ export const Chat = () => {
     const ch = selectedChannel ?? "ch";
     const short = selectedChannel ? channelShort(selectedChannel) : ch;
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
-    // keep it simple + stable
     return `chat_${short || ch}_${ts}`;
   }, [selectedChannel, channelShort]);
 
@@ -1273,7 +761,6 @@ export const Chat = () => {
       cols.map((c) => csvEscape((r as any)[c])).join(",")
     );
 
-    // BOM + CRLF to play nice with Excel
     const csv = "\ufeff" + [header, ...lines].join("\r\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
 
@@ -1281,196 +768,31 @@ export const Chat = () => {
     setExportOpen(false);
   };
 
-  // ---- Commit 6: Route helpers (details pane)
-  const routeLabel = (id: string) => {
-    if (!id || id === "ffffffff") return "ALL";
-    return (nodes as any)[id]?.shortname ?? id;
-  };
-
-  const copyRoute = async (m: any) => {
-    const from = routeLabel(String(m.from ?? ""));
-    const to = routeLabel(String(m.to ?? ""));
-    const via = Array.isArray(m.sender)
-      ? m.sender.map((x: any) => routeLabel(String(x)))
-      : [];
-    const chain = [from, ...via, to].join(" -> ");
-    try {
-      await navigator.clipboard.writeText(chain);
-    } catch {
-      // ignore
-    }
-  };
-
   return (
     <div className="w-full h-[100dvh] overflow-hidden flex flex-col">
-      {/* Filters Drawer (Commit 5) */}
-      {filtersOpen ? (
-        <div className="fixed inset-0 z-40">
-          <button
-            type="button"
-            className="absolute inset-0 bg-black/40"
-            onClick={() => setFiltersOpen(false)}
-            aria-label="Close filters"
-          />
-          <div className="absolute right-0 top-0 h-full w-full max-w-md bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 shadow-xl">
-            <div className="h-full flex flex-col">
-              <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
-                <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                  Advanced filters
-                </div>
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    className="text-xs underline hover:no-underline text-gray-600 dark:text-gray-300"
-                    onClick={clearFilters}
-                  >
-                    clear all
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-md px-2 py-1 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                    onClick={() => setFiltersOpen(false)}
-                  >
-                    Close
-                  </button>
-                </div>
-              </div>
+      <FiltersDrawer
+        open={filtersOpen}
+        onClose={() => setFiltersOpen(false)}
+        clearFilters={clearFilters}
+        onlyUnknownEndpoints={onlyUnknownEndpoints}
+        requireVia={requireVia}
+        urlFrom={urlFrom}
+        urlTo={urlTo}
+        urlVia={urlVia}
+        urlHopsMin={urlHopsMin}
+        urlHopsMax={urlHopsMax}
+        nodes={nodes}
+        setParam={setParam}
+      />
 
-              <div className="p-4 overflow-y-auto space-y-5">
-                <div className="space-y-4">
-                  <DrawerNodeSearch
-                    label="From"
-                    paramKey="from"
-                    currentValue={urlFrom}
-                    placeholder="Type 2+ chars to filter sender…"
-                    nodes={nodes}
-                    setParam={setParam}
-                  />
-                  <DrawerNodeSearch
-                    label="To"
-                    paramKey="to"
-                    currentValue={urlTo}
-                    placeholder="Type 2+ chars to filter recipient…"
-                    allowAll
-                    nodes={nodes}
-                    setParam={setParam}
-                  />
-                  <DrawerNodeSearch
-                    label="Via contains"
-                    paramKey="via"
-                    currentValue={urlVia}
-                    placeholder="Type 2+ chars to require a specific via…"
-                    nodes={nodes}
-                    setParam={setParam}
-                  />
-                </div>
-
-                <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-3">
-                  <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                    Hops range
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-3">
-                    <div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">
-                        Min
-                      </div>
-                      <select
-                        value={
-                          typeof urlHopsMin === "number" ? String(urlHopsMin) : ""
-                        }
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setParam("hmin", v || undefined, "push");
-                        }}
-                        className="mt-1 w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100"
-                      >
-                        <option value="">any</option>
-                        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
-                          <option key={`hmin-${n}`} value={String(n)}>
-                            {n}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">
-                        Max
-                      </div>
-                      <select
-                        value={
-                          typeof urlHopsMax === "number" ? String(urlHopsMax) : ""
-                        }
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setParam("hmax", v || undefined, "push");
-                        }}
-                        className="mt-1 w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100"
-                      >
-                        <option value="">any</option>
-                        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
-                          <option key={`hmax-${n}`} value={String(n)}>
-                            {n}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                  <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                    Tip: set both min & max for an exact hop count.
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-gray-200 dark:border-gray-800 p-3 space-y-3">
-                  <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                    Flags
-                  </div>
-
-                  <label className="flex items-center justify-between gap-3 text-sm">
-                    <span className="text-gray-800 dark:text-gray-200">
-                      Only unknown endpoints
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={onlyUnknownEndpoints}
-                      onChange={(e) =>
-                        setParam("unk", e.target.checked ? "1" : undefined, "push")
-                      }
-                    />
-                  </label>
-
-                  <label className="flex items-center justify-between gap-3 text-sm">
-                    <span className="text-gray-800 dark:text-gray-200">
-                      Require via (sender list present)
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={requireVia}
-                      onChange={(e) =>
-                        setParam("hv", e.target.checked ? "1" : undefined, "push")
-                      }
-                    />
-                  </label>
-                </div>
-
-                <div className="text-xs text-gray-500 dark:text-gray-400">
-                  Keyboard: <b>/</b> focus search, <b>Esc</b> close
-                  filters/details/export.
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {/* Sticky top area */}
       <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur border-b border-gray-200 dark:border-gray-800">
         <div className="mx-auto max-w-[1600px] px-3 sm:px-5 py-3">
-          {/* Title row */}
           <div className="flex items-start justify-between gap-3">
             <div>
               <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
                 Chat
               </h1>
+
               <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
                 <span>
                   Updated:{" "}
@@ -1497,57 +819,14 @@ export const Chat = () => {
             </div>
 
             <div className="flex items-center gap-2">
-              {/* Commit 6: Export dropdown */}
-              <div className="relative" ref={exportMenuRef}>
-                <button
-                  type="button"
-                  className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                  onClick={() => setExportOpen((v) => !v)}
-                  title="Export the current view (filters applied)"
-                >
-                  Export
-                </button>
-
-                {exportOpen ? (
-                  <div className="absolute right-0 mt-2 w-56 rounded-md border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-lg overflow-hidden z-30">
-                    <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">
-                      Exporting{" "}
-                      <span className="font-medium">
-                        {exportRows.length.toLocaleString()}
-                      </span>{" "}
-                      row(s)
-                    </div>
-
-                    <button
-                      type="button"
-                      disabled={exportRows.length === 0}
-                      className={[
-                        "w-full text-left px-3 py-2 text-sm",
-                        exportRows.length === 0
-                          ? "opacity-50 cursor-not-allowed"
-                          : "hover:bg-gray-50 dark:hover:bg-gray-800/40",
-                      ].join(" ")}
-                      onClick={doExportCsv}
-                    >
-                      Download CSV
-                    </button>
-
-                    <button
-                      type="button"
-                      disabled={exportRows.length === 0}
-                      className={[
-                        "w-full text-left px-3 py-2 text-sm",
-                        exportRows.length === 0
-                          ? "opacity-50 cursor-not-allowed"
-                          : "hover:bg-gray-50 dark:hover:bg-gray-800/40",
-                      ].join(" ")}
-                      onClick={doExportJson}
-                    >
-                      Download JSON
-                    </button>
-                  </div>
-                ) : null}
-              </div>
+              <ExportMenu
+                open={exportOpen}
+                setOpen={setExportOpen}
+                exportRowsCount={exportRows.length}
+                doExportCsv={doExportCsv}
+                doExportJson={doExportJson}
+                exportMenuRef={exportMenuRef}
+              />
 
               <button
                 type="button"
@@ -1560,7 +839,6 @@ export const Chat = () => {
             </div>
           </div>
 
-          {/* Preset pills */}
           <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
             {channels.map(([id, chObj]: any) => {
               const active = id === selectedChannel;
@@ -1601,9 +879,7 @@ export const Chat = () => {
             })}
           </div>
 
-          {/* Toolbar row */}
           <div className="mt-3 flex flex-col lg:flex-row gap-2 lg:items-center lg:justify-between">
-            {/* Search */}
             <div className="flex-1 min-w-[260px]">
               <input
                 ref={searchInputRef}
@@ -1614,9 +890,7 @@ export const Chat = () => {
               />
             </div>
 
-            {/* Controls */}
             <div className="flex flex-wrap gap-2 items-center">
-              {/* Range */}
               <div className="inline-flex rounded-md border border-gray-300/60 dark:border-gray-700 overflow-hidden">
                 {(["1h", "24h", "7d", "all"] as RangeKey[]).map((rk) => (
                   <button
@@ -1635,7 +909,6 @@ export const Chat = () => {
                 ))}
               </div>
 
-              {/* Type */}
               <select
                 value={urlType}
                 onChange={(e) => setParam("t", e.target.value, "push")}
@@ -1647,7 +920,6 @@ export const Chat = () => {
                 <option value="dm">Direct</option>
               </select>
 
-              {/* Focus mode */}
               <select
                 value={urlFocus}
                 onChange={(e) => setParam("focus", e.target.value, "push")}
@@ -1658,7 +930,6 @@ export const Chat = () => {
                 <option value="any">Focus: include via</option>
               </select>
 
-              {/* Focus direction (disabled unless focused) */}
               <div
                 className={[
                   "inline-flex rounded-md border overflow-hidden",
@@ -1690,19 +961,15 @@ export const Chat = () => {
                 ))}
               </div>
 
-              {/* Sort toggle */}
               <button
                 type="button"
                 className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                onClick={() =>
-                  setParam("s", urlSort === "desc" ? "asc" : "desc", "push")
-                }
+                onClick={() => setParam("s", urlSort === "desc" ? "asc" : "desc", "push")}
                 title="Toggle sort"
               >
                 {urlSort === "desc" ? "Newest" : "Oldest"}
               </button>
 
-              {/* Filters drawer */}
               <button
                 type="button"
                 className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
@@ -1717,13 +984,10 @@ export const Chat = () => {
                 ) : null}
               </button>
 
-              {/* Active filters summary */}
               <div className="flex items-center gap-2">
                 <span className="text-xs text-gray-500 dark:text-gray-400">
                   {activeFilterCount > 0
-                    ? `${activeFilterCount} filter${
-                        activeFilterCount > 1 ? "s" : ""
-                      }`
+                    ? `${activeFilterCount} filter${activeFilterCount > 1 ? "s" : ""}`
                     : "no filters"}
                 </span>
                 {activeFilterCount > 0 ? (
@@ -1740,7 +1004,6 @@ export const Chat = () => {
             </div>
           </div>
 
-          {/* Quick-clear chips */}
           {activeChips.length > 0 ? (
             <div className="mt-3 flex flex-wrap gap-2">
               {activeChips.map((c, i) => (
@@ -1758,20 +1021,18 @@ export const Chat = () => {
             </div>
           ) : null}
 
-          {/* Focus bar */}
           {urlNode ? (
             <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-indigo-300/50 dark:border-indigo-700/50 bg-indigo-50/50 dark:bg-indigo-900/20 px-3 py-2">
               <span className="text-sm text-indigo-900 dark:text-indigo-100 font-medium">
                 Focus:
               </span>
               <span className="text-sm text-indigo-900 dark:text-indigo-100">
-                {focusNodeObj
-                  ? `${focusNodeObj.shortname} — ${focusNodeObj.longname}`
+                {nodes?.[urlNode]
+                  ? `${nodes[urlNode].shortname} — ${nodes[urlNode].longname}`
                   : urlNode}
               </span>
               <span className="text-xs text-indigo-800/70 dark:text-indigo-200/70">
-                ({urlFocus === "any" ? "including via" : "endpoints only"},{" "}
-                {urlDir})
+                ({urlFocus === "any" ? "including via" : "endpoints only"}, {urlDir})
               </span>
 
               <div className="flex items-center gap-2 ml-auto">
@@ -1794,600 +1055,50 @@ export const Chat = () => {
         </div>
       </div>
 
-      {/* Main explorer body */}
       <div className="flex-1 overflow-hidden flex flex-col">
         <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pt-3 pb-0 flex-1 min-h-0 w-full flex flex-col">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-full min-h-0">
-            {/* Message list pane */}
             <div className="lg:col-span-2 min-h-0 flex flex-col">
-              <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col min-h-0 flex-1">                <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex items-center justify-between">
-                  <div className="text-sm text-gray-800 dark:text-gray-200">
-                    {selectedChannel ? (
-                      <>
-                        <span className="font-semibold">
-                          {channelLabel(selectedChannel)}
-                        </span>{" "}
-                        <span className="text-xs text-gray-500 dark:text-gray-400">
-                          (Channel {selectedChannel})
-                        </span>
-                        <span className="ml-3 text-xs text-gray-500 dark:text-gray-400">
-                          total {totalMessages.toLocaleString()}
-                        </span>
-                      </>
-                    ) : (
-                      "No channel selected"
-                    )}
-                  </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400">
-                    showing{" "}
-                    <span className="font-medium">
-                      {messages.length.toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex-1 min-h-0 overflow-hidden">
-                  {messages.length === 0 ? (
-                    <div className="px-4 py-8">
-                      <div className="text-sm text-gray-700 dark:text-gray-200 font-medium">
-                        No messages match your current filters.
-                      </div>
-                      <div className="mt-4 flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          className="rounded-md px-3 py-2 text-sm bg-indigo-600 text-white hover:bg-indigo-700 transition"
-                          onClick={clearFilters}
-                        >
-                          Clear filters
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                          onClick={() => setParam("r", "all", "push")}
-                        >
-                          Set range: all
-                        </button>
-                        <div className="text-xs text-gray-500 dark:text-gray-400">
-                          Tip: open Filters for from/to/via/hops flags.
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="h-full min-h-0 flex flex-col overflow-hidden">
-                      <Virtuoso
-                        key={selectedChannel ?? "ch"}
-                        ref={virtuosoRef}
-                        style={{ flex: 1, minHeight: 0, height: "100%" }}
-                        totalCount={messages.length}
-                        computeItemKey={(index) => {
-                          const m: any = (messages as any[])[index];
-                          return `${selectedChannel ?? "ch"}-${String(m?.id ?? index)}`;
-                        }}
-                        itemContent={(index) => {
-                          const m: any = (messages as any[])[index];
-
-                          const fromId = String(m.from ?? "");
-                          const toId = String(m.to ?? "");
-                          const msgId = String(m.id ?? `${index}`);
-                          const isSelected = urlMsg && msgId === String(urlMsg);
-
-                          const fromNode = (nodes as any)[fromId] || null;
-
-                          const viaIds = Array.isArray(m.sender)
-                            ? m.sender.map((x: any) => String(x))
-                            : [];
-                          const viaNodes = viaIds
-                            .map((sid) => (nodes as any)[sid])
-                            .filter(Boolean);
-
-                          // tighter guard: never call distance calc unless both sides have position
-                          const distanceFromSender =
-                            fromNode?.position && viaNodes.length
-                              ? viaNodes
-                                  .filter((s: any) => s?.position)
-                                  .map((s: any) =>
-                                    calculateDistanceBetweenNodes(fromNode, s)
-                                  )
-                                  .filter(Boolean)
-                              : [];
-
-                          const dxStr = distanceFromSender?.length
-                            ? distanceFromSender
-                                .map((d: any) => `${d} km`)
-                                .join(", ")
-                            : "";
-
-                          const focusId = urlNode.trim();
-                          const thisInFocus =
-                            focusId &&
-                            (fromId === focusId ||
-                              toId === focusId ||
-                              (urlFocus === "any" && viaIds.includes(focusId)));
-
-                          return (
-                            <div
-                              id={`msg-${msgId}`}
-                              className={[
-                                "px-4 py-3 cursor-pointer transition outline-none border-b border-gray-200 dark:border-gray-800",
-                                isSelected
-                                  ? "bg-indigo-50/70 dark:bg-indigo-900/20 ring-1 ring-indigo-400/30"
-                                  : "hover:bg-gray-50 dark:hover:bg-gray-900/30",
-                                thisInFocus ? "ring-1 ring-indigo-400/15" : "",
-                              ].join(" ")}
-                              onClick={() => setParam("msg", msgId, "push")}
-                              role="button"
-                              tabIndex={0}
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <NodeChip
-                                    nodeId={fromId}
-                                    fallback="UNK"
-                                    titlePrefix="From"
-                                    compact
-                                    stopPropagation
-                                    onFocus={(id) => applyFocus(id)}
-                                  />
-                                  <span className="text-gray-400">→</span>
-
-                                  {isBroadcast(toId) ? (
-                                    <span className="rounded-md px-2 py-0.5 text-[11px] font-medium bg-gray-200/60 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300">
-                                      ALL
-                                    </span>
-                                  ) : (
-                                    <NodeChip
-                                      nodeId={toId}
-                                      fallback="UNK"
-                                      titlePrefix="To"
-                                      compact
-                                      stopPropagation
-                                      onFocus={(id) => applyFocus(id)}
-                                    />
-                                  )}
-
-                                  <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
-                                    hops {m.hops_away ?? 0}
-                                  </span>
-
-                                  {!isBroadcast(toId) ? (
-                                    <span className="rounded-full px-2 py-0.5 text-[11px] bg-indigo-100/70 dark:bg-indigo-800/30 text-indigo-900 dark:text-indigo-100">
-                                      DM
-                                    </span>
-                                  ) : (
-                                    <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
-                                      BC
-                                    </span>
-                                  )}
-
-                                  {dxStr ? (
-                                    <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
-                                      dx {dxStr}
-                                    </span>
-                                  ) : null}
-                                </div>
-
-                                <div className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
-                                  {formatTimestamp(m.timestamp) || "Unknown"}
-                                </div>
-                              </div>
-
-                              <div className="mt-2 text-sm text-gray-900 dark:text-gray-100 whitespace-pre-wrap break-words">
-                                {renderHighlightedText(String(m.text ?? ""), urlQ)}
-                              </div>
-
-                              <div className="mt-2 text-xs text-gray-600 dark:text-gray-400">
-                                via:{" "}
-                                {viaNodes.length ? (
-                                  viaNodes.map((s: any, i: number) => (
-                                    <span key={`via-${msgId}-${s.id}-${i}`}>
-                                      <Link
-                                        to={`/nodes/${s.id}`}
-                                        className="underline hover:no-underline"
-                                        title={`${s.id} / ${s.longname}`}
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        {s.shortname ?? "UNK"}
-                                      </Link>
-                                      {i < viaNodes.length - 1 ? ", " : ""}
-                                    </span>
-                                  ))
-                                ) : (
-                                  <span className="text-gray-500">UNK</span>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        }}
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
+              <MessageList
+                selectedChannel={selectedChannel}
+                channelLabel={channelLabel}
+                totalMessages={totalMessages}
+                messages={messages}
+                nodes={nodes}
+                urlMsg={urlMsg}
+                urlQ={urlQ}
+                urlNode={urlNode}
+                urlFocus={urlFocus}
+                setParam={setParam}
+                applyFocus={applyFocus}
+                clearFilters={clearFilters}
+                setRangeAll={() => setParam("r", "all", "push")}
+                virtuosoRef={virtuosoRef}
+              />
             </div>
 
-            {/* Right column: Focus panel + Details panel */}
             <div className="lg:col-span-1 flex flex-col gap-4 min-h-0 h-full">
-              {/* Focus panel */}
-              <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col max-h-[40vh] min-h-0">
-                <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex items-center justify-between">
-                  <div className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                    Node focus
-                  </div>
-                  {urlNode.trim() ? (
-                    <button
-                      type="button"
-                      className="text-xs underline hover:no-underline text-gray-600 dark:text-gray-300"
-                      onClick={clearFocus}
-                    >
-                      clear
-                    </button>
-                  ) : null}
-                </div>
+              <FocusPanel
+                urlNode={urlNode}
+                nodes={nodes}
+                focusPicker={focusPicker}
+                setFocusPicker={setFocusPicker}
+                focusMatches={focusMatches}
+                frequentNodes={frequentNodes}
+                applyFocus={applyFocus}
+                clearFocus={clearFocus}
+                focusStats={focusStats}
+              />
 
-                <div className="p-4 flex-1 overflow-y-auto min-h-0">
-                  {!urlNode.trim() ? (
-                    <>
-                      <div className="text-sm text-gray-700 dark:text-gray-200 font-medium">
-                        Focus a node
-                      </div>
-                      <div className="mt-2">
-                        <input
-                          value={focusPicker}
-                          onChange={(e) => setFocusPicker(e.target.value)}
-                          placeholder="Type 2+ chars… (id, shortname, longname)"
-                          className="w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
-                        />
-                      </div>
-
-                      {focusMatches.length > 0 ? (
-                        <div className="mt-2 rounded-md border border-gray-200 dark:border-gray-800 overflow-hidden">
-                          <ul className="divide-y divide-gray-200 dark:divide-gray-800 max-h-64 overflow-y-auto">
-                            {focusMatches.map((m) => (
-                              <li
-                                key={`match-${m.id}`}
-                                className="px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-900/30 cursor-pointer"
-                                onClick={() => applyFocus(m.id)}
-                                role="button"
-                                tabIndex={0}
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <div className="text-gray-900 dark:text-gray-100 font-medium">
-                                    {m.short || "UNK"}
-                                  </div>
-                                  <div className="text-xs text-gray-500 dark:text-gray-400 font-mono">
-                                    {m.id}
-                                  </div>
-                                </div>
-                                <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                                  {m.long || "Unknown"}
-                                </div>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      ) : (
-                        <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                          Tip: type “fr”, “nb99”, “7cf6e06c”, etc.
-                        </div>
-                      )}
-
-                      {frequentNodes.length > 0 ? (
-                        <div className="mt-4">
-                          <div className="text-xs text-gray-500 dark:text-gray-400">
-                            Frequent in current view
-                          </div>
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            {frequentNodes.map((x) => (
-                              <button
-                                key={`freq-${x.nodeId}`}
-                                type="button"
-                                className="rounded-md px-2 py-1 text-xs border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                                onClick={() => applyFocus(x.nodeId)}
-                                title={`${x.nodeId} (${x.count})`}
-                              >
-                                {(nodes as any)[x.nodeId]?.shortname ?? "UNK"}{" "}
-                                <span className="opacity-70">({x.count})</span>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-                    </>
-                  ) : (
-                    <>
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                            {focusNodeObj?.shortname ?? "UNK"}{" "}
-                            <span className="text-xs text-gray-500 dark:text-gray-400 font-normal">
-                              {focusNodeObj?.longname ?? urlNode}
-                            </span>
-                          </div>
-                          <div className="mt-1 text-xs text-gray-500 dark:text-gray-400 font-mono">
-                            {urlNode}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Link
-                            to={`/nodes/${urlNode}`}
-                            className="text-xs underline hover:no-underline text-gray-700 dark:text-gray-200"
-                          >
-                            open
-                          </Link>
-                          <button
-                            type="button"
-                            className="text-xs underline hover:no-underline text-gray-700 dark:text-gray-200"
-                            onClick={async () => {
-                              try {
-                                await navigator.clipboard.writeText(urlNode);
-                              } catch {
-                                // no-op
-                              }
-                            }}
-                            title="Copy node id"
-                          >
-                            copy id
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="mt-4 grid grid-cols-2 gap-2">
-                        <div className="rounded-md border border-gray-200 dark:border-gray-800 p-2">
-                          <div className="text-xs text-gray-500 dark:text-gray-400">
-                            Messages
-                          </div>
-                          <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                            {focusStats?.total ?? 0}
-                          </div>
-                        </div>
-                        <div className="rounded-md border border-gray-200 dark:border-gray-800 p-2">
-                          <div className="text-xs text-gray-500 dark:text-gray-400">
-                            In / Out
-                          </div>
-                          <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                            {(focusStats?.inbound ?? 0).toLocaleString()} /{" "}
-                            {(focusStats?.outbound ?? 0).toLocaleString()}
-                          </div>
-                        </div>
-                      </div>
-
-                      {focusStats?.hopsChips?.length ? (
-                        <div className="mt-4">
-                          <div className="text-xs text-gray-500 dark:text-gray-400">
-                            Hops distribution
-                          </div>
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            {focusStats.hopsChips.map((h) => (
-                              <span
-                                key={`hop-${h.hops}`}
-                                className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200"
-                                title={`${h.count} messages`}
-                              >
-                                {h.hops} hops: {h.count}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* Details pane */}
-              <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex-1 min-h-0 flex flex-col">
-                <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex items-center justify-between">
-                  <div className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                    Message details
-                  </div>
-                  {urlMsg ? (
-                    <button
-                      type="button"
-                      className="text-xs underline hover:no-underline text-gray-600 dark:text-gray-300"
-                      onClick={() => setParam("msg", undefined, "push")}
-                    >
-                      close
-                    </button>
-                  ) : null}
-                </div>
-
-                <div className="flex-1 overflow-y-auto min-h-0">
-                  {!urlMsg ? (
-                    <div className="px-4 py-6 text-sm text-gray-600 dark:text-gray-400">
-                      <div className="font-medium text-gray-700 dark:text-gray-200">
-                        Click a message
-                      </div>
-                      <div className="mt-1">
-                        Select a message on the left to inspect route, hops, and nodes.
-                      </div>
-                      <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
-                        Pro tip: click the ⊙ next to a node to focus it.
-                      </div>
-                    </div>
-                  ) : !selectedMessage ? (
-                    <div className="px-4 py-6 text-sm text-gray-600 dark:text-gray-400">
-                      <div className="font-medium text-gray-700 dark:text-gray-200">
-                        Message not in current view
-                      </div>
-                      <div className="mt-1">
-                        It may be filtered out by range/type/hops/focus or advanced filters.
-                      </div>
-                      <div className="mt-4 flex gap-2">
-                        <button
-                          type="button"
-                          className="rounded-md px-3 py-2 text-sm bg-indigo-600 text-white hover:bg-indigo-700 transition"
-                          onClick={() => setParam("msg", undefined, "push")}
-                        >
-                          Clear selection
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                          onClick={clearFilters}
-                        >
-                          Clear filters
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="px-4 py-5 space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs text-gray-500 dark:text-gray-400">
-                          ID:{" "}
-                          <span className="font-mono text-gray-700 dark:text-gray-200">
-                            {String(selectedMessage.id)}
-                          </span>
-                        </div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400">
-                          {formatTimestamp(selectedMessage.timestamp) ||
-                            String(selectedMessage.timestamp)}
-                        </div>
-                      </div>
-
-                      <div>
-                        <div className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                          Text
-                        </div>
-                        <div className="mt-2 whitespace-pre-wrap break-words rounded-md border border-gray-200 dark:border-gray-800 p-3 bg-white dark:bg-gray-900/30 text-sm text-gray-900 dark:text-gray-100">
-                          {renderHighlightedText(
-                            String(selectedMessage.text ?? ""),
-                            urlQ
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Commit 6: Route visualization */}
-                      <div>
-                        <div className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                          Route
-                        </div>
-
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                          <NodeChip
-                            nodeId={String(selectedMessage.from ?? "")}
-                            fallback="UNK"
-                            titlePrefix="From"
-                            compact
-                            stopPropagation
-                            onFocus={(id) => applyFocus(id)}
-                          />
-
-                          <span className="text-gray-400">→</span>
-
-                          {Array.isArray(selectedMessage.sender) &&
-                          selectedMessage.sender.length ? (
-                            selectedMessage.sender.map((sid: any, idx: number) => (
-                              <span
-                                key={`route-via-${String(sid)}-${idx}`}
-                                className="inline-flex items-center gap-2"
-                              >
-                                <NodeChip
-                                  nodeId={String(sid)}
-                                  fallback="UNK"
-                                  titlePrefix="Via"
-                                  compact
-                                  stopPropagation
-                                  onFocus={(id) => applyFocus(id)}
-                                />
-                                <span className="text-gray-400">→</span>
-                              </span>
-                            ))
-                          ) : (
-                            <>
-                              <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
-                                via UNK
-                              </span>
-                              <span className="text-gray-400">→</span>
-                            </>
-                          )}
-
-                          {isBroadcast(String(selectedMessage.to ?? "")) ? (
-                            <span className="rounded-md px-2 py-0.5 text-[11px] font-medium bg-gray-200/60 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300">
-                              ALL
-                            </span>
-                          ) : (
-                            <NodeChip
-                              nodeId={String(selectedMessage.to ?? "")}
-                              fallback="UNK"
-                              titlePrefix="To"
-                              compact
-                              stopPropagation
-                              onFocus={(id) => applyFocus(id)}
-                            />
-                          )}
-
-                          <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
-                            hops {selectedMessage.hops_away ?? 0}
-                          </span>
-                        </div>
-
-                        <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                          {routeLabel(String(selectedMessage.from ?? ""))}{" "}
-                          {"->"}{" "}
-                          {Array.isArray(selectedMessage.sender) &&
-                          selectedMessage.sender.length
-                            ? selectedMessage.sender
-                                .map((x: any) => routeLabel(String(x)))
-                                .join(" -> ")
-                            : "UNK"}{" "}
-                          {"->"}{" "}
-                          {routeLabel(String(selectedMessage.to ?? ""))}
-                        </div>
-                      </div>
-
-                      <div className="pt-2 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                          onClick={async () => {
-                            try {
-                              await navigator.clipboard.writeText(
-                                String(selectedMessage.text ?? "")
-                              );
-                            } catch {
-                              // no-op
-                            }
-                          }}
-                        >
-                          Copy text
-                        </button>
-
-                        <button
-                          type="button"
-                          className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                          onClick={() => copyRoute(selectedMessage)}
-                          title="Copy route chain"
-                        >
-                          Copy route
-                        </button>
-
-                        <button
-                          type="button"
-                          className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                          onClick={() => applyFocus(String(selectedMessage.from))}
-                          title="Focus sender"
-                          disabled={
-                            !String(selectedMessage.from ?? "").trim() ||
-                            isBroadcast(String(selectedMessage.from))
-                          }
-                        >
-                          Focus from
-                        </button>
-
-                        <button
-                          type="button"
-                          className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                          onClick={() => applyFocus(String(selectedMessage.to))}
-                          title="Focus recipient"
-                          disabled={isBroadcast(String(selectedMessage.to))}
-                        >
-                          Focus to
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
+              <DetailsPanel
+                urlMsg={urlMsg}
+                selectedMessage={selectedMessage}
+                urlQ={urlQ}
+                nodes={nodes}
+                applyFocus={applyFocus}
+                setParam={setParam}
+                clearFilters={clearFilters}
+              />
             </div>
           </div>
         </div>
