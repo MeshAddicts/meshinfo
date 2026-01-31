@@ -7,6 +7,7 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
   const { pathname } = useLocation();
   const [isDark, setIsDark] = useState(false);
   const isMap = pathname === "/map";
+  const isChat = pathname === "/chat";
 
   // make sure the root element is updated with the dark class
   //  move this out eventually
@@ -62,11 +63,11 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
 
       <div
         className={`lg:pl-60 dark:bg-gray-950 dark:text-gray-100 lg:pt-0
-          ${isMap ? "pt-0 h-full overflow-hidden" : "pt-14"}`}
+          ${isMap || isChat ? "pt-0 h-full overflow-hidden" : "pt-14"}`}
       >
-        <main className={isMap ? "h-full" : "py-1"}>
+        <main className={isMap || isChat ? "h-full" : "py-1"}>
           <div
-            className={`w-full ${isMap ? "h-full" : "px-4 py-2 sm:px-6 sm:py-2 lg:px-6 lg:py-2"}`}
+            className={`w-full ${isMap || isChat ? "h-full" : "px-4 py-2 sm:px-6 sm:py-2 lg:px-6 lg:py-2"}`}
           >
             {children}
           </div>

@@ -980,21 +980,53 @@ export const Chat = () => {
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
 
   // ---- Commit 8: Scroll selected message into view (works with virtualization)
-  useEffect(() => {
-    if (!urlMsg) return;
+    const pendingScrollRef = useRef<string | null>(null);
 
-    const idx = (messages as any[]).findIndex(
-      (m: any) => String(m.id) === String(urlMsg)
-    );
-    if (idx < 0) return;
+    useEffect(() => {
+      if (!urlMsg) {
+        pendingScrollRef.current = null;
+        return;
+      }
 
-    virtuosoRef.current?.scrollToIndex({
-      index: idx,
-      align: "center",
-      behavior: "smooth",
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [urlMsg, messages, selectedChannel]);
+      const idx = (messages as any[]).findIndex(
+        (m: any) => String(m.id) === String(urlMsg)
+      );
+      if (idx < 0) {
+        pendingScrollRef.current = null;
+        return;
+      }
+
+      // Store it so we can retry after Virtuoso is ready
+      pendingScrollRef.current = urlMsg;
+
+      // Attempt scroll with increasing delays to give Virtuoso time to measure
+      const attempts = [50, 150, 400, 800];
+      const timers: ReturnType<typeof setTimeout>[] = [];
+
+      for (const delay of attempts) {
+        timers.push(
+          setTimeout(() => {
+            if (pendingScrollRef.current !== urlMsg) return;
+
+            const currentIdx = (messages as any[]).findIndex(
+              (m: any) => String(m.id) === String(urlMsg)
+            );
+            if (currentIdx < 0) return;
+
+            virtuosoRef.current?.scrollToIndex({
+              index: currentIdx,
+              align: "center",
+              behavior: "smooth",
+            });
+          }, delay)
+        );
+      }
+
+      return () => {
+        timers.forEach(clearTimeout);
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [urlMsg, messages, selectedChannel]);
 
   // ---- Commit 6: export menu click-outside
   useEffect(() => {
@@ -1270,7 +1302,7 @@ export const Chat = () => {
   };
 
   return (
-    <div className="w-full h-[calc(100vh-0px)] overflow-hidden flex flex-col">
+    <div className="w-full h-[100dvh] overflow-hidden flex flex-col">
       {/* Filters Drawer (Commit 5) */}
       {filtersOpen ? (
         <div className="fixed inset-0 z-40">
@@ -1764,7 +1796,7 @@ export const Chat = () => {
 
       {/* Main explorer body */}
       <div className="flex-1 overflow-hidden flex flex-col">
-        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 py-4 flex-1 min-h-0 w-full">
+        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pt-3 pb-0 flex-1 min-h-0 w-full flex flex-col">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-full min-h-0">
             {/* Message list pane */}
             <div className="lg:col-span-2 min-h-0 flex flex-col">
