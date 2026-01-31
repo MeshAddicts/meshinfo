@@ -5,8 +5,10 @@ import {
   useDeferredValue,
   useRef,
 } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { VirtuosoHandle } from "react-virtuoso";
+
+import { useChatSearchParams } from "../hooks/useChatSearchParams";
 
 import { HeardBy } from "../components/HeardBy";
 import {
@@ -15,19 +17,7 @@ import {
   useGetNodesQuery,
 } from "../slices/apiSlice";
 
-import {
-  DEFAULT_PARAM,
-  DirKey,
-  FocusMode,
-  MsgType,
-  NavMode,
-  RangeKey,
-  SortKey,
-  clampInt,
-  csvEscape,
-  downloadBlob,
-  isBroadcast,
-} from "./chat/chatUtils";
+import { DirKey, RangeKey, csvEscape, downloadBlob, isBroadcast } from "./chat/chatUtils";
 
 import { FiltersDrawer } from "./chat/FiltersDrawer";
 import { ExportMenu } from "./chat/ExportMenu";
@@ -40,26 +30,6 @@ export const Chat = () => {
   const { data: nodes = {} } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
 
-  const [searchParams, setSearchParams] = useSearchParams();
-
-  // UI state
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
-
-  // Export menu
-  const [exportOpen, setExportOpen] = useState(false);
-  const exportMenuRef = useRef<HTMLDivElement | null>(null);
-
-  // Search input
-  const urlQ = searchParams.get("q") ?? "";
-  const [qInput, setQInput] = useState(urlQ);
-  const qDeferred = useDeferredValue(qInput);
-  const searchInputRef = useRef<HTMLInputElement | null>(null);
-
-  // Focus picker input
-  const [focusPicker, setFocusPicker] = useState("");
-  const focusPickerDeferred = useDeferredValue(focusPicker);
-
   // ---- Channel list (filtered by config display list if provided)
   const channels = useMemo(() => {
     const entries = Object.entries(chat?.channels ?? {});
@@ -69,6 +39,33 @@ export const Chat = () => {
     }
     return entries;
   }, [chat?.channels, config?.broker?.channels?.display]);
+
+  // ---- URL param-backed state + helpers (moved into hook)
+  const {
+    searchParams,
+
+    urlCh,
+    urlQ,
+    urlRange,
+    urlType,
+    urlSort,
+    urlNode,
+    urlFocus,
+    urlDir,
+    urlMsg,
+
+    urlFrom,
+    urlTo,
+    urlVia,
+    urlHopsMin,
+    urlHopsMax,
+    onlyUnknownEndpoints,
+    requireVia,
+
+    setParam,
+    setParams,
+    clearFilters,
+  } = useChatSearchParams({ channels });
 
   // ---- Channel metadata
   const channelMeta = (config?.broker?.channels as any)?.meta ?? {};
@@ -97,97 +94,33 @@ export const Chat = () => {
     return parts.join("\n");
   };
 
-  // ---- URL param-backed state
-  const urlCh = searchParams.get("ch");
-  const urlRange = (searchParams.get("r") as RangeKey) ?? "24h";
-  const urlType = (searchParams.get("t") as MsgType) ?? "all";
-  const urlSort = (searchParams.get("s") as SortKey) ?? "desc";
-  const urlNode = searchParams.get("node") ?? "";
-  const urlFocus = (searchParams.get("focus") as FocusMode) ?? "endpoints";
-  const urlDir = (searchParams.get("dir") as DirKey) ?? "both";
-  const urlMsg = searchParams.get("msg") ?? "";
+  // UI state
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-  // Advanced filters
-  const urlFrom = searchParams.get("from") ?? "";
-  const urlTo = searchParams.get("to") ?? "";
-  const urlVia = searchParams.get("via") ?? "";
-  const urlHopsMin = clampInt(searchParams.get("hmin"), 0, 10);
-  const urlHopsMax = clampInt(searchParams.get("hmax"), 0, 10);
-  const onlyUnknownEndpoints = searchParams.get("unk") === "1";
-  const requireVia = searchParams.get("hv") === "1";
+  // Export menu
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
+
+  // Search input (local typing state; URL is updated via deferred effect)
+  const [qInput, setQInput] = useState(urlQ);
+  const qDeferred = useDeferredValue(qInput);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Focus picker input
+  const [focusPicker, setFocusPicker] = useState("");
+  const focusPickerDeferred = useDeferredValue(focusPicker);
 
   // Keep local input synced if user navigates via back/forward
   useEffect(() => {
     setQInput(urlQ);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlQ]);
 
-  // ---- Param helpers (canonical + history semantics)
-  const setParam = (key: string, value?: string, mode: NavMode = "replace") => {
-    const next = new URLSearchParams(searchParams);
-
-    const v = value?.trim();
-    const defaultForKey = DEFAULT_PARAM[key];
-
-    if (!v) next.delete(key);
-    else if (defaultForKey && v === defaultForKey) next.delete(key);
-    else next.set(key, v);
-
-    setSearchParams(next, { replace: mode === "replace" });
-  };
-
-  const setParams = (
-    updates: Array<{ key: string; value?: string }>,
-    mode: NavMode = "replace"
-  ) => {
-    const next = new URLSearchParams(searchParams);
-
-    for (const u of updates) {
-      const v = u.value?.trim();
-      const defaultForKey = DEFAULT_PARAM[u.key];
-
-      if (!v) next.delete(u.key);
-      else if (defaultForKey && v === defaultForKey) next.delete(u.key);
-      else next.set(u.key, v);
-    }
-
-    setSearchParams(next, { replace: mode === "replace" });
-  };
-
-  // Ensure ch is present and valid
+  // Update URL q from deferred input (replace, don’t spam history)
   useEffect(() => {
-    if (channels.length === 0) return;
-    const valid = urlCh && channels.some(([id]) => id === urlCh);
-    if (!valid) {
-      const firstId = channels[0][0];
-      setParams([{ key: "ch", value: firstId }], "replace");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channels.length, urlCh]);
-
-  // If node is not set, don’t keep focus/dir around in URL
-  useEffect(() => {
-    if (urlNode?.trim()) return;
-    const hasFocus = searchParams.has("focus");
-    const hasDir = searchParams.has("dir");
-    if (hasFocus || hasDir) {
-      setParams(
-        [
-          { key: "focus", value: undefined },
-          { key: "dir", value: undefined },
-        ],
-        "replace"
-      );
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [urlNode]);
-
-  // Update URL q from deferred input
-  useEffect(() => {
-    if ((searchParams.get("q") ?? "") === qDeferred) return;
+    if (urlQ === qDeferred) return;
     setParam("q", qDeferred, "replace");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qDeferred]);
+  }, [qDeferred, setParam, urlQ]);
 
   const selectedChannel = useMemo(() => {
     if (!urlCh) return undefined;
@@ -225,19 +158,23 @@ export const Chat = () => {
 
     let msgs = [...channelObj.messages];
 
+    // Range
     if (rangeThreshold) {
       msgs = msgs.filter((m: any) => (m.timestamp ?? 0) >= rangeThreshold);
     }
 
+    // Type
     if (urlType === "bc") msgs = msgs.filter((m: any) => isBroadcast(m.to));
     if (urlType === "dm") msgs = msgs.filter((m: any) => !isBroadcast(m.to));
 
+    // Require via
     if (requireVia) {
       msgs = msgs.filter(
         (m: any) => Array.isArray(m.sender) && m.sender.length > 0
       );
     }
 
+    // Hops
     if (typeof urlHopsMin === "number") {
       msgs = msgs.filter((m: any) => (m.hops_away ?? 0) >= urlHopsMin);
     }
@@ -245,6 +182,7 @@ export const Chat = () => {
       msgs = msgs.filter((m: any) => (m.hops_away ?? 0) <= urlHopsMax);
     }
 
+    // Endpoint filters
     if (urlFrom.trim()) {
       msgs = msgs.filter((m: any) => String(m.from ?? "") === urlFrom.trim());
     }
@@ -258,6 +196,7 @@ export const Chat = () => {
       );
     }
 
+    // Unknown endpoints toggle
     if (onlyUnknownEndpoints) {
       msgs = msgs.filter((m: any) => {
         const from = String(m.from ?? "");
@@ -268,6 +207,7 @@ export const Chat = () => {
       });
     }
 
+    // Search text
     const q = (urlQ ?? "").trim().toLowerCase();
     if (q.length > 0) {
       msgs = msgs.filter((m: any) =>
@@ -275,6 +215,7 @@ export const Chat = () => {
       );
     }
 
+    // Node focus + direction
     const focusNode = urlNode.trim();
     if (focusNode.length > 0) {
       msgs = msgs.filter((m: any) => {
@@ -301,6 +242,7 @@ export const Chat = () => {
       });
     }
 
+    // Sort
     msgs.sort((a: any, b: any) => {
       const at = a.timestamp ?? 0;
       const bt = b.timestamp ?? 0;
@@ -442,30 +384,21 @@ export const Chat = () => {
       });
 
     return chips;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [urlRange, urlType, urlHopsMin, urlHopsMax, urlFrom, urlTo, urlVia, onlyUnknownEndpoints, requireVia, urlQ, urlSort, nodes]);
-
-  const clearFilters = () => {
-    const next = new URLSearchParams(searchParams);
-    next.delete("q");
-    next.delete("node");
-    next.delete("focus");
-    next.delete("dir");
-    next.delete("t");
-    next.delete("r");
-    next.delete("s");
-    next.delete("msg");
-
-    next.delete("from");
-    next.delete("to");
-    next.delete("via");
-    next.delete("hmin");
-    next.delete("hmax");
-    next.delete("unk");
-    next.delete("hv");
-
-    setSearchParams(next, { replace: false });
-  };
+  }, [
+    urlRange,
+    urlType,
+    urlHopsMin,
+    urlHopsMax,
+    urlFrom,
+    urlTo,
+    urlVia,
+    onlyUnknownEndpoints,
+    requireVia,
+    urlQ,
+    urlSort,
+    nodes,
+    setParam,
+  ]);
 
   const copyLink = async () => {
     try {
@@ -507,11 +440,13 @@ export const Chat = () => {
     for (const m of messages as any[]) {
       const from = String(m.from ?? "");
       const to = String(m.to ?? "");
-      if (from && from !== "ffffffff") counts.set(from, (counts.get(from) ?? 0) + 1);
+      if (from && from !== "ffffffff")
+        counts.set(from, (counts.get(from) ?? 0) + 1);
       if (to && to !== "ffffffff") counts.set(to, (counts.get(to) ?? 0) + 1);
       const via = Array.isArray(m.sender) ? m.sender.map(String) : [];
       for (const v of via) {
-        if (v && v !== "ffffffff") counts.set(v, (counts.get(v) ?? 0) + 1);
+        if (v && v !== "ffffffff")
+          counts.set(v, (counts.get(v) ?? 0) + 1);
       }
     }
     return [...counts.entries()]
@@ -530,7 +465,9 @@ export const Chat = () => {
       long: String(n?.longname ?? ""),
     }));
     return all
-      .filter((x) => (`${x.id} ${x.short} ${x.long}`).toLowerCase().includes(q))
+      .filter((x) =>
+        (`${x.id} ${x.short} ${x.long}`).toLowerCase().includes(q)
+      )
       .slice(0, 12);
   }, [nodes, focusPickerDeferred]);
 
@@ -587,7 +524,16 @@ export const Chat = () => {
       .sort((a, b) => a[0] - b[0])
       .map(([h, c]) => ({ hops: h, count: c }));
 
-    return { total, inbound, outbound, broadcast, direct, viaOnly, topPeers, hopsChips };
+    return {
+      total,
+      inbound,
+      outbound,
+      broadcast,
+      direct,
+      viaOnly,
+      topPeers,
+      hopsChips,
+    };
   }, [messages, urlNode]);
 
   // Virtualized list ref
@@ -636,24 +582,7 @@ export const Chat = () => {
     return () => {
       timers.forEach(clearTimeout);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlMsg, messages, selectedChannel]);
-
-  // Export menu click-outside
-  useEffect(() => {
-    if (!exportOpen) return;
-
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Node | null;
-      if (!t) return;
-      if (exportMenuRef.current && !exportMenuRef.current.contains(t)) {
-        setExportOpen(false);
-      }
-    };
-
-    window.addEventListener("mousedown", onDown);
-    return () => window.removeEventListener("mousedown", onDown);
-  }, [exportOpen]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -664,6 +593,7 @@ export const Chat = () => {
         tag === "textarea" ||
         (e.target as any)?.isContentEditable;
 
+      // / focuses search (but not while typing)
       if (!isTypingContext && e.key === "/") {
         e.preventDefault();
         searchInputRef.current?.focus();
@@ -687,8 +617,7 @@ export const Chat = () => {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtersOpen, exportOpen, urlMsg]);
+  }, [exportOpen, filtersOpen, setParam, urlMsg]);
 
   // ---- Export rows + handlers (Commit 6)
   const exportRows = useMemo(() => {
@@ -706,10 +635,14 @@ export const Chat = () => {
         from: fromId,
         from_short: (nodes as any)[fromId]?.shortname ?? "UNK",
         to: toId,
-        to_short: isBroadcast(toId) ? "ALL" : (nodes as any)[toId]?.shortname ?? "UNK",
+        to_short: isBroadcast(toId)
+          ? "ALL"
+          : (nodes as any)[toId]?.shortname ?? "UNK",
         hops: Number(m.hops_away ?? 0),
         via_ids: viaIds.join(","),
-        via_short: viaIds.map((id) => (nodes as any)[id]?.shortname ?? "UNK").join(","),
+        via_short: viaIds
+          .map((id) => (nodes as any)[id]?.shortname ?? "UNK")
+          .join(","),
         text: String(m.text ?? ""),
       };
     });
@@ -761,12 +694,15 @@ export const Chat = () => {
       cols.map((c) => csvEscape((r as any)[c])).join(",")
     );
 
+    // BOM + CRLF to play nice with Excel
     const csv = "\ufeff" + [header, ...lines].join("\r\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
 
     downloadBlob(blob, `${exportFilenameBase}.csv`);
     setExportOpen(false);
   };
+
+  const focusNodeObj = urlNode ? (nodes as any)[urlNode] : null;
 
   return (
     <div className="w-full h-[100dvh] overflow-hidden flex flex-col">
@@ -964,7 +900,9 @@ export const Chat = () => {
               <button
                 type="button"
                 className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                onClick={() => setParam("s", urlSort === "desc" ? "asc" : "desc", "push")}
+                onClick={() =>
+                  setParam("s", urlSort === "desc" ? "asc" : "desc", "push")
+                }
                 title="Toggle sort"
               >
                 {urlSort === "desc" ? "Newest" : "Oldest"}
@@ -987,7 +925,9 @@ export const Chat = () => {
               <div className="flex items-center gap-2">
                 <span className="text-xs text-gray-500 dark:text-gray-400">
                   {activeFilterCount > 0
-                    ? `${activeFilterCount} filter${activeFilterCount > 1 ? "s" : ""}`
+                    ? `${activeFilterCount} filter${
+                        activeFilterCount > 1 ? "s" : ""
+                      }`
                     : "no filters"}
                 </span>
                 {activeFilterCount > 0 ? (
@@ -1027,8 +967,8 @@ export const Chat = () => {
                 Focus:
               </span>
               <span className="text-sm text-indigo-900 dark:text-indigo-100">
-                {nodes?.[urlNode]
-                  ? `${nodes[urlNode].shortname} — ${nodes[urlNode].longname}`
+                {focusNodeObj
+                  ? `${focusNodeObj.shortname} — ${focusNodeObj.longname}`
                   : urlNode}
               </span>
               <span className="text-xs text-indigo-800/70 dark:text-indigo-200/70">
