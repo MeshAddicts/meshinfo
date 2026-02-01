@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 import { formatTimestamp } from "../../utils/formatTimestamp";
 import { calculateDistanceBetweenNodes } from "../../utils/getDistanceBetweenTwoNodes";
 import { isBroadcast, renderHighlightedText } from "./chatUtils";
 import { NodeChip } from "./NodeChip";
+
+type FollowEdge = "top" | "bottom";
 
 export function MessageList({
   selectedChannel,
@@ -16,11 +18,17 @@ export function MessageList({
   urlQ,
   urlNode,
   urlFocus,
+  urlSort,
   setParam,
   applyFocus,
   clearFilters,
   setRangeAll,
   virtuosoRef,
+  liveEnabled,
+  setLiveEnabled,
+  followEdge,
+  filtersSig,
+  onFollowStateChange,
 }: {
   selectedChannel: string | undefined;
   channelLabel: (id: string) => string;
@@ -31,19 +39,142 @@ export function MessageList({
   urlQ: string;
   urlNode: string;
   urlFocus: "endpoints" | "any";
+  urlSort: "desc" | "asc";
   setParam: (key: string, value?: string, mode?: "replace" | "push") => void;
   applyFocus: (nodeId: string) => void;
   clearFilters: () => void;
   setRangeAll: () => void;
   virtuosoRef: React.RefObject<VirtuosoHandle>;
+  liveEnabled: boolean;
+  setLiveEnabled: (v: boolean) => void;
+  followEdge: FollowEdge;
+  filtersSig: string;
+  onFollowStateChange?: (s: {
+    atEdge: boolean;
+    selectionPinned: boolean;
+    newCount: number;
+  }) => void;
 }) {
+  const EDGE_BUFFER_ITEMS = 2;
+
+  const [atTop, setAtTop] = useState(true);
+  const [atBottom, setAtBottom] = useState(true);
+
+  const isAtEdge = followEdge === "bottom" ? atBottom : atTop;
+
+  // If a msg is selected, we treat that as “pinned view”
+  const selectionPinned = !!String(urlMsg ?? "").trim();
+
+  // When live is enabled AND you’re at the live edge AND no selection is pinned,
+  // we consider new messages “consumed”.
+  const shouldAutoFollow = liveEnabled && isAtEdge && !selectionPinned;
+
+  // Track "new messages" count when paused
+  const [newCount, setNewCount] = useState(0);
+  const prevLenRef = useRef(0);
+  const prevEdgeIdRef = useRef<string>("");
+  const prevSigRef = useRef<string>("");
+
+  const edgeMsgId = useMemo(() => {
+    if (!messages.length) return "";
+    const m =
+      followEdge === "top" ? messages[0] : messages[messages.length - 1];
+    return String(m?.id ?? "");
+  }, [messages, followEdge]);
+
+  // Report follow state upwards so the header can reflect "Paused"/"Pinned" accurately.
+  const lastReportedRef = useRef<string>("");
+  useEffect(() => {
+    if (!onFollowStateChange) return;
+
+    const payload = {
+      atEdge: !!isAtEdge,
+      selectionPinned: !!selectionPinned,
+      newCount: Number(newCount ?? 0),
+    };
+
+    const key = `${payload.atEdge}-${payload.selectionPinned}-${payload.newCount}`;
+    if (lastReportedRef.current === key) return;
+
+    lastReportedRef.current = key;
+    onFollowStateChange(payload);
+  }, [isAtEdge, selectionPinned, newCount, onFollowStateChange]);
+
+  // Reset pause counters when filters/sort/channel changes
+  useEffect(() => {
+    if (prevSigRef.current === filtersSig) return;
+
+    prevSigRef.current = filtersSig;
+    prevLenRef.current = messages.length;
+    prevEdgeIdRef.current = edgeMsgId;
+    setNewCount(0);
+    setAtTop(true);
+    setAtBottom(true);
+  }, [filtersSig, messages.length, edgeMsgId]);
+
+  // When new data arrives, increment counter if paused; clear if following.
+  useEffect(() => {
+    if (!messages.length) {
+      prevLenRef.current = 0;
+      prevEdgeIdRef.current = edgeMsgId;
+      setNewCount(0);
+      return;
+    }
+
+    const prevLen = prevLenRef.current;
+    const prevEdge = prevEdgeIdRef.current;
+
+    const len = messages.length;
+    const edgeChanged =
+      edgeMsgId && prevEdge ? String(edgeMsgId) !== String(prevEdge) : false;
+
+    prevLenRef.current = len;
+    prevEdgeIdRef.current = edgeMsgId;
+
+    const deltaRaw = len - prevLen;
+    if (deltaRaw <= 0 && !edgeChanged) return;
+
+    const delta = deltaRaw > 0 ? deltaRaw : edgeChanged ? 1 : 0;
+    if (delta <= 0) return;
+
+    if (shouldAutoFollow) {
+      setNewCount(0);
+    } else {
+      setNewCount((c) => Math.min(9999, c + delta));
+    }
+  }, [messages.length, edgeMsgId, shouldAutoFollow]);
+
+  // If we resume following, clear counter
+  useEffect(() => {
+    if (shouldAutoFollow) setNewCount(0);
+  }, [shouldAutoFollow]);
+
+  // Top-edge follow (Virtuoso followOutput is bottom oriented)
+  const lastTopFollowIdRef = useRef<string>("");
+  useEffect(() => {
+    if (followEdge !== "top") return;
+    if (!liveEnabled) return;
+    if (selectionPinned) return;
+    if (!atTop) return;
+
+    if (!edgeMsgId) return;
+    if (lastTopFollowIdRef.current === edgeMsgId) return;
+    lastTopFollowIdRef.current = edgeMsgId;
+
+    virtuosoRef.current?.scrollToIndex({
+      index: 0,
+      align: "start",
+      behavior: "smooth",
+    });
+  }, [followEdge, liveEnabled, selectionPinned, atTop, edgeMsgId, virtuosoRef]);
+
   const msgPresentInList = useMemo(() => {
     const mid = String(urlMsg ?? "").trim();
     if (!mid) return true;
     return (messages as any[]).some((m: any) => String(m?.id ?? "") === mid);
   }, [messages, urlMsg]);
 
-  // Flash/highlight selected message briefly when it becomes available in the list
+  // Flash selected message briefly when it becomes available in the list
   const [flashMsgId, setFlashMsgId] = useState<string>("");
   useEffect(() => {
     const mid = String(urlMsg ?? "").trim();
@@ -56,7 +187,6 @@ export function MessageList({
       return;
     }
 
-    // long enough to survive virtualization + scroll delays
     setFlashMsgId(mid);
     const t = window.setTimeout(() => setFlashMsgId(""), 4000);
     return () => window.clearTimeout(t);
@@ -88,9 +218,39 @@ export function MessageList({
       setCopiedMsgId(mid);
       window.setTimeout(() => setCopiedMsgId(""), 1200);
     } catch {
-      // ignore (clipboard may be blocked in some contexts)
+      // ignore
     }
   };
+
+  const jumpToLive = () => {
+    if (selectionPinned) setParam("msg", undefined, "push");
+
+    setLiveEnabled(true);
+    setNewCount(0);
+
+    if (!messages.length) return;
+
+    const index = followEdge === "top" ? 0 : Math.max(0, messages.length - 1);
+    virtuosoRef.current?.scrollToIndex({
+      index,
+      align: followEdge === "top" ? "start" : "end",
+      behavior: "smooth",
+    });
+  };
+
+  const showPausedOverlay =
+    (liveEnabled && !isAtEdge && messages.length > 0) ||
+    selectionPinned ||
+    newCount > 0;
+
+  const pausedLabel = selectionPinned
+    ? "Selection pinned"
+    : liveEnabled
+      ? "Paused"
+      : "Live off";
+
+  const overlayText =
+    newCount > 0 ? `New messages (${newCount.toLocaleString()})` : pausedLabel;
 
   return (
     <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col min-h-0 flex-1">
@@ -98,14 +258,16 @@ export function MessageList({
         <div className="text-sm text-gray-800 dark:text-gray-200">
           {selectedChannel ? (
             <>
-              <span className="font-semibold">
-                {channelLabel(selectedChannel)}
-              </span>{" "}
+              <span className="font-semibold">{channelLabel(selectedChannel)}</span>{" "}
               <span className="text-xs text-gray-500 dark:text-gray-400">
                 (Channel {selectedChannel})
               </span>
               <span className="ml-3 text-xs text-gray-500 dark:text-gray-400">
                 total {totalMessages.toLocaleString()}
+              </span>
+              <span className="ml-3 text-xs text-gray-500 dark:text-gray-400">
+                • edge: {followEdge === "bottom" ? "bottom" : "top"}{" "}
+                {urlSort === "asc" ? "(oldest→newest)" : "(newest→oldest)"}
               </span>
             </>
           ) : (
@@ -120,7 +282,6 @@ export function MessageList({
       </div>
 
       <div className="flex-1 min-h-0 overflow-hidden">
-        {/* If a permalink msg is set but it's filtered out, show a targeted callout */}
         {urlMsg && !msgPresentInList && messages.length > 0 ? (
           <div className="px-4 py-3 border-b border-amber-300/40 dark:border-amber-700/40 bg-amber-50/60 dark:bg-amber-900/10">
             <div className="text-sm text-amber-900 dark:text-amber-100 font-medium">
@@ -182,12 +343,62 @@ export function MessageList({
             </div>
           </div>
         ) : (
-          <div className="h-full min-h-0 flex flex-col overflow-hidden">
+          <div className="h-full min-h-0 flex flex-col overflow-hidden relative">
+            {showPausedOverlay ? (
+              <div
+                className={[
+                  "pointer-events-none absolute z-10 left-1/2 -translate-x-1/2",
+                  followEdge === "top" ? "top-3" : "bottom-3",
+                ].join(" ")}
+              >
+                <button
+                  type="button"
+                  className={[
+                    "pointer-events-auto rounded-full px-4 py-2 text-sm font-medium shadow-sm border transition",
+                    newCount > 0
+                      ? "bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700"
+                      : "bg-gray-900 text-white border-gray-900 hover:bg-gray-800",
+                  ].join(" ")}
+                  onClick={jumpToLive}
+                  title={
+                    selectionPinned
+                      ? "Jump back to the live edge (also clears selection)"
+                      : "Jump back to the live edge"
+                  }
+                >
+                  {overlayText}
+                  <span className="ml-2 opacity-90">•</span>
+                  <span className="ml-2 underline decoration-white/40">
+                    {selectionPinned || newCount > 0 ? "Jump" : "Back to live"}
+                    <span className="ml-2 opacity-80">
+                      {followEdge === "top" ? "↑" : "↓"}
+                    </span>
+                  </span>
+                </button>
+              </div>
+            ) : null}
+
             <Virtuoso
               key={selectedChannel ?? "ch"}
               ref={virtuosoRef}
               style={{ flex: 1, minHeight: 0, height: "100%" }}
               totalCount={messages.length}
+              rangeChanged={(r) => {
+                const total = messages.length;
+                const top = r.startIndex <= EDGE_BUFFER_ITEMS;
+                const bottom =
+                  r.endIndex >= Math.max(0, total - 1 - EDGE_BUFFER_ITEMS);
+                setAtTop(top);
+                setAtBottom(bottom);
+              }}
+              followOutput={
+                (followEdge === "bottom"
+                  ? ((isAtBottom: boolean) =>
+                      liveEnabled && !selectionPinned && isAtBottom
+                        ? "smooth"
+                        : false)
+                  : false) as any
+              }
               computeItemKey={(index) => {
                 const m: any = (messages as any[])[index];
                 return `${selectedChannel ?? "ch"}-${String(m?.id ?? index)}`;
@@ -206,13 +417,17 @@ export function MessageList({
                 const viaIds = Array.isArray(m.sender)
                   ? m.sender.map((x: any) => String(x))
                   : [];
-                const viaNodes = viaIds.map((sid) => nodes?.[sid]).filter(Boolean);
+                const viaNodes = viaIds
+                  .map((sid) => nodes?.[sid])
+                  .filter(Boolean);
 
                 const distanceFromSender =
                   fromNode?.position && viaNodes.length
                     ? viaNodes
                         .filter((s: any) => s?.position)
-                        .map((s: any) => calculateDistanceBetweenNodes(fromNode, s))
+                        .map((s: any) =>
+                          calculateDistanceBetweenNodes(fromNode, s)
+                        )
                         .filter(Boolean)
                     : [];
 

@@ -4,6 +4,7 @@ import {
   useState,
   useDeferredValue,
   useRef,
+  useCallback,
 } from "react";
 import { Link } from "react-router-dom";
 import { VirtuosoHandle } from "react-virtuoso";
@@ -33,14 +34,13 @@ import { ExportMenu } from "./chat/ExportMenu";
 import { MessageList } from "./chat/MessageList";
 import { FocusPanel } from "./chat/FocusPanel";
 import { DetailsPanel } from "./chat/DetailsPanel";
-import { NodeChip } from "./chat/NodeChip";
 
 type ViewDef = {
-  key: string;            // canonical URL key: "mediumfast"
-  label: string;          // "MediumFast"
-  short?: string;         // "MF"
-  channelId: string;      // "0"
-  aliases: string[];      // ["mf","0","MediumFast",...]
+  key: string; // canonical URL key: "mediumfast"
+  label: string; // "MediumFast"
+  short?: string; // "MF"
+  channelId: string; // "0"
+  aliases: string[]; // ["mf","0","MediumFast",...]
   tooltip?: string;
   isDefault?: boolean;
 };
@@ -108,21 +108,22 @@ export const Chat = () => {
     if (Array.isArray(vraw) && vraw.length > 0) {
       for (const v of vraw) {
         const chans = Array.isArray(v?.channels) ? v.channels.map(String) : [];
-        if (chans.length !== 1) continue; // keep this commit scoped (mf/lf). "all" can come next.
+        if (chans.length !== 1) continue;
         const channelId = chans[0];
         if (!availableChannelIds.has(channelId)) continue;
 
         const label = String(v?.label ?? v?.id ?? rawChannelLabel(channelId));
         const short = v?.short ? String(v.short) : rawChannelShort(channelId);
 
-        const key = normalizeKey(label) || normalizeKey(String(v?.id ?? "")) || channelId;
+        const key =
+          normalizeKey(label) || normalizeKey(String(v?.id ?? "")) || channelId;
 
         const aliases = [
           key,
           String(v?.id ?? ""),
           String(v?.short ?? ""),
           label,
-          channelId, // back-compat: ?ch=8
+          channelId,
           normalizeKey(String(v?.id ?? "")),
           normalizeKey(String(v?.short ?? "")),
           normalizeKey(label),
@@ -140,7 +141,9 @@ export const Chat = () => {
             `${label}${short ? ` • ${short}` : ""}`,
             `Channel: ${channelId}`,
             v?.description ? String(v.description) : "",
-          ].filter(Boolean).join("\n"),
+          ]
+            .filter(Boolean)
+            .join("\n"),
           isDefault: !!v?.default,
         });
       }
@@ -199,6 +202,23 @@ export const Chat = () => {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  // Live / auto-follow toggle
+  const [liveEnabled, setLiveEnabled] = useState(true);
+
+  // Follow state reported by MessageList so header can reflect "Paused" even when liveEnabled=true
+  const [followState, setFollowState] = useState<{
+    atEdge: boolean;
+    selectionPinned: boolean;
+    newCount: number;
+  }>({ atEdge: true, selectionPinned: false, newCount: 0 });
+
+  const onFollowStateChange = useCallback(
+    (s: { atEdge: boolean; selectionPinned: boolean; newCount: number }) => {
+      setFollowState(s);
+    },
+    []
+  );
+
   // Export menu
   const [exportOpen, setExportOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement | null>(null);
@@ -231,8 +251,8 @@ export const Chat = () => {
   }, [views, urlCh, defaultViewKey]);
 
   const selectedChannel = selectedView?.channelId;
+
   const channelLabel = (id: string) => {
-    // Prefer the view label for the mapped channel (so 8 shows "LongFast" not "LongFast (legacy)")
     const v = views.find((x) => x.channelId === id);
     return v?.label ?? rawChannelLabel(id);
   };
@@ -386,7 +406,7 @@ export const Chat = () => {
     return messages.find((m: any) => String(m.id) === String(urlMsg));
   }, [messages, urlMsg]);
 
-  // Active filter count (overall)
+  // Active filter count
   const activeFilterCount = useMemo(() => {
     let n = 0;
     if (urlQ.trim()) n += 1;
@@ -403,7 +423,6 @@ export const Chat = () => {
     if (urlFocus !== "endpoints" && urlNode.trim()) n += 1;
     if (urlDir !== "both" && urlNode.trim()) n += 1;
     if (urlSort !== "desc") n += 1;
-    if (urlMsg) n += 1;
     return n;
   }, [
     urlQ,
@@ -420,32 +439,22 @@ export const Chat = () => {
     urlFocus,
     urlDir,
     urlSort,
-    urlMsg,
   ]);
 
-  const advancedFilterCount = useMemo(() => {
-    let n = 0;
-    if (typeof urlHopsMin === "number") n += 1;
-    if (typeof urlHopsMax === "number") n += 1;
-    if (urlFrom.trim()) n += 1;
-    if (urlTo.trim()) n += 1;
-    if (urlVia.trim()) n += 1;
-    if (onlyUnknownEndpoints) n += 1;
-    if (requireVia) n += 1;
-    return n;
-  }, [
-    urlHopsMin,
-    urlHopsMax,
-    urlFrom,
-    urlTo,
-    urlVia,
-    onlyUnknownEndpoints,
-    requireVia,
-  ]);
-
-  // Advanced-only chips (no duplication with the context row)
-  const advancedChips = useMemo(() => {
+  const activeChips = useMemo(() => {
     const chips: Array<{ label: string; clear: () => void }> = [];
+
+    if (urlRange !== "24h")
+      chips.push({
+        label: `Range: ${urlRange}`,
+        clear: () => setParam("r", undefined, "push"),
+      });
+
+    if (urlType !== "all")
+      chips.push({
+        label: `Type: ${urlType === "bc" ? "BC" : "DM"}`,
+        clear: () => setParam("t", undefined, "push"),
+      });
 
     if (typeof urlHopsMin === "number")
       chips.push({
@@ -493,9 +502,23 @@ export const Chat = () => {
         clear: () => setParam("hv", undefined, "push"),
       });
 
+    if (urlQ.trim())
+      chips.push({
+        label: `Search: "${urlQ.trim()}"`,
+        clear: () => setParam("q", undefined, "push"),
+      });
+
+    if (urlSort !== "desc")
+      chips.push({
+        label: "Sort: oldest",
+        clear: () => setParam("s", undefined, "push"),
+      });
+
     return chips;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    urlRange,
+    urlType,
     urlHopsMin,
     urlHopsMax,
     urlFrom,
@@ -503,6 +526,8 @@ export const Chat = () => {
     urlVia,
     onlyUnknownEndpoints,
     requireVia,
+    urlQ,
+    urlSort,
     nodes,
   ]);
 
@@ -631,7 +656,16 @@ export const Chat = () => {
       .sort((a, b) => a[0] - b[0])
       .map(([h, c]) => ({ hops: h, count: c }));
 
-    return { total, inbound, outbound, broadcast, direct, viaOnly, topPeers, hopsChips };
+    return {
+      total,
+      inbound,
+      outbound,
+      broadcast,
+      direct,
+      viaOnly,
+      topPeers,
+      hopsChips,
+    };
   }, [messages, urlNode]);
 
   // Virtualized list ref
@@ -815,42 +849,79 @@ export const Chat = () => {
     setExportOpen(false);
   };
 
-  const cycleType = (t: MsgType): MsgType =>
-    t === "all" ? "bc" : t === "bc" ? "dm" : "all";
+  // Live-edge depends on sort:
+  // - asc (oldest→newest): live edge is bottom
+  // - desc (newest→oldest): live edge is top
+  const followEdge = urlSort === "asc" ? ("bottom" as const) : ("top" as const);
 
-  const cycleDir = (d: DirKey): DirKey =>
-    d === "both" ? "in" : d === "in" ? "out" : "both";
+  // A signature so MessageList can reset "new messages" when filters/sort/channel changes
+  const filtersSig = useMemo(() => {
+    return JSON.stringify({
+      ch: selectedChannel ?? "",
+      q: urlQ ?? "",
+      r: urlRange,
+      t: urlType,
+      s: urlSort,
+      node: urlNode ?? "",
+      focus: urlFocus,
+      dir: urlDir,
+      from: urlFrom ?? "",
+      to: urlTo ?? "",
+      via: urlVia ?? "",
+      hmin: urlHopsMin ?? null,
+      hmax: urlHopsMax ?? null,
+      unk: onlyUnknownEndpoints ? 1 : 0,
+      hv: requireVia ? 1 : 0,
+    });
+  }, [
+    selectedChannel,
+    urlQ,
+    urlRange,
+    urlType,
+    urlSort,
+    urlNode,
+    urlFocus,
+    urlDir,
+    urlFrom,
+    urlTo,
+    urlVia,
+    urlHopsMin,
+    urlHopsMax,
+    onlyUnknownEndpoints,
+    requireVia,
+  ]);
 
-  const Chip = ({
-    label,
-    title,
-    onClick,
-    active,
-    disabled,
-  }: {
-    label: string;
-    title?: string;
-    onClick?: () => void;
-    active?: boolean;
-    disabled?: boolean;
-  }) => (
-    <button
-      type="button"
-      disabled={disabled || !onClick}
-      onClick={onClick}
-      title={title}
-      className={[
-        "inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs border transition",
-        disabled
-          ? "opacity-50 cursor-not-allowed border-gray-300/30 dark:border-gray-700/30 text-gray-600 dark:text-gray-400"
-          : active
-            ? "border-indigo-300/60 dark:border-indigo-700/60 bg-indigo-50/60 dark:bg-indigo-900/20 text-indigo-900 dark:text-indigo-100 hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
-            : "border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
-      ].join(" ")}
-    >
-      {label}
-    </button>
-  );
+  // Derive what the header pill should say
+  const liveUiMode = useMemo(() => {
+    if (!liveEnabled) return "off" as const;
+    if (followState.selectionPinned) return "pinned" as const;
+    if (!followState.atEdge) return "paused" as const;
+    return "live" as const;
+  }, [liveEnabled, followState.atEdge, followState.selectionPinned]);
+
+  const livePillText = useMemo(() => {
+    if (liveUiMode === "live") return "Live";
+    if (liveUiMode === "pinned") return "Pinned";
+    if (liveUiMode === "paused") {
+      return followState.newCount > 0
+        ? `Paused (${followState.newCount})`
+        : "Paused";
+    }
+    return "Live off";
+  }, [liveUiMode, followState.newCount]);
+
+  const livePillTitle = useMemo(() => {
+    const edge =
+      followEdge === "bottom"
+        ? "bottom (oldest→newest)"
+        : "top (newest→oldest)";
+    if (!liveEnabled) return `Live mode is off. Enable to auto-follow at the ${edge}.`;
+    if (followState.selectionPinned)
+      return "A message is selected (msg=...). Auto-follow is suspended until selection is cleared or you jump back to live.";
+    if (!followState.atEdge)
+      return `You scrolled away from the live edge. Auto-follow will resume when you return to the ${edge}.`;
+    return `Auto-follow is active at the ${edge}.`;
+  }, [liveEnabled, followState.selectionPinned, followState.atEdge, followEdge]);
 
   return (
     <div className="w-full h-[100dvh] overflow-hidden flex flex-col">
@@ -886,10 +957,13 @@ export const Chat = () => {
                       : new Date().toLocaleString()}
                   </span>
                 </span>
+
                 <span className="opacity-60">•</span>
+
                 <span className={isFetching ? "animate-pulse" : ""}>
-                  {isFetching ? "Refreshing…" : "Live"}
+                  {isFetching ? "Refreshing…" : "Ready"}
                 </span>
+
                 <button
                   type="button"
                   className="underline hover:no-underline"
@@ -897,7 +971,29 @@ export const Chat = () => {
                 >
                   refresh
                 </button>
+
                 <span className="opacity-60">•</span>
+
+                <button
+                  type="button"
+                  className={[
+                    "rounded-full px-2 py-0.5 text-[11px] font-medium border transition",
+                    liveUiMode === "live"
+                      ? "bg-emerald-600 text-white border-emerald-600"
+                      : liveUiMode === "paused"
+                        ? "bg-amber-600 text-white border-amber-600"
+                        : liveUiMode === "pinned"
+                          ? "bg-indigo-600 text-white border-indigo-600"
+                          : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
+                  ].join(" ")}
+                  onClick={() => setLiveEnabled((v) => !v)}
+                  title={livePillTitle}
+                >
+                  {livePillText}
+                </button>
+
+                <span className="opacity-60">•</span>
+
                 <HeardBy />
               </div>
             </div>
@@ -1078,7 +1174,9 @@ export const Chat = () => {
               <div className="flex items-center gap-2">
                 <span className="text-xs text-gray-500 dark:text-gray-400">
                   {activeFilterCount > 0
-                    ? `${activeFilterCount} filter${activeFilterCount > 1 ? "s" : ""}`
+                    ? `${activeFilterCount} filter${
+                        activeFilterCount > 1 ? "s" : ""
+                      }`
                     : "no filters"}
                 </span>
                 {activeFilterCount > 0 ? (
@@ -1095,108 +1193,11 @@ export const Chat = () => {
             </div>
           </div>
 
-          {/* Context chips row (always visible) */}
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Chip
-              label={`Range: ${urlRange}`}
-              title="Toggle range between 24h and all"
-              active={urlRange !== "24h"}
-              onClick={() => setParam("r", urlRange === "all" ? "24h" : "all", "push")}
-            />
-
-            <Chip
-              label={`Type: ${urlType === "all" ? "All" : urlType === "bc" ? "BC" : "DM"}`}
-              title="Cycle message type"
-              active={urlType !== "all"}
-              onClick={() => setParam("t", cycleType(urlType as MsgType), "push")}
-            />
-
-            <Chip
-              label={`Sort: ${urlSort === "desc" ? "newest" : "oldest"}`}
-              title="Toggle sort order"
-              active={urlSort !== "desc"}
-              onClick={() => setParam("s", urlSort === "desc" ? "asc" : "desc", "push")}
-            />
-
-            <Chip
-              label={urlQ.trim() ? `Search: "${urlQ.trim()}"` : "Search"}
-              title={urlQ.trim() ? "Clear search" : "Focus search (press /)"}
-              active={!!urlQ.trim()}
-              onClick={() => {
-                if (urlQ.trim()) setParam("q", undefined, "push");
-                else searchInputRef.current?.focus();
-              }}
-            />
-
-            <Chip
-              label={
-                advancedFilterCount > 0
-                  ? `Advanced: ${advancedFilterCount}`
-                  : "Advanced: none"
-              }
-              title="Open advanced filters"
-              active={advancedFilterCount > 0}
-              onClick={() => setFiltersOpen(true)}
-            />
-
-            {urlMsg ? (
-              <Chip
-                label={`Selected msg: ${urlMsg}`}
-                title="Clear selected message"
-                active
-                onClick={() => setParam("msg", undefined, "push")}
-              />
-            ) : null}
-
-            {urlNode.trim() ? (
-              <>
-                <div className="mx-1 h-4 w-px bg-gray-300/70 dark:bg-gray-700/70" />
-                <NodeChip
-                  nodeId={urlNode}
-                  nodes={nodes}
-                  titlePrefix="Focus"
-                  compact
-                  stopPropagation
-                />
-
-                <Chip
-                  label={`Focus: ${urlFocus === "any" ? "any" : "endpoints"}`}
-                  title="Toggle focus mode"
-                  active={urlFocus !== "endpoints"}
-                  onClick={() =>
-                    setParam("focus", urlFocus === "any" ? "endpoints" : "any", "push")
-                  }
-                />
-
-                <Chip
-                  label={`Dir: ${urlDir}`}
-                  title="Cycle direction"
-                  active={urlDir !== "both"}
-                  onClick={() => setParam("dir", cycleDir(urlDir as DirKey), "push")}
-                />
-
-                <Chip
-                  label="Clear focus"
-                  title="Clear focused node + focus mode + direction"
-                  active
-                  onClick={clearFocus}
-                />
-              </>
-            ) : (
-              <Chip
-                label="Focus: none"
-                title="Pick a node on the right to enable focus"
-                disabled
-              />
-            )}
-          </div>
-
-          {/* Advanced filter chips (only when active) */}
-          {advancedChips.length > 0 ? (
-            <div className="mt-2 flex flex-wrap gap-2">
-              {advancedChips.map((c, i) => (
+          {activeChips.length > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {activeChips.map((c, i) => (
                 <button
-                  key={`chip-adv-${i}`}
+                  key={`chip-${i}`}
                   type="button"
                   onClick={c.clear}
                   className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
@@ -1206,6 +1207,41 @@ export const Chat = () => {
                   <span className="opacity-70">×</span>
                 </button>
               ))}
+            </div>
+          ) : null}
+
+          {urlNode ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-indigo-300/50 dark:border-indigo-700/50 bg-indigo-50/50 dark:bg-indigo-900/20 px-3 py-2">
+              <span className="text-sm text-indigo-900 dark:text-indigo-100 font-medium">
+                Focus:
+              </span>
+              <span className="text-sm text-indigo-900 dark:text-indigo-100">
+                {(nodes as any)?.[urlNode]
+                  ? `${(nodes as any)[urlNode].shortname} — ${
+                      (nodes as any)[urlNode].longname
+                    }`
+                  : urlNode}
+              </span>
+              <span className="text-xs text-indigo-800/70 dark:text-indigo-200/70">
+                ({urlFocus === "any" ? "including via" : "endpoints only"},{" "}
+                {urlDir})
+              </span>
+
+              <div className="flex items-center gap-2 ml-auto">
+                <Link
+                  to={`/nodes/${urlNode}`}
+                  className="text-sm underline hover:no-underline text-indigo-900 dark:text-indigo-100"
+                >
+                  open node
+                </Link>
+                <button
+                  type="button"
+                  className="rounded-md px-2 py-1 text-sm border border-indigo-400/50 dark:border-indigo-600/50 text-indigo-900 dark:text-indigo-100 hover:bg-indigo-100/60 dark:hover:bg-indigo-900/30 transition"
+                  onClick={clearFocus}
+                >
+                  clear
+                </button>
+              </div>
             </div>
           ) : null}
         </div>
@@ -1225,11 +1261,17 @@ export const Chat = () => {
                 urlQ={urlQ}
                 urlNode={urlNode}
                 urlFocus={urlFocus as FocusMode}
+                urlSort={urlSort as SortKey}
                 setParam={setParam}
                 applyFocus={applyFocus}
                 clearFilters={clearFilters}
                 setRangeAll={() => setParam("r", "all", "push")}
                 virtuosoRef={virtuosoRef}
+                liveEnabled={liveEnabled}
+                setLiveEnabled={setLiveEnabled}
+                followEdge={followEdge}
+                filtersSig={filtersSig}
+                onFollowStateChange={onFollowStateChange}
               />
             </div>
 
