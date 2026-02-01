@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 import { formatTimestamp } from "../../utils/formatTimestamp";
@@ -36,13 +37,70 @@ export function MessageList({
   setRangeAll: () => void;
   virtuosoRef: React.RefObject<VirtuosoHandle>;
 }) {
+  const msgPresentInList = useMemo(() => {
+    const mid = String(urlMsg ?? "").trim();
+    if (!mid) return true;
+    return (messages as any[]).some((m: any) => String(m?.id ?? "") === mid);
+  }, [messages, urlMsg]);
+
+  // Flash/highlight selected message briefly when it becomes available in the list
+  const [flashMsgId, setFlashMsgId] = useState<string>("");
+  useEffect(() => {
+    const mid = String(urlMsg ?? "").trim();
+    if (!mid) {
+      setFlashMsgId("");
+      return;
+    }
+    if (!msgPresentInList) {
+      setFlashMsgId("");
+      return;
+    }
+
+    // long enough to survive virtualization + scroll delays
+    setFlashMsgId(mid);
+    const t = window.setTimeout(() => setFlashMsgId(""), 4000);
+    return () => window.clearTimeout(t);
+  }, [urlMsg, msgPresentInList, selectedChannel]);
+
+  const [copiedMsgId, setCopiedMsgId] = useState<string>("");
+
+  const buildMessagePermalink = (msgId: string) => {
+    const mid = String(msgId ?? "").trim();
+    if (!mid) return window.location.href;
+
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.set("msg", mid);
+      return u.toString();
+    } catch {
+      return window.location.href;
+    }
+  };
+
+  const copyMessageLink = async (msgId: string) => {
+    const mid = String(msgId ?? "").trim();
+    if (!mid) return;
+
+    const href = buildMessagePermalink(mid);
+
+    try {
+      await navigator.clipboard.writeText(href);
+      setCopiedMsgId(mid);
+      window.setTimeout(() => setCopiedMsgId(""), 1200);
+    } catch {
+      // ignore (clipboard may be blocked in some contexts)
+    }
+  };
+
   return (
     <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col min-h-0 flex-1">
       <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex items-center justify-between">
         <div className="text-sm text-gray-800 dark:text-gray-200">
           {selectedChannel ? (
             <>
-              <span className="font-semibold">{channelLabel(selectedChannel)}</span>{" "}
+              <span className="font-semibold">
+                {channelLabel(selectedChannel)}
+              </span>{" "}
               <span className="text-xs text-gray-500 dark:text-gray-400">
                 (Channel {selectedChannel})
               </span>
@@ -62,6 +120,42 @@ export function MessageList({
       </div>
 
       <div className="flex-1 min-h-0 overflow-hidden">
+        {/* If a permalink msg is set but it's filtered out, show a targeted callout */}
+        {urlMsg && !msgPresentInList && messages.length > 0 ? (
+          <div className="px-4 py-3 border-b border-amber-300/40 dark:border-amber-700/40 bg-amber-50/60 dark:bg-amber-900/10">
+            <div className="text-sm text-amber-900 dark:text-amber-100 font-medium">
+              Selected message isn’t in the current view.
+            </div>
+            <div className="mt-1 text-xs text-amber-900/80 dark:text-amber-100/80">
+              It may be outside the time range or filtered out. Try widening the
+              range or clearing filters.
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="rounded-md px-3 py-1.5 text-xs bg-amber-600 text-white hover:bg-amber-700 transition"
+                onClick={setRangeAll}
+              >
+                Set range: all
+              </button>
+              <button
+                type="button"
+                className="rounded-md px-3 py-1.5 text-xs border border-amber-600/50 text-amber-900 dark:text-amber-100 hover:bg-amber-100/60 dark:hover:bg-amber-900/20 transition"
+                onClick={clearFilters}
+              >
+                Clear filters
+              </button>
+              <button
+                type="button"
+                className="rounded-md px-3 py-1.5 text-xs border border-amber-600/30 text-amber-900/90 dark:text-amber-100/90 hover:bg-amber-100/40 dark:hover:bg-amber-900/10 transition"
+                onClick={() => setParam("msg", undefined, "push")}
+              >
+                Clear selection
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {messages.length === 0 ? (
           <div className="px-4 py-8">
             <div className="text-sm text-gray-700 dark:text-gray-200 font-medium">
@@ -105,6 +199,7 @@ export function MessageList({
                 const toId = String(m.to ?? "");
                 const msgId = String(m.id ?? `${index}`);
                 const isSelected = urlMsg && msgId === String(urlMsg);
+                const isFlashing = flashMsgId && flashMsgId === msgId;
 
                 const fromNode = nodes?.[fromId] || null;
 
@@ -136,13 +231,22 @@ export function MessageList({
                   <div
                     id={`msg-${msgId}`}
                     className={[
-                      "px-4 py-3 cursor-pointer transition outline-none border-b border-gray-200 dark:border-gray-800",
+                      "group px-4 py-3 cursor-pointer transition outline-none border-b border-gray-200 dark:border-gray-800",
                       isSelected
                         ? "bg-indigo-50/70 dark:bg-indigo-900/20 ring-1 ring-indigo-400/30"
                         : "hover:bg-gray-50 dark:hover:bg-gray-900/30",
                       thisInFocus ? "ring-1 ring-indigo-400/15" : "",
+                      isFlashing
+                        ? "animate-pulse ring-2 ring-amber-400/40 bg-amber-50/60 dark:bg-amber-900/10"
+                        : "",
                     ].join(" ")}
                     onClick={() => setParam("msg", msgId, "push")}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setParam("msg", msgId, "push");
+                      }
+                    }}
                     role="button"
                     tabIndex={0}
                   >
@@ -196,8 +300,28 @@ export function MessageList({
                         ) : null}
                       </div>
 
-                      <div className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
-                        {formatTimestamp(m.timestamp) || "Unknown"}
+                      <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                        {copiedMsgId === msgId ? (
+                          <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                            Copied
+                          </span>
+                        ) : null}
+
+                        <button
+                          type="button"
+                          className="opacity-0 group-hover:opacity-100 transition rounded-md px-2 py-1 border border-gray-300/50 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40"
+                          title="Copy permalink to this message"
+                          aria-label="Copy message permalink"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setParam("msg", msgId, "push");
+                            copyMessageLink(msgId);
+                          }}
+                        >
+                          🔗
+                        </button>
+
+                        <span>{formatTimestamp(m.timestamp) || "Unknown"}</span>
                       </div>
                     </div>
 
