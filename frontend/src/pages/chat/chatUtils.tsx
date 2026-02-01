@@ -101,3 +101,24 @@ export const buildRouteChain = (nodes: any, m: any) => {
     : [];
   return [from, ...via, to].join(" -> ");
 };
+
+// ---- Message permalink helpers (Commit 9-ish)
+export const getMsgId = (m: any, fallback?: string) => {
+  const id = m?.id;
+  const s = String(id ?? "").trim();
+  if (s) return s;
+  return String(fallback ?? "").trim();
+};
+
+export const buildMessagePermalink = (msgId: string) => {
+  const mid = String(msgId ?? "").trim();
+  if (!mid) return window.location.href;
+
+  try {
+    const u = new URL(window.location.href);
+    u.searchParams.set("msg", mid);
+    return u.toString();
+  } catch {
+    return window.location.href;
+  }
+};
