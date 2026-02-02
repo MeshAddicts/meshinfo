@@ -1,6 +1,11 @@
 import { Link } from "react-router-dom";
 import { formatTimestamp } from "../../utils/formatTimestamp";
-import { buildRouteChain, isBroadcast, renderHighlightedText, routeLabel } from "./chatUtils";
+import {
+  buildRouteChain,
+  isBroadcast,
+  renderHighlightedText,
+  routeLabel,
+} from "./chatUtils";
 import { NodeChip } from "./NodeChip";
 
 export function DetailsPanel({
@@ -11,6 +16,7 @@ export function DetailsPanel({
   applyFocus,
   setParam,
   clearFilters,
+  closeDetails,
 }: {
   urlMsg: string;
   selectedMessage: any | undefined;
@@ -19,7 +25,18 @@ export function DetailsPanel({
   applyFocus: (id: string) => void;
   setParam: (key: string, value?: string, mode?: "replace" | "push") => void;
   clearFilters: () => void;
+  closeDetails?: () => void;
 }) {
+  const doClose = () => {
+    // On mobile, Chat.tsx passes closeDetails() which clears msg + closes the sheet.
+    // On desktop, closeDetails is undefined; just clear msg.
+    if (closeDetails) {
+      closeDetails();
+      return;
+    }
+    setParam("msg", undefined, "push");
+  };
+
   return (
     <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex-1 min-h-0 flex flex-col">
       <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex items-center justify-between">
@@ -30,7 +47,7 @@ export function DetailsPanel({
           <button
             type="button"
             className="text-xs underline hover:no-underline text-gray-600 dark:text-gray-300"
-            onClick={() => setParam("msg", undefined, "push")}
+            onClick={doClose}
           >
             close
           </button>
@@ -62,7 +79,7 @@ export function DetailsPanel({
               <button
                 type="button"
                 className="rounded-md px-3 py-2 text-sm bg-indigo-600 text-white hover:bg-indigo-700 transition"
-                onClick={() => setParam("msg", undefined, "push")}
+                onClick={doClose}
               >
                 Clear selection
               </button>
@@ -117,7 +134,8 @@ export function DetailsPanel({
 
                 <span className="text-gray-400">→</span>
 
-                {Array.isArray(selectedMessage.sender) && selectedMessage.sender.length ? (
+                {Array.isArray(selectedMessage.sender) &&
+                selectedMessage.sender.length ? (
                   selectedMessage.sender.map((sid: any, idx: number) => (
                     <span
                       key={`route-via-${String(sid)}-${idx}`}
@@ -167,7 +185,8 @@ export function DetailsPanel({
 
               <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
                 {routeLabel(nodes, String(selectedMessage.from ?? ""))} {"->"}{" "}
-                {Array.isArray(selectedMessage.sender) && selectedMessage.sender.length
+                {Array.isArray(selectedMessage.sender) &&
+                selectedMessage.sender.length
                   ? selectedMessage.sender
                       .map((x: any) => routeLabel(nodes, String(x)))
                       .join(" -> ")
@@ -182,7 +201,9 @@ export function DetailsPanel({
                 className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
                 onClick={async () => {
                   try {
-                    await navigator.clipboard.writeText(String(selectedMessage.text ?? ""));
+                    await navigator.clipboard.writeText(
+                      String(selectedMessage.text ?? "")
+                    );
                   } catch {
                     // no-op
                   }
@@ -196,7 +217,9 @@ export function DetailsPanel({
                 className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
                 onClick={async () => {
                   try {
-                    await navigator.clipboard.writeText(buildRouteChain(nodes, selectedMessage));
+                    await navigator.clipboard.writeText(
+                      buildRouteChain(nodes, selectedMessage)
+                    );
                   } catch {
                     // ignore
                   }

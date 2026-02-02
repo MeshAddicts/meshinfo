@@ -5,6 +5,7 @@ import {
   useDeferredValue,
   useRef,
   useCallback,
+  ReactNode,
 } from "react";
 import { Link } from "react-router-dom";
 import { VirtuosoHandle } from "react-virtuoso";
@@ -52,6 +53,97 @@ const normalizeKey = (s: string) => {
   if (k.startsWith("all")) return "all";
   return k;
 };
+
+type MobileSheetKey = "controls" | "focus" | "details";
+
+function MobileSheet({
+  open,
+  title,
+  onClose,
+  children,
+}: {
+  open: boolean;
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 lg:hidden">
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/40"
+        aria-label="Close"
+        onClick={onClose}
+      />
+      <div className="absolute inset-x-0 bottom-0">
+        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
+          <div className="rounded-t-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
+              <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                {title}
+              </div>
+              <button
+                type="button"
+                className="rounded-md px-2 py-1 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                onClick={onClose}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="max-h-[82dvh] overflow-y-auto">
+              <div className="p-4">{children}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatusChip({
+  label,
+  active,
+  title,
+  onClick,
+}: {
+  label: string;
+  active?: boolean;
+  title?: string;
+  onClick?: () => void;
+}) {
+  const clickable = !!onClick && !!active;
+
+  return (
+    <button
+      type="button"
+      onClick={clickable ? onClick : undefined}
+      disabled={!clickable}
+      title={title}
+      className={[
+        "rounded-full px-3 py-1 text-xs border transition whitespace-nowrap",
+        "border-gray-300/60 dark:border-gray-700",
+        clickable
+          ? "text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40"
+          : "text-gray-500 dark:text-gray-500 opacity-70 cursor-default",
+        active ? "bg-white/5 dark:bg-gray-800/30 opacity-100" : "bg-transparent",
+      ].join(" ")}
+    >
+      {label}
+    </button>
+  );
+}
 
 export const Chat = () => {
   const { data: chat, dataUpdatedAt, isFetching, refetch } = useGetChatsQuery();
@@ -202,6 +294,49 @@ export const Chat = () => {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  // Mobile sheets
+  const [mobileSheet, setMobileSheet] = useState<MobileSheetKey | null>(null);
+
+// Track lg breakpoint (1024px) to gate mobile/desktop behaviors
+  const [isLgUp, setIsLgUp] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return window.matchMedia("(min-width: 1024px)").matches;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const m = window.matchMedia("(min-width: 1024px)");
+    const onChange = () => setIsLgUp(m.matches);
+
+    onChange();
+
+    // Safari fallback
+    if (typeof m.addEventListener === "function") m.addEventListener("change", onChange);
+    else (m as any).addListener(onChange);
+
+    return () => {
+      if (typeof m.removeEventListener === "function") m.removeEventListener("change", onChange);
+      else (m as any).removeListener(onChange);
+    };
+  }, []);
+
+  // Mobile UX: when selection changes, auto-open Details sheet
+  const prevUrlMsgRef = useRef<string>("");
+
+  useEffect(() => {
+    if (isLgUp) return;
+
+    const prev = prevUrlMsgRef.current;
+    prevUrlMsgRef.current = urlMsg;
+
+    // If a message becomes selected (or selection changes), jump to Details
+    if (urlMsg && urlMsg !== prev) {
+      setMobileSheet("details");
+    }
+
+  }, [urlMsg, isLgUp]);
+
   // Live / auto-follow toggle
   const [liveEnabled, setLiveEnabled] = useState(true);
 
@@ -219,9 +354,9 @@ export const Chat = () => {
     []
   );
 
-  // Export menu
-  const [exportOpen, setExportOpen] = useState(false);
-  const exportMenuRef = useRef<HTMLDivElement | null>(null);
+    // Export menu
+    const [exportOpen, setExportOpen] = useState(false);
+    const exportMenuRef = useRef<HTMLDivElement | null>(null);
 
   // Search input
   const [qInput, setQInput] = useState(urlQ);
@@ -533,14 +668,52 @@ export const Chat = () => {
     nodes,
   ]);
 
-  const copyLink = async () => {
+  const copyTextToClipboard = async (text: string) => {
+    // Modern clipboard works best on secure contexts (https)
     try {
-      await navigator.clipboard.writeText(window.location.href);
+      if (navigator.clipboard && (window as any).isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      // fall through
+    }
+
+    // Fallback: textarea + execCommand("copy")
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.top = "0";
+      ta.style.left = "0";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  };
+
+  const copyLink = async () => {
+    const url = window.location.href;
+    const ok = await copyTextToClipboard(url);
+
+    if (ok) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1200);
-    } catch {
-      // ignore
+      return;
     }
+
+    // Last-resort: let the user manually copy
+    window.prompt("Copy link:", url);
   };
 
   const applyFocus = (nodeId: string) => {
@@ -553,6 +726,10 @@ export const Chat = () => {
       "push"
     );
     setFocusPicker("");
+  };
+
+  const clearSelection = () => {
+    setParam("msg", undefined, "push");
   };
 
   const clearFocus = () => {
@@ -719,9 +896,10 @@ export const Chat = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlMsg, messages, selectedChannel]);
 
-  // Export menu click-outside
+  // Export menu click-outside (desktop only)
   useEffect(() => {
     if (!exportOpen) return;
+    if (!isLgUp) return;
 
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node | null;
@@ -733,7 +911,7 @@ export const Chat = () => {
 
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
-  }, [exportOpen]);
+  }, [exportOpen, isLgUp]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -751,6 +929,10 @@ export const Chat = () => {
       }
 
       if (e.key === "Escape") {
+        if (mobileSheet) {
+          setMobileSheet(null);
+          return;
+        }
         if (filtersOpen) {
           setFiltersOpen(false);
           return;
@@ -768,7 +950,7 @@ export const Chat = () => {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtersOpen, exportOpen, urlMsg]);
+  }, [filtersOpen, exportOpen, urlMsg, mobileSheet]);
 
   // ---- Export rows + handlers (Commit 6)
   const exportRows = useMemo(() => {
@@ -925,6 +1107,26 @@ export const Chat = () => {
     return `Auto-follow is active at the ${edge}.`;
   }, [liveEnabled, followState.selectionPinned, followState.atEdge, followEdge]);
 
+    const advancedCount = useMemo(() => {
+      let n = 0;
+      if (typeof urlHopsMin === "number") n += 1;
+      if (typeof urlHopsMax === "number") n += 1;
+      if (urlFrom.trim()) n += 1;
+      if (urlTo.trim()) n += 1;
+      if (urlVia.trim()) n += 1;
+      if (onlyUnknownEndpoints) n += 1;
+      if (requireVia) n += 1;
+      return n;
+    }, [
+      urlHopsMin,
+      urlHopsMax,
+      urlFrom,
+      urlTo,
+      urlVia,
+      onlyUnknownEndpoints,
+      requireVia,
+    ]);
+
   return (
     <div className="w-full h-[100dvh] overflow-hidden flex flex-col">
       <FiltersDrawer
@@ -943,14 +1145,15 @@ export const Chat = () => {
       />
 
       <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur border-b border-gray-200 dark:border-gray-800">
-        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 py-3">
-          <div className="flex items-start justify-between gap-3">
+        <div className="mx-auto max-w-[1600px] pl-3 pr-14 sm:px-5 py-2 sm:py-3">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
               <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
                 Chat
               </h1>
 
-              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+              {/* Desktop meta row */}
+              <div className="mt-1 hidden sm:flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
                 <span>
                   Updated:{" "}
                   <span className="font-medium">
@@ -998,9 +1201,44 @@ export const Chat = () => {
 
                 <HeardBy />
               </div>
+
+              {/* Mobile meta row (compact) */}
+              <div className="mt-1 flex sm:hidden items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                <span className={isFetching ? "animate-pulse" : ""}>
+                  {isFetching ? "Refreshing…" : "Ready"}
+                </span>
+
+                <button
+                  type="button"
+                  className="underline hover:no-underline"
+                  onClick={() => refetch()}
+                >
+                  refresh
+                </button>
+
+                <span className="opacity-60">•</span>
+
+                <button
+                  type="button"
+                  className={[
+                    "rounded-full px-2 py-0.5 text-[11px] font-medium border transition",
+                    liveUiMode === "live"
+                      ? "bg-emerald-600 text-white border-emerald-600"
+                      : liveUiMode === "paused"
+                        ? "bg-amber-600 text-white border-amber-600"
+                        : liveUiMode === "pinned"
+                          ? "bg-indigo-600 text-white border-indigo-600"
+                          : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
+                  ].join(" ")}
+                  onClick={() => setLiveEnabled((v) => !v)}
+                  title={livePillTitle}
+                >
+                  {livePillText}
+                </button>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="hidden lg:flex items-center gap-2">
               <ExportMenu
                 open={exportOpen}
                 setOpen={setExportOpen}
@@ -1022,7 +1260,7 @@ export const Chat = () => {
           </div>
 
           {/* Preset pills (canonical ch=mediumfast/longfast) */}
-          <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+          <div className="mt-3 flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
             {views.map((v) => {
               const active = v.key === selectedView?.key;
               const chObj: any = (chat?.channels as any)?.[v.channelId];
@@ -1065,9 +1303,9 @@ export const Chat = () => {
             })}
           </div>
 
-          {/* Toolbar row */}
+          {/* Toolbar row: mobile keeps ONLY search; desktop keeps full controls */}
           <div className="mt-3 flex flex-col lg:flex-row gap-2 lg:items-center lg:justify-between">
-            <div className="flex-1 min-w-[260px]">
+            <div className="flex-1 min-w-0 lg:min-w-[260px]">
               <input
                 ref={searchInputRef}
                 value={qInput}
@@ -1077,7 +1315,7 @@ export const Chat = () => {
               />
             </div>
 
-            <div className="flex flex-wrap gap-2 items-center">
+            <div className="hidden lg:flex flex-wrap gap-2 items-center">
               <div className="inline-flex rounded-md border border-gray-300/60 dark:border-gray-700 overflow-hidden">
                 {(["1h", "24h", "7d", "all"] as RangeKey[]).map((rk) => (
                   <button
@@ -1203,22 +1441,60 @@ export const Chat = () => {
             </div>
           </div>
 
-          {activeChips.length > 0 ? (
-            <div className="mt-3 flex flex-wrap gap-2">
-              {activeChips.map((c, i) => (
-                <button
-                  key={`chip-${i}`}
-                  type="button"
-                  onClick={c.clear}
-                  className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                  title="Click to clear"
-                >
-                  {c.label}
-                  <span className="opacity-70">×</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
+          {/* Status chips: desktop only, always rendered (mobile uses Controls Badge) */}
+          <div className="mt-2 hidden lg:flex items-center gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch] min-h-[30px]">
+            <StatusChip
+              label={`Range: ${urlRange}`}
+              active={urlRange !== "24h"}
+              title="Click to reset range to 24h"
+              onClick={() => setParam("r", undefined, "push")}
+            />
+
+            <StatusChip
+              label={`Type: ${
+                urlType === "all" ? "All" : urlType === "bc" ? "BC" : "DM"
+              }`}
+              active={urlType !== "all"}
+              title="Click to reset type to All"
+              onClick={() => setParam("t", undefined, "push")}
+            />
+
+            <StatusChip
+              label={`Sort: ${urlSort === "desc" ? "newest" : "oldest"}`}
+              active={urlSort !== "desc"}
+              title="Click to reset sort to newest"
+              onClick={() => setParam("s", undefined, "push")}
+            />
+
+            <StatusChip
+              label={urlQ.trim() ? `Search: ${urlQ.trim()}` : "Search"}
+              active={urlQ.trim().length > 0}
+              title="Click to clear search"
+              onClick={() => setParam("q", undefined, "push")}
+            />
+
+            <StatusChip
+              label={`Advanced: ${advancedCount > 0 ? advancedCount : "none"}`}
+              active={advancedCount > 0}
+              title={
+                advancedCount > 0
+                  ? "Click to open advanced filters"
+                  : "No advanced filters"
+              }
+              onClick={() => setFiltersOpen(true)}
+            />
+
+            <StatusChip
+              label={`Focus: ${
+                urlNode.trim()
+                  ? (nodes as any)?.[urlNode]?.shortname ?? urlNode.trim()
+                  : "none"
+              }`}
+              active={urlNode.trim().length > 0}
+              title="Click to clear focus"
+              onClick={() => clearFocus()}
+            />
+          </div>
 
           {urlNode ? (
             <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-indigo-300/50 dark:border-indigo-700/50 bg-indigo-50/50 dark:bg-indigo-900/20 px-3 py-2">
@@ -1237,7 +1513,7 @@ export const Chat = () => {
                 {urlDir})
               </span>
 
-              <div className="flex items-center gap-2 ml-auto">
+              <div className="flex items-center gap-2 sm:ml-auto">
                 <Link
                   to={`/nodes/${urlNode}`}
                   className="text-sm underline hover:no-underline text-indigo-900 dark:text-indigo-100"
@@ -1258,7 +1534,7 @@ export const Chat = () => {
       </div>
 
       <div className="flex-1 overflow-hidden flex flex-col">
-        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pt-3 pb-0 flex-1 min-h-0 w-full flex flex-col">
+        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-full min-h-0">
             <div className="lg:col-span-2 min-h-0 flex flex-col">
               <MessageList
@@ -1285,7 +1561,8 @@ export const Chat = () => {
               />
             </div>
 
-            <div className="lg:col-span-1 flex flex-col gap-4 min-h-0 h-full">
+            {/* Desktop sidebar only */}
+            <div className="hidden lg:flex lg:col-span-1 flex-col gap-4 min-h-0 h-full">
               <FocusPanel
                 urlNode={urlNode}
                 nodes={nodes}
@@ -1311,6 +1588,343 @@ export const Chat = () => {
           </div>
         </div>
       </div>
+
+      {/* Mobile bottom nav */}
+      <div className="fixed inset-x-0 bottom-0 z-30 lg:hidden">
+        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
+          <div className="mb-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white/90 dark:bg-gray-900/85 backdrop-blur shadow-sm overflow-hidden">
+            <div className="grid grid-cols-3 divide-x divide-gray-200 dark:divide-gray-800">
+              <button
+                type="button"
+                className={[
+                  "py-3 text-sm font-medium text-gray-800 dark:text-gray-100 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition",
+                  mobileSheet === "controls" ? "bg-gray-100/60 dark:bg-gray-800/40" : "",
+                ].join(" ")}
+                onClick={() =>
+                  setMobileSheet((s) => (s === "controls" ? null : "controls"))
+                }
+              >
+                Controls
+                {hasFilters ? (
+                  <span className="ml-2 inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs bg-gray-200/70 dark:bg-gray-700/60 text-gray-700 dark:text-gray-200">
+                    {activeFilterCount}
+                  </span>
+                ) : null}
+              </button>
+
+              <button
+                type="button"
+                className={[
+                  "py-3 text-sm font-medium text-gray-800 dark:text-gray-100 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition",
+                  mobileSheet === "focus" ? "bg-gray-100/60 dark:bg-gray-800/40" : "",
+                ].join(" ")}
+                onClick={() =>
+                  setMobileSheet((s) => (s === "focus" ? null : "focus"))
+                }
+              >
+                Focus
+                {urlNode.trim() ? (
+                  <span className="ml-2 inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs bg-indigo-600 text-white">
+                    on
+                  </span>
+                ) : null}
+              </button>
+
+              <button
+                type="button"
+                className={[
+                  "py-3 text-sm font-medium text-gray-800 dark:text-gray-100 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition",
+                  mobileSheet === "details" ? "bg-gray-100/60 dark:bg-gray-800/40" : "",
+                ].join(" ")}
+                onClick={() =>
+                  setMobileSheet((s) => (s === "details" ? null : "details"))
+                }
+              >
+                Details
+                {urlMsg ? (
+                  <span className="ml-2 inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs bg-gray-200/70 dark:bg-gray-700/60 text-gray-700 dark:text-gray-200">
+                    1
+                  </span>
+                ) : null}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile sheets */}
+      <MobileSheet
+        open={mobileSheet === "controls"}
+        title="Controls"
+        onClose={() => setMobileSheet(null)}
+      >
+        <div className="space-y-4">
+          <div className="text-xs text-gray-600 dark:text-gray-400">
+            Quick controls for range/type/sort/focus + access to advanced filters.
+          </div>
+
+          <div>
+            <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
+              Range
+            </div>
+            <div className="inline-flex rounded-md border border-gray-300/60 dark:border-gray-700 overflow-hidden">
+              {(["1h", "24h", "7d", "all"] as RangeKey[]).map((rk) => (
+                <button
+                  key={`m-range-${rk}`}
+                  type="button"
+                  className={[
+                    "px-3 py-2 text-sm transition",
+                    urlRange === rk
+                      ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
+                      : "bg-transparent text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
+                  ].join(" ")}
+                  onClick={() => setParam("r", rk, "push")}
+                >
+                  {rk}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3">
+            <div>
+              <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                Message type
+              </div>
+              <select
+                value={urlType}
+                onChange={(e) => setParam("t", e.target.value, "push")}
+                className="w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100"
+              >
+                <option value="all">All</option>
+                <option value="bc">Broadcast</option>
+                <option value="dm">Direct</option>
+              </select>
+            </div>
+
+            <div>
+              <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                Sort
+              </div>
+              <button
+                type="button"
+                className="w-full rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                onClick={() =>
+                  setParam("s", urlSort === "desc" ? "asc" : "desc", "push")
+                }
+              >
+                {urlSort === "desc" ? "Newest → Oldest" : "Oldest → Newest"}
+              </button>
+            </div>
+
+            <div>
+              <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                Focus mode
+              </div>
+              <select
+                value={urlFocus}
+                onChange={(e) => setParam("focus", e.target.value, "push")}
+                className="w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100"
+              >
+                <option value="endpoints">Endpoints only</option>
+                <option value="any">Include via</option>
+              </select>
+            </div>
+
+            <div>
+              <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                Focus direction
+              </div>
+              <div
+                className={[
+                  "inline-flex w-full rounded-md border overflow-hidden",
+                  urlNode.trim()
+                    ? "border-gray-300/60 dark:border-gray-700"
+                    : "border-gray-300/30 dark:border-gray-700/30 opacity-60",
+                ].join(" ")}
+              >
+                {(["both", "in", "out"] as DirKey[]).map((d) => (
+                  <button
+                    key={`m-dir-${d}`}
+                    type="button"
+                    disabled={!urlNode.trim()}
+                    className={[
+                      "flex-1 px-3 py-2 text-sm transition",
+                      urlDir === d
+                        ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
+                        : "bg-transparent text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
+                    ].join(" ")}
+                    onClick={() => setParam("dir", d, "push")}
+                  >
+                    {d === "both" ? "Both" : d === "in" ? "In" : "Out"}
+                  </button>
+                ))}
+              </div>
+
+              {!urlNode.trim() ? (
+                <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  Pick a focused node to enable direction controls.
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          {activeChips.length > 0 ? (
+            <div>
+              <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                Active filters
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {activeChips.map((c, i) => (
+                  <button
+                    key={`m-chip-${i}`}
+                    type="button"
+                    onClick={c.clear}
+                    className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                    title="Tap to clear"
+                  >
+                    {c.label}
+                    <span className="opacity-70">×</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+              onClick={() => {
+                setMobileSheet(null);
+                setFiltersOpen(true);
+              }}
+            >
+              Advanced filters…
+            </button>
+
+            {hasFilters ? (
+              <button
+                type="button"
+                className="rounded-md px-3 py-2 text-sm border border-red-300/70 dark:border-red-800/70 text-red-700 dark:text-red-200 hover:bg-red-50/60 dark:hover:bg-red-900/20 transition"
+                onClick={() => {
+                  clearFilters();
+                  setMobileSheet(null);
+                }}
+              >
+                Clear all filters
+              </button>
+            ) : null}
+
+            {urlNode.trim() ? (
+              <button
+                type="button"
+                className="rounded-md px-3 py-2 text-sm border border-indigo-300/70 dark:border-indigo-800/70 text-indigo-700 dark:text-indigo-200 hover:bg-indigo-50/60 dark:hover:bg-indigo-900/20 transition"
+                onClick={() => {
+                  clearFocus();
+                  setMobileSheet(null);
+                }}
+              >
+                Clear focus
+              </button>
+            ) : null}
+          </div>
+
+          {/* Actions (mobile replacement for header Export/Copy + avoids popover off-screen) */}
+          <div className="pt-4 border-t border-gray-200 dark:border-gray-800">
+            <div className="text-xs text-gray-600 dark:text-gray-400">
+              Updated:{" "}
+              <span className="font-medium">
+                {dataUpdatedAt && dataUpdatedAt > 0
+                  ? new Date(dataUpdatedAt).toLocaleString()
+                  : new Date().toLocaleString()}
+              </span>
+            </div>
+
+            <div className="mt-3 grid grid-cols-1 gap-2">
+              <button
+                type="button"
+                className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                onClick={() => refetch()}
+              >
+                Refresh now
+              </button>
+
+              <button
+                type="button"
+                className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                onClick={copyLink}
+              >
+                {copied ? "Copied!" : "Copy link"}
+              </button>
+
+              <button
+                type="button"
+                className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                onClick={() => {
+                  doExportCsv();
+                  setMobileSheet(null);
+                }}
+              >
+                Export CSV ({exportRows.length})
+              </button>
+
+              <button
+                type="button"
+                className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                onClick={() => {
+                  doExportJson();
+                  setMobileSheet(null);
+                }}
+              >
+                Export JSON ({exportRows.length})
+              </button>
+            </div>
+          </div>
+        </div>
+      </MobileSheet>
+
+      <MobileSheet
+        open={mobileSheet === "focus"}
+        title="Node focus"
+        onClose={() => setMobileSheet(null)}
+      >
+        <FocusPanel
+          urlNode={urlNode}
+          nodes={nodes}
+          focusPicker={focusPicker}
+          setFocusPicker={setFocusPicker}
+          focusMatches={focusMatches}
+          frequentNodes={frequentNodes}
+          applyFocus={applyFocus}
+          clearFocus={clearFocus}
+          focusStats={focusStats}
+        />
+      </MobileSheet>
+
+      {/* Mobile details sheet */}
+      <MobileSheet
+        open={mobileSheet === "details"}
+        title="Message details"
+        onClose={() => {
+          setParam("msg", undefined, "push");
+          setMobileSheet(null);
+        }}
+      >
+        <DetailsPanel
+          urlMsg={urlMsg}
+          selectedMessage={selectedMessage}
+          urlQ={urlQ}
+          nodes={nodes}
+          applyFocus={applyFocus}
+          setParam={setParam}
+          clearFilters={clearFilters}
+          closeDetails={() => {
+            setParam("msg", undefined, "push");
+            setMobileSheet(null);
+          }}
+        />
+      </MobileSheet>
     </div>
   );
 };

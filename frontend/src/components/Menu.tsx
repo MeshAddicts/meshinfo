@@ -42,7 +42,7 @@ export const Menu = ({
       {/* Mobile Hamburger Button */}
       <button
         type="button"
-        className={`lg:hidden fixed z-50 top-4 left-4 p-2 rounded-lg shadow-lg backdrop-blur-sm border transition-all duration-200 ${
+        className={`lg:hidden fixed z-50 top-4 right-4 left-auto p-2 rounded-lg shadow-lg backdrop-blur-sm border transition-all duration-200 ${
           showMenu 
             ? "bg-gray-800 dark:bg-gray-200 border-gray-600 dark:border-gray-400" 
             : "bg-white/90 dark:bg-gray-800/90 border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700"
