@@ -441,6 +441,8 @@ export const Chat = () => {
     urlSort,
   ]);
 
+  const hasFilters = activeFilterCount > 0;
+
   const activeChips = useMemo(() => {
     const chips: Array<{ label: string; clear: () => void }> = [];
 
@@ -1164,31 +1166,39 @@ export const Chat = () => {
                 title="Advanced filters"
               >
                 Filters
-                {activeFilterCount > 0 ? (
-                  <span className="ml-2 rounded-full px-2 py-0.5 text-xs bg-gray-200/70 dark:bg-gray-700/60">
-                    {activeFilterCount}
-                  </span>
-                ) : null}
+                <span
+                  className={[
+                    "ml-2 rounded-full px-2 py-0.5 text-xs bg-gray-200/70 dark:bg-gray-700/60",
+                    hasFilters ? "visible" : "invisible",
+                  ].join(" ")}
+                  aria-hidden={!hasFilters}
+                >
+                  {activeFilterCount}
+                </span>
               </button>
 
               <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-500 dark:text-gray-400">
-                  {activeFilterCount > 0
+                <span className="min-w-[88px] text-xs text-gray-500 dark:text-gray-400 tabular-nums">
+                  {hasFilters
                     ? `${activeFilterCount} filter${
                         activeFilterCount > 1 ? "s" : ""
                       }`
                     : "no filters"}
                 </span>
-                {activeFilterCount > 0 ? (
-                  <button
-                    type="button"
-                    className="text-xs underline hover:no-underline text-gray-600 dark:text-gray-300"
-                    onClick={clearFilters}
-                    title="Clear all filters"
-                  >
-                    clear
-                  </button>
-                ) : null}
+
+                <button
+                  type="button"
+                  className={[
+                    "text-xs underline hover:no-underline text-gray-600 dark:text-gray-300",
+                    hasFilters ? "visible" : "invisible pointer-events-none",
+                  ].join(" ")}
+                  onClick={clearFilters}
+                  title="Clear all filters"
+                  tabIndex={hasFilters ? 0 : -1}
+                  aria-disabled={!hasFilters}
+                >
+                  clear
+                </button>
               </div>
             </div>
           </div>
