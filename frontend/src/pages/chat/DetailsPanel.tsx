@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { formatTimestamp } from "../../utils/formatTimestamp";
 import {
@@ -7,6 +8,41 @@ import {
   routeLabel,
 } from "./chatUtils";
 import { NodeChip } from "./NodeChip";
+
+// clipboard helper
+async function copyTextToClipboard(text: string) {
+  try {
+    if (navigator.clipboard && (window as any).isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // fall through
+  }
+
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "0";
+    ta.style.left = "0";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+type CopiedKind = "" | "text" | "route";
 
 export function DetailsPanel({
   urlMsg,
@@ -36,6 +72,41 @@ export function DetailsPanel({
     }
     setParam("msg", undefined, "push");
   };
+
+  // --- “Copied!” UX (match other copy buttons)
+  const [copiedKind, setCopiedKind] = useState<CopiedKind>("");
+  const copiedTimerRef = useRef<number | null>(null);
+
+  const flashCopied = (kind: CopiedKind) => {
+    if (copiedTimerRef.current) window.clearTimeout(copiedTimerRef.current);
+    setCopiedKind(kind);
+    copiedTimerRef.current = window.setTimeout(() => {
+      setCopiedKind("");
+      copiedTimerRef.current = null;
+    }, 1200);
+  };
+
+  useEffect(() => {
+    // selection changed → clear any copied state
+    setCopiedKind("");
+    if (copiedTimerRef.current) {
+      window.clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = null;
+    }
+  }, [urlMsg]);
+
+  useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current) window.clearTimeout(copiedTimerRef.current);
+    };
+  }, []);
+
+  const baseBtn =
+    "rounded-md px-3 py-2 text-sm border transition";
+  const defaultBtn =
+    "border-gray-300/70 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40";
+  const copiedBtn =
+    "bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700";
 
   return (
     <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex-1 min-h-0 flex flex-col">
@@ -85,7 +156,7 @@ export function DetailsPanel({
               </button>
               <button
                 type="button"
-                className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                className={`${baseBtn} ${defaultBtn}`}
                 onClick={clearFilters}
               >
                 Clear filters
@@ -198,40 +269,46 @@ export function DetailsPanel({
             <div className="pt-2 flex flex-wrap gap-2">
               <button
                 type="button"
-                className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                className={[
+                  baseBtn,
+                  copiedKind === "text" ? copiedBtn : defaultBtn,
+                ].join(" ")}
                 onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(
-                      String(selectedMessage.text ?? "")
-                    );
-                  } catch {
-                    // no-op
+                  const text = String(selectedMessage.text ?? "");
+                  const ok = await copyTextToClipboard(text);
+                  if (ok) {
+                    flashCopied("text");
+                    return;
                   }
+                  window.prompt("Copy text:", text);
                 }}
               >
-                Copy text
+                {copiedKind === "text" ? "Copied!" : "Copy text"}
               </button>
 
               <button
                 type="button"
-                className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                className={[
+                  baseBtn,
+                  copiedKind === "route" ? copiedBtn : defaultBtn,
+                ].join(" ")}
                 onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(
-                      buildRouteChain(nodes, selectedMessage)
-                    );
-                  } catch {
-                    // ignore
+                  const route = buildRouteChain(nodes, selectedMessage);
+                  const ok = await copyTextToClipboard(route);
+                  if (ok) {
+                    flashCopied("route");
+                    return;
                   }
+                  window.prompt("Copy route chain:", route);
                 }}
                 title="Copy route chain"
               >
-                Copy route
+                {copiedKind === "route" ? "Copied!" : "Copy route"}
               </button>
 
               <button
                 type="button"
-                className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                className={`${baseBtn} ${defaultBtn}`}
                 onClick={() => applyFocus(String(selectedMessage.from))}
                 title="Focus sender"
                 disabled={
@@ -244,7 +321,7 @@ export function DetailsPanel({
 
               <button
                 type="button"
-                className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                className={`${baseBtn} ${defaultBtn}`}
                 onClick={() => applyFocus(String(selectedMessage.to))}
                 title="Focus recipient"
                 disabled={isBroadcast(String(selectedMessage.to))}
@@ -255,7 +332,7 @@ export function DetailsPanel({
               {String(selectedMessage.from ?? "") ? (
                 <Link
                   to={`/nodes/${String(selectedMessage.from)}`}
-                  className="rounded-md px-3 py-2 text-sm border border-gray-300/70 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                  className={`${baseBtn} ${defaultBtn}`}
                 >
                   Open from
                 </Link>

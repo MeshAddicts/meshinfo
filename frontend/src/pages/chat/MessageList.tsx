@@ -108,6 +108,8 @@ export function MessageList({
     prevLenRef.current = messages.length;
     prevEdgeIdRef.current = edgeMsgId;
     setNewCount(0);
+
+    // Reset edge assumptions so we don’t incorrectly show “paused” before Virtuoso reports range.
     setAtTop(true);
     setAtBottom(true);
   }, [filtersSig, messages.length, edgeMsgId]);
@@ -207,19 +209,53 @@ export function MessageList({
     }
   };
 
+  const copyTextToClipboard = async (text: string) => {
+    try {
+      if (navigator.clipboard && (window as any).isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      // fall through
+    }
+
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.top = "0";
+      ta.style.left = "0";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  };
+
   const copyMessageLink = async (msgId: string) => {
     const mid = String(msgId ?? "").trim();
     if (!mid) return;
 
     const href = buildMessagePermalink(mid);
+    const ok = await copyTextToClipboard(href);
 
-    try {
-      await navigator.clipboard.writeText(href);
+    if (ok) {
       setCopiedMsgId(mid);
       window.setTimeout(() => setCopiedMsgId(""), 1200);
-    } catch {
-      // ignore
+      return;
     }
+
+    // last resort: manual copy prompt
+    window.prompt("Copy message link:", href);
   };
 
   const jumpToLive = () => {
