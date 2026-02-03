@@ -6,8 +6,12 @@ import { Menu } from "./Menu";
 export const Layout = ({ children }: { children: React.ReactNode }) => {
   const { pathname } = useLocation();
   const [isDark, setIsDark] = useState(false);
+
   const isMap = pathname === "/map";
   const isChat = pathname === "/chat";
+  const isLog = pathname === "/log" || pathname === "/logs";
+
+  const isFullBleed = isMap || isChat || isLog;
 
   // make sure the root element is updated with the dark class
   //  move this out eventually
@@ -58,16 +62,18 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   return (
-    <div className={isMap ? "h-[100dvh] overflow-hidden" : ""}>
+    <div className={isFullBleed ? "h-[100dvh] overflow-hidden" : ""}>
       <Menu isDark={isDark} onDarkChange={(dark) => setIsDark(dark)} />
 
       <div
         className={`lg:pl-60 dark:bg-gray-950 dark:text-gray-100 lg:pt-0
-          ${isMap || isChat ? "pt-0 h-full overflow-hidden" : "pt-14"}`}
+          ${isFullBleed ? "pt-0 h-full overflow-hidden" : "pt-14"}`}
       >
-        <main className={isMap || isChat ? "h-full" : "py-1"}>
+        <main className={isFullBleed ? "h-full" : "py-1"}>
           <div
-            className={`w-full ${isMap || isChat ? "h-full" : "px-4 py-2 sm:px-6 sm:py-2 lg:px-6 lg:py-2"}`}
+            className={`w-full ${
+              isFullBleed ? "h-full" : "px-4 py-2 sm:px-6 sm:py-2 lg:px-6 lg:py-2"
+            }`}
           >
             {children}
           </div>
