@@ -144,10 +144,9 @@ export function Map() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasMapbox]);
 
-  // Close settings panel when clicking outside (mobile only)
+  // Close settings panel when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent | TouchEvent) => {
-      if (window.innerWidth >= 1024) return; // desktop: ignore
       const target = event.target as Node;
 
       // allow clicks inside the panel OR on the toggle button
@@ -157,7 +156,7 @@ export function Map() {
       setSettingsPanelOpen(false);
     };
 
-    if (settingsPanelOpen && window.innerWidth < 1024) {
+    if (settingsPanelOpen) {
       document.addEventListener("mousedown", handleClickOutside);
       document.addEventListener("touchstart", handleClickOutside);
     }
@@ -168,10 +167,9 @@ export function Map() {
     };
   }, [settingsPanelOpen]);
 
-  // Close settings panel on Escape (mobile only, matches click-outside behavior)
+  // Close settings panel on Escape
   useEffect(() => {
     if (!settingsPanelOpen) return;
-    if (window.innerWidth >= 1024) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") setSettingsPanelOpen(false);

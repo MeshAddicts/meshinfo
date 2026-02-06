@@ -52,60 +52,44 @@ export function MapSettingsPanel({
 }) {
   return (
     <div className="fixed bottom-4 right-4 z-[1100]">
-      {/* Mobile toggle sits with the panel */}
+      {/* Toggle button - visible when panel is closed */}
       <button
         ref={settingsToggleRef}
         type="button"
-        onClick={() => setSettingsPanelOpen((v) => !v)}
-        className="lg:hidden mb-2 ml-auto block p-2 rounded-lg shadow-lg backdrop-blur-sm border transition-all duration-200
+        onClick={() => setSettingsPanelOpen(true)}
+        className={`mb-2 ml-auto block p-2 rounded-lg shadow-lg backdrop-blur-sm border transition-opacity duration-200
                     bg-white/90 dark:bg-gray-800/90 border-gray-200 dark:border-gray-600
-                    hover:bg-gray-50 dark:hover:bg-gray-700"
-        aria-label="Toggle Map Settings"
+                    hover:bg-gray-50 dark:hover:bg-gray-700
+                    ${settingsPanelOpen ? 'opacity-0 pointer-events-none' : 'opacity-100 pointer-events-auto'}`}
+        aria-label="Open Map Settings"
         aria-expanded={settingsPanelOpen}
       >
         <div className="w-5 h-5 flex items-center justify-center">
-          {settingsPanelOpen ? (
-            <svg
-              className="w-4 h-4 text-gray-700 dark:text-gray-200"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
-          ) : (
-            <svg
-              className="w-4 h-4 text-gray-700 dark:text-gray-200"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100-4m0 4v2m0-6V4"
-              />
-            </svg>
-          )}
+          <svg
+            className="w-4 h-4 text-gray-700 dark:text-gray-200"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100-4m0 4v2m0-6V4"
+            />
+          </svg>
         </div>
       </button>
 
       {/* Map Settings (sits above legend) */}
       <div
         ref={settingsPanelRef}
-        className={`absolute right-0 bottom-full mb-2 w-64 max-w-[calc(100vw-2rem)] rounded-xl shadow-lg border border-gray-200/70 dark:border-gray-700/70 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md transition-all duration-300 ease-in-out
+        className={`absolute right-0 bottom-full mb-2 w-64 max-w-[calc(100vw-2rem)] rounded-xl shadow-lg border border-gray-200/70 dark:border-gray-700/70 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md transition-opacity duration-200 ease-in-out
           ${
             settingsPanelOpen
-              ? "translate-y-0 opacity-100 pointer-events-auto"
-              : "translate-y-2 opacity-0 pointer-events-none"
-          }
-          lg:translate-y-0 lg:opacity-100 lg:pointer-events-auto`}
+              ? "opacity-100 pointer-events-auto"
+              : "opacity-0 pointer-events-none"
+          }`}
       >
         <div className="p-4">
           <div className="flex items-center justify-between mb-4">
@@ -113,11 +97,11 @@ export function MapSettingsPanel({
               Map Settings
             </h3>
 
-            {/* Close button for mobile */}
+            {/* Close button - visible on all screen sizes */}
             <button
               type="button"
               onClick={() => setSettingsPanelOpen(false)}
-              className="lg:hidden p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              className="p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
               aria-label="Close settings"
             >
               <svg
