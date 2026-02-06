@@ -318,7 +318,7 @@ export function Map() {
         }
       : defaultPosition;
 
-    // Safer savedCenter parsing (avoid crash if LS is corrupt)
+    // Safer savedCenter parsing (avoid NaN / wrong shape)
     let savedCenter: unknown = [];
     try {
       savedCenter = JSON.parse(localStorage.getItem("savedCenter") ?? "[]");
