@@ -8,15 +8,15 @@ export function MapLegend() {
         Legend
       </div>
       <div className="space-y-1 text-xs text-gray-600 dark:text-gray-300">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center justify-center gap-2">
           <div className="w-4 h-1 bg-green-400 rounded-full" />
           <span>Heard A Neighbor</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center justify-center gap-2">
           <div className="w-4 h-1 bg-blue-400 rounded-full" />
           <span>Heard By Neighbor</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center justify-center gap-2">
           <div className="w-4 h-1 bg-purple-400 rounded-full" />
           <span>Mutual Connection</span>
         </div>
