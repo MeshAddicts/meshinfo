@@ -114,23 +114,23 @@ class MemoryDataStore:
     
     # Real-time write to Postgres if enabled (dual-write pattern)
     if 'postgres' in self.config.get('storage', {}).get('write_to', []):
-      import asyncio
       try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-          asyncio.create_task(self.pg_storage.write_node(id, n))
-        else:
-          loop.run_until_complete(self.pg_storage.write_node(id, n))
+        try:
+          loop = asyncio.get_running_loop()
+          loop.create_task(self.pg_storage.write_node(id, n))
+        except RuntimeError:
+          # No running loop in this thread/context
+          asyncio.run(self.pg_storage.write_node(id, n))
       except Exception as e:
         logger.error(f"Failed to write node {id} to Postgres (non-blocking): {e}")
 
-  def load(self):
+  async def load(self):
     # Determine read source from config
     read_from = self.config.get('storage', {}).get('read_from', 'json')
-    
+
     if read_from == 'postgres':
       logger.info("Loading data from PostgreSQL")
-      self._load_from_postgres()
+      await self._load_from_postgres()
     else:
       logger.info("Loading data from JSON files")
       self._load_from_json()
@@ -228,41 +228,36 @@ class MemoryDataStore:
         self.traceroutes = []
         self.traceroutes_by_node = {}
 
-  def _load_from_postgres(self):
-    """Initialize PostgreSQL connection but don't load data into memory."""
-    
+  async def _load_from_postgres(self):
+    """Initialize PostgreSQL connection and prepare postgres-backed mode."""
     try:
-      loop = asyncio.get_event_loop()
-      if not loop.is_running():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-      
-      # Connect to Postgres
-      loop.run_until_complete(self.pg_storage.connect())
-      loop.run_until_complete(self.pg_storage.ensure_schema())
-      
-      # Initialize empty data structures (data will be queried directly from Postgres)
+      # Connect + ensure schema 
+      await self.pg_storage.connect()
+      await self.pg_storage.ensure_schema()
+
+      # NOTE: your current code intentionally does NOT load rows into memory.
+      # If your API still reads from self.nodes/chat/telemetry, you’ll get empty results.
       self.nodes = {}
       self.chat = {'channels': {'0': {'name': 'General', 'messages': []}}}
       self.telemetry = []
       self.telemetry_by_node = {}
       self.traceroutes = []
       self.traceroutes_by_node = {}
-      
+
       # Ensure default nodes exist in Postgres
-      if self.config['server']['node_id'] not in self.nodes:
-        default_node = Node.default_node(self.config['server']['node_id'])
-        self.nodes[self.config['server']['node_id']] = default_node
-        loop.run_until_complete(self.pg_storage.write_node(self.config['server']['node_id'], default_node))
-      
+      default_id = self.config['server']['node_id']
+      default_node = Node.default_node(default_id)
+      self.nodes[default_id] = default_node
+      await self.pg_storage.write_node(default_id, default_node)
+
       broadcast_node = Node.default_node('ffffffff')
       self.nodes['ffffffff'] = broadcast_node
-      loop.run_until_complete(self.pg_storage.write_node('ffffffff', broadcast_node))
-      
-      print(f"PostgreSQL mode: Data will be queried directly from database")
-      
+      await self.pg_storage.write_node('ffffffff', broadcast_node)
+
+      print("PostgreSQL mode: Data will be queried directly from database")
+
     except Exception as e:
-      logger.error(f"Failed to initialize PostgreSQL connection, falling back to JSON: {e}")
+      logger.exception("Failed to initialize PostgreSQL connection, falling back to JSON: %s", e)
       self._load_from_json()
 
   def load_json_file(self, filename):

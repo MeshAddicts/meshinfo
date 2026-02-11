@@ -11,7 +11,7 @@ import datetime
 import json
 import logging
 import base64
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List, Tuple
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
@@ -42,28 +42,37 @@ class PostgresStorage:
             logger.info("PostgreSQL storage is disabled in config")
             return False
 
+        # Idempotent: don't recreate the pool if we already have one.
+        if self.pool is not None:
+            return True
+
         try:
             self.pool = await asyncpg.create_pool(
-                host=self.pg_config.get('host', 'postgres'),
-                port=self.pg_config.get('port', 5432),
-                database=self.pg_config.get('database', 'meshinfo'),
-                user=self.pg_config.get('username', 'postgres'),
-                password=self.pg_config.get('password', 'password'),
-                min_size=self.pg_config.get('min_pool_size', 5),
-                max_size=self.pg_config.get('max_pool_size', 20),
-                command_timeout=10
+                host=self.pg_config.get("host", "postgres"),
+                port=self.pg_config.get("port", 5432),
+                database=self.pg_config.get("database", "meshinfo"),
+                user=self.pg_config.get("username", "postgres"),
+                password=self.pg_config.get("password", "password"),
+                min_size=self.pg_config.get("min_pool_size", 5),
+                max_size=self.pg_config.get("max_pool_size", 20),
+                command_timeout=10,
             )
             logger.info("PostgreSQL connection pool established")
             return True
         except Exception as e:
             logger.error(f"Failed to connect to PostgreSQL: {e}")
+            # Disable postgres mode to prevent repeated attempts elsewhere
             self.enabled = False
+            self.pool = None
             return False
 
     async def close(self):
         """Close the connection pool."""
-        if self.pool:
-            await self.pool.close()
+        if self.pool is not None:
+            try:
+                await self.pool.close()
+            finally:
+                self.pool = None
             logger.info("PostgreSQL connection pool closed")
 
     async def ensure_schema(self):
@@ -82,8 +91,6 @@ class PostgresStorage:
             logger.error(f"Failed to ensure schema: {e}")
             if self.raise_on_write_error:
                 raise
-
-    from typing import Any, Optional
 
     def _normalize_node_id(self, value: Any) -> Optional[str]:
         """
@@ -159,6 +166,22 @@ class PostgresStorage:
             t = t / 1000.0
 
         return datetime.datetime.fromtimestamp(t, tz=ZoneInfo(self.timezone))
+    
+    def _jsonb(self, v: Any, default):
+        """
+        Safe JSONB reader:
+        - asyncpg may return json/jsonb as str OR as dict/list depending on codecs.
+        """
+        if v is None:
+            return default
+        if isinstance(v, (dict, list)):
+            return v
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return default
+        return default
 
     # ============================================================================
     # WRITE OPERATIONS - Real-time writes for dual-write pattern
@@ -288,7 +311,7 @@ class PostgresStorage:
             INSERT INTO node_positions (
                 node_id, latitude_i, longitude_i, altitude, time, precision_bits, geocoded, last_geocoding
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
             ON CONFLICT (node_id) DO UPDATE SET
                 latitude_i = EXCLUDED.latitude_i,
                 longitude_i = EXCLUDED.longitude_i,
@@ -468,7 +491,7 @@ class PostgresStorage:
                         from_node_id, to_node_id, sender_node_id, message_id, channel,
                         packet_id, hops_away, rssi, snr, timestamp, rx_time, payload
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
                     ON CONFLICT (from_node_id, message_id) DO NOTHING
                 """,
                     from_id,
@@ -628,7 +651,7 @@ class PostgresStorage:
                         packet_id, hops_away, rssi, snr, timestamp, rx_time,
                         route, route_ids, payload
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14::jsonb)
                     ON CONFLICT (from_node_id, message_id) DO NOTHING
                 """,
                     from_id, to_id, sender_id, msg_id,
@@ -787,7 +810,7 @@ class PostgresStorage:
                             'altitude': row['altitude'],
                             'time': row['time'],
                             'precision_bits': row['precision_bits'],
-                            'geocoded': json.loads(row['geocoded']) if row['geocoded'] else None,
+                            'geocoded': self._jsonb(row['geocoded'], None),
                             'last_geocoding': row['last_geocoding'].isoformat() if row['last_geocoding'] else None
                         }
 
@@ -803,7 +826,7 @@ class PostgresStorage:
                     if node_id in nodes:
                         nodes[node_id]['neighborinfo'] = {
                             'node_broadcast_interval_secs': row['node_broadcast_interval_secs'],
-                            'neighbors': json.loads(row['neighbors']) if row['neighbors'] else []
+                            'neighbors': self._jsonb(row['neighbors'], []),
                         }
 
                 # Load current telemetry
@@ -919,7 +942,7 @@ class PostgresStorage:
                         'rssi': row['rssi'],
                         'snr': row['snr'],
                         'timestamp': row['timestamp'],
-                        'payload': json.loads(row['payload']) if row['payload'] else {}
+                        'payload': self._jsonb(row['payload'], {}),
                     }
                     
                     telemetry.append(msg)
@@ -969,9 +992,9 @@ class PostgresStorage:
                         'rssi': row['rssi'],
                         'snr': row['snr'],
                         'timestamp': row['timestamp'],
-                        'route': json.loads(row['route']) if row['route'] else [],
-                        'route_ids': json.loads(row['route_ids']) if row['route_ids'] else [],
-                        'payload': json.loads(row['payload']) if row['payload'] else {}
+                        'route': self._jsonb(row['route'], []),
+                        'route_ids': self._jsonb(row['route_ids'], []),
+                        'payload': self._jsonb(row['payload'], {}),
                     }
                     
                     traceroutes.append(msg)
@@ -1077,7 +1100,7 @@ class PostgresStorage:
                         'hardware': row['hardware'],
                         'role': row['role'],
                         'active': row['active'],
-                        'tc2_bbs': row.get('tc2_bbs', False),
+                        'tc2_bbs': row['tc2_bbs'] if 'tc2_bbs' in row else False,
                         'last_seen': row['last_seen'].isoformat() if row['last_seen'] else None,
                         'since': datetime.timedelta(seconds=row['since_seconds']) if row['since_seconds'] else None,
                         'position': None,
@@ -1107,7 +1130,7 @@ class PostgresStorage:
                                 'altitude': row['altitude'],
                                 'time': row['time'],
                                 'precision_bits': row['precision_bits'],
-                                'geocoded': json.loads(row['geocoded']) if row['geocoded'] else None,
+                                'geocoded': self._jsonb(row['geocoded'], None),
                                 'last_geocoding': row['last_geocoding'].isoformat() if row['last_geocoding'] else None
                             }
 
@@ -1125,7 +1148,7 @@ class PostgresStorage:
                         if node_id in nodes:
                             nodes[node_id]['neighborinfo'] = {
                                 'node_broadcast_interval_secs': row['node_broadcast_interval_secs'],
-                                'neighbors': json.loads(row['neighbors']) if row['neighbors'] else []
+                                'neighbors': self._jsonb(row['neighbors'], []),
                             }
 
                     # Load current telemetry
@@ -1183,7 +1206,7 @@ class PostgresStorage:
                         'rssi': row['rssi'],
                         'snr': row['snr'],
                         'timestamp': row['timestamp'],
-                        'payload': json.loads(row['payload']) if row['payload'] else {}
+                        'payload': self._jsonb(row['payload'], {}),
                     })
                 
                 return telemetry
@@ -1254,9 +1277,9 @@ class PostgresStorage:
                         'rssi': row['rssi'],
                         'snr': row['snr'],
                         'timestamp': row['timestamp'],
-                        'route': json.loads(row['route']) if row['route'] else [],
-                        'route_ids': json.loads(row['route_ids']) if row['route_ids'] else [],
-                        'payload': json.loads(row['payload']) if row['payload'] else {}
+                        'route': self._jsonb(row['route'], []),
+                        'route_ids': self._jsonb(row['route_ids'], []),
+                        'payload': self._jsonb(row['payload'], {}),
                     })
                 
                 return traceroutes
@@ -1342,7 +1365,7 @@ class PostgresStorage:
                         'rssi': row['rssi'],
                         'snr': row['snr'],
                         'timestamp': row['timestamp'],
-                        'payload': json.loads(row['payload']) if row['payload'] else {}
+                        'payload': self._jsonb(row['payload'], {}),
                     })
                 
                 return telemetry
@@ -1377,9 +1400,9 @@ class PostgresStorage:
                         'rssi': row['rssi'],
                         'snr': row['snr'],
                         'timestamp': row['timestamp'],
-                        'route': json.loads(row['route']) if row['route'] else [],
-                        'route_ids': json.loads(row['route_ids']) if row['route_ids'] else [],
-                        'payload': json.loads(row['payload']) if row['payload'] else {}
+                        'route': self._jsonb(row['route'], []),
+                        'route_ids': self._jsonb(row['route_ids'], []),
+                        'payload': self._jsonb(row['payload'], {}),
                     })
                 
                 return traceroutes

@@ -113,17 +113,7 @@ async def main() -> None:
         time.tzset()
     logger.info("Timezone set to: %s", tz)
 
-    # Initialize Postgres if enabled
-    if config.get('storage', {}).get('postgres', {}).get('enabled', False):
-        logger.info("Initializing PostgreSQL connection...")
-        connected = await data.pg_storage.connect()
-        if connected:
-            await data.pg_storage.ensure_schema()
-            logger.info("PostgreSQL initialized successfully")
-        else:
-            logger.warning("PostgreSQL connection failed, continuing with JSON only")
-
-    data.load()
+    await data.load()
     startup_time = datetime.datetime.now(ZoneInfo(tz))
     data.update("startup_time", startup_time)
 
