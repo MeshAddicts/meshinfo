@@ -22,6 +22,7 @@ import {
 import {
   DirKey,
   FocusMode,
+  MsgType,
   RangeKey,
   SortKey,
   csvEscape,
@@ -149,68 +150,47 @@ export const Chat = () => {
   const { data: nodes = {} } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
 
-  // ---- Horizontal rail: hide scrollbars to prevent height jitter
-  const railX =
-    "overflow-x-auto overflow-y-hidden pb-1 [-webkit-overflow-scrolling:touch] " +
-    "[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden";
-
   // ---- Channel metadata (from broker config)
-  const channelMeta = useMemo(() => {
-    return ((config?.broker?.channels as any)?.meta ?? {}) as Record<
-      string,
-      any
-    >;
-  }, [config]);
+  const channelMeta = (config?.broker?.channels as any)?.meta ?? {};
+  const rawChannelLabel = (id: string) =>
+    channelMeta?.[id]?.label ? String(channelMeta[id].label) : `Channel ${id}`;
+  const rawChannelShort = (id: string) =>
+    channelMeta?.[id]?.short ? String(channelMeta[id].short) : id;
 
-  const rawChannelLabel = useCallback(
-    (id: string) =>
-      channelMeta?.[id]?.label ? String(channelMeta[id].label) : `Channel ${id}`,
-    [channelMeta]
-  );
-
-  const rawChannelShort = useCallback(
-    (id: string) => (channelMeta?.[id]?.short ? String(channelMeta[id].short) : id),
-    [channelMeta]
-  );
-
-  const rawChannelTooltip = useCallback(
-    (id: string) => {
-      const meta = channelMeta?.[id] ?? {};
-      const label = rawChannelLabel(id);
-      const short = rawChannelShort(id);
-      const desc =
-        meta.description ??
-        meta.desc ??
-        meta.tooltip ??
-        meta.notes ??
-        meta.presetDescription ??
-        "";
-      const preset = meta.preset ?? meta.modemPreset ?? meta.profile ?? "";
-      const parts = [
-        `${label} (ch ${id}${short ? ` • ${short}` : ""})`,
-        preset ? `Preset: ${preset}` : "",
-        desc ? String(desc) : "",
-      ].filter(Boolean);
-      return parts.join("\n");
-    },
-    [channelMeta, rawChannelLabel, rawChannelShort]
-  );
+  const rawChannelTooltip = (id: string) => {
+    const meta = channelMeta?.[id] ?? {};
+    const label = rawChannelLabel(id);
+    const short = rawChannelShort(id);
+    const desc =
+      meta.description ??
+      meta.desc ??
+      meta.tooltip ??
+      meta.notes ??
+      meta.presetDescription ??
+      "";
+    const preset = meta.preset ?? meta.modemPreset ?? meta.profile ?? "";
+    const parts = [
+      `${label} (ch ${id}${short ? ` • ${short}` : ""})`,
+      preset ? `Preset: ${preset}` : "",
+      desc ? String(desc) : "",
+    ].filter(Boolean);
+    return parts.join("\n");
+  };
 
   // ---- Available channels from data (still the source of messages)
   const channelEntries = useMemo(() => {
     const entries = Object.entries(chat?.channels ?? {});
-    const allow = (config?.broker?.channels as any)?.display;
+    const allow = config?.broker?.channels?.display;
     if (Array.isArray(allow) && allow.length > 0) {
       return entries.filter(([id]) => allow.includes(id));
     }
     return entries;
-  }, [chat?.channels, config]);
+  }, [chat?.channels, config?.broker?.channels?.display]);
 
-  const availableChannelIds = useMemo(() => {
-    return new Set(channelEntries.map(([id]) => String(id)));
-  }, [channelEntries]);
-
-  const hasChatChannels = availableChannelIds.size > 0;
+  const availableChannelIds = useMemo(
+    () => new Set(channelEntries.map(([id]) => String(id))),
+    [channelEntries]
+  );
 
   // ---- Build “views” from broker.channels.views (single-channel ones)
   const views: ViewDef[] = useMemo(() => {
@@ -221,9 +201,8 @@ export const Chat = () => {
       for (const v of vraw) {
         const chans = Array.isArray(v?.channels) ? v.channels.map(String) : [];
         if (chans.length !== 1) continue;
-
         const channelId = chans[0];
-        if (hasChatChannels && !availableChannelIds.has(channelId)) continue;
+        if (!availableChannelIds.has(channelId)) continue;
 
         const label = String(v?.label ?? v?.id ?? rawChannelLabel(channelId));
         const short = v?.short ? String(v.short) : rawChannelShort(channelId);
@@ -262,26 +241,10 @@ export const Chat = () => {
       }
     }
 
-    // Fallback: if no views config, present channels from chat, display list, meta, or a sane default.
+    // Fallback: if no views config, present channels as-is (canonical key = channel id)
     if (out.length === 0) {
-      const idsFromChat = channelEntries.map(([id]) => String(id));
-      const idsFromDisplay: string[] = Array.isArray(
-        (config?.broker?.channels as any)?.display
-      )
-        ? (config?.broker?.channels as any)?.display.map(String)
-        : [];
-      const idsFromMeta = Object.keys(channelMeta ?? {}).map(String);
-
-      const ids =
-        idsFromChat.length > 0
-          ? idsFromChat
-          : idsFromDisplay.length > 0
-            ? idsFromDisplay
-            : idsFromMeta.length > 0
-              ? idsFromMeta
-              : ["0"];
-
-      for (const channelId of ids) {
+      for (const [id] of channelEntries) {
+        const channelId = String(id);
         out.push({
           key: channelId,
           label: rawChannelLabel(channelId),
@@ -294,24 +257,8 @@ export const Chat = () => {
       }
     }
 
-    // If nothing marked default, prefer ch "0" if present.
-    if (!out.some((v) => v.isDefault)) {
-      const v0 = out.find((v) => v.channelId === "0");
-      if (v0) v0.isDefault = true;
-      else if (out[0]) out[0].isDefault = true;
-    }
-
     return out;
-  }, [
-    config,
-    channelEntries,
-    availableChannelIds,
-    hasChatChannels,
-    rawChannelLabel,
-    rawChannelShort,
-    rawChannelTooltip,
-    channelMeta,
-  ]);
+  }, [config, channelEntries, availableChannelIds]);
 
   const defaultViewKey =
     views.find((v) => v.isDefault)?.key ?? views[0]?.key ?? "";
@@ -350,7 +297,7 @@ export const Chat = () => {
   // Mobile sheets
   const [mobileSheet, setMobileSheet] = useState<MobileSheetKey | null>(null);
 
-  // Track lg breakpoint (1024px) to gate mobile/desktop behaviors
+// Track lg breakpoint (1024px) to gate mobile/desktop behaviors
   const [isLgUp, setIsLgUp] = useState(() => {
     if (typeof window === "undefined") return true;
     return window.matchMedia("(min-width: 1024px)").matches;
@@ -374,22 +321,6 @@ export const Chat = () => {
     };
   }, []);
 
-  // IMPORTANT: if a mobile sheet is open and the viewport becomes lg+, close it.
-  // Otherwise the sheet becomes display:none (lg:hidden) but the body overflow lock remains.
-  useEffect(() => {
-    if (isLgUp && mobileSheet) {
-      setMobileSheet(null);
-    }
-  }, [isLgUp, mobileSheet]);
-
-  // Optional: if export popover is open and we go mobile, close it (prevents stale state)
-  useEffect(() => {
-    if (!isLgUp && isLgUp !== undefined) {
-      // only close when truly small; harmless otherwise
-      // (popover UI is hidden on mobile)
-    }
-  }, [isLgUp]);
-
   // Mobile UX: when selection changes, auto-open Details sheet
   const prevUrlMsgRef = useRef<string>("");
 
@@ -403,6 +334,7 @@ export const Chat = () => {
     if (urlMsg && urlMsg !== prev) {
       setMobileSheet("details");
     }
+
   }, [urlMsg, isLgUp]);
 
   // Live / auto-follow toggle
@@ -422,9 +354,9 @@ export const Chat = () => {
     []
   );
 
-  // Export menu
-  const [exportOpen, setExportOpen] = useState(false);
-  const exportMenuRef = useRef<HTMLDivElement | null>(null);
+    // Export menu
+    const [exportOpen, setExportOpen] = useState(false);
+    const exportMenuRef = useRef<HTMLDivElement | null>(null);
 
   // Search input
   const [qInput, setQInput] = useState(urlQ);
@@ -460,6 +392,11 @@ export const Chat = () => {
     return v?.label ?? rawChannelLabel(id);
   };
 
+  const channelShort = (id: string) => {
+    const v = views.find((x) => x.channelId === id);
+    return v?.short ?? rawChannelShort(id);
+  };
+
   const channelTooltip = (id: string) => {
     const v = views.find((x) => x.channelId === id);
     return v?.tooltip ?? rawChannelTooltip(id);
@@ -472,10 +409,9 @@ export const Chat = () => {
 
   const totalMessages = selectedChannelObj?.totalMessages ?? 0;
 
-  // Range threshold (tie updates to dataUpdatedAt so "now" progresses on refreshes)
+  // Range threshold
+  const nowSec = Math.floor(Date.now() / 1000);
   const rangeThreshold = useMemo(() => {
-    const nowSec = Math.floor(Date.now() / 1000);
-
     switch (urlRange) {
       case "1h":
         return nowSec - 3600;
@@ -487,7 +423,7 @@ export const Chat = () => {
       default:
         return undefined;
     }
-  }, [urlRange, dataUpdatedAt]);
+  }, [nowSec, urlRange]);
 
   // Messages (filtered + sorted)
   const messages = useMemo(() => {
@@ -792,6 +728,10 @@ export const Chat = () => {
     setFocusPicker("");
   };
 
+  const clearSelection = () => {
+    setParam("msg", undefined, "push");
+  };
+
   const clearFocus = () => {
     setParams(
       [
@@ -908,7 +848,7 @@ export const Chat = () => {
   }, [messages, urlNode]);
 
   // Virtualized list ref
-  const virtuosoRef = useRef<VirtuosoHandle>(null!);
+  const virtuosoRef = useRef<VirtuosoHandle | null>(null);
 
   // Scroll selected message into view (Commit 8)
   const pendingScrollRef = useRef<string | null>(null);
@@ -1167,25 +1107,25 @@ export const Chat = () => {
     return `Auto-follow is active at the ${edge}.`;
   }, [liveEnabled, followState.selectionPinned, followState.atEdge, followEdge]);
 
-  const advancedCount = useMemo(() => {
-    let n = 0;
-    if (typeof urlHopsMin === "number") n += 1;
-    if (typeof urlHopsMax === "number") n += 1;
-    if (urlFrom.trim()) n += 1;
-    if (urlTo.trim()) n += 1;
-    if (urlVia.trim()) n += 1;
-    if (onlyUnknownEndpoints) n += 1;
-    if (requireVia) n += 1;
-    return n;
-  }, [
-    urlHopsMin,
-    urlHopsMax,
-    urlFrom,
-    urlTo,
-    urlVia,
-    onlyUnknownEndpoints,
-    requireVia,
-  ]);
+    const advancedCount = useMemo(() => {
+      let n = 0;
+      if (typeof urlHopsMin === "number") n += 1;
+      if (typeof urlHopsMax === "number") n += 1;
+      if (urlFrom.trim()) n += 1;
+      if (urlTo.trim()) n += 1;
+      if (urlVia.trim()) n += 1;
+      if (onlyUnknownEndpoints) n += 1;
+      if (requireVia) n += 1;
+      return n;
+    }, [
+      urlHopsMin,
+      urlHopsMax,
+      urlFrom,
+      urlTo,
+      urlVia,
+      onlyUnknownEndpoints,
+      requireVia,
+    ]);
 
   return (
     <div className="w-full h-[100dvh] overflow-hidden flex flex-col">
@@ -1216,7 +1156,7 @@ export const Chat = () => {
               <div className="mt-1 hidden sm:flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
                 <span>
                   Updated:{" "}
-                  <span className="font-medium">
+                  <span className="font-medium tabular-nums">
                     {dataUpdatedAt && dataUpdatedAt > 0
                       ? new Date(dataUpdatedAt).toLocaleString()
                       : new Date().toLocaleString()}
@@ -1225,20 +1165,20 @@ export const Chat = () => {
 
                 <span className="opacity-60">•</span>
 
-                <span className={isFetching ? "animate-pulse" : ""}>
-                  {isFetching ? "Refreshing…" : "Ready"}
-                </span>
-
                 <button
                   type="button"
-                  className="underline hover:no-underline"
+                  className="underline hover:no-underline disabled:opacity-60 disabled:cursor-wait"
                   onClick={() => refetch()}
+                  disabled={isFetching}
+                  aria-busy={isFetching}
+                  title={isFetching ? "Refreshing…" : "Refresh now"}
                 >
                   refresh
                 </button>
 
                 <span className="opacity-60">•</span>
 
+                {/* live pill stays exactly as-is */}
                 <button
                   type="button"
                   className={[
@@ -1263,21 +1203,29 @@ export const Chat = () => {
               </div>
 
               {/* Mobile meta row (compact) */}
-              <div className="mt-1 flex sm:hidden items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                <span className={isFetching ? "animate-pulse" : ""}>
-                  {isFetching ? "Refreshing…" : "Ready"}
+              <div className="mt-1 flex sm:hidden flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                <span className="tabular-nums">
+                  {dataUpdatedAt && dataUpdatedAt > 0
+                    ? new Date(dataUpdatedAt).toLocaleString()
+                    : new Date().toLocaleString()}
                 </span>
+
+                <span className="opacity-60">•</span>
 
                 <button
                   type="button"
-                  className="underline hover:no-underline"
+                  className="underline hover:no-underline disabled:opacity-60 disabled:cursor-wait"
                   onClick={() => refetch()}
+                  disabled={isFetching}
+                  aria-busy={isFetching}
+                  title={isFetching ? "Refreshing…" : "Refresh now"}
                 >
                   refresh
                 </button>
 
                 <span className="opacity-60">•</span>
 
+                {/* live pill stays exactly as-is */}
                 <button
                   type="button"
                   className={[
@@ -1320,7 +1268,7 @@ export const Chat = () => {
           </div>
 
           {/* Preset pills (canonical ch=mediumfast/longfast) */}
-          <div className={`mt-3 flex gap-2 ${railX}`}>
+          <div className="mt-3 flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
             {views.map((v) => {
               const active = v.key === selectedView?.key;
               const chObj: any = (chat?.channels as any)?.[v.channelId];
@@ -1502,9 +1450,7 @@ export const Chat = () => {
           </div>
 
           {/* Status chips: desktop only, always rendered (mobile uses Controls Badge) */}
-          <div
-            className={`mt-2 hidden lg:flex items-center gap-2 min-h-[30px] ${railX}`}
-          >
+          <div className="mt-2 hidden lg:flex items-center gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch] min-h-[30px]">
             <StatusChip
               label={`Range: ${urlRange}`}
               active={urlRange !== "24h"}
