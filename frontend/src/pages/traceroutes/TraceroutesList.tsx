@@ -2,12 +2,8 @@ import { Link } from "react-router-dom";
 import { Virtuoso } from "react-virtuoso";
 
 import { formatTimestamp } from "../../utils/formatTimestamp";
-import {
-  type NodesById,
-  type TraceroutesListItem,
-  routeIdsOf,
-  routeHopsOf,
-} from "./traceroutesUtils";
+import { type NodesById } from "./traceroutesUtils";
+import { type TraceroutesListItem } from "./traceroutesTypes";
 
 function stop(e: React.MouseEvent) {
   e.stopPropagation();
@@ -30,6 +26,7 @@ function NodeLink({
         className ??
         "text-indigo-700 hover:text-indigo-800 dark:text-indigo-300 dark:hover:text-indigo-200"
       }
+      title={id}
     >
       {label}
     </Link>
@@ -80,16 +77,12 @@ export function TraceroutesList({
 }) {
   return (
     <Virtuoso
-      // Virtuoso MUST have a real height from parents (we keep flex-1 min-h-0 upstream)
       style={{ flex: 1, minHeight: 0, height: "100%" }}
       data={items}
       itemContent={(_, it) => {
         const isSelected = it.key === selectedKey;
 
-        if (it.kind === "route") {
-          const from = nodes[it.group.from]?.shortname || "UNK";
-          const to = nodes[it.group.to]?.shortname || "UNK";
-
+        if (it.kind === "all") {
           return (
             <div className="px-3 py-2">
               <div
@@ -108,31 +101,19 @@ export function TraceroutesList({
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
-                      {from} <span className="text-gray-400">→</span> {to}
+                      Overview
                     </div>
-                    <div className="mt-1">
-                      <RouteInline nodes={nodes} routeIds={it.group.route_ids} />
+                    <div className="text-xs text-gray-500 mt-1">
+                      {it.totalPairs.toLocaleString()} pairs •{" "}
+                      {it.totalEvents.toLocaleString()} runs •{" "}
+                      {it.uniqueRoutes.toLocaleString()} unique routes
                     </div>
                   </div>
 
                   <div className="shrink-0 text-right">
-                    <div className="text-xs text-gray-500">
-                      Count:{" "}
-                      <span className="font-semibold text-gray-700 dark:text-gray-200">
-                        {it.group.count.toLocaleString()}
-                      </span>
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1">
-                      Last:{" "}
-                      <span className="text-gray-700 dark:text-gray-200">
-                        {it.group.lastTsMs ? formatTimestamp(it.group.lastTsMs) : "Unknown"}
-                      </span>
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1">
-                      Hops:{" "}
-                      <span className="text-gray-700 dark:text-gray-200">
-                        {it.group.route_ids.length}
-                      </span>
+                    <div className="text-xs text-gray-500">Last run</div>
+                    <div className="text-xs text-gray-700 dark:text-gray-200">
+                      {it.lastTsMs ? formatTimestamp(it.lastTsMs) : "—"}
                     </div>
                   </div>
                 </div>
@@ -141,11 +122,9 @@ export function TraceroutesList({
           );
         }
 
-        // event
-        const e = it.event;
-        const from = nodes[e.from]?.shortname || "UNK";
-        const to = nodes[e.to]?.shortname || "UNK";
-        const routeIds = routeIdsOf(e);
+        // pair item
+        const fromLabel = nodes[it.from]?.shortname || "UNK";
+        const toLabel = nodes[it.to]?.shortname || "UNK";
 
         return (
           <div className="px-3 py-2">
@@ -165,34 +144,48 @@ export function TraceroutesList({
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
-                    {from} <span className="text-gray-400">→</span> {to}
+                    <NodeLink id={it.from} label={fromLabel} />
+                    <span className="mx-2 text-gray-400">→</span>
+                    <NodeLink id={it.to} label={toLabel} />
                   </div>
 
                   <div className="text-xs text-gray-500 mt-1">
-                    {formatTimestamp(e.timestamp) || "Unknown"} •{" "}
+                    Last:{" "}
                     <span className="text-gray-700 dark:text-gray-200">
-                      {routeHopsOf(e)} hops
+                      {it.summary.lastTsMs ? formatTimestamp(it.summary.lastTsMs) : "—"}
                     </span>
-                    {typeof e.hops_away === "number" ? (
-                      <>
-                        {" "}
-                        • <span className="text-gray-700 dark:text-gray-200">{e.hops_away}</span>{" "}
-                        away
-                      </>
-                    ) : null}
+                    {" • "}
+                    Runs:{" "}
+                    <span className="text-gray-700 dark:text-gray-200">
+                      {it.summary.count.toLocaleString()}
+                    </span>
+                    {" • "}
+                    Unique routes:{" "}
+                    <span className="text-gray-700 dark:text-gray-200">
+                      {it.summary.uniqueRoutes.toLocaleString()}
+                    </span>
                   </div>
 
                   <div className="mt-2">
-                    <RouteInline nodes={nodes} routeIds={routeIds} />
+                    {it.summary.topRouteIds.length ? (
+                      <>
+                        <div className="text-[11px] text-gray-500 mb-1">
+                          Most common route ({it.summary.topRouteCount.toLocaleString()}×)
+                        </div>
+                        <RouteInline nodes={nodes} routeIds={it.summary.topRouteIds} />
+                      </>
+                    ) : (
+                      <div className="text-xs text-gray-500">No route data.</div>
+                    )}
                   </div>
                 </div>
 
                 <div className="shrink-0 text-right">
                   <div className="text-xs text-gray-500">
-                    Route hops:{" "}
-                    <span className="font-semibold text-gray-700 dark:text-gray-200">
-                      {routeIds.length}
-                    </span>
+                    Pair
+                  </div>
+                  <div className="text-[11px] text-gray-400 tabular-nums mt-1">
+                    {it.from} → {it.to}
                   </div>
                 </div>
               </div>

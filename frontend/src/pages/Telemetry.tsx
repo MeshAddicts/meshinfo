@@ -15,6 +15,7 @@ import { ExportMenu } from "./chat/ExportMenu";
 
 import {
   type NodesById,
+  type RangeKey,
   type TelemetryEvent,
   type TelemetryListItem,
   type TelemetryNodeSummary,
@@ -31,7 +32,6 @@ import {
 import { TelemetryList } from "./telemetry/TelemetryList";
 import { TelemetryDetailsPanel } from "./telemetry/TelemetryDetailsPanel";
 
-type RangeKey = "all" | "24h" | "7d" | "30d";
 type SortKey =
   | "last_desc"
   | "name_asc"
@@ -46,15 +46,12 @@ const DEFAULT_RANGE: RangeKey = "all";
 const DEFAULT_SEL = "all";
 const DEFAULT_SORT: SortKey = "last_desc";
 
-function setParamValue(
-  params: URLSearchParams,
-  key: string,
-  value?: string | null,
-): URLSearchParams {
-  const next = new URLSearchParams(params);
-  if (!value) next.delete(key);
-  else next.set(key, value);
-  return next;
+function clampRange(v: any): RangeKey {
+  // legacy share links: telemetry used to allow 30d
+  if (v === "30d") return "7d";
+  return (["all", "1h", "24h", "7d"] as const).includes(v)
+    ? (v as RangeKey)
+    : DEFAULT_RANGE;
 }
 
 async function copyTextToClipboard(text: string) {
@@ -151,6 +148,14 @@ export const Telemetry = () => {
     [setSearchParams],
   );
 
+  // Migrate legacy URLs: range=30d => range=7d
+  useEffect(() => {
+    if (searchParams.get("range") === "30d") {
+      setParam("range", "7d", "replace");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   // Track lg breakpoint (1024px) (for ExportMenu click-outside)
   const [isLgUp, setIsLgUp] = useState(() => {
     if (typeof window === "undefined") return true;
@@ -178,13 +183,7 @@ export const Telemetry = () => {
   }, []);
 
   // URL state
-  const rangeRaw = searchParams.get("range") as RangeKey | null;
-  const range: RangeKey = (["all", "24h", "7d", "30d"] as const).includes(
-    rangeRaw as any,
-  )
-    ? (rangeRaw as RangeKey)
-    : DEFAULT_RANGE;
-
+  const range = clampRange(searchParams.get("range"));
   const urlQ = searchParams.get("q") || "";
   const sel = searchParams.get("sel") || DEFAULT_SEL;
 
@@ -317,7 +316,7 @@ export const Telemetry = () => {
   const nowMs = Date.now();
   const minTsMs = useMemo(() => {
     if (range === "all") return -Infinity;
-    return nowMs - RANGE_MS[range];
+    return nowMs - (RANGE_MS as any)[range];
   }, [range, nowMs]);
 
   // Search node-id allowlist (so overview charts can reflect search)
@@ -796,7 +795,7 @@ export const Telemetry = () => {
             <div className="hidden lg:flex flex-wrap gap-2 items-center">
               {/* Range segmented */}
               <div className="inline-flex rounded-md border border-gray-300/60 dark:border-gray-700 overflow-hidden">
-                {(["all", "24h", "7d", "30d"] as RangeKey[]).map((rk) => (
+                {(["1h", "24h", "7d", "all"] as RangeKey[]).map((rk) => (
                   <button
                     key={`range-${rk}`}
                     type="button"

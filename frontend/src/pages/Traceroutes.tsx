@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useLocation, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 
 import { HeardBy } from "../components/HeardBy";
 import { useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
@@ -16,8 +16,6 @@ import { ExportMenu } from "./chat/ExportMenu";
 import {
   type NodesById,
   type TracerouteEvent,
-  type TracerouteGroup,
-  type TraceroutesListItem,
   coerceEvent,
   csvEscape,
   downloadBlob,
@@ -29,58 +27,49 @@ import {
 
 import { TraceroutesList } from "./traceroutes/TraceroutesList";
 import { TracerouteDetailsPanel } from "./traceroutes/TracerouteDetailsPanel";
+import {
+  type TraceroutePairSummary,
+  type TraceroutesListItem,
+} from "./traceroutes/traceroutesTypes";
 
-type ViewKey = "events" | "routes";
-type RangeKey = "all" | "24h" | "7d" | "30d";
+type RangeKey = "all" | "1h" | "24h" | "7d";
 type SortKey =
-  | "newest"
-  | "oldest"
-  | "hops_desc"
-  | "hops_asc"
+  | "last_desc"
+  | "last_asc"
   | "count_desc"
   | "count_asc"
-  | "last_desc"
-  | "last_asc";
+  | "routes_desc"
+  | "routes_asc";
+
+const DEFAULT_RANGE: RangeKey = "all";
+const DEFAULT_SEL = "all";
+const DEFAULT_SORT: SortKey = "last_desc";
 
 const RANGE_MS: Record<Exclude<RangeKey, "all">, number> = {
+  "1h": 60 * 60 * 1000,
   "24h": 24 * 60 * 60 * 1000,
   "7d": 7 * 24 * 60 * 60 * 1000,
-  "30d": 30 * 24 * 60 * 60 * 1000,
 };
 
-function clampSortForView(view: ViewKey, sort: SortKey): SortKey {
-  if (view === "routes") {
-    if (
-      sort === "newest" ||
-      sort === "oldest" ||
-      sort === "hops_desc" ||
-      sort === "hops_asc"
-    ) {
-      return "count_desc";
-    }
-    return sort;
-  }
-  // events
-  if (
-    sort === "count_desc" ||
-    sort === "count_asc" ||
-    sort === "last_desc" ||
-    sort === "last_asc"
-  ) {
-    return "newest";
-  }
-  return sort;
+function clampRange(v: any): RangeKey {
+  // legacy share links: traceroutes used to allow 30d
+  if (v === "30d") return "7d";
+  return (["all", "1h", "24h", "7d"] as const).includes(v)
+    ? (v as RangeKey)
+    : DEFAULT_RANGE;
 }
 
-function setParamValue(
-  params: URLSearchParams,
-  key: string,
-  value?: string | null,
-): URLSearchParams {
-  const next = new URLSearchParams(params);
-  if (!value) next.delete(key);
-  else next.set(key, value);
-  return next;
+function clampSort(v: any): SortKey {
+  return ([
+    "last_desc",
+    "last_asc",
+    "count_desc",
+    "count_asc",
+    "routes_desc",
+    "routes_asc",
+  ] as const).includes(v)
+    ? (v as SortKey)
+    : DEFAULT_SORT;
 }
 
 async function copyTextToClipboard(text: string) {
@@ -148,17 +137,92 @@ function StatusChip({
   );
 }
 
+function sanitizeFilename(s: string) {
+  return s.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 140);
+}
+
 export const Traceroutes = () => {
-  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
+
+  // Clean up legacy params (old view + old sorts + old selection keys)
+  useEffect(() => {
+    const legacyView = searchParams.get("view");
+    const legacySort = searchParams.get("sort") ?? "";
+    const legacySel = searchParams.get("sel") ?? "";
+    const legacyRange = searchParams.get("range") ?? "";
+
+    const needsCleanup =
+      !!legacyView ||
+      legacyRange === "30d" ||
+      [
+        "newest",
+        "oldest",
+        "hops_desc",
+        "hops_asc",
+        "count_desc",
+        "count_asc",
+        "last_desc",
+        "last_asc",
+      ].includes(legacySort) ||
+      (legacySel && legacySel !== "all" && !legacySel.startsWith("pair:"));
+
+    if (!needsCleanup) return;
+
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        p.delete("view");
+
+        // legacy: 30d => 7d so UI + behavior match
+        if (p.get("range") === "30d") p.set("range", "7d");
+
+        // old page used different sort values; drop to our default
+        if (
+          [
+            "newest",
+            "oldest",
+            "hops_desc",
+            "hops_asc",
+            "count_desc",
+            "count_asc",
+            "last_desc",
+            "last_asc",
+          ].includes(p.get("sort") ?? "")
+        ) {
+          p.delete("sort");
+        }
+
+        // old selection keys (evt:/route:) won’t exist anymore
+        const s = p.get("sel") ?? "";
+        if (s && s !== "all" && !s.startsWith("pair:")) p.delete("sel");
+
+        return p;
+      },
+      { replace: true },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const setParam = useCallback(
     (key: string, value?: string, mode: "push" | "replace" = "push") => {
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
-          if (value == null || value === "") next.delete(key);
-          else next.set(key, value);
+
+          // always remove legacy view param if present
+          next.delete("view");
+
+          const v = value == null ? "" : String(value);
+
+          const isDefault =
+            (key === "range" && v === DEFAULT_RANGE) ||
+            (key === "sel" && v === DEFAULT_SEL) ||
+            (key === "sort" && (v as SortKey) === DEFAULT_SORT) ||
+            (key === "q" && v.trim() === "");
+
+          if (!v || isDefault) next.delete(key);
+          else next.set(key, v);
+
           return next;
         },
         { replace: mode === "replace" },
@@ -181,7 +245,6 @@ export const Traceroutes = () => {
 
     onChange();
 
-    // Safari fallback
     if (typeof m.addEventListener === "function")
       m.addEventListener("change", onChange);
     else (m as any).addListener(onChange);
@@ -194,15 +257,10 @@ export const Traceroutes = () => {
   }, []);
 
   // URL state
-  const view = (searchParams.get("view") as ViewKey) || "events";
-  const range = (searchParams.get("range") as RangeKey) || "all";
-  const sel = searchParams.get("sel") || "";
+  const range = clampRange(searchParams.get("range"));
   const urlQ = searchParams.get("q") || "";
-
-  const sortParam =
-    (searchParams.get("sort") as SortKey) ||
-    (view === "routes" ? "count_desc" : "newest");
-  const sort = clampSortForView(view, sortParam);
+  const selectedKey = searchParams.get("sel") || DEFAULT_SEL;
+  const sort = clampSort(searchParams.get("sort") || DEFAULT_SORT);
 
   // Live polling (simple: on/off)
   const [liveEnabled, setLiveEnabled] = useState(true);
@@ -249,7 +307,7 @@ export const Traceroutes = () => {
     return () => window.removeEventListener("mousedown", onDown);
   }, [exportOpen, isLgUp]);
 
-  // Search input (matches Chat pattern: local input + deferred URL replace)
+  // Search input (Chat pattern: local input + deferred URL replace)
   const [qInput, setQInput] = useState(urlQ);
   const qDeferred = useDeferredValue(qInput);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -285,15 +343,15 @@ export const Traceroutes = () => {
           setExportOpen(false);
           return;
         }
-        if (sel) {
-          setParam("sel", undefined, "push");
+        if (selectedKey && selectedKey !== DEFAULT_SEL) {
+          setParam("sel", DEFAULT_SEL, "push");
         }
       }
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [exportOpen, sel, setParam]);
+  }, [exportOpen, selectedKey, setParam]);
 
   // Copy link (Chat-style)
   const [copied, setCopied] = useState(false);
@@ -310,7 +368,7 @@ export const Traceroutes = () => {
     window.prompt("Copy link:", url);
   }, []);
 
-  // Manual refresh (quiet; doesn’t make header “flash”)
+  // Manual refresh
   const [manualRefreshing, setManualRefreshing] = useState(false);
   const doManualRefresh = useCallback(() => {
     if (manualRefreshing) return;
@@ -333,7 +391,7 @@ export const Traceroutes = () => {
     return nowMs - RANGE_MS[range];
   }, [range, nowMs]);
 
-  // ---- Filter (q across endpoints + route ids + short/long names)
+  // ---- Filter (q across endpoints + hop ids + short/long names)
   const filteredEvents: TracerouteEvent[] = useMemo(() => {
     if (!nodes) return [];
     const q = (urlQ ?? "").trim().toLowerCase();
@@ -356,6 +414,7 @@ export const Traceroutes = () => {
         toNode?.shortname,
         toNode?.longname,
         String(e.hops_away ?? ""),
+        String(routeHopsOf(e) ?? ""),
         ...rids,
         ...rids.map((id) => nodes[id]?.shortname || ""),
       ]
@@ -367,225 +426,248 @@ export const Traceroutes = () => {
     });
   }, [eventsAll, nodes, urlQ, minTsMs]);
 
-  // ---- Sort events
+  // Keep events newest-first (details + summaries feel best this way)
   const filteredEventsSorted: TracerouteEvent[] = useMemo(() => {
     const arr = [...filteredEvents];
+    arr.sort((a, b) => safeTsMs(b.timestamp) - safeTsMs(a.timestamp));
+    return arr;
+  }, [filteredEvents]);
 
-    const byTs = (a: TracerouteEvent, b: TracerouteEvent) =>
-      safeTsMs(a.timestamp) - safeTsMs(b.timestamp);
+  // Unique route sequences across all filtered events (for overview)
+  const uniqueRoutesTotal = useMemo(() => {
+    return groupTracerouteEvents(filteredEventsSorted).length;
+  }, [filteredEventsSorted]);
 
-    const byHops = (a: TracerouteEvent, b: TracerouteEvent) =>
-      (routeHopsOf(a) || 0) - (routeHopsOf(b) || 0);
+  // ---- Build pair summaries + events-by-pair
+  const { pairItems, eventsByPairKey, listItems } = useMemo(() => {
+    const byPair = new Map<
+      string,
+      {
+        from: string;
+        to: string;
+        count: number;
+        firstTsMs: number;
+        lastTsMs: number;
+        uniqueRouteKeys: Set<string>;
+        routeCounts: Map<
+          string,
+          { routeIds: string[]; count: number; lastTsMs: number }
+        >;
+      }
+    >();
 
-    switch (sort) {
-      case "oldest":
-        arr.sort((a, b) => byTs(a, b));
-        return arr;
-      case "hops_asc":
-        arr.sort((a, b) => byHops(a, b) || byTs(a, b));
-        return arr;
-      case "hops_desc":
-        arr.sort((a, b) => byHops(b, a) || byTs(b, a));
-        return arr;
-      case "newest":
-      default:
-        arr.sort((a, b) => byTs(b, a));
-        return arr;
+    const eventsMap = new Map<string, TracerouteEvent[]>();
+
+    for (const e of filteredEventsSorted) {
+      const pairKey = `${e.from}|${e.to}`;
+      const ts = safeTsMs(e.timestamp);
+      if (!eventsMap.has(pairKey)) eventsMap.set(pairKey, []);
+      eventsMap.get(pairKey)!.push(e);
+
+      if (!byPair.has(pairKey)) {
+        byPair.set(pairKey, {
+          from: e.from,
+          to: e.to,
+          count: 1,
+          firstTsMs: ts,
+          lastTsMs: ts,
+          uniqueRouteKeys: new Set<string>(),
+          routeCounts: new Map(),
+        });
+      } else {
+        const s = byPair.get(pairKey)!;
+        s.count += 1;
+        s.firstTsMs = Math.min(s.firstTsMs || ts, ts || s.firstTsMs);
+        s.lastTsMs = Math.max(s.lastTsMs || ts, ts || s.lastTsMs);
+      }
+
+      const s = byPair.get(pairKey)!;
+      const rids = routeIdsOf(e);
+      const rk = rids.join(",");
+      s.uniqueRouteKeys.add(rk);
+
+      const cur = s.routeCounts.get(rk);
+      if (!cur) {
+        s.routeCounts.set(rk, { routeIds: rids, count: 1, lastTsMs: ts });
+      } else {
+        cur.count += 1;
+        cur.lastTsMs = Math.max(cur.lastTsMs || ts, ts || cur.lastTsMs);
+      }
     }
-  }, [filteredEvents, sort]);
 
-  // ---- Group routes
-  const routeGroups: TracerouteGroup[] = useMemo(() => {
-    if (!nodes) return [];
-    return groupTracerouteEvents(filteredEventsSorted);
-  }, [filteredEventsSorted, nodes]);
+    const pairs: TraceroutesListItem[] = Array.from(byPair.entries()).map(
+      ([pairKey, s]) => {
+        // compute a "top route" for the list preview
+        let best: { routeIds: string[]; count: number; lastTsMs: number } | null =
+          null;
 
-  const routeGroupsSorted: TracerouteGroup[] = useMemo(() => {
-    const arr = [...routeGroups];
-    switch (sort) {
-      case "count_asc":
-        arr.sort((a, b) => a.count - b.count || b.lastTsMs - a.lastTsMs);
-        return arr;
-      case "count_desc":
-        arr.sort((a, b) => b.count - a.count || b.lastTsMs - a.lastTsMs);
-        return arr;
-      case "last_asc":
-        arr.sort((a, b) => a.lastTsMs - b.lastTsMs || b.count - a.count);
-        return arr;
-      case "last_desc":
-      default:
-        arr.sort((a, b) => b.lastTsMs - a.lastTsMs || b.count - a.count);
-        return arr;
+        for (const v of s.routeCounts.values()) {
+          if (
+            !best ||
+            v.count > best.count ||
+            (v.count === best.count && v.lastTsMs > best.lastTsMs)
+          ) {
+            best = v;
+          }
+        }
+
+        const summary: TraceroutePairSummary = {
+          pairKey,
+          from: s.from,
+          to: s.to,
+          count: s.count,
+          firstTsMs: s.firstTsMs,
+          lastTsMs: s.lastTsMs,
+          uniqueRoutes: s.uniqueRouteKeys.size,
+          topRouteIds: best?.routeIds ?? [],
+          topRouteCount: best?.count ?? 0,
+        };
+
+        return {
+          kind: "pair",
+          key: `pair:${pairKey}`,
+          pairKey,
+          from: s.from,
+          to: s.to,
+          summary,
+        };
+      },
+    );
+
+    const sortedPairs = [...pairs].sort((a, b) => {
+      const A = a.kind === "pair" ? a.summary : null;
+      const B = b.kind === "pair" ? b.summary : null;
+      if (!A || !B) return 0;
+
+      switch (sort) {
+        case "count_asc":
+          return A.count - B.count || B.lastTsMs - A.lastTsMs;
+        case "count_desc":
+          return B.count - A.count || B.lastTsMs - A.lastTsMs;
+        case "routes_asc":
+          return A.uniqueRoutes - B.uniqueRoutes || B.lastTsMs - A.lastTsMs;
+        case "routes_desc":
+          return B.uniqueRoutes - A.uniqueRoutes || B.lastTsMs - A.lastTsMs;
+        case "last_asc":
+          return A.lastTsMs - B.lastTsMs || B.count - A.count;
+        case "last_desc":
+        default:
+          return B.lastTsMs - A.lastTsMs || B.count - A.count;
+      }
+    });
+
+    let maxLast = 0;
+    for (const it of sortedPairs) {
+      if (it.kind === "pair") maxLast = Math.max(maxLast, it.summary.lastTsMs);
     }
-  }, [routeGroups, sort]);
 
-  // ---- List items for Virtuoso
-  const listItems: TraceroutesListItem[] = useMemo(() => {
-    if (view === "routes") {
-      return routeGroupsSorted.map((g) => ({
-        kind: "route",
-        key: `route:${g.key}`,
-        group: g,
-      }));
-    }
-    return filteredEventsSorted.map((e) => ({
-      kind: "event",
-      key: `evt:${e.__idx}`,
-      event: e,
-    }));
-  }, [view, routeGroupsSorted, filteredEventsSorted]);
+    const allItem: TraceroutesListItem = {
+      kind: "all",
+      key: "all",
+      totalPairs: sortedPairs.length,
+      totalEvents: filteredEventsSorted.length,
+      lastTsMs: maxLast,
+      uniqueRoutes: uniqueRoutesTotal,
+    };
+
+    const items: TraceroutesListItem[] = [allItem, ...sortedPairs];
+
+    return {
+      pairItems: sortedPairs,
+      eventsByPairKey: eventsMap,
+      listItems: items,
+    };
+  }, [filteredEventsSorted, sort, uniqueRoutesTotal]);
 
   // ---- Selection
-  const selected: TraceroutesListItem | null = useMemo(() => {
-    if (!sel) return null;
-    return listItems.find((it) => it.key === sel) || null;
-  }, [sel, listItems]);
+  const selectedItem = useMemo(() => {
+    return listItems.find((it) => it.key === selectedKey) || listItems[0] || null;
+  }, [listItems, selectedKey]);
 
-  // If selection disappears due to filtering, clear it.
   useEffect(() => {
-    if (sel && !selected) {
-      setParam("sel", undefined, "replace");
+    if (!selectedItem) return;
+    if (selectedKey && !listItems.find((it) => it.key === selectedKey)) {
+      setParam("sel", DEFAULT_SEL, "replace");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sel, selected]);
+  }, [selectedKey, listItems.length]);
 
-  const relatedEvents: TracerouteEvent[] = useMemo(() => {
-    if (!selected || selected.kind !== "route") return [];
-    const routeKey = selected.group.key;
-    const match = filteredEventsSorted.filter((e) => {
-      const k = `${e.from}|${e.to}|${routeIdsOf(e).join(",")}`;
-      return k === routeKey;
-    });
-    return match.slice(0, 50);
-  }, [selected, filteredEventsSorted]);
+  const selectedPairKey =
+    selectedItem && selectedItem.kind === "pair" ? selectedItem.pairKey : null;
+
+  const eventsSelected: TracerouteEvent[] = useMemo(() => {
+    if (!selectedPairKey) return filteredEventsSorted;
+    return eventsByPairKey.get(selectedPairKey) ?? [];
+  }, [selectedPairKey, filteredEventsSorted, eventsByPairKey]);
 
   // ---- Header derived values
+  const totalPairs =
+    listItems.length > 0 && listItems[0].kind === "all"
+      ? listItems[0].totalPairs
+      : Math.max(0, listItems.length - 1);
+
   const totalEvents = filteredEventsSorted.length;
-  const totalRoutes = routeGroupsSorted.length;
-  const totalLabel =
-    view === "routes"
-      ? `${totalRoutes.toLocaleString()} route${totalRoutes === 1 ? "" : "s"}`
-      : `${totalEvents.toLocaleString()} traceroute${
-          totalEvents === 1 ? "" : "s"
-        }`;
+
+  const totalLabel = `${totalPairs.toLocaleString()} pair${
+    totalPairs === 1 ? "" : "s"
+  } • ${totalEvents.toLocaleString()} traceroute${
+    totalEvents === 1 ? "" : "s"
+  }`;
 
   const liveUiMode = liveEnabled ? ("live" as const) : ("off" as const);
   const livePillText = liveUiMode === "live" ? "Live" : "Live off";
   const livePillTitle = liveEnabled
     ? "Live mode is on. Auto-refresh polls every 5 seconds (paused when tab is unfocused). Click to disable."
-    : "Live mode is off. Auto-refresh is disabled (no polling / focus / reconnect). Click to enable.";
-
-  // ---- Status chips (desktop only)
-  const activeChips = useMemo(() => {
-    const chips: Array<{ label: string; clear: () => void }> = [];
-
-    if (range !== "all") {
-      chips.push({
-        label: `Range: ${range}`,
-        clear: () => setParam("range", "all", "push"),
-      });
-    }
-
-    if (view !== "events") {
-      chips.push({
-        label: "View: routes",
-        clear: () => setParam("view", "events", "push"),
-      });
-    }
-
-    const defaultSort = view === "routes" ? "count_desc" : "newest";
-    if (sort !== defaultSort) {
-      chips.push({
-        label: `Sort: ${sort.replaceAll("_", " ")}`,
-        clear: () => setParam("sort", defaultSort, "push"),
-      });
-    }
-
-    if (urlQ.trim()) {
-      chips.push({
-        label: `Search: "${urlQ.trim()}"`,
-        clear: () => setParam("q", undefined, "push"),
-      });
-    }
-
-    return chips;
-  }, [range, view, sort, urlQ, setParam]);
+    : "Live mode is off. Auto-refresh is disabled. Click to enable.";
 
   // ---- Actions
   const onSelect = useCallback(
     (key: string) => {
-      setParam("sel", key, "push");
+      setParam("sel", key, "push"); // key==="all" => deleted
     },
     [setParam],
   );
 
   const clearSelection = useCallback(() => {
-    setParam("sel", undefined, "push");
+    setParam("sel", DEFAULT_SEL, "push");
   }, [setParam]);
 
-  const updateView = useCallback(
-    (next: ViewKey) => {
-      const nextSort = clampSortForView(next, sort);
-      setSearchParams(
-        (prev) => {
-          let p = new URLSearchParams(prev);
-          p = setParamValue(p, "view", next);
-          p = setParamValue(p, "sort", nextSort);
-          p = setParamValue(p, "sel", null);
-          return p;
-        },
-        { replace: false },
-      );
-    },
-    [setSearchParams, sort],
-  );
-
   const updateRange = useCallback(
-    (next: RangeKey) => {
-      setParam("range", next, "push");
-    },
+    (next: RangeKey) => setParam("range", next, "push"),
     [setParam],
   );
 
   const updateSort = useCallback(
-    (next: SortKey) => {
-      setParam("sort", clampSortForView(view, next), "push");
-    },
-    [setParam, view],
+    (next: SortKey) => setParam("sort", clampSort(next), "push"),
+    [setParam],
   );
 
-  // ---- Export (wired into ExportMenu)
-  const exportRowsCount =
-    view === "routes" ? routeGroupsSorted.length : filteredEventsSorted.length;
+  // ---- Export (scope = selected pair or all)
+  const exportRowsCount = eventsSelected.length;
 
   const exportFilenameBase = useMemo(() => {
-    const base = `traceroutes_${view}`;
+    if (selectedPairKey) {
+      const [from, to] = selectedPairKey.split("|");
+      const base = sanitizeFilename(`traceroutes_${from}_${to}`);
+      const ts = new Date().toISOString().replace(/[:.]/g, "-");
+      return `${base}_${ts}`;
+    }
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
-    return `${base}_${ts}`;
-  }, [view]);
+    return `traceroutes_all_${ts}`;
+  }, [selectedPairKey]);
 
   const doExportJson = () => {
-    const payload =
-      view === "routes"
-        ? {
-            exportedAt: new Date().toISOString(),
-            view,
-            params: Object.fromEntries(searchParams.entries()),
-            count: routeGroupsSorted.length,
-            rows: routeGroupsSorted,
-          }
-        : {
-            exportedAt: new Date().toISOString(),
-            view,
-            params: Object.fromEntries(searchParams.entries()),
-            count: filteredEventsSorted.length,
-            rows: filteredEventsSorted.map((e) => {
-              // strip internal idx
-              // eslint-disable-next-line @typescript-eslint/no-unused-vars
-              const { __idx, ...rest } = e;
-              return rest;
-            }),
-          };
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      selection: selectedPairKey ? { pair: selectedPairKey } : { all: true },
+      params: Object.fromEntries(searchParams.entries()),
+      count: eventsSelected.length,
+      rows: eventsSelected.map((e) => {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { __idx, ...rest } = e as any;
+        return rest;
+      }),
+    };
 
     downloadBlob(
       `${exportFilenameBase}.json`,
@@ -598,87 +680,42 @@ export const Traceroutes = () => {
   const doExportCsv = () => {
     if (!nodes) return;
 
+    const cols = [
+      "timestamp",
+      "from_id",
+      "from_short",
+      "to_id",
+      "to_short",
+      "hops_away",
+      "route_hops",
+      "route_ids",
+      "route_short",
+    ] as const;
+
     const lines: string[] = [];
+    lines.push(cols.join(","));
 
-    if (view === "routes") {
-      const cols = [
-        "count",
-        "first_ts",
-        "last_ts",
-        "from_id",
-        "from_short",
-        "to_id",
-        "to_short",
-        "hops_away",
-        "route_hops",
-        "route_ids",
-        "route_short",
-      ] as const;
+    for (const e of eventsSelected) {
+      const fromShort = nodes[e.from]?.shortname ?? "UNK";
+      const toShort = nodes[e.to]?.shortname ?? "UNK";
+      const rids = routeIdsOf(e);
+      const routeShort = rids
+        .map((id) => nodes[id]?.shortname ?? "UNK")
+        .join(" > ");
 
-      lines.push(cols.join(","));
+      const row: Record<string, any> = {
+        timestamp: e.timestamp ? new Date(safeTsMs(e.timestamp)).toISOString() : "",
+        from_id: e.from,
+        from_short: fromShort,
+        to_id: e.to,
+        to_short: toShort,
+        hops_away: e.hops_away ?? "",
+        route_hops: rids.length,
+        route_ids: rids.join(" "),
+        route_short: routeShort,
+      };
 
-      for (const g of routeGroupsSorted) {
-        const fromShort = nodes[g.from]?.shortname ?? "UNK";
-        const toShort = nodes[g.to]?.shortname ?? "UNK";
-        const routeShort = g.route_ids
-          .map((id) => nodes[id]?.shortname ?? "UNK")
-          .join(" > ");
-
-        const row = {
-          count: g.count,
-          first_ts: g.firstTsMs ? new Date(g.firstTsMs).toISOString() : "",
-          last_ts: g.lastTsMs ? new Date(g.lastTsMs).toISOString() : "",
-          from_id: g.from,
-          from_short: fromShort,
-          to_id: g.to,
-          to_short: toShort,
-          hops_away: g.hops_away ?? "",
-          route_hops: g.route_ids.length,
-          route_ids: g.route_ids.join(" "),
-          route_short: routeShort,
-        };
-
-        lines.push(cols.map((c) => csvEscape((row as any)[c])).join(","));
-      }
-    } else {
-      const cols = [
-        "timestamp",
-        "from_id",
-        "from_short",
-        "to_id",
-        "to_short",
-        "hops_away",
-        "route_hops",
-        "route_ids",
-        "route_short",
-      ] as const;
-
-      lines.push(cols.join(","));
-
-      for (const e of filteredEventsSorted) {
-        const fromShort = nodes[e.from]?.shortname ?? "UNK";
-        const toShort = nodes[e.to]?.shortname ?? "UNK";
-        const rids = routeIdsOf(e);
-        const routeShort = rids
-          .map((id) => nodes[id]?.shortname ?? "UNK")
-          .join(" > ");
-
-        const row = {
-          timestamp: e.timestamp
-            ? new Date(safeTsMs(e.timestamp)).toISOString()
-            : "",
-          from_id: e.from,
-          from_short: fromShort,
-          to_id: e.to,
-          to_short: toShort,
-          hops_away: e.hops_away ?? "",
-          route_hops: rids.length,
-          route_ids: rids.join(" "),
-          route_short: routeShort,
-        };
-
-        lines.push(cols.map((c) => csvEscape((row as any)[c])).join(","));
-      }
+      lines.push(cols.map((c) => csvEscape(row[c])).join(","));
     }
 
     const csv = "\ufeff" + lines.join("\r\n");
@@ -715,7 +752,7 @@ export const Traceroutes = () => {
                 Traceroutes
               </h1>
 
-              {/* Desktop meta row (Chat-style) */}
+              {/* Desktop meta row */}
               <div className="mt-1 hidden sm:flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
                 <span>
                   Updated:{" "}
@@ -769,7 +806,7 @@ export const Traceroutes = () => {
                 <span className="tabular-nums">{totalLabel}</span>
               </div>
 
-              {/* Mobile meta row (compact, Chat-style) */}
+              {/* Mobile meta row */}
               <div className="mt-1 flex sm:hidden flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
                 <span className="font-medium tabular-nums">
                   {dataUpdatedAt && dataUpdatedAt > 0
@@ -835,46 +872,7 @@ export const Traceroutes = () => {
             </div>
           </div>
 
-          {/* View pills (Chat preset-pill vibe) */}
-          <div className="mt-3 flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
-            {(["events", "routes"] as ViewKey[]).map((vk) => {
-              const active = vk === view;
-              const count = vk === "events" ? totalEvents : totalRoutes;
-
-              return (
-                <button
-                  key={`view-${vk}`}
-                  type="button"
-                  className={[
-                    "whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-medium border transition",
-                    active
-                      ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
-                      : "bg-transparent text-gray-700 dark:text-gray-200 border-gray-300/60 dark:border-gray-600/60 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
-                  ].join(" ")}
-                  onClick={() => updateView(vk)}
-                  title={
-                    vk === "events"
-                      ? "Individual traceroute runs"
-                      : "Grouped by identical hop sequence"
-                  }
-                >
-                  {vk === "events" ? "Events" : "Routes"}
-                  <span
-                    className={[
-                      "ml-2 rounded-full px-2 py-0.5 text-xs",
-                      active
-                        ? "bg-white/20 text-white"
-                        : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-700 dark:text-gray-200",
-                    ].join(" ")}
-                  >
-                    {count}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Toolbar row: mobile keeps ONLY search; desktop keeps full controls */}
+          {/* Toolbar row */}
           <div className="mt-3 flex flex-col lg:flex-row gap-2 lg:items-center lg:justify-between">
             <div className="flex-1 min-w-0 lg:min-w-[260px]">
               <input
@@ -889,7 +887,7 @@ export const Traceroutes = () => {
             <div className="hidden lg:flex flex-wrap gap-2 items-center">
               {/* Range segmented */}
               <div className="inline-flex rounded-md border border-gray-300/60 dark:border-gray-700 overflow-hidden">
-                {(["24h", "7d", "30d", "all"] as RangeKey[]).map((rk) => (
+                {(["1h", "24h", "7d", "all"] as RangeKey[]).map((rk) => (
                   <button
                     key={`range-${rk}`}
                     type="button"
@@ -911,23 +909,14 @@ export const Traceroutes = () => {
                 value={sort}
                 onChange={(e) => updateSort(e.target.value as SortKey)}
                 className="rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100"
-                title="Sort"
+                title="Sort pairs list"
               >
-                {view === "events" ? (
-                  <>
-                    <option value="newest">Newest</option>
-                    <option value="oldest">Oldest</option>
-                    <option value="hops_desc">Hops (desc)</option>
-                    <option value="hops_asc">Hops (asc)</option>
-                  </>
-                ) : (
-                  <>
-                    <option value="count_desc">Count (desc)</option>
-                    <option value="count_asc">Count (asc)</option>
-                    <option value="last_desc">Last seen (desc)</option>
-                    <option value="last_asc">Last seen (asc)</option>
-                  </>
-                )}
+                <option value="last_desc">Last seen (desc)</option>
+                <option value="last_asc">Last seen (asc)</option>
+                <option value="count_desc">Count (desc)</option>
+                <option value="count_asc">Count (asc)</option>
+                <option value="routes_desc">Unique routes (desc)</option>
+                <option value="routes_asc">Unique routes (asc)</option>
               </select>
 
               {/* Clear selection */}
@@ -935,14 +924,14 @@ export const Traceroutes = () => {
                 type="button"
                 className={[
                   "rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition",
-                  sel ? "visible" : "invisible pointer-events-none",
+                  selectedPairKey ? "visible" : "invisible pointer-events-none",
                 ].join(" ")}
                 onClick={clearSelection}
-                title="Clear selection"
-                tabIndex={sel ? 0 : -1}
-                aria-disabled={!sel}
+                title="Back to overview"
+                tabIndex={selectedPairKey ? 0 : -1}
+                aria-disabled={!selectedPairKey}
               >
-                Clear selection
+                Overview
               </button>
             </div>
           </div>
@@ -951,29 +940,9 @@ export const Traceroutes = () => {
           <div className="mt-2 hidden lg:flex items-center gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch] min-h-[30px]">
             <StatusChip
               label={`Range: ${range}`}
-              active={range !== "all"}
+              active={range !== DEFAULT_RANGE}
               title="Click to reset range to all"
-              onClick={() => setParam("range", "all", "push")}
-            />
-
-            <StatusChip
-              label={`View: ${view}`}
-              active={view !== "events"}
-              title="Click to reset view to events"
-              onClick={() => updateView("events")}
-            />
-
-            <StatusChip
-              label={`Sort: ${sort.replaceAll("_", " ")}`}
-              active={sort !== (view === "routes" ? "count_desc" : "newest")}
-              title="Click to reset sort"
-              onClick={() =>
-                setParam(
-                  "sort",
-                  view === "routes" ? "count_desc" : "newest",
-                  "push",
-                )
-              }
+              onClick={() => setParam("range", DEFAULT_RANGE, "push")}
             />
 
             <StatusChip
@@ -983,14 +952,19 @@ export const Traceroutes = () => {
               onClick={() => setParam("q", undefined, "push")}
             />
 
-            {activeChips.length > 0 ? (
-              <>
-                <span className="opacity-60">•</span>
-                <span className="text-xs text-gray-500">
-                  {activeChips.length} active
-                </span>
-              </>
-            ) : null}
+            <StatusChip
+              label={`Sort: ${sort.replaceAll("_", " ")}`}
+              active={sort !== DEFAULT_SORT}
+              title="Click to reset sort"
+              onClick={() => setParam("sort", DEFAULT_SORT, "push")}
+            />
+
+            <StatusChip
+              label={selectedPairKey ? "Pair: selected" : "Overview"}
+              active={!!selectedPairKey}
+              title="Click to return to overview"
+              onClick={clearSelection}
+            />
           </div>
         </div>
       </div>
@@ -998,15 +972,16 @@ export const Traceroutes = () => {
       {/* Main body */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
         <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
+          {/* Telemetry-style layout: list 1 col, details 2 col */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
             {/* List */}
-            <div className="lg:col-span-2 min-h-0 flex flex-col h-full">
+            <div className="min-h-0 flex flex-col h-full">
               <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col min-h-0 flex-1">
                 <div className="flex-1 min-h-0 overflow-hidden">
                   <TraceroutesList
                     items={listItems}
                     nodes={nodes}
-                    selectedKey={sel}
+                    selectedKey={selectedItem?.key ?? "all"}
                     onSelect={onSelect}
                   />
                 </div>
@@ -1014,12 +989,16 @@ export const Traceroutes = () => {
             </div>
 
             {/* Details */}
-            <div className="min-h-0 flex flex-col">
+            <div className="lg:col-span-2 min-h-0 flex flex-col">
               <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col min-h-0">
                 <TracerouteDetailsPanel
-                  selected={selected}
+                  selectedItem={selectedItem ?? listItems[0]}
                   nodes={nodes}
-                  relatedEvents={relatedEvents}
+                  range={range}
+                  eventsAll={filteredEventsSorted}
+                  eventsSelected={eventsSelected}
+                  pairItems={pairItems}
+                  uniqueRoutesTotal={uniqueRoutesTotal}
                   onClearSelection={clearSelection}
                   onQuickSearch={(text) => {
                     setQInput(text);
@@ -1028,6 +1007,12 @@ export const Traceroutes = () => {
                 />
               </div>
             </div>
+          </div>
+
+          {/* Tiny footer hint (mobile) */}
+          <div className="mt-3 lg:hidden text-xs text-gray-500">
+            Tip: press <span className="font-mono">/</span> to search. Tap a pair
+            to see route breakdown + recent runs.
           </div>
         </div>
       </div>
