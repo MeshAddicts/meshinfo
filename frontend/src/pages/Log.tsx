@@ -24,6 +24,9 @@ type RangeKey = "1h" | "24h" | "7d" | "all";
 type SortKey = "desc" | "asc";
 type RowViewKey = "mesh" | "raw"; // "raw" == mqtt raw
 
+const DEFAULT_RANGE: RangeKey = "all";
+const DEFAULT_SORT: SortKey = "desc";
+
 type ViewDef = {
   key: string;
   label: string;
@@ -208,7 +211,13 @@ type GroupedRow = {
   searchText: string;
 };
 
-const matchKeyFor = (src: "mesh" | "mqtt", raw: any, ts: number, topic: string, idx: number) => {
+const matchKeyFor = (
+  src: "mesh" | "mqtt",
+  raw: any,
+  ts: number,
+  topic: string,
+  idx: number,
+) => {
   const id = raw?.id ?? raw?.packet?.id ?? raw?.raw?.id;
   const from = raw?.from ?? raw?.packet?.from ?? raw?.raw?.from;
   const typ = raw?.type ?? raw?.packet?.type ?? raw?.raw?.type;
@@ -269,29 +278,47 @@ export const Log = () => {
 
   const [searchParams, setSearchParams] = useSearchParams();
 
+  // We want URL defaults to match UI defaults by *omitting* default params.
+  const defaultViewKey = "all";
+
+  const isDefaultParam = useCallback(
+    (key: string, value: string) => {
+      if (key === "ch" && value === defaultViewKey) return true;
+      if (key === "r" && (value as RangeKey) === DEFAULT_RANGE) return true;
+      if (key === "s" && (value as SortKey) === DEFAULT_SORT) return true;
+      if (key === "q" && value.trim() === "") return true;
+      return false;
+    },
+    [defaultViewKey],
+  );
+
   const setParam = useCallback(
     (key: string, value: string | undefined, mode: "push" | "replace") => {
       const sp = new URLSearchParams(searchParams);
-      if (!value) sp.delete(key);
-      else sp.set(key, value);
+      const v = value == null ? "" : String(value);
+
+      if (!v || isDefaultParam(key, v)) sp.delete(key);
+      else sp.set(key, v);
+
       setSearchParams(sp, { replace: mode === "replace" });
     },
-    [searchParams, setSearchParams]
+    [searchParams, setSearchParams, isDefaultParam],
   );
 
   const setParams = useCallback(
     (
       pairs: Array<{ key: string; value: string | undefined }>,
-      mode: "push" | "replace"
+      mode: "push" | "replace",
     ) => {
       const sp = new URLSearchParams(searchParams);
       for (const p of pairs) {
-        if (!p.value) sp.delete(p.key);
-        else sp.set(p.key, p.value);
+        const v = p.value == null ? "" : String(p.value);
+        if (!v || isDefaultParam(p.key, v)) sp.delete(p.key);
+        else sp.set(p.key, v);
       }
       setSearchParams(sp, { replace: mode === "replace" });
     },
-    [searchParams, setSearchParams]
+    [searchParams, setSearchParams, isDefaultParam],
   );
 
   // views from config (same pattern as MeshLog/MqttLog)
@@ -315,7 +342,8 @@ export const Log = () => {
 
         const label = String(v?.label ?? v?.id ?? "");
         const short = v?.short ? String(v.short) : undefined;
-        const key = normalizeKey(label) || normalizeKey(String(v?.id ?? "")) || "";
+        const key =
+          normalizeKey(label) || normalizeKey(String(v?.id ?? "")) || "";
         if (!key) continue;
 
         const aliases = [
@@ -349,8 +377,6 @@ export const Log = () => {
     return out;
   }, [config]);
 
-  const defaultViewKey = "all";
-
   // preset alias map
   const aliasToKey = useMemo(() => {
     const m = new Map<string, string>();
@@ -375,7 +401,7 @@ export const Log = () => {
       }
       return "unknown";
     },
-    [aliasToKey]
+    [aliasToKey],
   );
 
   // URL params
@@ -383,21 +409,21 @@ export const Log = () => {
   const urlChNorm = normalizeKey(urlChRaw);
 
   const selectedViewKey = useMemo(() => {
-    if (!urlChNorm) return "all";
-    if (urlChNorm === "all") return "all";
+    if (!urlChNorm) return defaultViewKey;
+    if (urlChNorm === "all") return defaultViewKey;
     const hit =
       views.find((v) => v.key === urlChNorm) ??
       views.find((v) => v.aliases.includes(urlChNorm));
-    return hit?.key ?? "all";
-  }, [urlChNorm, views]);
+    return hit?.key ?? defaultViewKey;
+  }, [urlChNorm, views, defaultViewKey]);
 
   const selectedView = useMemo(
     () => views.find((v) => v.key === selectedViewKey) ?? views[0],
-    [views, selectedViewKey]
+    [views, selectedViewKey],
   );
 
-  const urlRange = (searchParams.get("r") as RangeKey) || "24h";
-  const urlSort = (searchParams.get("s") as SortKey) || "desc";
+  const urlRange = (searchParams.get("r") as RangeKey) || DEFAULT_RANGE;
+  const urlSort = (searchParams.get("s") as SortKey) || DEFAULT_SORT;
   const urlQ = searchParams.get("q") ?? "";
 
   // Search input (deferred)
@@ -506,7 +532,8 @@ export const Log = () => {
       const cur = map.get(k);
 
       const topic = p.topic || cur?.topic || "";
-      const preset = p.preset !== "unknown" ? p.preset : cur?.preset || p.preset || "unknown";
+      const preset =
+        p.preset !== "unknown" ? p.preset : cur?.preset || p.preset || "unknown";
       const ts = Math.max(cur?.ts ?? 0, p.ts ?? 0);
 
       const next: GroupedRow = {
@@ -523,11 +550,9 @@ export const Log = () => {
       else next.mqtt = p;
 
       // combined search text (both sides)
-      const parts = [
-        topic,
-        next.mesh?.searchText ?? "",
-        next.mqtt?.searchText ?? "",
-      ].filter(Boolean);
+      const parts = [topic, next.mesh?.searchText ?? "", next.mqtt?.searchText ?? ""].filter(
+        Boolean,
+      );
 
       next.searchText = parts.join("\n").toLowerCase();
 
@@ -558,7 +583,7 @@ export const Log = () => {
   const filtered: GroupedRow[] = useMemo(() => {
     let items = baseRows;
 
-    if (selectedViewKey !== "all") {
+    if (selectedViewKey !== defaultViewKey) {
       items = items.filter((x) => x.preset === selectedViewKey);
     }
 
@@ -576,7 +601,7 @@ export const Log = () => {
     });
 
     return items;
-  }, [baseRows, selectedViewKey, rangeThreshold, urlQ, urlSort]);
+  }, [baseRows, selectedViewKey, defaultViewKey, rangeThreshold, urlQ, urlSort]);
 
   // Export popover
   const [exportOpen, setExportOpen] = useState(false);
@@ -641,7 +666,14 @@ export const Log = () => {
   }, [filtered, exportFilenameBase, searchParams, selectedViewKey, exportRow]);
 
   const doExportCsv = useCallback(() => {
-    const cols = ["timestamp_unix", "timestamp", "preset", "topic", "has_mesh", "has_mqtt"] as const;
+    const cols = [
+      "timestamp_unix",
+      "timestamp",
+      "preset",
+      "topic",
+      "has_mesh",
+      "has_mqtt",
+    ] as const;
 
     const lines = filtered.map((g) => {
       const iso = g.ts ? new Date(g.ts * 1000).toISOString() : "";
@@ -667,12 +699,15 @@ export const Log = () => {
   // Per-row view toggle state
   const [rowView, setRowView] = useState<Record<string, RowViewKey>>({});
 
-  const getRowView = useCallback((g: GroupedRow): RowViewKey => {
-    const v = rowView[g.key];
-    if (v) return v;
-    // default mesh if present, else raw
-    return g.mesh ? "mesh" : "raw";
-  }, [rowView]);
+  const getRowView = useCallback(
+    (g: GroupedRow): RowViewKey => {
+      const v = rowView[g.key];
+      if (v) return v;
+      // default mesh if present, else raw
+      return g.mesh ? "mesh" : "raw";
+    },
+    [rowView],
+  );
 
   const setRowViewKey = useCallback((groupKey: string, next: RowViewKey) => {
     setRowView((cur) => ({ ...cur, [groupKey]: next }));
@@ -681,8 +716,7 @@ export const Log = () => {
   const buildCombinedForDisplay = useCallback((g: GroupedRow, v: RowViewKey) => {
     const message = v === "mesh" ? g.mesh?.raw ?? null : g.mqtt?.raw ?? null;
 
-    // This is the “single combined JSON” you asked for.
-    // It stays stable, and only `view` + `message` flip.
+    // stable combined JSON
     return {
       ts_unix: g.ts || null,
       timestamp: g.ts ? new Date(g.ts * 1000).toISOString() : null,
@@ -747,8 +781,8 @@ export const Log = () => {
   const activeFilterCount = useMemo(() => {
     let n = 0;
     if (selectedViewKey !== defaultViewKey) n += 1;
-    if (urlRange !== "24h") n += 1;
-    if (urlSort !== "desc") n += 1;
+    if (urlRange !== DEFAULT_RANGE) n += 1;
+    if (urlSort !== DEFAULT_SORT) n += 1;
     if (urlQ.trim()) n += 1;
     return n;
   }, [selectedViewKey, defaultViewKey, urlRange, urlSort, urlQ]);
@@ -815,7 +849,8 @@ export const Log = () => {
               </div>
 
               <div className="mt-2 text-xs text-gray-600 dark:text-gray-400">
-                This list shows processed mesh messages. Use the in-row Raw toggle (when present) to view the MQTT counterpart.
+                This list shows processed mesh messages. Use the in-row Raw toggle
+                (when present) to view the MQTT counterpart.
               </div>
             </div>
 
@@ -880,7 +915,12 @@ export const Log = () => {
                       ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
                       : "bg-transparent text-gray-700 dark:text-gray-200 border-gray-300/60 dark:border-gray-600/60 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
                   ].join(" ")}
-                  onClick={() => setParams([{ key: "ch", value: v.key }], "push")}
+                  onClick={() =>
+                    setParams(
+                      [{ key: "ch", value: v.key === defaultViewKey ? undefined : v.key }],
+                      "push",
+                    )
+                  }
                   title={v.tooltip}
                 >
                   {v.label}
@@ -912,7 +952,7 @@ export const Log = () => {
 
             <div className="hidden lg:flex flex-wrap gap-2 items-center">
               <div className="inline-flex rounded-md border border-gray-300/60 dark:border-gray-700 overflow-hidden">
-                {(["1h", "24h", "7d", "all"] as RangeKey[]).map((rk) => (
+                {(["all", "1h", "24h", "7d"] as RangeKey[]).map((rk) => (
                   <button
                     key={`range-${rk}`}
                     type="button"
@@ -922,7 +962,7 @@ export const Log = () => {
                         ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
                         : "bg-transparent text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
                     ].join(" ")}
-                    onClick={() => setParam("r", rk, "push")}
+                    onClick={() => setParam("r", rk, "push")} // rk==="all" => deletes
                   >
                     {rk}
                   </button>
@@ -932,7 +972,9 @@ export const Log = () => {
               <button
                 type="button"
                 className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                onClick={() => setParam("s", urlSort === "desc" ? "asc" : "desc", "push")}
+                onClick={() =>
+                  setParam("s", urlSort === "desc" ? "asc" : "desc", "push") // desc => deletes
+                }
                 title="Toggle sort"
               >
                 {urlSort === "desc" ? "Newest" : "Oldest"}
@@ -954,12 +996,12 @@ export const Log = () => {
                   onClick={() => {
                     setParams(
                       [
-                        { key: "ch", value: "all" },
+                        { key: "ch", value: undefined },
                         { key: "r", value: undefined },
                         { key: "s", value: undefined },
                         { key: "q", value: undefined },
                       ],
-                      "push"
+                      "push",
                     );
                   }}
                   title="Clear all filters"
@@ -977,17 +1019,17 @@ export const Log = () => {
               label={`Preset: ${selectedView?.label ?? selectedViewKey}`}
               active={selectedViewKey !== defaultViewKey}
               title="Click to reset preset"
-              onClick={() => setParam("ch", defaultViewKey, "push")}
+              onClick={() => setParam("ch", undefined, "push")}
             />
             <StatusChip
               label={`Range: ${urlRange}`}
-              active={urlRange !== "24h"}
-              title="Click to reset range to 24h"
+              active={urlRange !== DEFAULT_RANGE}
+              title="Click to reset range to all"
               onClick={() => setParam("r", undefined, "push")}
             />
             <StatusChip
               label={`Sort: ${urlSort === "desc" ? "newest" : "oldest"}`}
-              active={urlSort !== "desc"}
+              active={urlSort !== DEFAULT_SORT}
               title="Click to reset sort to newest"
               onClick={() => setParam("s", undefined, "push")}
             />
@@ -1027,7 +1069,9 @@ export const Log = () => {
                   style={{ height: "100%" }}
                   itemKey={(_index, item) => item.key}
                   itemContent={(_index, g) => {
-                    const tsLabel = g.ts ? formatTimestamp(g.ts) || "Unknown" : "Unknown";
+                    const tsLabel = g.ts
+                      ? formatTimestamp(g.ts) || "Unknown"
+                      : "Unknown";
                     const topic = g.topic || "";
 
                     const v = getRowView(g);
@@ -1037,11 +1081,8 @@ export const Log = () => {
                     const displayObj = buildCombinedForDisplay(g, v);
                     const pretty = JSON.stringify(displayObj, null, 2);
 
-                    const sourceBadge = g.mesh && g.mqtt
-                      ? "mesh + raw"
-                      : g.mesh
-                        ? "mesh"
-                        : "raw";
+                    const sourceBadge =
+                      g.mesh && g.mqtt ? "mesh + raw" : g.mesh ? "mesh" : "raw";
 
                     return (
                       <div className="px-3 sm:px-4 py-3 border-b border-gray-200/70 dark:border-gray-800">
@@ -1077,10 +1118,16 @@ export const Log = () => {
                                   v === "mesh"
                                     ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
                                     : "bg-transparent text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
-                                  !canMesh ? "opacity-40 cursor-not-allowed hover:bg-transparent" : "",
+                                  !canMesh
+                                    ? "opacity-40 cursor-not-allowed hover:bg-transparent"
+                                    : "",
                                 ].join(" ")}
                                 onClick={() => setRowViewKey(g.key, "mesh")}
-                                title={canMesh ? "Show processed mesh view" : "No mesh view for this row"}
+                                title={
+                                  canMesh
+                                    ? "Show processed mesh view"
+                                    : "No mesh view for this row"
+                                }
                               >
                                 Mesh
                               </button>
@@ -1092,10 +1139,16 @@ export const Log = () => {
                                   v === "raw"
                                     ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
                                     : "bg-transparent text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
-                                  !canRaw ? "opacity-40 cursor-not-allowed hover:bg-transparent" : "",
+                                  !canRaw
+                                    ? "opacity-40 cursor-not-allowed hover:bg-transparent"
+                                    : "",
                                 ].join(" ")}
                                 onClick={() => setRowViewKey(g.key, "raw")}
-                                title={canRaw ? "Show raw MQTT view" : "No raw view for this row"}
+                                title={
+                                  canRaw
+                                    ? "Show raw MQTT view"
+                                    : "No raw view for this row"
+                                }
                               >
                                 Raw
                               </button>
@@ -1159,7 +1212,7 @@ export const Log = () => {
                 Range
               </div>
               <div className="inline-flex rounded-md border border-gray-300/60 dark:border-gray-700 overflow-hidden">
-                {(["1h", "24h", "7d", "all"] as RangeKey[]).map((rk) => (
+                {(["all", "1h", "24h", "7d"] as RangeKey[]).map((rk) => (
                   <button
                     key={`m-range-${rk}`}
                     type="button"
@@ -1184,7 +1237,9 @@ export const Log = () => {
               <button
                 type="button"
                 className="w-full rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                onClick={() => setParam("s", urlSort === "desc" ? "asc" : "desc", "push")}
+                onClick={() =>
+                  setParam("s", urlSort === "desc" ? "asc" : "desc", "push")
+                }
               >
                 {urlSort === "desc" ? "Newest → Oldest" : "Oldest → Newest"}
               </button>
@@ -1247,12 +1302,12 @@ export const Log = () => {
                   onClick={() => {
                     setParams(
                       [
-                        { key: "ch", value: defaultViewKey },
+                        { key: "ch", value: undefined },
                         { key: "r", value: undefined },
                         { key: "s", value: undefined },
                         { key: "q", value: undefined },
                       ],
-                      "push"
+                      "push",
                     );
                     setControlsOpen(false);
                   }}

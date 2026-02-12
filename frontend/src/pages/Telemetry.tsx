@@ -42,6 +42,10 @@ type SortKey =
   | "airutil_desc"
   | "temp_desc";
 
+const DEFAULT_RANGE: RangeKey = "all";
+const DEFAULT_SEL = "all";
+const DEFAULT_SORT: SortKey = "last_desc";
+
 function setParamValue(
   params: URLSearchParams,
   key: string,
@@ -126,8 +130,19 @@ export const Telemetry = () => {
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
-          if (value == null || value === "") next.delete(key);
-          else next.set(key, value);
+
+          const v = value == null ? "" : String(value);
+
+          // Treat defaults as "unset" so URL stays clean and matches default UI.
+          const isDefault =
+            (key === "range" && v === DEFAULT_RANGE) ||
+            (key === "sel" && v === DEFAULT_SEL) ||
+            (key === "sort" && (v as SortKey) === DEFAULT_SORT) ||
+            (key === "q" && v.trim() === "");
+
+          if (!v || isDefault) next.delete(key);
+          else next.set(key, v);
+
           return next;
         },
         { replace: mode === "replace" },
@@ -163,11 +178,17 @@ export const Telemetry = () => {
   }, []);
 
   // URL state
-  const range = (searchParams.get("range") as RangeKey) || "24h";
-  const urlQ = searchParams.get("q") || "";
-  const sel = searchParams.get("sel") || "all";
+  const rangeRaw = searchParams.get("range") as RangeKey | null;
+  const range: RangeKey = (["all", "24h", "7d", "30d"] as const).includes(
+    rangeRaw as any,
+  )
+    ? (rangeRaw as RangeKey)
+    : DEFAULT_RANGE;
 
-  const sortParam = (searchParams.get("sort") as SortKey) || "last_desc";
+  const urlQ = searchParams.get("q") || "";
+  const sel = searchParams.get("sel") || DEFAULT_SEL;
+
+  const sortParam = (searchParams.get("sort") as SortKey) || DEFAULT_SORT;
   const sort = clampSort(sortParam);
 
   // Live polling (simple: on/off)
@@ -249,8 +270,8 @@ export const Telemetry = () => {
           setExportOpen(false);
           return;
         }
-        if (sel && sel !== "all") {
-          setParam("sel", "all", "push");
+        if (sel && sel !== DEFAULT_SEL) {
+          setParam("sel", DEFAULT_SEL, "push"); // will delete param
         }
       }
     };
@@ -259,7 +280,7 @@ export const Telemetry = () => {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [exportOpen, sel, setParam]);
 
-  // Copy link 
+  // Copy link
   const [copied, setCopied] = useState(false);
   const copyLink = useCallback(async () => {
     const url = window.location.href;
@@ -274,7 +295,7 @@ export const Telemetry = () => {
     window.prompt("Copy link:", url);
   }, []);
 
-  // Manual refresh 
+  // Manual refresh
   const [manualRefreshing, setManualRefreshing] = useState(false);
   const doManualRefresh = useCallback(() => {
     if (manualRefreshing) return;
@@ -310,12 +331,7 @@ export const Telemetry = () => {
     }
 
     for (const [id, n] of Object.entries(nodes)) {
-      const hay = [
-        id,
-        n?.shortname,
-        n?.longname,
-        (n as any)?.id,
-      ]
+      const hay = [id, n?.shortname, n?.longname, (n as any)?.id]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
@@ -353,12 +369,18 @@ export const Telemetry = () => {
         };
       } else {
         map[id].count += 1;
-        map[id].firstTsMs = Math.min(map[id].firstTsMs || ts, ts || map[id].firstTsMs);
+        map[id].firstTsMs = Math.min(
+          map[id].firstTsMs || ts,
+          ts || map[id].firstTsMs,
+        );
         if (ts >= (map[id].lastTsMs || 0)) {
           map[id].lastTsMs = ts;
           map[id].latest = e;
         } else {
-          map[id].lastTsMs = Math.max(map[id].lastTsMs || ts, ts || map[id].lastTsMs);
+          map[id].lastTsMs = Math.max(
+            map[id].lastTsMs || ts,
+            ts || map[id].lastTsMs,
+          );
         }
       }
     }
@@ -434,20 +456,20 @@ export const Telemetry = () => {
         case "name_asc":
           return aName.localeCompare(bName);
         case "samples_desc":
-          return b.count - a.count || (b.lastTsMs - a.lastTsMs);
+          return b.count - a.count || b.lastTsMs - a.lastTsMs;
         case "battery_asc":
-          return aBattery - bBattery || (b.lastTsMs - a.lastTsMs);
+          return aBattery - bBattery || b.lastTsMs - a.lastTsMs;
         case "voltage_asc":
-          return aVolt - bVolt || (b.lastTsMs - a.lastTsMs);
+          return aVolt - bVolt || b.lastTsMs - a.lastTsMs;
         case "chanutil_desc":
-          return bChan - aChan || (b.lastTsMs - a.lastTsMs);
+          return bChan - aChan || b.lastTsMs - a.lastTsMs;
         case "airutil_desc":
-          return bAir - aAir || (b.lastTsMs - a.lastTsMs);
+          return bAir - aAir || b.lastTsMs - a.lastTsMs;
         case "temp_desc":
-          return bTemp - aTemp || (b.lastTsMs - a.lastTsMs);
+          return bTemp - aTemp || b.lastTsMs - a.lastTsMs;
         case "last_desc":
         default:
-          return (b.lastTsMs - a.lastTsMs) || b.count - a.count;
+          return b.lastTsMs - a.lastTsMs || b.count - a.count;
       }
     });
 
@@ -471,14 +493,14 @@ export const Telemetry = () => {
   }, [nodes, nodeSummaries, filteredEventsAll.length, sort]);
 
   // Selection handling
-  const selectedKey = sel || "all";
+  const selectedKey = sel || DEFAULT_SEL;
   const selectedItem = useMemo(() => {
     return listItems.find((it) => it.key === selectedKey) || null;
   }, [listItems, selectedKey]);
 
   useEffect(() => {
     if (selectedKey && !selectedItem) {
-      setParam("sel", "all", "replace");
+      setParam("sel", DEFAULT_SEL, "replace"); // will delete param
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedKey, selectedItem]);
@@ -509,22 +531,22 @@ export const Telemetry = () => {
   // Actions
   const onSelect = useCallback(
     (key: string) => {
-      setParam("sel", key, "push");
+      setParam("sel", key, "push"); // key==="all" => deletes param
     },
     [setParam],
   );
 
   const clearSelection = useCallback(() => {
-    setParam("sel", "all", "push");
+    setParam("sel", DEFAULT_SEL, "push"); // deletes
   }, [setParam]);
 
   const updateRange = useCallback(
-    (next: RangeKey) => setParam("range", next, "push"),
+    (next: RangeKey) => setParam("range", next, "push"), // next==="all" => deletes
     [setParam],
   );
 
   const updateSort = useCallback(
-    (next: SortKey) => setParam("sort", clampSort(next), "push"),
+    (next: SortKey) => setParam("sort", clampSort(next), "push"), // last_desc => deletes
     [setParam],
   );
 
@@ -532,9 +554,7 @@ export const Telemetry = () => {
   const exportRowsCount = selectedEvents.length;
 
   const exportFilenameBase = useMemo(() => {
-    const base = selectedNodeId
-      ? `telemetry_${selectedNodeId}`
-      : "telemetry_all";
+    const base = selectedNodeId ? `telemetry_${selectedNodeId}` : "telemetry_all";
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
     return `${base}_${ts}`;
   }, [selectedNodeId]);
@@ -586,7 +606,9 @@ export const Telemetry = () => {
     for (const e of selectedEvents) {
       const fromShort = getNodeLabel(nodes, e.from);
       const row: Record<string, any> = {
-        timestamp: e.timestamp ? new Date(safeTsMs(e.timestamp)).toISOString() : "",
+        timestamp: e.timestamp
+          ? new Date(safeTsMs(e.timestamp)).toISOString()
+          : "",
         from_id: e.from,
         from_short: fromShort,
         battery_level: e.payload?.battery_level ?? "",
@@ -774,7 +796,7 @@ export const Telemetry = () => {
             <div className="hidden lg:flex flex-wrap gap-2 items-center">
               {/* Range segmented */}
               <div className="inline-flex rounded-md border border-gray-300/60 dark:border-gray-700 overflow-hidden">
-                {(["24h", "7d", "30d", "all"] as RangeKey[]).map((rk) => (
+                {(["all", "24h", "7d", "30d"] as RangeKey[]).map((rk) => (
                   <button
                     key={`range-${rk}`}
                     type="button"
@@ -829,9 +851,9 @@ export const Telemetry = () => {
           <div className="mt-2 hidden lg:flex items-center gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch] min-h-[30px]">
             <StatusChip
               label={`Range: ${range}`}
-              active={range !== "24h"}
-              title="Click to reset range to 24h"
-              onClick={() => setParam("range", "24h", "push")}
+              active={range !== DEFAULT_RANGE}
+              title="Click to reset range to all"
+              onClick={() => setParam("range", DEFAULT_RANGE, "push")}
             />
 
             <StatusChip
@@ -843,13 +865,17 @@ export const Telemetry = () => {
 
             <StatusChip
               label={`Sort: ${sort.replaceAll("_", " ")}`}
-              active={sort !== "last_desc"}
+              active={sort !== DEFAULT_SORT}
               title="Click to reset sort"
-              onClick={() => setParam("sort", "last_desc", "push")}
+              onClick={() => setParam("sort", DEFAULT_SORT, "push")}
             />
 
             <StatusChip
-              label={selectedNodeId ? `Node: ${getNodeLabel(nodes, selectedNodeId)}` : "Overview"}
+              label={
+                selectedNodeId
+                  ? `Node: ${getNodeLabel(nodes, selectedNodeId)}`
+                  : "Overview"
+              }
               active={!!selectedNodeId}
               title="Click to return to overview"
               onClick={clearSelection}
@@ -899,7 +925,8 @@ export const Telemetry = () => {
 
           {/* Tiny footer hint (mobile) */}
           <div className="mt-3 lg:hidden text-xs text-gray-500">
-            Tip: press <span className="font-mono">/</span> to search. Tap a node to switch the charts.
+            Tip: press <span className="font-mono">/</span> to search. Tap a node
+            to switch the charts.
           </div>
         </div>
       </div>
