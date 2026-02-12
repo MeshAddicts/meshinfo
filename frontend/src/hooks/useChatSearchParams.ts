@@ -9,6 +9,7 @@ export type DirKey = "both" | "in" | "out";
 export type NavMode = "replace" | "push";
 
 // Default URL param values (we will *remove* these from the URL for canonical links)
+// NOTE: ch is dynamic (depends on args/views), so it is handled separately.
 const DEFAULT_PARAM: Record<string, string> = {
   r: "24h",
   t: "all",
@@ -65,6 +66,7 @@ export function useChatSearchParams(args?: {
     return m;
   }, [views]);
 
+  // Resolved channel (always a real key if defaultCh is available)
   const urlCh = useMemo(() => {
     if (!defaultCh) return rawCh; // fallback (shouldn’t happen)
     if (!rawCh) return defaultCh;
@@ -73,18 +75,35 @@ export function useChatSearchParams(args?: {
     return mapped ?? defaultCh;
   }, [rawCh, aliasToKey, defaultCh]);
 
-  // Canonicalize ch in the URL (also fixes invalid ch to default)
+  // Canonicalize ch in the URL WITHOUT forcing defaults into the URL:
+  // - If resolved == defaultCh -> delete ch
+  // - Else ensure ch is set to canonical key
   useEffect(() => {
     if (!defaultCh) return;
 
-    const desired = urlCh || defaultCh;
-    const current = (searchParams.get("ch") ?? "").trim();
+    const resolved = (urlCh || defaultCh).trim();
+    const currentRaw = (searchParams.get("ch") ?? "").trim();
 
-    if (current !== desired) {
+    const shouldOmit = resolved === defaultCh;
+
+    // If URL already matches canonical intent, do nothing.
+    // - When default: ch should be omitted, so currentRaw must be ""
+    // - When non-default: ch should equal resolved
+    if (shouldOmit) {
+      if (!currentRaw) return;
       const next = new URLSearchParams(searchParams);
-      next.set("ch", desired);
+      next.delete("ch");
       setSearchParams(next, { replace: true });
+      return;
     }
+
+    // Non-default channel must be explicit and canonical
+    if (currentRaw === resolved) return;
+
+    const next = new URLSearchParams(searchParams);
+    next.set("ch", resolved);
+    setSearchParams(next, { replace: true });
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlCh, defaultCh]);
 
@@ -134,21 +153,31 @@ export function useChatSearchParams(args?: {
   const onlyUnknownEndpoints = searchParams.get("unk") === "1";
   const requireVia = searchParams.get("hv") === "1";
 
+  const isDefaultForKey = useCallback(
+    (key: string, v: string) => {
+      if (key === "ch") {
+        const vv = v.trim();
+        return !!defaultCh && vv === defaultCh;
+      }
+      const def = DEFAULT_PARAM[key];
+      return !!def && v === def;
+    },
+    [defaultCh]
+  );
+
   // ---- Param helpers (canonical + history semantics)
   const setParam = useCallback(
     (key: string, value?: string, mode: NavMode = "replace") => {
       const next = new URLSearchParams(searchParams);
 
-      const v = value?.trim();
-      const defaultForKey = DEFAULT_PARAM[key];
-
+      const v = value?.trim() ?? "";
       if (!v) next.delete(key);
-      else if (defaultForKey && v === defaultForKey) next.delete(key);
+      else if (isDefaultForKey(key, v)) next.delete(key);
       else next.set(key, v);
 
       setSearchParams(next, { replace: mode === "replace" });
     },
-    [searchParams, setSearchParams]
+    [searchParams, setSearchParams, isDefaultForKey]
   );
 
   const setParams = useCallback(
@@ -159,22 +188,20 @@ export function useChatSearchParams(args?: {
       const next = new URLSearchParams(searchParams);
 
       for (const u of updates) {
-        const v = u.value?.trim();
-        const defaultForKey = DEFAULT_PARAM[u.key];
-
+        const v = u.value?.trim() ?? "";
         if (!v) next.delete(u.key);
-        else if (defaultForKey && v === defaultForKey) next.delete(u.key);
+        else if (isDefaultForKey(u.key, v)) next.delete(u.key);
         else next.set(u.key, v);
       }
 
       setSearchParams(next, { replace: mode === "replace" });
     },
-    [searchParams, setSearchParams]
+    [searchParams, setSearchParams, isDefaultForKey]
   );
 
   const clearFilters = useCallback(() => {
     const next = new URLSearchParams(searchParams);
-    // keep ch
+    // keep ch (and let canonicalizer omit it if it's default)
     next.delete("q");
     next.delete("node");
     next.delete("focus");
@@ -220,7 +247,7 @@ export function useChatSearchParams(args?: {
       searchParams,
 
       // parsed
-      urlCh, // now canonical key (e.g., "mediumfast")
+      urlCh, // resolved key (canonical)
       urlQ,
       urlRange,
       urlType,

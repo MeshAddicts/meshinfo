@@ -174,7 +174,7 @@ export const Nodes = () => {
       skipPollingIfUnfocused: true,
       refetchOnReconnect: liveEnabled,
       refetchOnFocus: liveEnabled,
-    }
+    },
   );
 
   const { data: config } = useGetConfigQuery();
@@ -192,14 +192,6 @@ export const Nodes = () => {
     setParams,
   } = useNodesSearchParams();
 
-  // Default range to "all" when param missing (keeps URLs consistent/shareable)
-  useEffect(() => {
-    if (!searchParams.has("r")) {
-      setParam("r", "all", "replace");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
-
   // local UI state
   const [qInput, setQInput] = useState(urlQ);
   const qDeferred = useDeferredValue(qInput);
@@ -213,7 +205,7 @@ export const Nodes = () => {
   // update URL q (replace, don’t spam history)
   useEffect(() => {
     if ((searchParams.get("q") ?? "") === qDeferred) return;
-    setParam("q", qDeferred, "replace");
+    setParam("q", qDeferred, "replace"); // hook will delete q when empty
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qDeferred]);
 
@@ -319,7 +311,7 @@ export const Nodes = () => {
 
     if (typeof rangeThresholdMs === "number") {
       items = items.filter(
-        (x) => x.lastSeenMs != null && x.lastSeenMs >= rangeThresholdMs
+        (x) => x.lastSeenMs != null && x.lastSeenMs >= rangeThresholdMs,
       );
     }
 
@@ -332,7 +324,7 @@ export const Nodes = () => {
         const n: any = x.node;
         const s =
           `${x.id} ${String(n?.shortname ?? "")} ${String(
-            n?.longname ?? ""
+            n?.longname ?? "",
           )}`.toLowerCase();
         return s.includes(q);
       });
@@ -456,7 +448,7 @@ export const Nodes = () => {
     window.prompt("Copy link:", url);
   }, []);
 
-  // Manual refresh 
+  // Manual refresh
   const [manualRefreshing, setManualRefreshing] = useState(false);
   const doManualRefresh = useCallback(() => {
     if (manualRefreshing) return;
@@ -466,7 +458,7 @@ export const Nodes = () => {
     });
   }, [refetch, manualRefreshing]);
 
-  // Header live pill 
+  // Header live pill
   const liveUiMode = useMemo(() => {
     return liveEnabled ? ("live" as const) : ("off" as const);
   }, [liveEnabled]);
@@ -534,7 +526,7 @@ export const Nodes = () => {
     const cols = Object.keys(exportRows[0] ?? { id: "" });
     const header = cols.join(",");
     const lines = exportRows.map((r: any) =>
-      cols.map((c) => csvEscape(r[c])).join(",")
+      cols.map((c) => csvEscape(r[c])).join(","),
     );
     const csv = "\ufeff" + [header, ...lines].join("\r\n");
 
@@ -557,6 +549,7 @@ export const Nodes = () => {
   const hasFilters = activeFilterCount > 0;
 
   const clearFilters = useCallback(() => {
+    // These are defaults — hook will delete them from URL.
     setParams(
       [
         { key: "r", value: "all" },
@@ -565,7 +558,7 @@ export const Nodes = () => {
         { key: "by", value: "seen" },
         { key: "dir", value: "desc" },
       ],
-      "push"
+      "push",
     );
   }, [setParams]);
 
@@ -573,7 +566,7 @@ export const Nodes = () => {
     (id: string) => {
       setParams([{ key: "node", value: id }], "push");
     },
-    [setParams]
+    [setParams],
   );
 
   const clearSelection = useCallback(() => {
@@ -604,7 +597,7 @@ export const Nodes = () => {
       if (!isTypingContext && e.key === "/") {
         e.preventDefault();
         const el = document.getElementById(
-          "nodes-search"
+          "nodes-search",
         ) as HTMLInputElement | null;
         el?.focus();
       }
@@ -768,7 +761,7 @@ export const Nodes = () => {
                         ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
                         : "bg-transparent text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
                     ].join(" ")}
-                    onClick={() => setParam("r", rk, "push")}
+                    onClick={() => setParam("r", rk, "push")} // rk==="all" deletes param
                   >
                     {rk}
                   </button>
@@ -777,7 +770,7 @@ export const Nodes = () => {
 
               <select
                 value={urlStatus}
-                onChange={(e) => setParam("st", e.target.value, "push")}
+                onChange={(e) => setParam("st", e.target.value, "push")} // "all" deletes
                 className="rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100"
                 title="Status"
               >
@@ -788,7 +781,7 @@ export const Nodes = () => {
 
               <select
                 value={urlBy}
-                onChange={(e) => setParam("by", e.target.value, "push")}
+                onChange={(e) => setParam("by", e.target.value, "push")} // "seen" deletes
                 className="rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100"
                 title="Sort by"
               >
@@ -803,7 +796,7 @@ export const Nodes = () => {
                 type="button"
                 className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
                 onClick={() =>
-                  setParam("dir", urlDir === "desc" ? "asc" : "desc", "push")
+                  setParam("dir", urlDir === "desc" ? "asc" : "desc", "push") // desc deletes
                 }
                 title="Toggle sort direction"
               >
@@ -842,13 +835,13 @@ export const Nodes = () => {
               label={`Range: ${urlRange}`}
               active={urlRange !== "all"}
               title="Click to reset range to all"
-              onClick={() => setParam("r", "all", "push")}
+              onClick={() => setParam("r", "all", "push")} // deletes
             />
             <StatusChip
               label={`Status: ${urlStatus}`}
               active={urlStatus !== "all"}
               title="Click to reset status to All"
-              onClick={() => setParam("st", "all", "push")}
+              onClick={() => setParam("st", "all", "push")} // deletes
             />
             <StatusChip
               label={`Sort: ${urlBy}/${urlDir}`}
@@ -857,10 +850,10 @@ export const Nodes = () => {
               onClick={() =>
                 setParams(
                   [
-                    { key: "by", value: "seen" },
-                    { key: "dir", value: "desc" },
+                    { key: "by", value: "seen" }, // deletes
+                    { key: "dir", value: "desc" }, // deletes
                   ],
-                  "push"
+                  "push",
                 )
               }
             />
@@ -868,7 +861,7 @@ export const Nodes = () => {
               label={urlQ.trim() ? `Search: ${urlQ.trim()}` : "Search"}
               active={urlQ.trim().length > 0}
               title="Click to clear search"
-              onClick={() => setParam("q", undefined, "push")}
+              onClick={() => setParam("q", undefined, "push")} // deletes
             />
             <StatusChip
               label={selectedId ? `Selected: ${selectedId}` : "Selected: none"}
