@@ -71,9 +71,13 @@ class PostgresStorage:
         if self.pool is not None:
             try:
                 await self.pool.close()
+                logger.info("PostgreSQL connection pool closed")
+            except Exception as e:
+                logger.error(f"Failed to close PostgreSQL connection pool: {e}")
+                if getattr(self, "raise_on_write_error", False):
+                    raise
             finally:
                 self.pool = None
-            logger.info("PostgreSQL connection pool closed")
 
     async def ensure_schema(self):
         """Ensure database schema is created."""
