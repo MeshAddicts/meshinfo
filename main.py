@@ -130,9 +130,7 @@ async def main() -> None:
     # MQTT
     if config["broker"]["enabled"]:
         mqtt = MQTT(config, data)
-        background_tasks.append(
-            asyncio.create_task(supervise("MQTT", mqtt.connect))
-        )
+        background_tasks.append(asyncio.create_task(supervise("MQTT", mqtt.connect)))
     else:
         logger.info("MQTT disabled in config")
 
@@ -153,9 +151,7 @@ async def main() -> None:
             bot = make_discord_bot()
             await bot.start_server()
 
-        background_tasks.append(
-            asyncio.create_task(supervise("Discord", run_discord))
-        )
+        background_tasks.append(asyncio.create_task(supervise("Discord", run_discord)))
     else:
         logger.info("Discord disabled in config")
 
@@ -170,11 +166,15 @@ async def main() -> None:
             t.cancel()
         if background_tasks:
             await asyncio.gather(*background_tasks, return_exceptions=True)
-        
-        # Close Postgres connection
-        if config.get('storage', {}).get('postgres', {}).get('enabled', False):
+
+        # Close Postgres if it was used for reads OR writes
+        storage = config.get("storage", {})
+        read_from = storage.get("read_from", "json")
+        write_to = storage.get("write_to", [])
+
+        if read_from == "postgres" or "postgres" in write_to:
             await data.pg_storage.close()
-        
+
         logger.info("Shutdown complete")
 
 

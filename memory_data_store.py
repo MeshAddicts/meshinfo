@@ -40,7 +40,7 @@ class MemoryDataStore:
     self.telemetry_by_node: dict = {}
     self.traceroutes: list = []
     self.traceroutes_by_node: dict = {}
-    
+
     # Initialize Postgres storage
     self.pg_storage = PostgresStorage(config)
 
@@ -111,9 +111,14 @@ class MemoryDataStore:
     n['since'] = datetime.now().astimezone(ZoneInfo(self.config['server']['timezone'])) - n['last_seen']
     n['last_seen'] = datetime.now().astimezone(ZoneInfo(self.config['server']['timezone']))
     self.nodes[id] = n
-    
+
     # Real-time write to Postgres if enabled (dual-write pattern)
-    if 'postgres' in self.config.get('storage', {}).get('write_to', []):
+    if (
+      'postgres' in self.config.get('storage', {}).get('write_to', [])
+      and self.pg_storage is not None
+      and getattr(self.pg_storage, "enabled", False)
+      and getattr(self.pg_storage, "pool", None) is not None
+    ):
       try:
         try:
           loop = asyncio.get_running_loop()
@@ -125,10 +130,21 @@ class MemoryDataStore:
         logger.error(f"Failed to write node {id} to Postgres (non-blocking): {e}")
 
   async def load(self):
-    # Determine read source from config
-    read_from = self.config.get('storage', {}).get('read_from', 'json')
+    storage = self.config.get("storage", {})
+    read_from = storage.get("read_from", "json")
+    write_to = storage.get("write_to", [])
 
-    if read_from == 'postgres':
+    # If Postgres is used for writes (dual-write), initialize it even if read_from is JSON.
+    if "postgres" in write_to and read_from != "postgres":
+      logger.info("Postgres is enabled for writes; initializing Postgres pool/schema")
+      ok = await self.pg_storage.connect()
+      if ok:
+        await self.pg_storage.ensure_schema()
+      else:
+        logger.warning("Postgres connect failed; disabling Postgres writes for this run")
+        storage["write_to"] = [x for x in write_to if x != "postgres"]
+
+    if read_from == "postgres":
       logger.info("Loading data from PostgreSQL")
       await self._load_from_postgres()
     else:
@@ -231,8 +247,10 @@ class MemoryDataStore:
   async def _load_from_postgres(self):
     """Initialize PostgreSQL connection and prepare postgres-backed mode."""
     try:
-      # Connect + ensure schema 
-      await self.pg_storage.connect()
+      ok = await self.pg_storage.connect()
+      if not ok:
+        raise RuntimeError("PostgreSQL connect failed")
+
       await self.pg_storage.ensure_schema()
 
       # NOTE: your current code intentionally does NOT load rows into memory.
