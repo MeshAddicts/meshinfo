@@ -11,7 +11,7 @@ import datetime
 import json
 import logging
 import base64
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List, Tuple
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
@@ -23,10 +23,10 @@ class PostgresStorage:
     def __init__(self, config: Dict[str, Any]):
         """Initialize Postgres storage with configuration."""
         self.config = config
-        self.pg_config = config.get('storage', {}).get('postgres', {})
-        self.enabled = self.pg_config.get('enabled', False)
+        self.pg_config = config.get("storage", {}).get("postgres", {})
+        self.enabled = self.pg_config.get("enabled", False)
         self.pool: Optional[asyncpg.Pool] = None
-        self.timezone = config['server']['timezone']
+        self.timezone = config["server"]["timezone"]
 
         # Optional: enable to make migrations "honest" (fail fast / count failures correctly)
         self.raise_on_write_error = bool(self.pg_config.get("raise_on_write_error", False))
@@ -42,28 +42,37 @@ class PostgresStorage:
             logger.info("PostgreSQL storage is disabled in config")
             return False
 
+        # Idempotent: don't recreate the pool if we already have one.
+        if self.pool is not None:
+            return True
+
         try:
             self.pool = await asyncpg.create_pool(
-                host=self.pg_config.get('host', 'postgres'),
-                port=self.pg_config.get('port', 5432),
-                database=self.pg_config.get('database', 'meshinfo'),
-                user=self.pg_config.get('username', 'postgres'),
-                password=self.pg_config.get('password', 'password'),
-                min_size=self.pg_config.get('min_pool_size', 5),
-                max_size=self.pg_config.get('max_pool_size', 20),
-                command_timeout=10
+                host=self.pg_config.get("host", "postgres"),
+                port=self.pg_config.get("port", 5432),
+                database=self.pg_config.get("database", "meshinfo"),
+                user=self.pg_config.get("username", "postgres"),
+                password=self.pg_config.get("password", "password"),
+                min_size=self.pg_config.get("min_pool_size", 5),
+                max_size=self.pg_config.get("max_pool_size", 20),
+                command_timeout=10,
             )
             logger.info("PostgreSQL connection pool established")
             return True
         except Exception as e:
             logger.error(f"Failed to connect to PostgreSQL: {e}")
+            # Disable postgres mode to prevent repeated attempts elsewhere
             self.enabled = False
+            self.pool = None
             return False
 
     async def close(self):
         """Close the connection pool."""
-        if self.pool:
-            await self.pool.close()
+        if self.pool is not None:
+            try:
+                await self.pool.close()
+            finally:
+                self.pool = None
             logger.info("PostgreSQL connection pool closed")
 
     async def ensure_schema(self):
@@ -74,7 +83,7 @@ class PostgresStorage:
         try:
             async with self.pool.acquire() as conn:
                 # Read and execute schema file
-                with open('postgres/sql/schema.sql', 'r') as f:
+                with open("postgres/sql/schema.sql", "r") as f:
                     schema_sql = f.read()
                 await conn.execute(schema_sql)
                 logger.info("PostgreSQL schema verified/created")
@@ -83,7 +92,22 @@ class PostgresStorage:
             if self.raise_on_write_error:
                 raise
 
-    from typing import Any, Optional
+    # --------------------------- readiness helper ---------------------------
+
+    def _ready(self, op: str) -> bool:
+        """
+        Return True if Postgres is enabled and the pool is initialized.
+        Logs a warning when Postgres is enabled but connect() hasn't run yet.
+        """
+        if not self.enabled:
+            return False
+        if self.pool is None:
+            logger.warning(
+                "%s: Postgres enabled but pool is not initialized (connect() not called yet). Dropping operation.",
+                op,
+            )
+            return False
+        return True
 
     def _normalize_node_id(self, value: Any) -> Optional[str]:
         """
@@ -142,10 +166,10 @@ class PostgresStorage:
             VALUES ($1, FALSE)
             ON CONFLICT (id) DO NOTHING
             """,
-            nid
+            nid,
         )
         return nid
-    
+
     def _ts_to_dt(self, ts: Any) -> Optional[datetime.datetime]:
         if ts is None:
             return None
@@ -160,6 +184,22 @@ class PostgresStorage:
 
         return datetime.datetime.fromtimestamp(t, tz=ZoneInfo(self.timezone))
 
+    def _jsonb(self, v: Any, default):
+        """
+        Safe JSONB reader:
+        - asyncpg may return json/jsonb as str OR as dict/list depending on codecs.
+        """
+        if v is None:
+            return default
+        if isinstance(v, (dict, list)):
+            return v
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return default
+        return default
+
     # ============================================================================
     # WRITE OPERATIONS - Real-time writes for dual-write pattern
     # ============================================================================
@@ -172,7 +212,7 @@ class PostgresStorage:
             node_id: node id (any supported form; will be normalized)
             node_data: Complete node data dictionary
         """
-        if not self.enabled or not self.pool:
+        if not self._ready("write_node"):
             return
 
         try:
@@ -183,7 +223,7 @@ class PostgresStorage:
                         logger.warning(f"write_node: could not normalize node_id={node_id!r}, skipping")
                         return
 
-                    last_seen = node_data.get('last_seen')
+                    last_seen = node_data.get("last_seen")
                     if isinstance(last_seen, str):
                         try:
                             last_seen_ts = datetime.datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
@@ -194,18 +234,18 @@ class PostgresStorage:
                     else:
                         last_seen_ts = None
 
-                    since = node_data.get('since')
+                    since = node_data.get("since")
                     since_seconds = since.total_seconds() if since else None
 
-                    longname = node_data.get('longname')
+                    longname = node_data.get("longname")
                     if longname is not None and not isinstance(longname, str):
                         longname = str(longname)
 
-                    shortname = node_data.get('shortname')
+                    shortname = node_data.get("shortname")
                     if shortname is not None and not isinstance(shortname, str):
                         shortname = str(shortname)
 
-                    hardware = node_data.get('hardware')
+                    hardware = node_data.get("hardware")
                     if hardware is not None and not isinstance(hardware, str):
                         hardware = str(hardware)
 
@@ -222,7 +262,8 @@ class PostgresStorage:
                     if role is None and role_raw not in (None, "", 0):
                         logger.debug("Invalid role %r for node %s; storing NULL", role_raw, node_id_norm)
 
-                    await conn.execute("""
+                    await conn.execute(
+                        """
                         INSERT INTO nodes (id, longname, shortname, hardware, role, active, tc2_bbs, last_seen, since_seconds)
                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                         ON CONFLICT (id) DO UPDATE SET
@@ -235,26 +276,26 @@ class PostgresStorage:
                             last_seen = EXCLUDED.last_seen,
                             since_seconds = EXCLUDED.since_seconds,
                             updated_at = NOW()
-                    """,
+                        """,
                         node_id_norm,
                         longname,
                         shortname,
                         hardware,
                         role,
-                        node_data.get('active', False),
-                        node_data.get('tc2_bbs', False),
+                        node_data.get("active", False),
+                        node_data.get("tc2_bbs", False),
                         last_seen_ts,
-                        since_seconds
+                        since_seconds,
                     )
 
-                    if node_data.get('position'):
-                        await self._write_node_position(conn, node_id_norm, node_data['position'])
+                    if node_data.get("position"):
+                        await self._write_node_position(conn, node_id_norm, node_data["position"])
 
-                    if node_data.get('neighborinfo'):
-                        await self._write_node_neighborinfo(conn, node_id_norm, node_data['neighborinfo'])
+                    if node_data.get("neighborinfo"):
+                        await self._write_node_neighborinfo(conn, node_id_norm, node_data["neighborinfo"])
 
-                    if node_data.get('telemetry'):
-                        await self._write_node_telemetry_current(conn, node_id_norm, node_data['telemetry'])
+                    if node_data.get("telemetry"):
+                        await self._write_node_telemetry_current(conn, node_id_norm, node_data["telemetry"])
 
         except Exception as e:
             logger.error(f"Failed to write node to PostgreSQL: {e}")
@@ -263,16 +304,16 @@ class PostgresStorage:
 
     async def _write_node_position(self, conn, node_id: str, position: Dict[str, Any]):
         """Write/replace node position data (latest only)."""
-        geocoded = json.dumps(position.get('geocoded')) if position.get('geocoded') else None
+        geocoded = json.dumps(position.get("geocoded")) if position.get("geocoded") else None
 
-        last_geocoding = position.get('last_geocoding')
+        last_geocoding = position.get("last_geocoding")
         if isinstance(last_geocoding, str):
             try:
                 last_geocoding = datetime.datetime.fromisoformat(last_geocoding.replace("Z", "+00:00"))
             except Exception:
                 last_geocoding = None
 
-        pos_time = position.get('time')
+        pos_time = position.get("time")
         if isinstance(pos_time, str):
             try:
                 pos_time = int(pos_time)
@@ -284,11 +325,12 @@ class PostgresStorage:
             except Exception:
                 pos_time = None
 
-        await conn.execute("""
+        await conn.execute(
+            """
             INSERT INTO node_positions (
                 node_id, latitude_i, longitude_i, altitude, time, precision_bits, geocoded, last_geocoding
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
             ON CONFLICT (node_id) DO UPDATE SET
                 latitude_i = EXCLUDED.latitude_i,
                 longitude_i = EXCLUDED.longitude_i,
@@ -303,22 +345,23 @@ class PostgresStorage:
                 OR
                 -- if both are NULL, allow the update
                 (EXCLUDED.time IS NULL AND node_positions.time IS NULL)
-        """,
+            """,
             node_id,
-            position.get('latitude_i'),
-            position.get('longitude_i'),
-            position.get('altitude'),
+            position.get("latitude_i"),
+            position.get("longitude_i"),
+            position.get("altitude"),
             pos_time,
-            position.get('precision_bits'),
+            position.get("precision_bits"),
             geocoded,
-            last_geocoding
+            last_geocoding,
         )
 
     async def _write_node_neighborinfo(self, conn, node_id: str, neighborinfo: Dict[str, Any]):
         """Write node neighborinfo data (latest snapshot per node) + optional history snapshots."""
         neighbors_json = json.dumps(neighborinfo.get("neighbors", []), ensure_ascii=False)
 
-        await conn.execute("""
+        await conn.execute(
+            """
             WITH upsert AS (
                 INSERT INTO node_neighborinfo (node_id, node_broadcast_interval_secs, neighbors)
                 VALUES ($1, $2, $3::jsonb)
@@ -333,7 +376,11 @@ class PostgresStorage:
             INSERT INTO node_neighborinfo_history (node_id, neighbors)
             SELECT $1, $3::jsonb
             WHERE EXISTS (SELECT 1 FROM upsert);
-        """, node_id, neighborinfo.get("node_broadcast_interval_secs"), neighbors_json)
+            """,
+            node_id,
+            neighborinfo.get("node_broadcast_interval_secs"),
+            neighbors_json,
+        )
 
     async def _write_node_telemetry_current(self, conn, node_id: str, telemetry: Dict[str, Any]):
         """Write current node telemetry state (latest snapshot per node)."""
@@ -344,7 +391,8 @@ class PostgresStorage:
             logger.warning("_write_node_telemetry_current: could not normalize node_id=%r; skipping", node_id)
             return
 
-        await conn.execute("""
+        await conn.execute(
+            """
             INSERT INTO node_telemetry_current (
                 node_id, battery_level, voltage, channel_utilization, air_util_tx,
                 uptime_seconds, temperature, relative_humidity, barometric_pressure,
@@ -391,7 +439,7 @@ class PostgresStorage:
                 OR node_telemetry_current.wind_direction IS DISTINCT FROM EXCLUDED.wind_direction
                 OR node_telemetry_current.wind_speed IS DISTINCT FROM EXCLUDED.wind_speed
                 OR node_telemetry_current.weight IS DISTINCT FROM EXCLUDED.weight
-        """,
+            """,
             node_norm,
             telemetry.get("battery_level"),
             telemetry.get("voltage"),
@@ -421,7 +469,7 @@ class PostgresStorage:
             node_id: from-node id (any supported form; will be normalized)
             telemetry_msg: Telemetry message dictionary
         """
-        if not self.enabled or not self.pool:
+        if not self._ready("write_telemetry"):
             return
 
         if not isinstance(node_id, str) or not node_id:
@@ -443,17 +491,20 @@ class PostgresStorage:
                     if msg_from_norm and msg_from_norm != from_id:
                         logger.debug(
                             "write_telemetry: msg['from']=%r (norm=%s) != explicit node_id=%r (norm=%s); using explicit",
-                            msg_from, msg_from_norm, node_id, from_id
+                            msg_from,
+                            msg_from_norm,
+                            node_id,
+                            from_id,
                         )
 
-                sender_id = await self._ensure_node_stub(conn, telemetry_msg.get('sender'))
-                to_id = await self._ensure_node_stub(conn, telemetry_msg.get('to'))
+                sender_id = await self._ensure_node_stub(conn, telemetry_msg.get("sender"))
+                to_id = await self._ensure_node_stub(conn, telemetry_msg.get("to"))
 
-                payload_json = json.dumps(telemetry_msg.get('payload', {}))
+                payload_json = json.dumps(telemetry_msg.get("payload", {}))
 
                 rx_time = self._ts_to_dt(telemetry_msg.get("timestamp"))
 
-                msg_id = telemetry_msg.get('id')
+                msg_id = telemetry_msg.get("id")
                 if msg_id is None:
                     logger.warning("write_telemetry: missing telemetry_msg['id']; skipping insert")
                     return
@@ -463,26 +514,27 @@ class PostgresStorage:
                     logger.warning("write_telemetry: invalid telemetry_msg['id']=%r; skipping insert", msg_id)
                     return
 
-                await conn.execute("""
+                await conn.execute(
+                    """
                     INSERT INTO telemetry (
                         from_node_id, to_node_id, sender_node_id, message_id, channel,
                         packet_id, hops_away, rssi, snr, timestamp, rx_time, payload
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
                     ON CONFLICT (from_node_id, message_id) DO NOTHING
-                """,
+                    """,
                     from_id,
                     to_id,
                     sender_id,
                     msg_id,
-                    telemetry_msg.get('channel'),
-                    telemetry_msg.get('packet_id'),
-                    telemetry_msg.get('hops_away'),
-                    telemetry_msg.get('rssi'),
-                    telemetry_msg.get('snr'),
-                    telemetry_msg.get('timestamp'),
+                    telemetry_msg.get("channel"),
+                    telemetry_msg.get("packet_id"),
+                    telemetry_msg.get("hops_away"),
+                    telemetry_msg.get("rssi"),
+                    telemetry_msg.get("snr"),
+                    telemetry_msg.get("timestamp"),
                     rx_time,
-                    payload_json
+                    payload_json,
                 )
 
         except Exception as e:
@@ -498,7 +550,7 @@ class PostgresStorage:
             node_id: from-node id (any supported form; will be normalized)
             chat_msg: Chat message dictionary
         """
-        if not self.enabled or not self.pool:
+        if not self._ready("write_chat_message"):
             return
 
         if not isinstance(node_id, str) or not node_id:
@@ -525,43 +577,51 @@ class PostgresStorage:
                         if msg_from_norm and msg_from_norm != from_id:
                             logger.debug(
                                 "write_chat_message: msg['from']=%r (norm=%s) != explicit node_id=%r (norm=%s); using explicit",
-                                msg_from, msg_from_norm, node_id, from_id
+                                msg_from,
+                                msg_from_norm,
+                                node_id,
+                                from_id,
                             )
 
-                    sender_id = await self._ensure_node_stub(conn, chat_msg.get('sender'))
-                    to_id = await self._ensure_node_stub(conn, chat_msg.get('to'))
+                    sender_id = await self._ensure_node_stub(conn, chat_msg.get("sender"))
+                    to_id = await self._ensure_node_stub(conn, chat_msg.get("to"))
 
                     # Ensure channel exists
-                    channel_id = str(chat_msg.get('channel', '0'))
-                    channel_name = f"Channel {channel_id}" if channel_id != '0' else 'General'
+                    channel_id = str(chat_msg.get("channel", "0"))
+                    channel_name = f"Channel {channel_id}" if channel_id != "0" else "General"
 
-                    await conn.execute("""
+                    await conn.execute(
+                        """
                         INSERT INTO chat_channels (id, name)
                         VALUES ($1, $2)
                         ON CONFLICT (id) DO NOTHING
-                    """, channel_id, channel_name)
+                        """,
+                        channel_id,
+                        channel_name,
+                    )
 
                     rx_time = self._ts_to_dt(chat_msg.get("timestamp"))
 
-                    await conn.execute("""
+                    await conn.execute(
+                        """
                         INSERT INTO chat_messages (
                             id, from_node_id, to_node_id, sender_node_id, channel_id,
                             text, timestamp, rx_time, hops_away, rssi, snr
                         )
                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                         ON CONFLICT (id) DO NOTHING
-                    """,
-                        chat_msg.get('id'),
+                        """,
+                        chat_msg.get("id"),
                         from_id,
                         to_id,
                         sender_id,
                         channel_id,
-                        chat_msg.get('text'),
-                        chat_msg.get('timestamp'),
+                        chat_msg.get("text"),
+                        chat_msg.get("timestamp"),
                         rx_time,
-                        chat_msg.get('hops_away'),
-                        chat_msg.get('rssi'),
-                        chat_msg.get('snr')
+                        chat_msg.get("hops_away"),
+                        chat_msg.get("rssi"),
+                        chat_msg.get("snr"),
                     )
 
         except Exception as e:
@@ -577,7 +637,7 @@ class PostgresStorage:
             node_id: from-node id (any supported form; will be normalized)
             traceroute_msg: Traceroute message dictionary
         """
-        if not self.enabled or not self.pool:
+        if not self._ready("write_traceroute"):
             return
 
         if not isinstance(node_id, str) or not node_id:
@@ -599,20 +659,31 @@ class PostgresStorage:
                     if msg_from_norm and msg_from_norm != from_id:
                         logger.debug(
                             "write_traceroute: msg['from']=%r (norm=%s) != explicit node_id=%r (norm=%s); using explicit",
-                            msg_from, msg_from_norm, node_id, from_id
+                            msg_from,
+                            msg_from_norm,
+                            node_id,
+                            from_id,
                         )
 
                 # Prefer stubs (safer if schema uses FKs); allow NULL if missing/invalid
-                to_id = await self._ensure_node_stub(conn, traceroute_msg.get('to')) if traceroute_msg.get('to') else None
-                sender_id = await self._ensure_node_stub(conn, traceroute_msg.get('sender')) if traceroute_msg.get('sender') else None
+                to_id = (
+                    await self._ensure_node_stub(conn, traceroute_msg.get("to"))
+                    if traceroute_msg.get("to")
+                    else None
+                )
+                sender_id = (
+                    await self._ensure_node_stub(conn, traceroute_msg.get("sender"))
+                    if traceroute_msg.get("sender")
+                    else None
+                )
 
-                payload_json = json.dumps(traceroute_msg.get('payload', {}))
-                route_json = json.dumps(traceroute_msg.get('route', []))
-                route_ids_json = json.dumps(traceroute_msg.get('route_ids', []))
+                payload_json = json.dumps(traceroute_msg.get("payload", {}))
+                route_json = json.dumps(traceroute_msg.get("route", []))
+                route_ids_json = json.dumps(traceroute_msg.get("route_ids", []))
 
                 rx_time = self._ts_to_dt(traceroute_msg.get("timestamp"))
 
-                msg_id = traceroute_msg.get('id')
+                msg_id = traceroute_msg.get("id")
                 if msg_id is None:
                     logger.warning("write_traceroute: missing traceroute_msg['id']; skipping insert")
                     return
@@ -622,27 +693,37 @@ class PostgresStorage:
                     logger.warning("write_traceroute: invalid traceroute_msg['id']=%r; skipping insert", msg_id)
                     return
 
-                await conn.execute("""
+                await conn.execute(
+                    """
                     INSERT INTO traceroutes (
                         from_node_id, to_node_id, sender_node_id, message_id, channel,
                         packet_id, hops_away, rssi, snr, timestamp, rx_time,
                         route, route_ids, payload
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14::jsonb)
                     ON CONFLICT (from_node_id, message_id) DO NOTHING
-                """,
-                    from_id, to_id, sender_id, msg_id,
-                    traceroute_msg.get('channel'), traceroute_msg.get('packet_id'),
-                    traceroute_msg.get('hops_away'), traceroute_msg.get('rssi'),
-                    traceroute_msg.get('snr'), traceroute_msg.get('timestamp'),
-                    rx_time, route_json, route_ids_json, payload_json
+                    """,
+                    from_id,
+                    to_id,
+                    sender_id,
+                    msg_id,
+                    traceroute_msg.get("channel"),
+                    traceroute_msg.get("packet_id"),
+                    traceroute_msg.get("hops_away"),
+                    traceroute_msg.get("rssi"),
+                    traceroute_msg.get("snr"),
+                    traceroute_msg.get("timestamp"),
+                    rx_time,
+                    route_json,
+                    route_ids_json,
+                    payload_json,
                 )
 
         except Exception as e:
             logger.error(f"Failed to write traceroute to PostgreSQL: {e}")
             if self.raise_on_write_error:
                 raise
-    
+
     def _coerce_mqtt_payload_text(self, value: Any) -> Optional[str]:
         """
         Convert MQTT payload/message content into a text blob suitable for mqtt_messages.payload.
@@ -677,7 +758,7 @@ class PostgresStorage:
         Expected table columns:
           topic (text), payload (text), qos (int), retain (bool), timestamp (bigint), created_at (timestamptz default now())
         """
-        if not self.enabled or not self.pool:
+        if not self._ready("write_mqtt_message"):
             return
 
         if isinstance(mqtt_msg, dict):
@@ -732,7 +813,7 @@ class PostgresStorage:
         except Exception as e:
             logger.error(f"Failed to write mqtt message to PostgreSQL: {e}")
             if self.raise_on_write_error:
-                raise    
+                raise
 
     # ============================================================================
     # READ OPERATIONS - Load data from PostgreSQL matching JSON structure
@@ -741,7 +822,7 @@ class PostgresStorage:
     async def load_nodes(self) -> Dict[str, Any]:
         """
         Load all nodes from PostgreSQL in JSON-compatible format.
-        
+
         Returns:
             Dict mapping node_id to node data (same structure as JSON)
         """
@@ -753,74 +834,93 @@ class PostgresStorage:
                 # Load nodes
                 nodes = {}
                 rows = await conn.fetch("SELECT * FROM nodes")
-                
+
                 for row in rows:
-                    node_id = row['id']
+                    node_id = row["id"]
                     nodes[node_id] = {
-                        'id': node_id,
-                        'longname': row['longname'],
-                        'shortname': row['shortname'],
-                        'hardware': row['hardware'],
-                        'role': row['role'],
-                        'active': row['active'],
-                        'tc2_bbs': row['tc2_bbs'],
-                        'last_seen': row['last_seen'].isoformat() if row['last_seen'] else None,
-                        'since': datetime.timedelta(seconds=row['since_seconds']) if row['since_seconds'] else None,
-                        'position': None,
-                        'neighborinfo': None,
-                        'telemetry': None
+                        "id": node_id,
+                        "longname": row["longname"],
+                        "shortname": row["shortname"],
+                        "hardware": row["hardware"],
+                        "role": row["role"],
+                        "active": row["active"],
+                        "tc2_bbs": row["tc2_bbs"],
+                        "last_seen": row["last_seen"].isoformat() if row["last_seen"] else None,
+                        "since": datetime.timedelta(seconds=row["since_seconds"]) if row["since_seconds"] else None,
+                        "position": None,
+                        "neighborinfo": None,
+                        "telemetry": None,
                     }
 
                 # Load positions (most recent per node)
-                position_rows = await conn.fetch("""
+                position_rows = await conn.fetch(
+                    """
                     SELECT DISTINCT ON (node_id) *
                     FROM node_positions
                     ORDER BY node_id, created_at DESC
-                """)
-                
+                    """
+                )
+
                 for row in position_rows:
-                    node_id = row['node_id']
+                    node_id = row["node_id"]
                     if node_id in nodes:
-                        nodes[node_id]['position'] = {
-                            'latitude_i': row['latitude_i'],
-                            'longitude_i': row['longitude_i'],
-                            'altitude': row['altitude'],
-                            'time': row['time'],
-                            'precision_bits': row['precision_bits'],
-                            'geocoded': json.loads(row['geocoded']) if row['geocoded'] else None,
-                            'last_geocoding': row['last_geocoding'].isoformat() if row['last_geocoding'] else None
+                        nodes[node_id]["position"] = {
+                            "latitude_i": row["latitude_i"],
+                            "longitude_i": row["longitude_i"],
+                            "altitude": row["altitude"],
+                            "time": row["time"],
+                            "precision_bits": row["precision_bits"],
+                            "geocoded": self._jsonb(row["geocoded"], None),
+                            "last_geocoding": row["last_geocoding"].isoformat() if row["last_geocoding"] else None,
                         }
 
                 # Load neighborinfo (most recent per node)
-                neighbor_rows = await conn.fetch("""
+                neighbor_rows = await conn.fetch(
+                    """
                     SELECT DISTINCT ON (node_id) *
                     FROM node_neighborinfo
                     ORDER BY node_id, created_at DESC
-                """)
-                
+                    """
+                )
+
                 for row in neighbor_rows:
-                    node_id = row['node_id']
+                    node_id = row["node_id"]
                     if node_id in nodes:
-                        nodes[node_id]['neighborinfo'] = {
-                            'node_broadcast_interval_secs': row['node_broadcast_interval_secs'],
-                            'neighbors': json.loads(row['neighbors']) if row['neighbors'] else []
+                        nodes[node_id]["neighborinfo"] = {
+                            "node_broadcast_interval_secs": row["node_broadcast_interval_secs"],
+                            "neighbors": self._jsonb(row["neighbors"], []),
                         }
 
                 # Load current telemetry
                 telemetry_rows = await conn.fetch("SELECT * FROM node_telemetry_current")
-                
+
                 for row in telemetry_rows:
-                    node_id = row['node_id']
+                    node_id = row["node_id"]
                     if node_id in nodes:
                         telemetry = {}
-                        for field in ['battery_level', 'voltage', 'channel_utilization', 'air_util_tx',
-                                    'uptime_seconds', 'temperature', 'relative_humidity', 
-                                    'barometric_pressure', 'gas_resistance', 'iaq', 'distance',
-                                    'lux', 'white_lux', 'ir_lux', 'uv_lux', 'wind_direction',
-                                    'wind_speed', 'weight']:
+                        for field in [
+                            "battery_level",
+                            "voltage",
+                            "channel_utilization",
+                            "air_util_tx",
+                            "uptime_seconds",
+                            "temperature",
+                            "relative_humidity",
+                            "barometric_pressure",
+                            "gas_resistance",
+                            "iaq",
+                            "distance",
+                            "lux",
+                            "white_lux",
+                            "ir_lux",
+                            "uv_lux",
+                            "wind_direction",
+                            "wind_speed",
+                            "weight",
+                        ]:
                             if row[field] is not None:
                                 telemetry[field] = row[field]
-                        nodes[node_id]['telemetry'] = telemetry if telemetry else None
+                        nodes[node_id]["telemetry"] = telemetry if telemetry else None
 
                 logger.info(f"Loaded {len(nodes)} nodes from PostgreSQL")
                 return nodes
@@ -832,64 +932,62 @@ class PostgresStorage:
     async def load_chat(self) -> Dict[str, Any]:
         """
         Load chat data from PostgreSQL in JSON-compatible format.
-        
+
         Returns:
             Chat structure matching JSON format
         """
         if not self.enabled or not self.pool:
-            return {'channels': {'0': {'name': 'General', 'messages': []}}}
+            return {"channels": {"0": {"name": "General", "messages": []}}}
 
         try:
             async with self.pool.acquire() as conn:
-                chat = {'channels': {}}
+                chat = {"channels": {}}
 
                 # Load channels
                 channel_rows = await conn.fetch("SELECT * FROM chat_channels ORDER BY id")
                 for row in channel_rows:
-                    chat['channels'][row['id']] = {
-                        'name': row['name'],
-                        'messages': []
-                    }
+                    chat["channels"][row["id"]] = {"name": row["name"], "messages": []}
 
                 # Load messages (most recent first)
-                message_rows = await conn.fetch("""
+                message_rows = await conn.fetch(
+                    """
                     SELECT * FROM chat_messages
                     ORDER BY created_at DESC
                     LIMIT 10000
-                """)
+                    """
+                )
 
                 for row in message_rows:
-                    channel_id = row['channel_id'] or '0'
-                    if channel_id not in chat['channels']:
-                        chat['channels'][channel_id] = {
-                            'name': f'Channel {channel_id}',
-                            'messages': []
+                    channel_id = row["channel_id"] or "0"
+                    if channel_id not in chat["channels"]:
+                        chat["channels"][channel_id] = {"name": f"Channel {channel_id}", "messages": []}
+
+                    chat["channels"][channel_id]["messages"].append(
+                        {
+                            "id": row["id"],
+                            "from": row["from_node_id"],
+                            "to": row["to_node_id"],
+                            "sender": row["sender_node_id"],
+                            "channel": channel_id,
+                            "text": row["text"],
+                            "timestamp": row["timestamp"],
+                            "hops_away": row["hops_away"],
+                            "rssi": row["rssi"],
+                            "snr": row["snr"],
                         }
-                    
-                    chat['channels'][channel_id]['messages'].append({
-                        'id': row['id'],
-                        'from': row['from_node_id'],
-                        'to': row['to_node_id'],
-                        'sender': row['sender_node_id'],
-                        'channel': channel_id,
-                        'text': row['text'],
-                        'timestamp': row['timestamp'],
-                        'hops_away': row['hops_away'],
-                        'rssi': row['rssi'],
-                        'snr': row['snr']
-                    })
+                    )
 
                 logger.info(f"Loaded {len(message_rows)} chat messages from PostgreSQL")
                 return chat
 
         except Exception as e:
             logger.error(f"Failed to load chat from PostgreSQL: {e}")
-            return {'channels': {'0': {'name': 'General', 'messages': []}}}
+            return {"channels": {"0": {"name": "General", "messages": []}}}
 
     async def load_telemetry(self) -> tuple[List[Dict[str, Any]], Dict[str, List[Dict[str, Any]]]]:
         """
         Load telemetry data from PostgreSQL.
-        
+
         Returns:
             Tuple of (telemetry_list, telemetry_by_node)
         """
@@ -898,33 +996,35 @@ class PostgresStorage:
 
         try:
             async with self.pool.acquire() as conn:
-                rows = await conn.fetch("""
+                rows = await conn.fetch(
+                    """
                     SELECT * FROM telemetry
                     ORDER BY created_at DESC
                     LIMIT 10000
-                """)
+                    """
+                )
 
                 telemetry = []
                 telemetry_by_node = {}
 
                 for row in rows:
                     msg = {
-                        'from': row['from_node_id'],
-                        'to': row['to_node_id'],
-                        'sender': row['sender_node_id'],
-                        'id': row['message_id'],
-                        'channel': row['channel'],
-                        'packet_id': row['packet_id'],
-                        'hops_away': row['hops_away'],
-                        'rssi': row['rssi'],
-                        'snr': row['snr'],
-                        'timestamp': row['timestamp'],
-                        'payload': json.loads(row['payload']) if row['payload'] else {}
+                        "from": row["from_node_id"],
+                        "to": row["to_node_id"],
+                        "sender": row["sender_node_id"],
+                        "id": row["message_id"],
+                        "channel": row["channel"],
+                        "packet_id": row["packet_id"],
+                        "hops_away": row["hops_away"],
+                        "rssi": row["rssi"],
+                        "snr": row["snr"],
+                        "timestamp": row["timestamp"],
+                        "payload": self._jsonb(row["payload"], {}),
                     }
-                    
+
                     telemetry.append(msg)
-                    
-                    node_id = row['from_node_id']
+
+                    node_id = row["from_node_id"]
                     if node_id not in telemetry_by_node:
                         telemetry_by_node[node_id] = []
                     telemetry_by_node[node_id].append(msg)
@@ -939,7 +1039,7 @@ class PostgresStorage:
     async def load_traceroutes(self) -> tuple[List[Dict[str, Any]], Dict[str, List[Dict[str, Any]]]]:
         """
         Load traceroute data from PostgreSQL.
-        
+
         Returns:
             Tuple of (traceroutes_list, traceroutes_by_node)
         """
@@ -948,35 +1048,37 @@ class PostgresStorage:
 
         try:
             async with self.pool.acquire() as conn:
-                rows = await conn.fetch("""
+                rows = await conn.fetch(
+                    """
                     SELECT * FROM traceroutes
                     ORDER BY created_at DESC
                     LIMIT 10000
-                """)
+                    """
+                )
 
                 traceroutes = []
                 traceroutes_by_node = {}
 
                 for row in rows:
                     msg = {
-                        'from': row['from_node_id'],
-                        'to': row['to_node_id'],
-                        'sender': row['sender_node_id'],
-                        'id': row['message_id'],
-                        'channel': row['channel'],
-                        'packet_id': row['packet_id'],
-                        'hops_away': row['hops_away'],
-                        'rssi': row['rssi'],
-                        'snr': row['snr'],
-                        'timestamp': row['timestamp'],
-                        'route': json.loads(row['route']) if row['route'] else [],
-                        'route_ids': json.loads(row['route_ids']) if row['route_ids'] else [],
-                        'payload': json.loads(row['payload']) if row['payload'] else {}
+                        "from": row["from_node_id"],
+                        "to": row["to_node_id"],
+                        "sender": row["sender_node_id"],
+                        "id": row["message_id"],
+                        "channel": row["channel"],
+                        "packet_id": row["packet_id"],
+                        "hops_away": row["hops_away"],
+                        "rssi": row["rssi"],
+                        "snr": row["snr"],
+                        "timestamp": row["timestamp"],
+                        "route": self._jsonb(row["route"], []),
+                        "route_ids": self._jsonb(row["route_ids"], []),
+                        "payload": self._jsonb(row["payload"], {}),
                     }
-                    
+
                     traceroutes.append(msg)
-                    
-                    node_id = row['from_node_id']
+
+                    node_id = row["from_node_id"]
                     if node_id not in traceroutes_by_node:
                         traceroutes_by_node[node_id] = []
                     traceroutes_by_node[node_id].append(msg)
@@ -993,23 +1095,23 @@ class PostgresStorage:
     # ============================================================================
 
     async def query_nodes_filtered(
-        self, 
+        self,
         days_limit: int = 7,
         node_ids: Optional[List[str]] = None,
         longname_filter: Optional[str] = None,
         shortname_filter: Optional[str] = None,
-        status_filter: Optional[str] = None
+        status_filter: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Query nodes with filters directly from PostgreSQL.
-        
+
         Args:
             days_limit: Only return nodes seen within this many days
             node_ids: Filter by specific node IDs
             longname_filter: Filter by longname substring (case-insensitive)
             shortname_filter: Filter by shortname substring (case-insensitive)
             status_filter: Filter by status ("online" or "offline")
-        
+
         Returns:
             Dict mapping node_id to node data
         """
@@ -1038,7 +1140,7 @@ class PostgresStorage:
 
                 # Node IDs filter
                 if node_ids:
-                    placeholders = ','.join([f'${i}' for i in range(param_num, param_num + len(node_ids))])
+                    placeholders = ",".join([f"${i}" for i in range(param_num, param_num + len(node_ids))])
                     where_parts.append(f"id IN ({placeholders})")
                     params.extend(node_ids)
                     param_num += len(node_ids)
@@ -1062,33 +1164,33 @@ class PostgresStorage:
                     where_parts.append("active = FALSE")
 
                 where_clause = " AND ".join(where_parts) if where_parts else "TRUE"
-                
+
                 # Query nodes
                 nodes = {}
                 query = f"SELECT * FROM nodes WHERE {where_clause}"
                 rows = await conn.fetch(query, *params)
-                
+
                 for row in rows:
-                    node_id = row['id']
+                    node_id = row["id"]
                     nodes[node_id] = {
-                        'id': node_id,
-                        'longname': row['longname'],
-                        'shortname': row['shortname'],
-                        'hardware': row['hardware'],
-                        'role': row['role'],
-                        'active': row['active'],
-                        'tc2_bbs': row.get('tc2_bbs', False),
-                        'last_seen': row['last_seen'].isoformat() if row['last_seen'] else None,
-                        'since': datetime.timedelta(seconds=row['since_seconds']) if row['since_seconds'] else None,
-                        'position': None,
-                        'neighborinfo': None,
-                        'telemetry': None
+                        "id": node_id,
+                        "longname": row["longname"],
+                        "shortname": row["shortname"],
+                        "hardware": row["hardware"],
+                        "role": row["role"],
+                        "active": row["active"],
+                        "tc2_bbs": row["tc2_bbs"] if "tc2_bbs" in row else False,
+                        "last_seen": row["last_seen"].isoformat() if row["last_seen"] else None,
+                        "since": datetime.timedelta(seconds=row["since_seconds"]) if row["since_seconds"] else None,
+                        "position": None,
+                        "neighborinfo": None,
+                        "telemetry": None,
                     }
 
                 # Load related data for returned nodes
                 if nodes:
                     node_ids_list = list(nodes.keys())
-                    
+
                     # Load positions
                     position_query = """
                         SELECT DISTINCT ON (node_id) *
@@ -1097,18 +1199,18 @@ class PostgresStorage:
                         ORDER BY node_id, created_at DESC
                     """
                     position_rows = await conn.fetch(position_query, node_ids_list)
-                    
+
                     for row in position_rows:
-                        node_id = row['node_id']
+                        node_id = row["node_id"]
                         if node_id in nodes:
-                            nodes[node_id]['position'] = {
-                                'latitude_i': row['latitude_i'],
-                                'longitude_i': row['longitude_i'],
-                                'altitude': row['altitude'],
-                                'time': row['time'],
-                                'precision_bits': row['precision_bits'],
-                                'geocoded': json.loads(row['geocoded']) if row['geocoded'] else None,
-                                'last_geocoding': row['last_geocoding'].isoformat() if row['last_geocoding'] else None
+                            nodes[node_id]["position"] = {
+                                "latitude_i": row["latitude_i"],
+                                "longitude_i": row["longitude_i"],
+                                "altitude": row["altitude"],
+                                "time": row["time"],
+                                "precision_bits": row["precision_bits"],
+                                "geocoded": self._jsonb(row["geocoded"], None),
+                                "last_geocoding": row["last_geocoding"].isoformat() if row["last_geocoding"] else None,
                             }
 
                     # Load neighborinfo
@@ -1119,31 +1221,46 @@ class PostgresStorage:
                         ORDER BY node_id, created_at DESC
                     """
                     neighbor_rows = await conn.fetch(neighbor_query, node_ids_list)
-                    
+
                     for row in neighbor_rows:
-                        node_id = row['node_id']
+                        node_id = row["node_id"]
                         if node_id in nodes:
-                            nodes[node_id]['neighborinfo'] = {
-                                'node_broadcast_interval_secs': row['node_broadcast_interval_secs'],
-                                'neighbors': json.loads(row['neighbors']) if row['neighbors'] else []
+                            nodes[node_id]["neighborinfo"] = {
+                                "node_broadcast_interval_secs": row["node_broadcast_interval_secs"],
+                                "neighbors": self._jsonb(row["neighbors"], []),
                             }
 
                     # Load current telemetry
                     telemetry_query = "SELECT * FROM node_telemetry_current WHERE node_id = ANY($1)"
                     telemetry_rows = await conn.fetch(telemetry_query, node_ids_list)
-                    
+
                     for row in telemetry_rows:
-                        node_id = row['node_id']
+                        node_id = row["node_id"]
                         if node_id in nodes:
                             telemetry = {}
-                            for field in ['battery_level', 'voltage', 'channel_utilization', 'air_util_tx',
-                                        'uptime_seconds', 'temperature', 'relative_humidity', 
-                                        'barometric_pressure', 'gas_resistance', 'iaq', 'distance',
-                                        'lux', 'white_lux', 'ir_lux', 'uv_lux', 'wind_direction',
-                                        'wind_speed', 'weight']:
+                            for field in [
+                                "battery_level",
+                                "voltage",
+                                "channel_utilization",
+                                "air_util_tx",
+                                "uptime_seconds",
+                                "temperature",
+                                "relative_humidity",
+                                "barometric_pressure",
+                                "gas_resistance",
+                                "iaq",
+                                "distance",
+                                "lux",
+                                "white_lux",
+                                "ir_lux",
+                                "uv_lux",
+                                "wind_direction",
+                                "wind_speed",
+                                "weight",
+                            ]:
                                 if row[field] is not None:
                                     telemetry[field] = row[field]
-                            nodes[node_id]['telemetry'] = telemetry if telemetry else None
+                            nodes[node_id]["telemetry"] = telemetry if telemetry else None
 
                 return nodes
 
@@ -1163,29 +1280,35 @@ class PostgresStorage:
 
         try:
             async with self.pool.acquire() as conn:
-                rows = await conn.fetch("""
+                rows = await conn.fetch(
+                    """
                     SELECT * FROM telemetry
                     WHERE from_node_id = $1
                     ORDER BY created_at DESC
                     LIMIT $2
-                """, node_id, limit)
+                    """,
+                    node_id,
+                    limit,
+                )
 
                 telemetry = []
                 for row in rows:
-                    telemetry.append({
-                        'from': row['from_node_id'],
-                        'to': row['to_node_id'],
-                        'sender': row['sender_node_id'],
-                        'id': row['message_id'],
-                        'channel': row['channel'],
-                        'packet_id': row['packet_id'],
-                        'hops_away': row['hops_away'],
-                        'rssi': row['rssi'],
-                        'snr': row['snr'],
-                        'timestamp': row['timestamp'],
-                        'payload': json.loads(row['payload']) if row['payload'] else {}
-                    })
-                
+                    telemetry.append(
+                        {
+                            "from": row["from_node_id"],
+                            "to": row["to_node_id"],
+                            "sender": row["sender_node_id"],
+                            "id": row["message_id"],
+                            "channel": row["channel"],
+                            "packet_id": row["packet_id"],
+                            "hops_away": row["hops_away"],
+                            "rssi": row["rssi"],
+                            "snr": row["snr"],
+                            "timestamp": row["timestamp"],
+                            "payload": self._jsonb(row["payload"], {}),
+                        }
+                    )
+
                 return telemetry
 
         except Exception as e:
@@ -1199,28 +1322,33 @@ class PostgresStorage:
 
         try:
             async with self.pool.acquire() as conn:
-                rows = await conn.fetch("""
+                rows = await conn.fetch(
+                    """
                     SELECT * FROM chat_messages
                     WHERE from_node_id = $1 OR to_node_id = $1
                     ORDER BY created_at DESC
                     LIMIT 1000
-                """, node_id)
+                    """,
+                    node_id,
+                )
 
                 texts = []
                 for row in rows:
-                    texts.append({
-                        'id': row['id'],
-                        'from': row['from_node_id'],
-                        'to': row['to_node_id'],
-                        'sender': row['sender_node_id'],
-                        'channel': row['channel_id'] or '0',
-                        'text': row['text'],
-                        'timestamp': row['timestamp'],
-                        'hops_away': row['hops_away'],
-                        'rssi': row['rssi'],
-                        'snr': row['snr']
-                    })
-                
+                    texts.append(
+                        {
+                            "id": row["id"],
+                            "from": row["from_node_id"],
+                            "to": row["to_node_id"],
+                            "sender": row["sender_node_id"],
+                            "channel": row["channel_id"] or "0",
+                            "text": row["text"],
+                            "timestamp": row["timestamp"],
+                            "hops_away": row["hops_away"],
+                            "rssi": row["rssi"],
+                            "snr": row["snr"],
+                        }
+                    )
+
                 return texts
 
         except Exception as e:
@@ -1234,31 +1362,36 @@ class PostgresStorage:
 
         try:
             async with self.pool.acquire() as conn:
-                rows = await conn.fetch("""
+                rows = await conn.fetch(
+                    """
                     SELECT * FROM traceroutes
                     WHERE from_node_id = $1 OR to_node_id = $1
                     ORDER BY created_at DESC
                     LIMIT 1000
-                """, node_id)
+                    """,
+                    node_id,
+                )
 
                 traceroutes = []
                 for row in rows:
-                    traceroutes.append({
-                        'from': row['from_node_id'],
-                        'to': row['to_node_id'],
-                        'sender': row['sender_node_id'],
-                        'id': row['message_id'],
-                        'channel': row['channel'],
-                        'packet_id': row['packet_id'],
-                        'hops_away': row['hops_away'],
-                        'rssi': row['rssi'],
-                        'snr': row['snr'],
-                        'timestamp': row['timestamp'],
-                        'route': json.loads(row['route']) if row['route'] else [],
-                        'route_ids': json.loads(row['route_ids']) if row['route_ids'] else [],
-                        'payload': json.loads(row['payload']) if row['payload'] else {}
-                    })
-                
+                    traceroutes.append(
+                        {
+                            "from": row["from_node_id"],
+                            "to": row["to_node_id"],
+                            "sender": row["sender_node_id"],
+                            "id": row["message_id"],
+                            "channel": row["channel"],
+                            "packet_id": row["packet_id"],
+                            "hops_away": row["hops_away"],
+                            "rssi": row["rssi"],
+                            "snr": row["snr"],
+                            "timestamp": row["timestamp"],
+                            "route": self._jsonb(row["route"], []),
+                            "route_ids": self._jsonb(row["route_ids"], []),
+                            "payload": self._jsonb(row["payload"], {}),
+                        }
+                    )
+
                 return traceroutes
 
         except Exception as e:
@@ -1268,53 +1401,52 @@ class PostgresStorage:
     async def query_all_chat(self, limit: int = 10000) -> Dict[str, Any]:
         """Query all chat channels and messages."""
         if not self.enabled or not self.pool:
-            return {'channels': {'0': {'name': 'General', 'messages': []}}}
+            return {"channels": {"0": {"name": "General", "messages": []}}}
 
         try:
             async with self.pool.acquire() as conn:
-                chat = {'channels': {}}
+                chat = {"channels": {}}
 
                 # Load channels
                 channel_rows = await conn.fetch("SELECT * FROM chat_channels ORDER BY id")
                 for row in channel_rows:
-                    chat['channels'][row['id']] = {
-                        'name': row['name'],
-                        'messages': []
-                    }
+                    chat["channels"][row["id"]] = {"name": row["name"], "messages": []}
 
                 # Load messages
-                message_rows = await conn.fetch("""
+                message_rows = await conn.fetch(
+                    """
                     SELECT * FROM chat_messages
                     ORDER BY created_at DESC
                     LIMIT $1
-                """, limit)
+                    """,
+                    limit,
+                )
 
                 for row in message_rows:
-                    channel_id = row['channel_id'] or '0'
-                    if channel_id not in chat['channels']:
-                        chat['channels'][channel_id] = {
-                            'name': f'Channel {channel_id}',
-                            'messages': []
+                    channel_id = row["channel_id"] or "0"
+                    if channel_id not in chat["channels"]:
+                        chat["channels"][channel_id] = {"name": f"Channel {channel_id}", "messages": []}
+
+                    chat["channels"][channel_id]["messages"].append(
+                        {
+                            "id": row["id"],
+                            "from": row["from_node_id"],
+                            "to": row["to_node_id"],
+                            "sender": row["sender_node_id"],
+                            "channel": channel_id,
+                            "text": row["text"],
+                            "timestamp": row["timestamp"],
+                            "hops_away": row["hops_away"],
+                            "rssi": row["rssi"],
+                            "snr": row["snr"],
                         }
-                    
-                    chat['channels'][channel_id]['messages'].append({
-                        'id': row['id'],
-                        'from': row['from_node_id'],
-                        'to': row['to_node_id'],
-                        'sender': row['sender_node_id'],
-                        'channel': channel_id,
-                        'text': row['text'],
-                        'timestamp': row['timestamp'],
-                        'hops_away': row['hops_away'],
-                        'rssi': row['rssi'],
-                        'snr': row['snr']
-                    })
+                    )
 
                 return chat
 
         except Exception as e:
             logger.error(f"Failed to query chat from PostgreSQL: {e}")
-            return {'channels': {'0': {'name': 'General', 'messages': []}}}
+            return {"channels": {"0": {"name": "General", "messages": []}}}
 
     async def query_all_telemetry(self, limit: int = 1000) -> List[Dict[str, Any]]:
         """Query all telemetry records."""
@@ -1323,28 +1455,33 @@ class PostgresStorage:
 
         try:
             async with self.pool.acquire() as conn:
-                rows = await conn.fetch("""
+                rows = await conn.fetch(
+                    """
                     SELECT * FROM telemetry
                     ORDER BY created_at DESC
                     LIMIT $1
-                """, limit)
+                    """,
+                    limit,
+                )
 
                 telemetry = []
                 for row in rows:
-                    telemetry.append({
-                        'from': row['from_node_id'],
-                        'to': row['to_node_id'],
-                        'sender': row['sender_node_id'],
-                        'id': row['message_id'],
-                        'channel': row['channel'],
-                        'packet_id': row['packet_id'],
-                        'hops_away': row['hops_away'],
-                        'rssi': row['rssi'],
-                        'snr': row['snr'],
-                        'timestamp': row['timestamp'],
-                        'payload': json.loads(row['payload']) if row['payload'] else {}
-                    })
-                
+                    telemetry.append(
+                        {
+                            "from": row["from_node_id"],
+                            "to": row["to_node_id"],
+                            "sender": row["sender_node_id"],
+                            "id": row["message_id"],
+                            "channel": row["channel"],
+                            "packet_id": row["packet_id"],
+                            "hops_away": row["hops_away"],
+                            "rssi": row["rssi"],
+                            "snr": row["snr"],
+                            "timestamp": row["timestamp"],
+                            "payload": self._jsonb(row["payload"], {}),
+                        }
+                    )
+
                 return telemetry
 
         except Exception as e:
@@ -1358,30 +1495,35 @@ class PostgresStorage:
 
         try:
             async with self.pool.acquire() as conn:
-                rows = await conn.fetch("""
+                rows = await conn.fetch(
+                    """
                     SELECT * FROM traceroutes
                     ORDER BY created_at DESC
                     LIMIT $1
-                """, limit)
+                    """,
+                    limit,
+                )
 
                 traceroutes = []
                 for row in rows:
-                    traceroutes.append({
-                        'from': row['from_node_id'],
-                        'to': row['to_node_id'],
-                        'sender': row['sender_node_id'],
-                        'id': row['message_id'],
-                        'channel': row['channel'],
-                        'packet_id': row['packet_id'],
-                        'hops_away': row['hops_away'],
-                        'rssi': row['rssi'],
-                        'snr': row['snr'],
-                        'timestamp': row['timestamp'],
-                        'route': json.loads(row['route']) if row['route'] else [],
-                        'route_ids': json.loads(row['route_ids']) if row['route_ids'] else [],
-                        'payload': json.loads(row['payload']) if row['payload'] else {}
-                    })
-                
+                    traceroutes.append(
+                        {
+                            "from": row["from_node_id"],
+                            "to": row["to_node_id"],
+                            "sender": row["sender_node_id"],
+                            "id": row["message_id"],
+                            "channel": row["channel"],
+                            "packet_id": row["packet_id"],
+                            "hops_away": row["hops_away"],
+                            "rssi": row["rssi"],
+                            "snr": row["snr"],
+                            "timestamp": row["timestamp"],
+                            "route": self._jsonb(row["route"], []),
+                            "route_ids": self._jsonb(row["route_ids"], []),
+                            "payload": self._jsonb(row["payload"], {}),
+                        }
+                    )
+
                 return traceroutes
 
         except Exception as e:
@@ -1396,20 +1538,20 @@ class PostgresStorage:
         try:
             async with self.pool.acquire() as conn:
                 stats = {}
-                
+
                 # Count nodes
-                stats['total_nodes'] = await conn.fetchval("SELECT COUNT(*) FROM nodes")
-                stats['active_nodes'] = await conn.fetchval("SELECT COUNT(*) FROM nodes WHERE active = TRUE")
-                
+                stats["total_nodes"] = await conn.fetchval("SELECT COUNT(*) FROM nodes")
+                stats["active_nodes"] = await conn.fetchval("SELECT COUNT(*) FROM nodes WHERE active = TRUE")
+
                 # Count messages
-                stats['total_chat'] = await conn.fetchval("SELECT COUNT(*) FROM chat_messages WHERE channel_id = '0'")
-                stats['total_telemetry'] = await conn.fetchval("SELECT COUNT(*) FROM telemetry")
-                stats['total_traceroutes'] = await conn.fetchval("SELECT COUNT(*) FROM traceroutes")
-                
+                stats["total_chat"] = await conn.fetchval("SELECT COUNT(*) FROM chat_messages WHERE channel_id = '0'")
+                stats["total_telemetry"] = await conn.fetchval("SELECT COUNT(*) FROM telemetry")
+                stats["total_traceroutes"] = await conn.fetchval("SELECT COUNT(*) FROM traceroutes")
+
                 # Messages and MQTT messages not stored in Postgres (in-memory only)
-                stats['total_messages'] = 0
-                stats['total_mqtt_messages'] = 0
-                
+                stats["total_messages"] = 0
+                stats["total_mqtt_messages"] = 0
+
                 return stats
 
         except Exception as e:
