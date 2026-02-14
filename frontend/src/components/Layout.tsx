@@ -13,8 +13,9 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
   const isTraceroutes = pathname === "/traceroutes";
   const isTelemetry = pathname === "/telemetry";
   const isNodes = pathname === "/nodes";
+  const isNeighbors = pathname === "/neighbors";
 
-  const isFullBleed = isMap || isChat || isLog || isTraceroutes || isTelemetry || isNodes;
+  const isFullBleed = isMap || isChat || isLog || isTraceroutes || isTelemetry || isNodes || isNeighbors;
 
   // make sure the root element is updated with the dark class
   //  move this out eventually
