@@ -1,21 +1,24 @@
 # trunk-ignore-all(checkov/CKV_DOCKER_3)
-FROM node:25.2.1-alpine AS build
+FROM node:25.5.0-alpine AS build
 
 LABEL org.opencontainers.image.source="https://github.com/MeshAddicts/meshinfo"
 LABEL org.opencontainers.image.description="Realtime web UI to run against a Meshtastic regional or private mesh network."
-
-COPY . .
 
 WORKDIR /frontend
 
 ARG env=production
 ENV NODE_ENV=$env
 
-RUN rm -f /usr/local/bin/yarn /usr/local/bin/yarnpkg
-RUN npm install -g corepack
-RUN corepack enable
-RUN yarn
+RUN rm -f /usr/local/bin/yarn /usr/local/bin/yarnpkg \
+ && npm install -g corepack \
+ && corepack enable
+
+COPY frontend/package.json frontend/yarn.lock frontend/.yarnrc.yml ./
+COPY frontend/.yarn ./.yarn
+
+RUN yarn install --immutable
+
+COPY frontend/ ./
 
 EXPOSE 80
-
 CMD ["/frontend/scripts/run-frontend.sh"]
