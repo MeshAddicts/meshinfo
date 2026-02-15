@@ -4,6 +4,7 @@ import asyncio
 import base64
 import datetime
 import json
+import logging
 import time
 import traceback
 from zoneinfo import ZoneInfo
@@ -17,6 +18,8 @@ from cryptography.hazmat.backends import default_backend
 from encoders import _JSONDecoder
 from models.node import Node
 import utils
+
+logger = logging.getLogger(__name__)
 
 key = "AQ=="
 key_hash = "1PG7OiApB1nwvP+rz05pAQ==" # AQ==
@@ -36,7 +39,7 @@ class MQTT:
     ### actions
 
     async def connect(self):
-        print(f"Connecting to MQTT broker at {self.config['broker']['host']}:{self.config['broker']['port']}")
+        logger.info("Connecting to MQTT broker at %s:%d", self.config['broker']['host'], self.config['broker']['port'])
         while True:
             try:
                 async with aiomqtt.Client(
@@ -46,17 +49,14 @@ class MQTT:
                     username = self.config["broker"]["username"],
                     password = self.config["broker"]["password"],
                 ) as client:
-                    print("Connected to MQTT broker at %s:%d" % (
-                        self.config["broker"]["host"],
-                        self.config["broker"]["port"],
-                    ))
+                    logger.info("Connected to MQTT broker at %s:%d", self.config["broker"]["host"], self.config["broker"]["port"])
                     if "topics" in self.config["broker"] and self.config["broker"]["topics"] is not None and isinstance(self.config["broker"]["topics"], list):
                         for topic in self.config["broker"]["topics"]:
                             await client.subscribe(topic)
                     elif "topic" in self.config["broker"] and self.config["broker"]["topic"] is not None and isinstance(self.config["broker"]["topic"], str):
                         await client.subscribe(self.config["broker"]["topic"])
                     else:
-                        print("No MQTT topics to subscribe to defined in config broker.topics or broker.topic")
+                        logger.error("No MQTT topics to subscribe to defined in config broker.topics or broker.topic")
                         exit(1)
 
                     self.data.mqtt_connect_time = datetime.datetime.now(ZoneInfo(self.config['server']['timezone']))
@@ -66,15 +66,14 @@ class MQTT:
                         msg.timestamp = time.monotonic() # type: ignore
                         await self.process_mqtt_msg(client, msg)
             except aiomqtt.MqttError as err:
-                print(f"Disconnected from MQTT broker: {err}")
-                print("Reconnecting...")
+                logger.warning("Disconnected from MQTT broker: %s", err)
+                logger.info("Reconnecting...")
                 await asyncio.sleep(5)
 
     async def process_mqtt_msg(self, client, msg):
         if self.config['broker']['decoders']['protobuf']['enabled']:
             if'/2/e/' in msg.topic.value or '/2/map/' in msg.topic.value:
-                if self.config['debug']:
-                    print(f"Received a protobuf message: {msg.topic} {msg.payload}")
+                logger.debug("Received a protobuf message: %s %s", msg.topic, msg.payload)
                 is_encrypted = False
                 mp = mesh_pb2.MeshPacket()
                 outs = {}
@@ -84,10 +83,8 @@ class MQTT:
                     se.ParseFromString(msg.payload)
                     mp = se.packet
                     outs = json.loads(MessageToJson(mp, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
-                    if self.config['debug']:
-                        print(f"Decoded protobuf message: {outs}")
+                    logger.debug("Decoded protobuf message: %s", outs)
                 except Exception as _:
-                    # print(f"*** ParseFromString: {str(e)}")
                     pass
 
                 if mp.HasField("encrypted") and not mp.HasField("decoded"):
@@ -95,8 +92,7 @@ class MQTT:
                     for key_item in self.config['broker']['channels']['encryption']:
                         key_bytes = base64.b64decode(key_item['key'].encode('ascii'))
                         try:
-                            if self.config['debug']:
-                                print(f"Attempting decryption with key: {key}")
+                            logger.debug("Attempting decryption with key: %s", key)
                             nonce_packet_id = getattr(mp, "id").to_bytes(8, "little")
                             nonce_from_node = getattr(mp, "from").to_bytes(8, "little")
                             nonce = nonce_packet_id + nonce_from_node
@@ -109,8 +105,7 @@ class MQTT:
                             outs = json.loads(MessageToJson(mp, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
                             break
                         except Exception as e:
-                            if self.config['debug']:
-                                print(f"*** Decryption failed: {str(e)}")
+                            logger.debug("Decryption failed: %s", e)
                             continue
 
                 outs['rssi'] = mp.rx_rssi
@@ -126,8 +121,7 @@ class MQTT:
                         text = payload_bytes.decode("utf-8")
                         outs["type"] = "text"
                         outs["payload"] = {"text": text}
-                        if self.config['debug']:
-                            print(f"Decoded protobuf message: text: {outs}")
+                        logger.debug("Decoded protobuf message: text: %s", outs)
                         await self.handle_text(outs)
 
                     except UnicodeDecodeError:
@@ -136,8 +130,7 @@ class MQTT:
                             "text_b64": base64.b64encode(payload_bytes).decode("ascii"),
                             "len": len(payload_bytes),
                         }
-                        if self.config['debug']:
-                            print(f"Decoded protobuf message: text_binary: {outs}")
+                        logger.debug("Decoded protobuf message: text_binary: %s", outs)
                         # log it, but don't treat as chat text
                         await self.handle_log(outs)
 
@@ -147,13 +140,12 @@ class MQTT:
                         out = json.loads(MessageToJson(report, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
                         outs["type"] = "mapreport"
                         outs["payload"] = out
-                        if self.config['debug']:
-                            print(f"Decoded protobuf message: mapreport: {outs}")
+                        logger.debug("Decoded protobuf message: mapreport: %s", outs)
                         # self.handle_mapreport(outs)
                     except UnicodeDecodeError as e:
-                        print(f"*** Unicode decoding error: text: {str(e)}")
+                        logger.warning("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
-                        print(f"*** Protobuf decode error: text: {str(e)}")
+                        logger.warning("Protobuf decode error: text: %s", e)
 
                 elif mp.decoded.portnum == portnums_pb2.NEIGHBORINFO_APP:
                     try:
@@ -161,13 +153,12 @@ class MQTT:
                         out = json.loads(MessageToJson(info, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
                         outs["type"] = "neighborinfo"
                         outs["payload"] = out
-                        if self.config['debug']:
-                            print(f"Decoded protobuf message: neighborinfo: {outs}")
+                        logger.debug("Decoded protobuf message: neighborinfo: %s", outs)
                         await self.handle_neighborinfo(outs)
                     except UnicodeDecodeError as e:
-                        print(f"*** Unicode decoding error: text: {str(e)}")
+                        logger.warning("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
-                        print(f"*** Protobuf decode error: text: {str(e)}")
+                        logger.warning("Protobuf decode error: text: %s", e)
 
                 elif mp.decoded.portnum == portnums_pb2.NODEINFO_APP:
                     try:
@@ -178,13 +169,12 @@ class MQTT:
                         out["id"] = out['id'].replace('!', '')
                         outs["type"] = "nodeinfo"
                         outs["payload"] = out
-                        if self.config['debug']:
-                            print(f"Decoded protobuf message: nodeinfo: {outs}")
+                        logger.debug("Decoded protobuf message: nodeinfo: %s", outs)
                         await self.handle_nodeinfo(outs)
                     except UnicodeDecodeError as e:
-                        print(f"*** Unicode decoding error: text: {str(e)}")
+                        logger.warning("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
-                        print(f"*** Protobuf decode error: text: {str(e)}")
+                        logger.warning("Protobuf decode error: text: %s", e)
 
                 elif mp.decoded.portnum == portnums_pb2.ROUTING_APP:
                     try:
@@ -192,13 +182,12 @@ class MQTT:
                         out = json.loads(MessageToJson(data, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
                         outs["type"] = "routing"
                         outs["payload"] = out
-                        if self.config['debug']:
-                            print(f"Decoded protobuf message: routing: {outs}")
+                        logger.debug("Decoded protobuf message: routing: %s", outs)
                         # self.handle_routing(outs)
                     except UnicodeDecodeError as e:
-                        print(f"*** Unicode decoding error: text: {str(e)}")
+                        logger.warning("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
-                        print(f"*** Protobuf decode error: text: {str(e)}")
+                        logger.warning("Protobuf decode error: text: %s", e)
 
                 elif mp.decoded.portnum == portnums_pb2.TRACEROUTE_APP:
                     try:
@@ -212,13 +201,12 @@ class MQTT:
                             outs["route"] = route
                         outs["type"] = "traceroute"
                         outs["payload"] = out
-                        if self.config['debug']:
-                            print(f"Decoded protobuf message: traceroute: {outs}")
+                        logger.debug("Decoded protobuf message: traceroute: %s", outs)
                         await self.handle_traceroute(outs)
                     except UnicodeDecodeError as e:
-                        print(f"*** Unicode decoding error: text: {str(e)}")
+                        logger.warning("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
-                        print(f"*** Protobuf decode error: text: {str(e)}")
+                        logger.warning("Protobuf decode error: text: %s", e)
 
                 elif mp.decoded.portnum == portnums_pb2.POSITION_APP:
                     try:
@@ -226,13 +214,12 @@ class MQTT:
                         out = json.loads(MessageToJson(pos, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
                         outs["type"] = "position"
                         outs["payload"] = out
-                        if self.config['debug']:
-                            print(f"Decoded protobuf message: position: {outs}")
+                        logger.debug("Decoded protobuf message: position: %s", outs)
                         await self.handle_position(outs)
                     except UnicodeDecodeError as e:
-                        print(f"*** Unicode decoding error: text: {str(e)}")
+                        logger.warning("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
-                        print(f"*** Protobuf decode error: text: {str(e)}")
+                        logger.warning("Protobuf decode error: text: %s", e)
 
                 elif mp.decoded.portnum == portnums_pb2.TELEMETRY_APP:
                     try:
@@ -247,40 +234,37 @@ class MQTT:
                             outs["payload"] = out['device_metrics']
                         if 'environment_metrics' in out:
                             outs["payload"] = out['environment_metrics']
-                        if self.config['debug']:
-                            print(f"Decoded protobuf message: telemetry: {outs}")
+                        logger.debug("Decoded protobuf message: telemetry: %s", outs)
                         await self.handle_telemetry(outs)
                     except UnicodeDecodeError as e:
-                        print(f"*** Unicode decoding error: text: {str(e)}")
+                        logger.warning("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
-                        print(f"*** Protobuf decode error: text: {str(e)}")
+                        logger.warning("Protobuf decode error: text: %s", e)
                     except Exception as e:
-                        print(e)
+                        logger.error("Telemetry processing error: %s", e)
 
                 else:
-                    if self.config['debug']:
-                        print(f"Received an unknown protobuf message: {mp}")
+                    logger.debug("Received an unknown protobuf message: %s", mp)
                     outs["type"] = "unknown"
                     if mp.decoded.payload is not None:
                         try:
                             outs["payload"] = mp.decoded.payload.decode("utf-8")
                         except UnicodeDecodeError as e:
-                            print(f"*** Unicode decoding error: text: {str(e)}")
+                            logger.warning("Unicode decoding error: text: %s", e)
                             outs["payload"] = {}
                         except DecodeError as e:
-                            print(f"*** Protobuf decode error: text: {str(e)}")
+                            logger.warning("Protobuf decode error: text: %s", e)
                             outs["payload"] = {}
                     else:
                         outs["payload"] = {}
 
-                print(outs)
+                logger.debug("Processed message: %s", outs)
                 await self.handle_log(outs)
                 await self.prune_expired_nodes()
 
         elif self.config['broker']['decoders']['json']['enabled']:
             if '/2/json' in msg.topic.value:
-                if self.config['debug']:
-                    print(f"Received a JSON message: {msg.topic} {msg.payload}")
+                logger.debug("Received a JSON message: %s %s", msg.topic, msg.payload)
                 try:
                     decoded = msg.payload.decode("utf-8")
                     j = json.loads(decoded, cls=_JSONDecoder)
@@ -314,22 +298,21 @@ class MQTT:
                         await self.handle_traceroute(j)
                     await self.prune_expired_nodes()
                 except Exception as e:
-                    print(e)
-                    traceback.print_exc()
+                    logger.error("JSON message processing error: %s", e, exc_info=True)
 
     async def publish(self, client, topic, msg):
         result = await client.publish(topic, msg)
         status = result[0]
         if status == 0:
-            print(f"Send `{msg}` to topic `{topic}`")
+            logger.debug("Sent message to topic %s", topic)
             return True
         else:
-            print(f"Failed to send message to topic {topic}")
+            logger.warning("Failed to send message to topic %s", topic)
             return False
 
     async def subscribe(self, client, topic):
         client.subscribe(topic)
-        print(f"Subscribed to topic `{topic}`")
+        logger.info("Subscribed to topic %s", topic)
 
     async def unsubscribe(self, client, topic):
         client.unsubscribe(topic)
@@ -338,8 +321,7 @@ class MQTT:
 
     async def handle_log(self, msg):
         topic = msg['topic'] if 'topic' in msg else 'unknown'
-        if self.config['debug']:
-            print(f"MQTT >> {topic} -- {msg}")
+        logger.debug("MQTT >> %s -- %s", topic, msg)
 
         self.data.mqtt_messages.append(msg)
 
@@ -354,9 +336,9 @@ class MQTT:
             try:
                 await self.data.pg_storage.write_mqtt_message(clean_msg)
             except Exception as e:
-                print(f"*** Failed to write mqtt_message to postgres: {e}")
+                logger.error("Failed to write mqtt_message to postgres: %s", e)
                 if self.config.get('debug'):
-                    traceback.print_exc()
+                    logger.debug("Postgres write traceback", exc_info=True)
 
         with open(f'{self.config["paths"]["data"]}/message-log.jsonl', 'a', encoding='utf-8') as f:
             f.write(json.dumps(clean_msg, ensure_ascii=False, default=str) + "\n")
@@ -373,12 +355,12 @@ class MQTT:
             node = self.data.nodes[id]
             node['neighborinfo'] = msg['payload']
             self.data.update_node(id, node)
-            print(f"Node {id} updated with neighborinfo")
+            logger.debug("Node %s updated with neighborinfo", id)
         else:
             node = Node.default_node(id)
             node['neighborinfo'] = msg['payload']
             self.data.update_node(id, node)
-            print(f"Node {id} skeleton added with neighborinfo")
+            logger.debug("Node %s skeleton added with neighborinfo", id)
         await self.data.save()
 
     async def handle_nodeinfo(self, msg):
@@ -391,10 +373,10 @@ class MQTT:
         id = msg['payload']['id']
         if id in self.data.nodes:
             node = self.data.nodes[id]
-            print(f"Updating node {id}")
+            logger.debug("Updating node %s", id)
         else:
             node = Node.default_node(id)
-            print(f"Discovered node {id}")
+            logger.debug("Discovered node %s", id)
 
         if 'hardware' in msg['payload']:
             node['hardware'] = msg['payload']['hardware']
@@ -433,12 +415,12 @@ class MQTT:
             node = self.data.nodes[id]
             node['position'] = msg['payload'] if 'payload' in msg else None
             self.data.update_node(id, node)
-            print(f"Node {id} updated with position")
+            logger.debug("Node %s updated with position", id)
         else:
             node = Node.default_node(id)
             node['position'] = msg['payload'] if 'payload' in msg else None
             self.data.update_node(id, node)
-            print(f"Node {id} skeleton added with position")
+            logger.debug("Node %s skeleton added with position", id)
         await self.data.save()
 
     async def handle_telemetry(self, msg):
@@ -453,12 +435,12 @@ class MQTT:
             node = self.data.nodes[id]
             node['telemetry'] = msg['payload'] if 'payload' in msg else None
             self.data.update_node(id, node)
-            print(f"Node {id} updated with telemetry")
+            logger.debug("Node %s updated with telemetry", id)
         else:
             node = Node.default_node(id)
             node['telemetry'] = msg['payload'] if 'payload' in msg else None
             self.data.update_node(id, node)
-            print(f"Node {id} skeleton added with telemetry")
+            logger.debug("Node %s skeleton added with telemetry", id)
 
         if id not in self.data.telemetry_by_node:
             self.data.telemetry_by_node[id] = []
@@ -564,12 +546,12 @@ class MQTT:
             try:
                 since = (now - last_seen).seconds
             except Exception:
-                print(f"Node {id} has invalid last_seen: {node['last_seen']}")
+                logger.warning("Node %s has invalid last_seen: %s", id, node['last_seen'])
                 self.data.nodes[id]['last_seen'] = None
                 self.data.nodes[id]['active'] = False
             if node['active'] and since >= self.config['server']['node_activity_prune_threshold']:
                 ids_to_delete.append(node['id'])
-                print(f"Node {id} pruned (last heard {since} seconds ago)")
+                logger.debug("Node %s pruned (last heard %d seconds ago)", id, since)
 
         for id in ids_to_delete:
             self.data.nodes[id]['active'] = False

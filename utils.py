@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-
 import datetime
+import logging
 import requests
 from geo import distance_between_two_points
+
+logger = logging.getLogger(__name__)
+
 
 def calculate_distance_between_nodes(node1, node2):
   if node1 is None or node2 is None:
@@ -38,18 +41,17 @@ def days_since_datetime(dt: datetime.datetime):
 def geocode_position(api_key: str, latitude: float, longitude: float):
   if latitude is None or longitude is None:
     return None
-  print(f"Geocoding {latitude}, {longitude}")
+  logger.debug("Geocoding %s, %s", latitude, longitude)
   url = f"https://geocode.maps.co/reverse?lat={latitude}&lon={longitude}&api_key={api_key}"
   response = requests.get(url)
   if response.status_code != 200:
     return None
-  print(f"Geocoded {latitude}, {longitude} to {response.json()}")
+  logger.debug("Geocoded %s, %s to %s", latitude, longitude, response.json())
   return response.json()
 
 def filter_dict(d, whitelist):
     """
     Recursively filter a dictionary to only include whitelisted keys.
-
     :param d: The original dictionary or list.
     :param whitelist: A dictionary that mirrors the structure of `d` with the keys you want to keep.
                       Nested dictionaries and lists should be specified with the keys you want to retain.

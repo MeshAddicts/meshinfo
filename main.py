@@ -87,7 +87,14 @@ async def supervise(
 async def main() -> None:
     config, data = init_runtime()
 
+    # --- Apply log level from config ---
+    log_level_name = config.get("server", {}).get("log_level", "INFO").upper()
+    log_level = getattr(logging, log_level_name, logging.INFO)
+    logging.getLogger().setLevel(log_level)
+    logger.info("Log level set to: %s", log_level_name)
+
     # Banner + version: best-effort only
+    # NOTE: Banner intentionally uses print() for clean stdout display
     banner = _read_text_file("banner")
     if banner:
         print(banner)

@@ -1,4 +1,5 @@
 import datetime
+import logging
 import os
 from fastapi.encoders import jsonable_encoder
 import uvicorn
@@ -9,6 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import Config
 import utils
+
+logger = logging.getLogger(__name__)
 
 templates = Jinja2Templates(directory="./templates/api")
 app = FastAPI()
@@ -294,7 +297,7 @@ class API:
 
 
         allow_origins = os.getenv("ALLOW_ORIGINS", "").split(",")
-        print(f"Allowed origins: {allow_origins} {len(allow_origins)}")
+        logger.info("Allowed origins: %s (%d)", allow_origins, len(allow_origins))
 
         if(len(allow_origins) > 0):
             app.add_middleware(
@@ -305,8 +308,8 @@ class API:
                 allow_headers=["*"]
             )
 
-        conf = uvicorn.Config(app=app, host="0.0.0.0", port=9000, loop=loop)
+        conf = uvicorn.Config(app=app, host="0.0.0.0", port=9000, loop=loop, log_config=None)
         server = uvicorn.Server(conf)
-        print(f"Starting Uvicorn server bound at http://{conf.host}:{conf.port}")
+        logger.info("Starting Uvicorn server bound at http://%s:%d", conf.host, conf.port)
         await server.serve()
-        print("Uvicorn server stopped")
+        logger.info("Uvicorn server stopped")
