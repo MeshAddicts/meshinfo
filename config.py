@@ -75,6 +75,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "server": {
         "node_id": "",
         "base_url": "",
+        "log_level": "INFO",
         "node_activity_prune_threshold": 259200,
         "timezone": "UTC",
         "intervals": {
@@ -317,6 +318,7 @@ def validate(config: dict) -> list[str]:
     # ── server section ────────────────────────────────────────────────
     _validate_type(config, "server", dict, required=True)
     check(_validate_type(config, "server.node_id", str))
+    check(_validate_one_of(config, "server.log_level", ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]))
     _validate_type(config, "server.timezone", str, required=True)
     check(_validate_positive_number(config, "server.node_activity_prune_threshold"))
     check(_validate_type(config, "server.intervals", dict))
