@@ -103,7 +103,7 @@ class MemoryDataStore:
               n['position']['geocoded'] = geocoded
               n['position']['last_geocoding'] = datetime.now().astimezone(ZoneInfo(self.config['server']['timezone']))
           except Exception as e:
-            print(f"Failed to geocode position: {e}")
+            logger.warning("Failed to geocode position: %s", e)
 
     n['active'] = True
     if 'last_seen' in n and n['last_seen'] is not None and isinstance(n['last_seen'], str):
@@ -127,7 +127,7 @@ class MemoryDataStore:
           # No running loop in this thread/context
           asyncio.run(self.pg_storage.write_node(id, n))
       except Exception as e:
-        logger.error(f"Failed to write node {id} to Postgres (non-blocking): {e}")
+        logger.error("Failed to write node %s to Postgres (non-blocking): %s", id, e)
 
   async def load(self):
     storage = self.config.get("storage", {})
@@ -169,7 +169,7 @@ class MemoryDataStore:
             node['since'] = None
           nodes[id] = node
         self.nodes = nodes
-      print(f"Loaded {len(self.nodes)} existing nodes from file ({self.config['paths']['data']}/nodes.json)")
+      logger.info("Loaded %d existing nodes from file (%s/nodes.json)", len(self.nodes), self.config['paths']['data'])
     except FileNotFoundError:
       self.nodes = {}
     if self.config['server']['node_id'] not in self.nodes:
@@ -181,13 +181,13 @@ class MemoryDataStore:
       if nodes_overrides is not None:
         for id, node_override in nodes_overrides.items():
           if id in self.nodes:
-            print(f"Overriding node {id}")
+            logger.debug("Overriding node %s", id)
             node = self.nodes[id]
             if 'position' in node_override:
-              print("Overriding node position")
+              logger.debug("Overriding node %s position", id)
               node['position'] = node_override['position']
             self.nodes[id] = node
-        print(f"Loaded {len(nodes_overrides.keys())} nodes overrides from file ({self.config['paths']['data']}/nodes-overrides.json)")
+        logger.info("Loaded %d nodes overrides from file (%s/nodes-overrides.json)", len(nodes_overrides.keys()), self.config['paths']['data'])
     except FileNotFoundError:
       pass
 
@@ -195,7 +195,7 @@ class MemoryDataStore:
       chat = self.load_json_file(f"{self.config['paths']['data']}/chat.json")
       if chat is not None:
         self.chat = chat
-      print(f"Loaded {len(self.chat['channels']['0']['messages'])} chat messages from file ({self.config['paths']['data']}/chat.json)")
+      logger.info("Loaded %d chat messages from file (%s/chat.json)", len(self.chat['channels']['0']['messages']), self.config['paths']['data'])
     except FileNotFoundError:
       self.chat = {
           'channels': {
@@ -219,8 +219,8 @@ class MemoryDataStore:
         if id not in self.telemetry_by_node:
           self.telemetry_by_node[id] = []
         self.telemetry_by_node[id].insert(0, msg)
-      print(f"Loaded {len(self.telemetry)} telemetry messages from file ({self.config['paths']['data']}/telemetry.json)")
-      print(f"Loaded telemetry data for {len(self.telemetry_by_node)} nodes")
+      logger.info("Loaded %d telemetry messages from file (%s/telemetry.json)", len(self.telemetry), self.config['paths']['data'])
+      logger.info("Loaded telemetry data for %d nodes", len(self.telemetry_by_node))
     except FileNotFoundError:
       self.telemetry = []
       self.telemetry_by_node = {}
@@ -238,8 +238,8 @@ class MemoryDataStore:
           if id not in self.traceroutes_by_node:
             self.traceroutes_by_node[id] = []
           self.traceroutes_by_node[id].insert(0, msg)
-        print(f"Loaded {len(self.traceroutes)} traceroutes from file ({self.config['paths']['data']}/traceroutes.json)")
-        print(f"Loaded traceroutes data for {len(self.traceroutes_by_node)} nodes")
+        logger.info("Loaded %d traceroutes from file (%s/traceroutes.json)", len(self.traceroutes), self.config['paths']['data'])
+        logger.info("Loaded traceroutes data for %d nodes", len(self.traceroutes_by_node))
     except FileNotFoundError:
         self.traceroutes = []
         self.traceroutes_by_node = {}
@@ -254,7 +254,7 @@ class MemoryDataStore:
       await self.pg_storage.ensure_schema()
 
       # NOTE: your current code intentionally does NOT load rows into memory.
-      # If your API still reads from self.nodes/chat/telemetry, you’ll get empty results.
+      # If your API still reads from self.nodes/chat/telemetry, you'll get empty results.
       self.nodes = {}
       self.chat = {'channels': {'0': {'name': 'General', 'messages': []}}}
       self.telemetry = []
@@ -272,7 +272,7 @@ class MemoryDataStore:
       self.nodes['ffffffff'] = broadcast_node
       await self.pg_storage.write_node('ffffffff', broadcast_node)
 
-      print("PostgreSQL mode: Data will be queried directly from database")
+      logger.info("PostgreSQL mode: Data will be queried directly from database")
 
     except Exception as e:
       logger.exception("Failed to initialize PostgreSQL connection, falling back to JSON: %s", e)
@@ -297,20 +297,26 @@ class MemoryDataStore:
     since_last_backfill = (save_start - last_backfill).total_seconds()
     last_backup = self.config['server']['last_backup'] if 'last_backup' in self.config['server'] else self.config['server']['start_time']
     since_last_backup = (save_start - last_backup).total_seconds()
-    print(f"Save (since last): data: {since_last_data} (threshhold: {self.config['server']['intervals']['data_save']}), render: {since_last_render} (threshhold: {self.config['server']['intervals']['render']}), enrich: {since_last_backfill} (threshhold: {self.config['server']['enrich']['interval']}), backup: {since_last_backup} (threshhold: {self.config['server']['backups']['interval']})")
+    logger.debug(
+      "Save (since last): data: %s (threshold: %s), render: %s (threshold: %s), enrich: %s (threshold: %s), backup: %s (threshold: %s)",
+      since_last_data, self.config['server']['intervals']['data_save'],
+      since_last_render, self.config['server']['intervals']['render'],
+      since_last_backfill, self.config['server']['enrich']['interval'],
+      since_last_backup, self.config['server']['backups']['interval'],
+    )
 
     if 'enrich' in self.config['server'] and self.config['server']['enrich']['enabled']:
       if since_last_backfill >= self.config['server']['enrich']['interval']:
         await self.backfill_node_infos()
         end = datetime.now(ZoneInfo(self.config['server']['timezone']))
-        print(f"Enriched in {round(end.timestamp() - save_start.timestamp(), 2)} seconds")
+        logger.debug("Enriched in %.2f seconds", end.timestamp() - save_start.timestamp())
         self.config['server']['last_backfill'] = end
 
     if since_last_data >= self.config['server']['intervals']['data_save']:
         data_renderer = DataRenderer(self.config, copy.deepcopy(self))
         await data_renderer.render()
         end = datetime.now(ZoneInfo(self.config['server']['timezone']))
-        print(f"Saved json data in {round(end.timestamp() - save_start.timestamp(), 2)} seconds")
+        logger.debug("Saved json data in %.2f seconds", end.timestamp() - save_start.timestamp())
         self.config['server']['last_data_save'] = end
         self.graph = self.graph_node(self.config['server']['node_id'])
 
@@ -318,14 +324,14 @@ class MemoryDataStore:
         static_html_renderer = StaticHTMLRenderer(self.config, copy.deepcopy(self))
         await static_html_renderer.render()
         end = datetime.now(ZoneInfo(self.config['server']['timezone']))
-        print(f"Rendered in {round(end.timestamp() - save_start.timestamp(), 2)} seconds")
+        logger.debug("Rendered in %.2f seconds", end.timestamp() - save_start.timestamp())
         self.config['server']['last_render'] = end
 
     if 'backups' in self.config['server'] and self.config['server']['backups']['enabled']:
       if since_last_backup >= self.config['server']['backups']['interval']:
         await self.backup()
         end = datetime.now(ZoneInfo(self.config['server']['timezone']))
-        print(f"Backed up in {round(end.timestamp() - save_start.timestamp(), 2)} seconds")
+        logger.debug("Backed up in %.2f seconds", end.timestamp() - save_start.timestamp())
         self.config['server']['last_backup'] = end
 
   ### helpers
@@ -335,7 +341,7 @@ class MemoryDataStore:
     base_name = f"{self.config['paths']['backups']}/backup-{now}"
     tmp_path = f"/tmp/meshinfo/backup-{now}"
 
-    print(f"Backing up to {base_name}.tar.bz2")
+    logger.info("Backing up to %s.tar.bz2", base_name)
     os.makedirs(tmp_path, exist_ok=True)
     shutil.copytree("output/data", f"{tmp_path}/data")
     shutil.copytree("output/static-html", f"{tmp_path}/static-html")
@@ -347,15 +353,15 @@ class MemoryDataStore:
       root_dir=tmp_path,
       base_dir=".",
       verbose=True)
-    print(f"Backed up to {base_name}.tar.bz2")
+    logger.info("Backed up to %s.tar.bz2", base_name)
     shutil.rmtree(tmp_path)
 
     if 'max_backups' in self.config['server']['backups'] and self.config['server']['backups']['max_backups'] > 0:
       files = glob.glob(f"{self.config['paths']['backups']}/*")
       files.sort(key=os.path.getmtime)
-      print(f"Deleting old backups (max {self.config['server']['backups']['max_backups']}, found {len(files)})")
+      logger.debug("Deleting old backups (max %d, found %d)", self.config['server']['backups']['max_backups'], len(files))
       for file in files[:-self.config['server']['backups']['max_backups']]:
-        print(f"Deleting old backup: {file}")
+        logger.debug("Deleting old backup: %s", file)
         os.remove(file)
 
   async def backfill_node_infos(self):
@@ -363,36 +369,34 @@ class MemoryDataStore:
     for id, node in self.nodes.items():
       if 'shortname' not in node or 'longname' not in node or node['shortname'] == 'UNK' or node['longname'] == 'Unknown':
         nodes_needing_enrichment[id] = node
-    print(f"Nodes needing enrichment: {len(nodes_needing_enrichment)}")
+    logger.info("Nodes needing enrichment: %d", len(nodes_needing_enrichment))
     if len(nodes_needing_enrichment) > 0:
       await self.enrich_nodes(nodes_needing_enrichment)
 
   async def enrich_nodes(self, node_to_enrich):
     async with aiohttp.ClientSession() as session:
         node_ids = list(node_to_enrich.keys())
-        print(f"Enriching nodes: {','.join(node_ids)}")
+        logger.info("Enriching nodes: %s", ','.join(node_ids))
         if self.config['server']['enrich']['provider'] == 'bayme':
           for node_id in node_ids:
-            print(f"Enriching {node_id}")
+            logger.debug("Enriching %s", node_id)
             url = f"https://data.bayme.sh/api/node/infos?ids={node_id}"
             try:
               async with session.get(url) as response:
-                # print(f"Response code: {response.status_code}")
                 if response.status == 200:
                   data = await response.json()
                   for node_id, node_info in data.items():
-                    print(f"Got info for {node_id}")
+                    logger.debug("Got info for %s", node_id)
                     if node_id in self.nodes:
-                      print(f"Enriched {node_id}")
+                      logger.debug("Enriched %s", node_id)
                       node = self.nodes[node_id]
                       node['shortname'] = node_info['shortName']
                       node['longname'] = node_info['longName']
                       self.nodes[node_id] = node
                 else:
-                    print(f"Failed to get info for {node_id}")
+                    logger.warning("Failed to get info for %s", node_id)
             except Exception as e:
-              print(f"Failed to get info for {node_id}")
-              print(e)
+              logger.warning("Failed to get info for %s: %s", node_id, e)
         elif self.config['server']['enrich']['provider'] == 'world.meshinfo.network':
           url = f"https://world.meshinfo.network/api/v1/nodes?ids={','.join(node_ids)}"
           try:
@@ -400,18 +404,17 @@ class MemoryDataStore:
               if response.status == 200:
                 data = await response.json()
                 for node_id, node_info in data.items():
-                  print(f"Got info for {node_id}")
+                  logger.debug("Got info for %s", node_id)
                   if node_id in self.nodes:
-                    print(f"Enriched {node_id}")
+                    logger.debug("Enriched %s", node_id)
                     node = self.nodes[node_id]
                     node['shortname'] = node_info['shortName']
                     node['longname'] = node_info['longName']
                     self.nodes[node_id] = node
               else:
-                  print(f"Failed to get info for {node_ids}")
+                  logger.warning("Failed to get info for %s", node_ids)
           except Exception as e:
-            print(f"Failed to get info for {node_ids}")
-            print(e)
+            logger.warning("Failed to get info for %s: %s", node_ids, e)
 
   def find_node_by_int_id(self, id: int):
     return self.nodes.get(utils.convert_node_id_from_int_to_hex(id), None)
@@ -459,8 +462,7 @@ class MemoryDataStore:
     return None
 
   def graph_node(self, node_id: str) -> dict|None:
-    if self.config['debug']:
-        print(f"Graphing node: {node_id}")
+    logger.debug("Graphing node: %s", node_id)
 
     visited = set()  # Set to keep track of visited nodes
 
@@ -472,8 +474,7 @@ class MemoryDataStore:
         if level > 1 and node_id in visited:
             return node  # Return the node if it has already been visited
 
-        if self.config['debug']:
-          print("%s - %s" % ("  " * level, node_id))
+        logger.debug("%s - %s", "  " * level, node_id)
 
         visited.add(node_id)  # Mark the node as visited
 
@@ -481,7 +482,6 @@ class MemoryDataStore:
         neighbors_heard_by = []
 
         if node['neighborinfo'] and node['neighborinfo']['neighbors']:
-            # print(f"Node {node_id} has {len(node['neighborinfo']['neighbors'])} neighbors")
             for neighbor in node['neighborinfo']['neighbors']:
                 nid = utils.convert_node_id_from_int_to_hex(neighbor["node_id"])
                 if start_id is not None and start_id == nid or (self.config['server']['graph']['max_depth'] is not None and level >= self.config['server']['graph']['max_depth']):
