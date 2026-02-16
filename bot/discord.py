@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-
 import asyncio
+import logging
 from discord.ext import commands
 import discord
 from dotenv import load_dotenv
-
 from bot.cogs.main_commands import MainCommands
 from memory_data_store import MemoryDataStore
+
+logger = logging.getLogger(__name__)
 
 
 class DiscordBot(commands.Bot):
@@ -23,27 +24,27 @@ class DiscordBot(commands.Bot):
         self.synced = False
 
     async def on_ready(self):
-        print('Discord: Ready!')
+        logger.info('Discord: Ready!')
         await self.wait_until_ready()
         if not self.synced:
-            print("Discord: Syncing commands")
+            logger.info("Discord: Syncing commands")
             guild = discord.Object(id=self.config['integrations']['discord']['guild'])
             self.tree.copy_global_to(guild=guild)
             await self.tree.sync(guild = discord.Object(id=self.config['integrations']['discord']['guild']))
             self.synced = True
 
-
     async def on_message(self, message):
-        print(f'Discord: {message.channel.id}: {message.author}: {message.content}')
+        logger.debug('Discord: %s: %s: %s', message.channel.id, message.author, message.content)
         if message.content.startswith('!test'):
             await message.channel.send('Test successful!')
         await self.process_commands(message)
 
     async def start_server(self):
-        print("Starting Discord Bot")
+        logger.info("Starting Discord Bot")
         await self.add_cog(MainCommands(self, self.config, self.data))
         await self.start(self.config['integrations']['discord']['token'])
-        print("Discord Bot Done!")
+        logger.info("Discord Bot Done!")
+
 
 async def main():
     load_dotenv()

@@ -4,6 +4,7 @@ import asyncio
 import copy
 import datetime
 import json
+import logging
 from zoneinfo import ZoneInfo
 from jinja2 import Environment, FileSystemLoader
 
@@ -11,6 +12,9 @@ import encoders
 import geo
 import meshtastic_support
 import utils
+
+logger = logging.getLogger(__name__)
+
 
 class StaticHTMLRenderer:
   def __init__(self, config, data):
@@ -36,7 +40,7 @@ class StaticHTMLRenderer:
     self.render_stats()
     self.render_telemetry()
     self.render_traceroutes()
-    print("Done rendering static HTML files")
+    logger.debug("Done rendering static HTML files")
 
   def save_file(self, filename, content):
     with open(f"{self.output_path}/{filename}", "w", encoding='utf-8') as f:
@@ -50,8 +54,7 @@ class StaticHTMLRenderer:
     return html
 
   def render_html_and_save(self, filename, **kwargs):
-    if self.config['debug']:
-      print(f"Rendering {filename}")
+    logger.debug("Rendering %s", filename)
     html = self.render_html(filename, **kwargs)
     self.save_file(filename, html)
 
