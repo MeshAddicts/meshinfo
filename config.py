@@ -38,6 +38,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "metro": "",
         "latitude": 0.0,
         "longitude": 0.0,
+        "zoom": 10,
         "altitude": 0,
         "timezone": "UTC",
         "announce": {
@@ -75,7 +76,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "server": {
         "node_id": "",
         "base_url": "",
-        "log_level": "INFO",
+        "log_level": "INFO",  # TODO: Wire into logging setup (e.g., logging.getLogger().setLevel(...))
         "node_activity_prune_threshold": 259200,
         "timezone": "UTC",
         "intervals": {
@@ -191,8 +192,12 @@ def _validate_type(
         raise ConfigValidationError(f"Required config field '{path}' is missing")
 
     if not isinstance(value, expected_type):
+        if isinstance(expected_type, tuple):
+            type_name = " or ".join(t.__name__ for t in expected_type)
+        else:
+            type_name = expected_type.__name__
         msg = (
-            f"Config field '{path}' expected {expected_type.__name__ if isinstance(expected_type, type) else expected_type}, "
+            f"Config field '{path}' expected {type_name}, "
             f"got {type(value).__name__} ({value!r})"
         )
         if required:
@@ -327,8 +332,14 @@ def validate(config: dict) -> list[str]:
     check(_validate_type(config, "server.backups", dict))
     check(_validate_type(config, "server.backups.enabled", bool))
     check(_validate_positive_number(config, "server.backups.interval"))
+    check(_validate_type(config, "server.backups.max_backups", int))
+    check(_validate_positive_number(config, "server.backups.max_backups"))
     check(_validate_type(config, "server.enrich", dict))
+    check(_validate_type(config, "server.enrich.enabled", bool))
+    check(_validate_positive_number(config, "server.enrich.interval"))
+    check(_validate_type(config, "server.enrich.provider", str))
     check(_validate_type(config, "server.graph", dict))
+    check(_validate_type(config, "server.graph.enabled", bool))
     check(_validate_positive_number(config, "server.graph.max_depth"))
 
     check(_warn_placeholder(config, "server.base_url", ["REPLACE_WITH"]))
@@ -343,9 +354,11 @@ def validate(config: dict) -> list[str]:
 
     discord_cfg = _get_nested(config, "integrations", "discord") or {}
     if discord_cfg.get("enabled"):
-        if not discord_cfg.get("token") or "REPLACE_WITH" in discord_cfg.get("token", ""):
+        token = discord_cfg.get("token") or ""
+        if not token or "REPLACE_WITH" in str(token):
             warn("Discord is enabled but token is missing or still a placeholder.")
-        if not discord_cfg.get("guild") or "REPLACE_WITH" in discord_cfg.get("guild", ""):
+        guild = discord_cfg.get("guild") or ""
+        if not guild or "REPLACE_WITH" in str(guild):
             warn("Discord is enabled but guild ID is missing or still a placeholder.")
 
     check(_validate_type(config, "integrations.geocoding", dict))
@@ -353,7 +366,8 @@ def validate(config: dict) -> list[str]:
     if geocoding_cfg.get("enabled"):
         provider = geocoding_cfg.get("provider", "")
         provider_cfg = geocoding_cfg.get(provider, {})
-        if not provider_cfg.get("api_key") or "REPLACE_WITH" in provider_cfg.get("api_key", ""):
+        api_key = provider_cfg.get("api_key") or ""
+        if not api_key or "REPLACE_WITH" in str(api_key):
             warn(f"Geocoding is enabled (provider: {provider}) but API key is missing or still a placeholder.")
 
     # ── storage section ───────────────────────────────────────────────
@@ -365,13 +379,15 @@ def validate(config: dict) -> list[str]:
     write_to = storage_cfg.get("write_to", [])
     read_from = storage_cfg.get("read_from", "json")
 
-    if isinstance(write_to, list):
-        for target in write_to:
-            if target not in ("json", "postgres"):
-                warn(f"Unknown storage write target: {target!r}. Expected 'json' or 'postgres'.")
+    # Ensure we only iterate and check membership on a proper list
+    write_to_list = write_to if isinstance(write_to, list) else []
+
+    for target in write_to_list:
+        if target not in ("json", "postgres"):
+            warn(f"Unknown storage write target: {target!r}. Expected 'json' or 'postgres'.")
 
     # If postgres is being used, validate its config
-    needs_postgres = read_from == "postgres" or "postgres" in write_to
+    needs_postgres = read_from == "postgres" or "postgres" in write_to_list
     pg_cfg = storage_cfg.get("postgres", {})
     if needs_postgres:
         if not pg_cfg.get("enabled"):
@@ -490,12 +506,15 @@ class Config:
         for path in sensitive_paths:
             d = config_clean
             for key in path[:-1]:
-                if isinstance(d, dict) and key in d:
-                    d = d[key]
-                else:
+                if not isinstance(d, dict):
+                    d = None
                     break
-            else:
-                if isinstance(d, dict) and path[-1] in d:
-                    d[path[-1]] = "***REDACTED***"
+                d = d.get(key)
+                if d is None:
+                    break
+            # If we successfully reached a dict that contains a sensitive key,
+            # redact its value.
+            if isinstance(d, dict) and path[-1] in d:
+                d[path[-1]] = "***REDACTED***"
 
         return config_clean
