@@ -56,8 +56,7 @@ class MQTT:
                     elif "topic" in self.config["broker"] and self.config["broker"]["topic"] is not None and isinstance(self.config["broker"]["topic"], str):
                         await client.subscribe(self.config["broker"]["topic"])
                     else:
-                        logger.error("No MQTT topics to subscribe to defined in config broker.topics or broker.topic")
-                        exit(1)
+                        raise RuntimeError("No MQTT topics to subscribe to defined in config broker.topics or broker.topic")
 
                     self.data.mqtt_connect_time = datetime.datetime.now(ZoneInfo(self.config['server']['timezone']))
                     async for msg in client.messages:

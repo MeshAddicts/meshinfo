@@ -3,10 +3,7 @@ import datetime
 import logging
 import requests
 from geo import distance_between_two_points
-
 logger = logging.getLogger(__name__)
-
-
 def calculate_distance_between_nodes(node1, node2):
   if node1 is None or node2 is None:
     return None
@@ -20,16 +17,13 @@ def calculate_distance_between_nodes(node1, node2):
     node2["position"]["latitude_i"] / 10000000,
     node2["position"]["longitude_i"] / 10000000
   ), 2)
-
 def convert_node_id_from_int_to_hex(id: int):
   id_hex = f'{id:08x}'
   return id_hex
-
 def convert_node_id_from_hex_to_int(id: str):
   if id.startswith('!'):
       id = id.replace('!', '')
   return int(id, 16)
-
 def days_since_datetime(dt: datetime.datetime):
   # Returns the number of days since the given datetime using UTC
   now = datetime.datetime.now(datetime.timezone.utc)
@@ -37,18 +31,25 @@ def days_since_datetime(dt: datetime.datetime):
     dt = datetime.datetime.fromisoformat(dt)
   diff = now - dt
   return diff.days
-
 def geocode_position(api_key: str, latitude: float, longitude: float):
   if latitude is None or longitude is None:
     return None
   logger.debug("Geocoding %s, %s", latitude, longitude)
   url = f"https://geocode.maps.co/reverse?lat={latitude}&lon={longitude}&api_key={api_key}"
-  response = requests.get(url)
+  try:
+    response = requests.get(url, timeout=5)
+  except requests.RequestException as exc:
+    logger.warning("Geocoding request failed for %s, %s: %s", latitude, longitude, exc)
+    return None
   if response.status_code != 200:
     return None
-  logger.debug("Geocoded %s, %s to %s", latitude, longitude, response.json())
-  return response.json()
-
+  try:
+    data = response.json()
+  except ValueError as exc:
+    logger.warning("Failed to decode geocoding response for %s, %s: %s", latitude, longitude, exc)
+    return None
+  logger.debug("Geocoded %s, %s to %s", latitude, longitude, data)
+  return data
 def filter_dict(d, whitelist):
     """
     Recursively filter a dictionary to only include whitelisted keys.

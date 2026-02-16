@@ -22,7 +22,7 @@ class API:
         self.data = data
         self.read_from_postgres = config.get('storage', {}).get('read_from') == 'postgres'
 
-    async def serve(self, loop):
+    async def serve(self):
         @app.get("/", response_class=HTMLResponse)
         async def root(request: Request):
             return templates.TemplateResponse(request=request, name="index.html.j2", context={})
@@ -308,7 +308,7 @@ class API:
                 allow_headers=["*"]
             )
 
-        conf = uvicorn.Config(app=app, host="0.0.0.0", port=9000, loop=loop, log_config=None)
+        conf = uvicorn.Config(app=app, host="0.0.0.0", port=9000, loop="asyncio", log_config=None)
         server = uvicorn.Server(conf)
         logger.info("Starting Uvicorn server bound at http://%s:%d", conf.host, conf.port)
         await server.serve()

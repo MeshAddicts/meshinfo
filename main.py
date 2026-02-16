@@ -89,9 +89,17 @@ async def main() -> None:
 
     # --- Apply log level from config ---
     log_level_name = config.get("server", {}).get("log_level", "INFO").upper()
-    log_level = getattr(logging, log_level_name, logging.INFO)
-    logging.getLogger().setLevel(log_level)
-    logger.info("Log level set to: %s", log_level_name)
+    valid_levels = logging.getLevelNamesMapping()
+    if log_level_name in valid_levels:
+        effective_log_level = valid_levels[log_level_name]
+    else:
+        logger.warning(
+            "Invalid log level '%s' in config; falling back to INFO",
+            log_level_name,
+        )
+        effective_log_level = logging.INFO
+    logging.getLogger().setLevel(effective_log_level)
+    logger.info("Log level set to: %s", logging.getLevelName(effective_log_level))
 
     # Banner + version: best-effort only
     # NOTE: Banner intentionally uses print() for clean stdout display
@@ -129,7 +137,6 @@ async def main() -> None:
 
     await data.save()
 
-    loop = asyncio.get_running_loop()
     api_server = api.API(config, data)
 
     background_tasks: list[asyncio.Task] = []
@@ -165,7 +172,7 @@ async def main() -> None:
     # API is critical: await it in the foreground.
     try:
         logger.info("API starting (critical)")
-        await api_server.serve(loop)
+        await api_server.serve()
     finally:
         # If API exits or we get cancelled, stop secondaries.
         logger.info("Shutting down background services...")
