@@ -50,14 +50,19 @@ CREATE TABLE IF NOT EXISTS node_neighborinfo (
 );
 
 -- Node telemetry current - stores the most recent telemetry per node
+-- Device metrics and environment metrics have dedicated typed columns.
+-- Other telemetry variants (power, air quality, local stats, health,
+-- host metrics, traffic management) are stored as JSONB columns.
 CREATE TABLE IF NOT EXISTS node_telemetry_current (
     id SERIAL PRIMARY KEY,
     node_id VARCHAR(8) NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    -- device_metrics fields
     battery_level INTEGER,
     voltage REAL,
     channel_utilization REAL,
     air_util_tx REAL,
     uptime_seconds INTEGER,
+    -- environment_metrics fields
     temperature REAL,
     relative_humidity REAL,
     barometric_pressure REAL,
@@ -71,6 +76,21 @@ CREATE TABLE IF NOT EXISTS node_telemetry_current (
     wind_direction INTEGER,
     wind_speed REAL,
     weight REAL,
+    current REAL,               -- current measured (A)
+    wind_gust REAL,             -- wind gust in m/s
+    wind_lull REAL,             -- wind lull in m/s
+    radiation REAL,             -- radiation in µR/h
+    rainfall_1h REAL,           -- rainfall last hour in mm
+    rainfall_24h REAL,          -- rainfall last 24h in mm
+    soil_moisture INTEGER,      -- soil moisture % (1-100)
+    soil_temperature REAL,      -- soil temperature in °C
+    -- JSONB columns for other telemetry variants (latest snapshot per node)
+    power_metrics JSONB,                -- PowerMetrics (multi-channel voltage/current)
+    air_quality_metrics JSONB,          -- AirQualityMetrics (PM, CO2, particles, etc.)
+    local_stats JSONB,                  -- LocalStats (mesh statistics)
+    health_metrics JSONB,               -- HealthMetrics (heart rate, SpO2, temp)
+    host_metrics JSONB,                 -- HostMetrics (Linux host system metrics)
+    traffic_management_stats JSONB,     -- TrafficManagementStats
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     UNIQUE(node_id)

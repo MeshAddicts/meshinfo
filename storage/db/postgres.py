@@ -25,11 +25,13 @@ class PostgresStorage:
     # partial updates so that a device_metrics message never NULLs out
     # environment_metrics columns and vice versa.
     TELEMETRY_COLUMNS = {
+        # device_metrics fields
         "battery_level": "battery_level",
         "voltage": "voltage",
         "channel_utilization": "channel_utilization",
         "air_util_tx": "air_util_tx",
         "uptime_seconds": "uptime_seconds",
+        # environment_metrics fields
         "temperature": "temperature",
         "relative_humidity": "relative_humidity",
         "barometric_pressure": "barometric_pressure",
@@ -43,7 +45,58 @@ class PostgresStorage:
         "wind_direction": "wind_direction",
         "wind_speed": "wind_speed",
         "weight": "weight",
+        "current": "current",
+        "wind_gust": "wind_gust",
+        "wind_lull": "wind_lull",
+        "radiation": "radiation",
+        "rainfall_1h": "rainfall_1h",
+        "rainfall_24h": "rainfall_24h",
+        "soil_moisture": "soil_moisture",
+        "soil_temperature": "soil_temperature",
     }
+
+    # Telemetry variant names (from protobuf WhichOneof) that are stored as
+    # JSONB columns on node_telemetry_current rather than as individual typed
+    # columns. The dict value is the Postgres column name.
+    TELEMETRY_JSONB_VARIANTS = {
+        "power_metrics": "power_metrics",
+        "air_quality_metrics": "air_quality_metrics",
+        "local_stats": "local_stats",
+        "health_metrics": "health_metrics",
+        "host_metrics": "host_metrics",
+        "traffic_management_stats": "traffic_management_stats",
+    }
+
+    # All typed telemetry field names used in read queries. Kept in sync with
+    # TELEMETRY_COLUMNS values for use in load_nodes / query_nodes_filtered.
+    _TYPED_TELEMETRY_FIELDS = [
+        "battery_level",
+        "voltage",
+        "channel_utilization",
+        "air_util_tx",
+        "uptime_seconds",
+        "temperature",
+        "relative_humidity",
+        "barometric_pressure",
+        "gas_resistance",
+        "iaq",
+        "distance",
+        "lux",
+        "white_lux",
+        "ir_lux",
+        "uv_lux",
+        "wind_direction",
+        "wind_speed",
+        "weight",
+        "current",
+        "wind_gust",
+        "wind_lull",
+        "radiation",
+        "rainfall_1h",
+        "rainfall_24h",
+        "soil_moisture",
+        "soil_temperature",
+    ]
 
     def __init__(self, config: Dict[str, Any]):
         """Initialize Postgres storage with configuration."""
@@ -224,6 +277,31 @@ class PostgresStorage:
             except json.JSONDecodeError:
                 return default
         return default
+
+    # --------------------------- telemetry read helper ---------------------------
+
+    def _build_telemetry_dict_from_row(self, row) -> Optional[Dict[str, Any]]:
+        """
+        Build a telemetry dict from a node_telemetry_current row.
+        Merges typed columns and JSONB variant columns into a single dict.
+        Used by load_nodes() and query_nodes_filtered() to avoid duplication.
+        """
+        telemetry: Dict[str, Any] = {}
+
+        # Typed columns (device_metrics + environment_metrics fields)
+        for field in self._TYPED_TELEMETRY_FIELDS:
+            val = row.get(field)
+            if val is not None:
+                telemetry[field] = val
+
+        # JSONB variant columns — merge their fields into the flat dict
+        # so the API response stays compatible with the in-memory structure
+        for variant_name, col_name in self.TELEMETRY_JSONB_VARIANTS.items():
+            variant_data = self._jsonb(row.get(col_name), None)
+            if variant_data and isinstance(variant_data, dict):
+                telemetry.update(variant_data)
+
+        return telemetry if telemetry else None
 
     # ============================================================================
     # WRITE OPERATIONS - Real-time writes for dual-write pattern
@@ -407,7 +485,8 @@ class PostgresStorage:
             neighbors_json,
         )
 
-    async def _write_node_telemetry_current(self, conn, node_id: str, telemetry: Dict[str, Any]):
+    async def _write_node_telemetry_current(self, conn, node_id: str, telemetry: Dict[str, Any],
+                                             telemetry_type: Optional[str] = None):
         """
         Write current node telemetry state (latest snapshot per node).
 
@@ -415,6 +494,9 @@ class PostgresStorage:
         in the incoming telemetry dict are written. This prevents a
         device_metrics message from NULLing out environment_metrics columns
         and vice versa.
+
+        For JSONB variant types (power_metrics, air_quality_metrics, etc.),
+        the entire payload is stored as a JSONB blob in the corresponding column.
         """
         # Normalize + ensure FK target exists
         node_norm = await self._ensure_node_stub(conn, node_id)
@@ -422,6 +504,24 @@ class PostgresStorage:
             logger.warning("_write_node_telemetry_current: could not normalize node_id=%r; skipping", node_id)
             return
 
+        # Check if this is a JSONB variant type
+        if telemetry_type and telemetry_type in self.TELEMETRY_JSONB_VARIANTS:
+            col_name = self.TELEMETRY_JSONB_VARIANTS[telemetry_type]
+            payload_json = json.dumps(telemetry, ensure_ascii=False)
+
+            sql = f"""
+                INSERT INTO node_telemetry_current (node_id, {col_name})
+                VALUES ($1, $2::jsonb)
+                ON CONFLICT (node_id) DO UPDATE SET
+                    {col_name} = EXCLUDED.{col_name},
+                    updated_at = NOW()
+                WHERE
+                    node_telemetry_current.{col_name} IS DISTINCT FROM EXCLUDED.{col_name}
+            """
+            await conn.execute(sql, node_norm, payload_json)
+            return
+
+        # Otherwise, handle typed columns (device_metrics / environment_metrics)
         # Collect only the columns that are actually present in this payload.
         # We intentionally include keys whose value is None — that means the
         # protobuf explicitly sent a zero/null for that field, which we should
@@ -909,30 +1009,7 @@ class PostgresStorage:
                 for row in telemetry_rows:
                     node_id = row["node_id"]
                     if node_id in nodes:
-                        telemetry = {}
-                        for field in [
-                            "battery_level",
-                            "voltage",
-                            "channel_utilization",
-                            "air_util_tx",
-                            "uptime_seconds",
-                            "temperature",
-                            "relative_humidity",
-                            "barometric_pressure",
-                            "gas_resistance",
-                            "iaq",
-                            "distance",
-                            "lux",
-                            "white_lux",
-                            "ir_lux",
-                            "uv_lux",
-                            "wind_direction",
-                            "wind_speed",
-                            "weight",
-                        ]:
-                            if row[field] is not None:
-                                telemetry[field] = row[field]
-                        nodes[node_id]["telemetry"] = telemetry if telemetry else None
+                        nodes[node_id]["telemetry"] = self._build_telemetry_dict_from_row(row)
 
                 logger.info(f"Loaded {len(nodes)} nodes from PostgreSQL")
                 return nodes
@@ -1250,30 +1327,7 @@ class PostgresStorage:
                     for row in telemetry_rows:
                         node_id = row["node_id"]
                         if node_id in nodes:
-                            telemetry = {}
-                            for field in [
-                                "battery_level",
-                                "voltage",
-                                "channel_utilization",
-                                "air_util_tx",
-                                "uptime_seconds",
-                                "temperature",
-                                "relative_humidity",
-                                "barometric_pressure",
-                                "gas_resistance",
-                                "iaq",
-                                "distance",
-                                "lux",
-                                "white_lux",
-                                "ir_lux",
-                                "uv_lux",
-                                "wind_direction",
-                                "wind_speed",
-                                "weight",
-                            ]:
-                                if row[field] is not None:
-                                    telemetry[field] = row[field]
-                            nodes[node_id]["telemetry"] = telemetry if telemetry else None
+                            nodes[node_id]["telemetry"] = self._build_telemetry_dict_from_row(row)
 
                 return nodes
 

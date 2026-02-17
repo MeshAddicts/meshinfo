@@ -476,10 +476,24 @@ class MQTT:
         if payload is not None:
             self.data.telemetry.insert(0, msg)
             self.data.telemetry_by_node[id].insert(0, msg)
-            
+
             # Real-time write to Postgres if enabled
             if 'postgres' in self.config.get('storage', {}).get('write_to', []):
+                # Write to telemetry history table
                 await self.data.pg_storage.write_telemetry(id, msg)
+
+                # Update node_telemetry_current with variant-aware write.
+                # For JSONB variants (power_metrics, air_quality, etc.) this
+                # stores the payload in the correct JSONB column. For typed
+                # variants (device_metrics, environment_metrics) it updates
+                # the individual typed columns as before.
+                try:
+                    async with self.data.pg_storage.pool.acquire() as conn:
+                        await self.data.pg_storage._write_node_telemetry_current(
+                            conn, id, payload, telemetry_type=telemetry_type
+                        )
+                except Exception as e:
+                    logger.error("Failed to update node_telemetry_current for node %s: %s", id, e)
 
         await self.data.save()
 
