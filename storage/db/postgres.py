@@ -20,6 +20,31 @@ logger = logging.getLogger(__name__)
 class PostgresStorage:
     """PostgreSQL storage backend with connection pooling and error handling."""
 
+    # Maps telemetry payload field names to their Postgres column names in
+    # node_telemetry_current. Used by _write_node_telemetry_current to build
+    # partial updates so that a device_metrics message never NULLs out
+    # environment_metrics columns and vice versa.
+    TELEMETRY_COLUMNS = {
+        "battery_level": "battery_level",
+        "voltage": "voltage",
+        "channel_utilization": "channel_utilization",
+        "air_util_tx": "air_util_tx",
+        "uptime_seconds": "uptime_seconds",
+        "temperature": "temperature",
+        "relative_humidity": "relative_humidity",
+        "barometric_pressure": "barometric_pressure",
+        "gas_resistance": "gas_resistance",
+        "iaq": "iaq",
+        "distance": "distance",
+        "lux": "lux",
+        "white_lux": "white_lux",
+        "ir_lux": "ir_lux",
+        "uv_lux": "uv_lux",
+        "wind_direction": "wind_direction",
+        "wind_speed": "wind_speed",
+        "weight": "weight",
+    }
+
     def __init__(self, config: Dict[str, Any]):
         """Initialize Postgres storage with configuration."""
         self.config = config
@@ -383,83 +408,65 @@ class PostgresStorage:
         )
 
     async def _write_node_telemetry_current(self, conn, node_id: str, telemetry: Dict[str, Any]):
-        """Write current node telemetry state (latest snapshot per node)."""
+        """
+        Write current node telemetry state (latest snapshot per node).
 
+        Uses a partial update strategy: only columns whose keys are present
+        in the incoming telemetry dict are written. This prevents a
+        device_metrics message from NULLing out environment_metrics columns
+        and vice versa.
+        """
         # Normalize + ensure FK target exists
         node_norm = await self._ensure_node_stub(conn, node_id)
         if not node_norm:
             logger.warning("_write_node_telemetry_current: could not normalize node_id=%r; skipping", node_id)
             return
 
-        await conn.execute(
-            """
-            INSERT INTO node_telemetry_current (
-                node_id, battery_level, voltage, channel_utilization, air_util_tx,
-                uptime_seconds, temperature, relative_humidity, barometric_pressure,
-                gas_resistance, iaq, distance, lux, white_lux, ir_lux, uv_lux,
-                wind_direction, wind_speed, weight
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+        # Collect only the columns that are actually present in this payload.
+        # We intentionally include keys whose value is None — that means the
+        # protobuf explicitly sent a zero/null for that field, which we should
+        # store. But we skip keys that aren't in the payload at all.
+        present: Dict[str, Any] = {}
+        for payload_key, col_name in self.TELEMETRY_COLUMNS.items():
+            if payload_key in telemetry:
+                present[col_name] = telemetry[payload_key]
+
+        if not present:
+            logger.debug("_write_node_telemetry_current: no recognized telemetry fields for node %s; skipping", node_norm)
+            return
+
+        # Build dynamic SQL for the partial upsert.
+        # INSERT creates the row with only the present columns (others default to NULL).
+        # ON CONFLICT updates only the present columns, leaving the rest untouched.
+        col_names = list(present.keys())
+        col_values = list(present.values())
+
+        # Parameter numbers: $1 = node_id, $2.. = column values
+        insert_cols = ["node_id"] + col_names
+        insert_placeholders = ", ".join(f"${i}" for i in range(1, len(insert_cols) + 1))
+        insert_cols_str = ", ".join(insert_cols)
+
+        # Build SET clause for ON CONFLICT: only update the present columns
+        set_parts = []
+        where_parts = []
+        for col in col_names:
+            set_parts.append(f"{col} = EXCLUDED.{col}")
+            where_parts.append(f"node_telemetry_current.{col} IS DISTINCT FROM EXCLUDED.{col}")
+
+        set_parts.append("updated_at = NOW()")
+        set_clause = ", ".join(set_parts)
+        where_clause = " OR ".join(where_parts)
+
+        sql = f"""
+            INSERT INTO node_telemetry_current ({insert_cols_str})
+            VALUES ({insert_placeholders})
             ON CONFLICT (node_id) DO UPDATE SET
-                battery_level = EXCLUDED.battery_level,
-                voltage = EXCLUDED.voltage,
-                channel_utilization = EXCLUDED.channel_utilization,
-                air_util_tx = EXCLUDED.air_util_tx,
-                uptime_seconds = EXCLUDED.uptime_seconds,
-                temperature = EXCLUDED.temperature,
-                relative_humidity = EXCLUDED.relative_humidity,
-                barometric_pressure = EXCLUDED.barometric_pressure,
-                gas_resistance = EXCLUDED.gas_resistance,
-                iaq = EXCLUDED.iaq,
-                distance = EXCLUDED.distance,
-                lux = EXCLUDED.lux,
-                white_lux = EXCLUDED.white_lux,
-                ir_lux = EXCLUDED.ir_lux,
-                uv_lux = EXCLUDED.uv_lux,
-                wind_direction = EXCLUDED.wind_direction,
-                wind_speed = EXCLUDED.wind_speed,
-                weight = EXCLUDED.weight,
-                updated_at = NOW()
+                {set_clause}
             WHERE
-                node_telemetry_current.battery_level IS DISTINCT FROM EXCLUDED.battery_level
-                OR node_telemetry_current.voltage IS DISTINCT FROM EXCLUDED.voltage
-                OR node_telemetry_current.channel_utilization IS DISTINCT FROM EXCLUDED.channel_utilization
-                OR node_telemetry_current.air_util_tx IS DISTINCT FROM EXCLUDED.air_util_tx
-                OR node_telemetry_current.uptime_seconds IS DISTINCT FROM EXCLUDED.uptime_seconds
-                OR node_telemetry_current.temperature IS DISTINCT FROM EXCLUDED.temperature
-                OR node_telemetry_current.relative_humidity IS DISTINCT FROM EXCLUDED.relative_humidity
-                OR node_telemetry_current.barometric_pressure IS DISTINCT FROM EXCLUDED.barometric_pressure
-                OR node_telemetry_current.gas_resistance IS DISTINCT FROM EXCLUDED.gas_resistance
-                OR node_telemetry_current.iaq IS DISTINCT FROM EXCLUDED.iaq
-                OR node_telemetry_current.distance IS DISTINCT FROM EXCLUDED.distance
-                OR node_telemetry_current.lux IS DISTINCT FROM EXCLUDED.lux
-                OR node_telemetry_current.white_lux IS DISTINCT FROM EXCLUDED.white_lux
-                OR node_telemetry_current.ir_lux IS DISTINCT FROM EXCLUDED.ir_lux
-                OR node_telemetry_current.uv_lux IS DISTINCT FROM EXCLUDED.uv_lux
-                OR node_telemetry_current.wind_direction IS DISTINCT FROM EXCLUDED.wind_direction
-                OR node_telemetry_current.wind_speed IS DISTINCT FROM EXCLUDED.wind_speed
-                OR node_telemetry_current.weight IS DISTINCT FROM EXCLUDED.weight
-            """,
-            node_norm,
-            telemetry.get("battery_level"),
-            telemetry.get("voltage"),
-            telemetry.get("channel_utilization"),
-            telemetry.get("air_util_tx"),
-            telemetry.get("uptime_seconds"),
-            telemetry.get("temperature"),
-            telemetry.get("relative_humidity"),
-            telemetry.get("barometric_pressure"),
-            telemetry.get("gas_resistance"),
-            telemetry.get("iaq"),
-            telemetry.get("distance"),
-            telemetry.get("lux"),
-            telemetry.get("white_lux"),
-            telemetry.get("ir_lux"),
-            telemetry.get("uv_lux"),
-            telemetry.get("wind_direction"),
-            telemetry.get("wind_speed"),
-            telemetry.get("weight"),
-        )
+                {where_clause}
+        """
+
+        await conn.execute(sql, node_norm, *col_values)
 
     async def write_telemetry(self, node_id: str, telemetry_msg: Dict[str, Any]) -> None:
         """
@@ -467,7 +474,7 @@ class PostgresStorage:
 
         Args:
             node_id: from-node id (any supported form; will be normalized)
-            telemetry_msg: Telemetry message dictionary
+            telemetry_msg: Telemetry message dictionary (now includes 'telemetry_type')
         """
         if not self._ready("write_telemetry"):
             return
@@ -504,6 +511,9 @@ class PostgresStorage:
 
                 rx_time = self._ts_to_dt(telemetry_msg.get("timestamp"))
 
+                # telemetry_type: "device_metrics", "environment_metrics", etc.
+                telemetry_type = telemetry_msg.get("telemetry_type")
+
                 msg_id = telemetry_msg.get("id")
                 if msg_id is None:
                     logger.warning("write_telemetry: missing telemetry_msg['id']; skipping insert")
@@ -518,9 +528,10 @@ class PostgresStorage:
                     """
                     INSERT INTO telemetry (
                         from_node_id, to_node_id, sender_node_id, message_id, channel,
-                        packet_id, hops_away, rssi, snr, timestamp, rx_time, payload
+                        packet_id, hops_away, rssi, snr, timestamp, rx_time,
+                        telemetry_type, payload
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb)
                     ON CONFLICT (from_node_id, message_id) DO NOTHING
                     """,
                     from_id,
@@ -534,6 +545,7 @@ class PostgresStorage:
                     telemetry_msg.get("snr"),
                     telemetry_msg.get("timestamp"),
                     rx_time,
+                    telemetry_type,
                     payload_json,
                 )
 
@@ -1019,6 +1031,7 @@ class PostgresStorage:
                         "rssi": row["rssi"],
                         "snr": row["snr"],
                         "timestamp": row["timestamp"],
+                        "telemetry_type": row.get("telemetry_type"),
                         "payload": self._jsonb(row["payload"], {}),
                     }
 
@@ -1305,6 +1318,7 @@ class PostgresStorage:
                             "rssi": row["rssi"],
                             "snr": row["snr"],
                             "timestamp": row["timestamp"],
+                            "telemetry_type": row.get("telemetry_type"),
                             "payload": self._jsonb(row["payload"], {}),
                         }
                     )
@@ -1478,6 +1492,7 @@ class PostgresStorage:
                             "rssi": row["rssi"],
                             "snr": row["snr"],
                             "timestamp": row["timestamp"],
+                            "telemetry_type": row.get("telemetry_type"),
                             "payload": self._jsonb(row["payload"], {}),
                         }
                     )

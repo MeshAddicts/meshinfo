@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS telemetry (
     snr REAL,
     timestamp BIGINT,
     rx_time TIMESTAMP WITH TIME ZONE,
+    telemetry_type TEXT,
     payload JSONB,  -- Complete telemetry payload
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     CONSTRAINT telemetry_from_node_id_message_id_key UNIQUE (from_node_id, message_id)
@@ -98,6 +99,9 @@ CREATE TABLE IF NOT EXISTS telemetry (
 CREATE INDEX IF NOT EXISTS idx_telemetry_from_node_id ON telemetry(from_node_id);
 CREATE INDEX IF NOT EXISTS idx_telemetry_created_at ON telemetry(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_telemetry_rx_time ON telemetry(rx_time DESC);
+
+CREATE INDEX IF NOT EXISTS idx_telemetry_type ON telemetry(telemetry_type);
+CREATE INDEX IF NOT EXISTS idx_telemetry_node_type ON telemetry(from_node_id, telemetry_type);
 
 -- Chat channels table
 CREATE TABLE IF NOT EXISTS chat_channels (
