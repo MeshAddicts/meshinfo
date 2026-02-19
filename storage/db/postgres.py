@@ -67,36 +67,10 @@ class PostgresStorage:
         "traffic_management_stats": "traffic_management_stats",
     }
 
-    # All typed telemetry field names used in read queries. Kept in sync with
-    # TELEMETRY_COLUMNS values for use in load_nodes / query_nodes_filtered.
-    _TYPED_TELEMETRY_FIELDS = [
-        "battery_level",
-        "voltage",
-        "channel_utilization",
-        "air_util_tx",
-        "uptime_seconds",
-        "temperature",
-        "relative_humidity",
-        "barometric_pressure",
-        "gas_resistance",
-        "iaq",
-        "distance",
-        "lux",
-        "white_lux",
-        "ir_lux",
-        "uv_lux",
-        "wind_direction",
-        "wind_speed",
-        "weight",
-        "current",
-        "wind_gust",
-        "wind_lull",
-        "radiation",
-        "rainfall_1h",
-        "rainfall_24h",
-        "soil_moisture",
-        "soil_temperature",
-    ]
+    # All typed telemetry field names used in read queries. Derived directly
+    # from TELEMETRY_COLUMNS to stay in sync — adding a new field to
+    # TELEMETRY_COLUMNS automatically includes it here.
+    _TYPED_TELEMETRY_FIELDS = list(TELEMETRY_COLUMNS.values())
 
     def __init__(self, config: Dict[str, Any]):
         """Initialize Postgres storage with configuration."""
@@ -285,6 +259,11 @@ class PostgresStorage:
         Build a telemetry dict from a node_telemetry_current row.
         Merges typed columns and JSONB variant columns into a single dict.
         Used by load_nodes() and query_nodes_filtered() to avoid duplication.
+
+        If a JSONB variant field collides with an already-populated typed column
+        key, the existing value is kept and a debug warning is logged. This
+        mirrors the protobuf oneof guarantee (no real collisions expected) but
+        guards against malformed data silently overwriting values.
         """
         telemetry: Dict[str, Any] = {}
 
@@ -295,11 +274,21 @@ class PostgresStorage:
                 telemetry[field] = val
 
         # JSONB variant columns — merge their fields into the flat dict
-        # so the API response stays compatible with the in-memory structure
+        # so the API response stays compatible with the in-memory structure.
+        # If a field name collides with an existing key, keep the original
+        # value and log a debug warning to avoid silent overwrites.
         for variant_name, col_name in self.TELEMETRY_JSONB_VARIANTS.items():
             variant_data = self._jsonb(row.get(col_name), None)
             if variant_data and isinstance(variant_data, dict):
-                telemetry.update(variant_data)
+                for key, value in variant_data.items():
+                    if key in telemetry:
+                        logger.debug(
+                            "Telemetry key collision for '%s' in variant '%s'; keeping existing value.",
+                            key,
+                            variant_name,
+                        )
+                        continue
+                    telemetry[key] = value
 
         return telemetry if telemetry else None
 

@@ -244,8 +244,9 @@ class MQTT:
                             outs["payload"] = out['environment_metrics']
                             outs["telemetry_type"] = "environment_metrics"
                         else:
-                            # Unknown or empty telemetry variant
+                            # Unknown or empty telemetry variant; mark telemetry_type explicitly
                             outs["payload"] = out
+                            outs["telemetry_type"] = "unknown"
                             logger.debug("Telemetry with unrecognized variant=%s: %s", variant, out)
 
                         logger.debug("Decoded protobuf message: telemetry (variant=%s): %s", variant, outs)
@@ -463,9 +464,6 @@ class MQTT:
             # Merge: new fields overwrite, but fields not in this payload survive
             existing.update(payload)
             node['telemetry'] = existing
-        else:
-            # No payload; don't wipe existing telemetry
-            pass
 
         self.data.update_node(id, node)
         logger.debug("Node %s updated with telemetry (variant=%s)", id, telemetry_type)
@@ -487,13 +485,19 @@ class MQTT:
                 # stores the payload in the correct JSONB column. For typed
                 # variants (device_metrics, environment_metrics) it updates
                 # the individual typed columns as before.
-                try:
-                    async with self.data.pg_storage.pool.acquire() as conn:
-                        await self.data.pg_storage._write_node_telemetry_current(
-                            conn, id, payload, telemetry_type=telemetry_type
-                        )
-                except Exception as e:
-                    logger.error("Failed to update node_telemetry_current for node %s: %s", id, e)
+                if self.data.pg_storage and self.data.pg_storage.pool:
+                    try:
+                        async with self.data.pg_storage.pool.acquire() as conn:
+                            await self.data.pg_storage._write_node_telemetry_current(
+                                conn, id, payload, telemetry_type=telemetry_type
+                            )
+                    except Exception as e:
+                        logger.error("Failed to update node_telemetry_current for node %s: %s", id, e)
+                else:
+                    logger.warning(
+                        "handle_telemetry: pg_storage or pool not available; "
+                        "skipping node_telemetry_current update for node %s", id
+                    )
 
         await self.data.save()
 
