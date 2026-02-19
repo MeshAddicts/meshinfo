@@ -178,7 +178,7 @@ function metricLabel(key: MetricKey) {
   return METRICS.find((m) => m.key === key)?.label ?? key;
 }
 
-// Format via your existing helper when possible, otherwise fallback
+// Format via existing helper when possible, otherwise fallback
 function formatAnyMetricValue(key: MetricKey, v: any): string {
   if (v == null) return "—";
 
@@ -841,7 +841,7 @@ export function TelemetryDetailsPanel({
     return { voltageCh, currentCh };
   }, [lastEvent]);
 
-  // Recent samples (keep, but we’ll tuck it under a collapse)
+  // Recent samples
   const recentSamples = useMemo(() => {
     const arr = [...(selectedNodeId ? eventsSelected : scopeEvents)];
     arr.sort((a, b) => safeTsMs(b.timestamp) - safeTsMs(a.timestamp));

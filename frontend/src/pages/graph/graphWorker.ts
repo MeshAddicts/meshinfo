@@ -1,10 +1,3 @@
-/**
- * graphWorker.ts — Force simulation with auto-stabilization.
- * Runs physics for up to maxTicks, progressively increasing damping.
- * Auto-stops when total kinetic energy drops below threshold.
- * After stopping, nodes stay put — no jittering.
- */
-
 type WorkerNode = {
   id: string;
   x: number;

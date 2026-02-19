@@ -22,8 +22,6 @@ type StatsPayload = {
   total_messages: number;
   total_mqtt_messages: number;
 
-  // Recommended addition to /stats response:
-  // { session_by_modem_preset: { MediumFast: 123, LongFast: 456 } }
   session_by_modem_preset?: Record<string, number>;
 };
 
@@ -91,8 +89,8 @@ function pickPreset(presets: Record<string, number> | undefined, names: string[]
 }
 
 export const Stats = () => {
-  // ---- Live polling: no new endpoints required ----
-  // Adjust pollingInterval to taste (e.g. 3000–10000ms).
+  // ---- Live polling ----
+  // Adjust pollingInterval (e.g. 3000–10000ms).
   const {
     data: rawStats,
     isFetching,

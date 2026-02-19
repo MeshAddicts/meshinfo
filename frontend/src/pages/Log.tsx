@@ -225,7 +225,7 @@ const matchKeyFor = (
   // strongest: topic + id
   if (topic && id != null) return `t:${topic}|id:${String(id)}`;
 
-  // next: topic + from + ts + type (still decent)
+  // next: topic + from + ts + type
   if (topic && from != null) {
     return `t:${topic}|from:${String(from)}|ts:${ts}|type:${String(typ ?? "")}`;
   }
@@ -237,10 +237,10 @@ const matchKeyFor = (
 function JsonBlock({ code }: { code: string }) {
   const html = useMemo(() => {
     try {
-      // highlight.js escapes content for you and returns HTML spans
+      // highlight.js escapes content and returns HTML spans
       return hljs.highlight(code, { language: "json" }).value;
     } catch {
-      // fallback: no highlight, but still safe
+      // fallback: no highlight
       return hljs.escapeHTML(code);
     }
   }, [code]);
@@ -249,7 +249,7 @@ function JsonBlock({ code }: { code: string }) {
     <pre className="mt-3 rounded-lg border border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-gray-950/40 p-3 text-xs font-mono text-gray-800 dark:text-gray-200 overflow-x-auto">
       <code
         className="hljs"
-        style={{ background: "transparent" }} // prevent theme bg from fighting your card bg
+        style={{ background: "transparent" }} // prevent theme bg from fighting card bg
         dangerouslySetInnerHTML={{ __html: html }}
       />
     </pre>
@@ -278,7 +278,7 @@ export const Log = () => {
 
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // We want URL defaults to match UI defaults by *omitting* default params.
+  // URL defaults to match UI defaults by omitting default params.
   const defaultViewKey = "all";
 
   const isDefaultParam = useCallback(
@@ -549,7 +549,7 @@ export const Log = () => {
       if (kind === "mesh") next.mesh = p;
       else next.mqtt = p;
 
-      // combined search text (both sides)
+      // combined search text
       const parts = [topic, next.mesh?.searchText ?? "", next.mqtt?.searchText ?? ""].filter(
         Boolean,
       );

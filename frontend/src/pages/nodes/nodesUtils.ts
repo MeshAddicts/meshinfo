@@ -141,7 +141,6 @@ export function getTelemetrySnapshot(node: INode): {
   const voltage =
     typeof t.voltage === "number" ? t.voltage : null;
 
-  // You have both names in different files — accept both
   const airTx =
     typeof t.air_utilization_tx === "number"
       ? t.air_utilization_tx

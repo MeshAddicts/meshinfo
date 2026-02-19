@@ -73,7 +73,7 @@ export function DetailsPanel({
     setParam("msg", undefined, "push");
   };
 
-  // --- “Copied!” UX (match other copy buttons)
+  // --- UX 
   const [copiedKind, setCopiedKind] = useState<CopiedKind>("");
   const copiedTimerRef = useRef<number | null>(null);
 

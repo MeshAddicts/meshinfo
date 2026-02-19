@@ -177,7 +177,7 @@ export const Chat = () => {
     return parts.join("\n");
   };
 
-  // ---- Available channels from data (still the source of messages)
+  // ---- Available channels from data (source of messages)
   const channelEntries = useMemo(() => {
     const entries = Object.entries(chat?.channels ?? {});
     const allow = config?.broker?.channels?.display;
@@ -330,7 +330,7 @@ export const Chat = () => {
     const prev = prevUrlMsgRef.current;
     prevUrlMsgRef.current = urlMsg;
 
-    // If a message becomes selected (or selection changes), jump to Details
+    // If a message becomes selected or selection changes, jump to Details
     if (urlMsg && urlMsg !== prev) {
       setMobileSheet("details");
     }
@@ -373,7 +373,7 @@ export const Chat = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlQ]);
 
-  // Update URL q from deferred input (replace, don’t spam history)
+  // Update URL q from deferred input (replace)
   useEffect(() => {
     if ((searchParams.get("q") ?? "") === qDeferred) return;
     setParam("q", qDeferred, "replace");
@@ -1178,7 +1178,7 @@ export const Chat = () => {
 
                 <span className="opacity-60">•</span>
 
-                {/* live pill stays exactly as-is */}
+                {/* live pill */}
                 <button
                   type="button"
                   className={[
@@ -1225,7 +1225,7 @@ export const Chat = () => {
 
                 <span className="opacity-60">•</span>
 
-                {/* live pill stays exactly as-is */}
+                {/* live pill */}
                 <button
                   type="button"
                   className={[
