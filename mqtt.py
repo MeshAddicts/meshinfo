@@ -229,11 +229,27 @@ class MQTT:
                                 ZoneInfo(self.config['server']['timezone'])
                             )
                         outs["type"] = "telemetry"
-                        if 'device_metrics' in out:
+
+                        # Determine the telemetry variant using protobuf oneof
+                        variant = env.WhichOneof('variant')
+                        outs["telemetry_type"] = variant  # e.g. "device_metrics", "environment_metrics", etc.
+
+                        if variant and variant in out:
+                            outs["payload"] = out[variant]
+                        elif 'device_metrics' in out:
+                            # Fallback for edge cases where WhichOneof returns None
                             outs["payload"] = out['device_metrics']
-                        if 'environment_metrics' in out:
+                            outs["telemetry_type"] = "device_metrics"
+                        elif 'environment_metrics' in out:
                             outs["payload"] = out['environment_metrics']
-                        logger.debug("Decoded protobuf message: telemetry: %s", outs)
+                            outs["telemetry_type"] = "environment_metrics"
+                        else:
+                            # Unknown or empty telemetry variant; mark telemetry_type explicitly
+                            outs["payload"] = out
+                            outs["telemetry_type"] = "unknown"
+                            logger.debug("Telemetry with unrecognized variant=%s: %s", variant, out)
+
+                        logger.debug("Decoded protobuf message: telemetry (variant=%s): %s", variant, outs)
                         await self.handle_telemetry(outs)
                     except UnicodeDecodeError as e:
                         logger.warning("Unicode decoding error: text: %s", e)
@@ -430,27 +446,58 @@ class MQTT:
             msg['sender'] = msg['sender'].replace('!', '')
 
         id = msg['from']
+        telemetry_type = msg.get('telemetry_type')
+        payload = msg.get('payload')
+
         if id in self.data.nodes:
             node = self.data.nodes[id]
-            node['telemetry'] = msg['payload'] if 'payload' in msg else None
-            self.data.update_node(id, node)
-            logger.debug("Node %s updated with telemetry", id)
         else:
             node = Node.default_node(id)
-            node['telemetry'] = msg['payload'] if 'payload' in msg else None
-            self.data.update_node(id, node)
-            logger.debug("Node %s skeleton added with telemetry", id)
+
+        # Merge incoming telemetry into the node's existing telemetry dict
+        # instead of replacing it entirely. This preserves device_metrics
+        # fields when an environment_metrics message arrives, and vice versa.
+        if payload is not None:
+            existing = node.get('telemetry')
+            if existing is None or not isinstance(existing, dict):
+                existing = {}
+            # Merge: new fields overwrite, but fields not in this payload survive
+            existing.update(payload)
+            node['telemetry'] = existing
+
+        self.data.update_node(id, node)
+        logger.debug("Node %s updated with telemetry (variant=%s)", id, telemetry_type)
 
         if id not in self.data.telemetry_by_node:
             self.data.telemetry_by_node[id] = []
 
-        if 'payload' in msg:
+        if payload is not None:
             self.data.telemetry.insert(0, msg)
             self.data.telemetry_by_node[id].insert(0, msg)
-            
+
             # Real-time write to Postgres if enabled
             if 'postgres' in self.config.get('storage', {}).get('write_to', []):
+                # Write to telemetry history table
                 await self.data.pg_storage.write_telemetry(id, msg)
+
+                # Update node_telemetry_current with variant-aware write.
+                # For JSONB variants (power_metrics, air_quality, etc.) this
+                # stores the payload in the correct JSONB column. For typed
+                # variants (device_metrics, environment_metrics) it updates
+                # the individual typed columns as before.
+                if self.data.pg_storage and self.data.pg_storage.pool:
+                    try:
+                        async with self.data.pg_storage.pool.acquire() as conn:
+                            await self.data.pg_storage._write_node_telemetry_current(
+                                conn, id, payload, telemetry_type=telemetry_type
+                            )
+                    except Exception as e:
+                        logger.error("Failed to update node_telemetry_current for node %s: %s", id, e)
+                else:
+                    logger.warning(
+                        "handle_telemetry: pg_storage or pool not available; "
+                        "skipping node_telemetry_current update for node %s", id
+                    )
 
         await self.data.save()
 
