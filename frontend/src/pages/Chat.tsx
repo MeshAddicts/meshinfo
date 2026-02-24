@@ -22,7 +22,6 @@ import {
 import {
   DirKey,
   FocusMode,
-  MsgType,
   RangeKey,
   SortKey,
   csvEscape,
@@ -392,11 +391,6 @@ export const Chat = () => {
     return v?.label ?? rawChannelLabel(id);
   };
 
-  const channelShort = (id: string) => {
-    const v = views.find((x) => x.channelId === id);
-    return v?.short ?? rawChannelShort(id);
-  };
-
   const channelTooltip = (id: string) => {
     const v = views.find((x) => x.channelId === id);
     return v?.tooltip ?? rawChannelTooltip(id);
@@ -726,10 +720,6 @@ export const Chat = () => {
       "push"
     );
     setFocusPicker("");
-  };
-
-  const clearSelection = () => {
-    setParam("msg", undefined, "push");
   };
 
   const clearFocus = () => {

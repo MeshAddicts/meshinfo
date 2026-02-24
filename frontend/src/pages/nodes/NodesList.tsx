@@ -5,7 +5,6 @@ import { Link } from "react-router-dom";
 import { Avatar } from "../../components/Avatar";
 import { DateToSince } from "../../components/DateSince";
 import { HardwareImg } from "../../components/HardwareImg";
-import { Role } from "../../components/Role";
 import { HardwareModel, INode } from "../../types";
 import { getTelemetrySnapshot, roleLabel } from "./nodesUtils";
 
@@ -77,9 +76,9 @@ export function NodesList({
           }}
           style={{ flex: 1, minHeight: 0, height: "100%" }}
           data={items}
-          computeItemKey={(index, item) => item.id}
+          computeItemKey={(_index, item) => item.id}
           overscan={600}
-          itemContent={(index, item) => {
+          itemContent={(_index, item) => {
             const n: any = item.node as any;
             const telem = getTelemetrySnapshot(item.node);
 

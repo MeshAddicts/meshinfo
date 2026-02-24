@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { normNodeId, getBestNodeLabel, toNumberLoose, type GraphNode, type GraphEdge } from "./graphUtils";
+import { normNodeId, getBestNodeLabel, toNumberLoose, type GraphNode } from "./graphUtils";
 import { buildNeighborEdges, buildTracerouteEdges, mergeEdges } from "./graphEdges";
 
 /**

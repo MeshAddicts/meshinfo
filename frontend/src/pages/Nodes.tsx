@@ -7,7 +7,6 @@ import {
   useState,
   ReactNode,
 } from "react";
-import { Link } from "react-router-dom";
 import { VirtuosoHandle } from "react-virtuoso";
 
 import { HeardBy } from "../components/HeardBy";
@@ -19,9 +18,6 @@ import { csvEscape, downloadBlob } from "./chat/chatUtils";
 import { useNodesSearchParams } from "../hooks/useNodesSearchParams";
 import {
   RangeKey,
-  StatusKey,
-  SortByKey,
-  SortDir,
   cleanNodeId,
   getLatLon,
   getTelemetrySnapshot,
@@ -163,13 +159,12 @@ export const Nodes = () => {
 
   const {
     data: nodesRaw,
-    dataUpdatedAt,
+    fulfilledTimeStamp: dataUpdatedAt,
     isFetching,
     refetch,
   } = useGetNodesQuery(
-    {},
+    undefined,
     {
-      // Live controls auto-refresh behavior; manual refresh still works when off.
       pollingInterval: liveEnabled ? 5000 : 0,
       skipPollingIfUnfocused: true,
       refetchOnReconnect: liveEnabled,

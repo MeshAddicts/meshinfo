@@ -9,7 +9,7 @@ interface Props {
   onSelect: (id: string | null) => void;
 }
 
-export const AdjacencyHeatmap: React.FC<Props> = ({ nodes, edges, nodeById, selectedId, onSelect }) => {
+export const AdjacencyHeatmap: React.FC<Props> = ({ nodes, edges, nodeById: _nodeById, selectedId, onSelect }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
@@ -213,7 +213,6 @@ export const AdjacencyHeatmap: React.FC<Props> = ({ nodes, edges, nodeById, sele
 
     const onClick = (e: MouseEvent) => {
       const rect = canvas.getBoundingClientRect();
-      const mx = e.clientX - rect.left - startX;
       const my = e.clientY - rect.top - startY;
       const row = Math.floor(my / cellSize);
       if (row >= 0 && row < n) {

@@ -13,7 +13,7 @@ import {
   toNumberLoose,
 } from "./telemetryUtils";
 
-import { MiniBarChart, downsamplePoints } from "./MiniCharts";
+import { MiniBarChart } from "./MiniCharts";
 
 // ---------------------- clipboard helper ----------------------
 
@@ -582,7 +582,7 @@ function bucketCounts(events: TelemetryEvent[], bucketMs: number) {
 
 export function TelemetryDetailsPanel({
   nodes,
-  selectedKey,
+  selectedKey: _selectedKey,
   selectedNodeId,
   eventsAll,
   eventsSelected,

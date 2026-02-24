@@ -1,5 +1,3 @@
-import React from "react";
-
 export type FocusMode = "endpoints" | "any";
 export type MsgType = "all" | "bc" | "dm";
 export type RangeKey = "1h" | "24h" | "7d" | "all";

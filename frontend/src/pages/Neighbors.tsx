@@ -36,12 +36,6 @@ interface NeighborEntry {
   distance?: number;
 }
 
-interface NeighborInfo {
-  neighbors?: NeighborEntry[];
-  neighbors_count?: number;
-  node_broadcast_interval_secs?: number;
-}
-
 /** One row in the virtualized list */
 export interface NeighborListItem {
   id: string;
@@ -192,7 +186,7 @@ async function copyTextToClipboard(text: string) {
 
 function NeighborDetailPanel({
   item,
-  nodes,
+  nodes: _nodes,
   onClearSelection,
 }: {
   item: NeighborListItem;
@@ -601,11 +595,11 @@ export const Neighbors = () => {
 
   const {
     data: nodesRaw,
-    dataUpdatedAt,
+    fulfilledTimeStamp: dataUpdatedAt,
     isFetching,
     refetch,
   } = useGetNodesQuery(
-    {},
+    undefined,
     {
       pollingInterval: liveEnabled ? 5000 : 0,
       skipPollingIfUnfocused: true,
@@ -614,7 +608,6 @@ export const Neighbors = () => {
     },
   );
 
-  const { data: config } = useGetConfigQuery();
   const nodes = useMemo(() => (nodesRaw ?? {}) as any, [nodesRaw]);
 
   // UI state
@@ -659,7 +652,7 @@ export const Neighbors = () => {
 
       // Build "heard by" — other nodes whose neighborinfo includes this node
       const heardBy: NeighborListItem["heardBy"] = [];
-      for (const [otherId, otherNode] of entries) {
+      for (const [, otherNode] of entries) {
         const other = otherNode as any;
         if (!other?.neighborinfo?.neighbors) continue;
         for (const nb of other.neighborinfo.neighbors) {
@@ -1149,7 +1142,7 @@ export const Neighbors = () => {
                       style={{ flex: 1, minHeight: 0, height: "100%" }}
                       data={filteredItems}
                       overscan={600}
-                      itemContent={(index, item) => (
+                      itemContent={(_index, item) => (
                         <NeighborRow
                           item={item}
                           selected={item.id === selectedId}

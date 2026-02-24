@@ -241,7 +241,11 @@ function JsonBlock({ code }: { code: string }) {
       return hljs.highlight(code, { language: "json" }).value;
     } catch {
       // fallback: no highlight
-      return hljs.escapeHTML(code);
+      return code
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
     }
   }, [code]);
 
@@ -259,14 +263,14 @@ function JsonBlock({ code }: { code: string }) {
 export const Log = () => {
   const {
     data: rawMesh = [],
-    dataUpdatedAt: meshUpdatedAt,
+    fulfilledTimeStamp: meshUpdatedAt,
     isFetching: meshFetching,
     refetch: refetchMesh,
   } = useGetMessagesQuery();
 
   const {
     data: rawMqtt = [],
-    dataUpdatedAt: mqttUpdatedAt,
+    fulfilledTimeStamp: mqttUpdatedAt,
     isFetching: mqttFetching,
     refetch: refetchMqtt,
   } = useGetMqttMessagesQuery();
@@ -1067,8 +1071,8 @@ export const Log = () => {
                   ref={virtuosoRef}
                   data={filtered}
                   style={{ height: "100%" }}
-                  itemKey={(_index, item) => item.key}
-                  itemContent={(_index, g) => {
+                  computeItemKey={(_index: number, item: GroupedRow) => item.key}
+                  itemContent={(_index: number, g: groupedrow) => {
                     const tsLabel = g.ts
                       ? formatTimestamp(g.ts) || "Unknown"
                       : "Unknown";

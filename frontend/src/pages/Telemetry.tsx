@@ -195,7 +195,7 @@ export const Telemetry = () => {
 
   const {
     data: telemetryRaw,
-    dataUpdatedAt,
+    fulfilledTimeStamp: dataUpdatedAt,
     isFetching,
     refetch,
   } = useGetTelemetryQuery(undefined as any, {
@@ -481,7 +481,7 @@ export const Telemetry = () => {
         lastTsMs: maxLast,
       },
       ...sorted.map((s) => ({
-        kind: "node",
+        kind: "node" as const,
         key: `node:${s.nodeId}`,
         nodeId: s.nodeId,
         summary: s,
@@ -863,7 +863,7 @@ export const Telemetry = () => {
             />
 
             <StatusChip
-              label={`Sort: ${sort.replaceAll("_", " ")}`}
+              label={`Sort: ${sort.replace(/_/g, " ")}`}
               active={sort !== DEFAULT_SORT}
               title="Click to reset sort"
               onClick={() => setParam("sort", DEFAULT_SORT, "push")}

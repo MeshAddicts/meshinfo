@@ -70,7 +70,7 @@ function GaugeRow({
 
 export function NodeDetailsPanel({
   node,
-  nodes,
+  nodes: _nodes,
   serverNode,
   onClearSelection,
 }: {

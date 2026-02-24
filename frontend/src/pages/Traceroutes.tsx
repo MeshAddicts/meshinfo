@@ -32,7 +32,7 @@ import {
   type TraceroutesListItem,
 } from "./traceroutes/traceroutesTypes";
 
-type RangeKey = "all" | "1h" | "24h" | "7d";
+export type RangeKey = "all" | "1h" | "24h" | "7d";
 type SortKey =
   | "last_desc"
   | "last_asc"
@@ -267,7 +267,7 @@ export const Traceroutes = () => {
 
   const {
     data: traceroutesRaw,
-    dataUpdatedAt,
+    fulfilledTimeStamp: dataUpdatedAt,
     isFetching,
     refetch,
   } = useGetTraceroutesQuery(undefined as any, {
@@ -953,7 +953,7 @@ export const Traceroutes = () => {
             />
 
             <StatusChip
-              label={`Sort: ${sort.replaceAll("_", " ")}`}
+              label={`Sort: ${sort.replace(/_/G, " ")}`}
               active={sort !== DEFAULT_SORT}
               title="Click to reset sort"
               onClick={() => setParam("sort", DEFAULT_SORT, "push")}

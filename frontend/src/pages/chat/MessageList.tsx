@@ -454,7 +454,7 @@ export function MessageList({
                   ? m.sender.map((x: any) => String(x))
                   : [];
                 const viaNodes = viaIds
-                  .map((sid) => nodes?.[sid])
+                  .map((sid: string) => nodes?.[sid])
                   .filter(Boolean);
 
                 const distanceFromSender =
