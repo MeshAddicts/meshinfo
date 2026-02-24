@@ -341,7 +341,7 @@ export const Stats = () => {
             </div>
 
             <p className="mt-1 text-sm text-gray-400">
-              Quick signal on your mesh — based on messages <HeardBy />.
+              Based on messages <HeardBy />.
             </p>
           </div>
 
