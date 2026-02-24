@@ -13,7 +13,7 @@ import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 import { Avatar } from "../components/Avatar";
 import { DateToSince } from "../components/DateSince";
 import { HeardBy } from "../components/HeardBy";
-import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";
+import { useGetNodesQuery } from "../slices/apiSlice";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { calculateDistanceBetweenNodes } from "../utils/getDistanceBetweenTwoNodes";
 

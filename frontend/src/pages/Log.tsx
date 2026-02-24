@@ -1072,7 +1072,7 @@ export const Log = () => {
                   data={filtered}
                   style={{ height: "100%" }}
                   computeItemKey={(_index: number, item: GroupedRow) => item.key}
-                  itemContent={(_index: number, g: groupedrow) => {
+                  itemContent={(_index: number, g: GroupedRow) => {
                     const tsLabel = g.ts
                       ? formatTimestamp(g.ts) || "Unknown"
                       : "Unknown";

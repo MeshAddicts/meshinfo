@@ -953,7 +953,7 @@ export const Traceroutes = () => {
             />
 
             <StatusChip
-              label={`Sort: ${sort.replace(/_/G, " ")}`}
+              label={`Sort: ${sort.split("_").join(" ")}`}
               active={sort !== DEFAULT_SORT}
               title="Click to reset sort"
               onClick={() => setParam("sort", DEFAULT_SORT, "push")}

@@ -145,7 +145,7 @@ function StatusChip({
 }
 
 export const Chat = () => {
-  const { data: chat, dataUpdatedAt, isFetching, refetch } = useGetChatsQuery();
+  const { data: chat, fulfilledTimeStamp: dataUpdatedAt, isFetching, refetch } = useGetChatsQuery();
   const { data: nodes = {} } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
 
@@ -964,7 +964,7 @@ export const Chat = () => {
         hops: Number(m.hops_away ?? 0),
         via_ids: viaIds.join(","),
         via_short: viaIds
-          .map((id) => (nodes as any)[id]?.shortname ?? "UNK")
+          .map((id: string) => (nodes as any)[id]?.shortname ?? "UNK")
           .join(","),
         text: String(m.text ?? ""),
       };
