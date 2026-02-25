@@ -404,20 +404,16 @@ export const Chat = () => {
   const totalMessages = selectedChannelObj?.totalMessages ?? 0;
 
   // Range threshold
-  const nowSec = Math.floor(Date.now() / 1000);
   const rangeThreshold = useMemo(() => {
+    const now = Math.floor(Date.now() / 1000);
     switch (urlRange) {
-      case "1h":
-        return nowSec - 3600;
-      case "24h":
-        return nowSec - 86400;
-      case "7d":
-        return nowSec - 604800;
+      case "1h":  return now - 3600;
+      case "24h": return now - 86400;
+      case "7d":  return now - 604800;
       case "all":
-      default:
-        return undefined;
+      default:    return undefined;
     }
-  }, [nowSec, urlRange]);
+  }, [urlRange]);
 
   // Messages (filtered + sorted)
   const messages = useMemo(() => {
