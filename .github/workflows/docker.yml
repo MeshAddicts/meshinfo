@@ -150,7 +150,7 @@ jobs:
       packages: write
     steps:
       - name: Download digests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: /tmp/digests
           pattern: main-digests-*
@@ -328,7 +328,7 @@ jobs:
       packages: write
     steps:
       - name: Download digests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: /tmp/digests
           pattern: spa-digests-*
