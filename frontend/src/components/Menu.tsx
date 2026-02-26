@@ -42,7 +42,7 @@ export const Menu = ({
       {/* Mobile Hamburger Button */}
       <button
         type="button"
-        className={`lg:hidden fixed z-50 top-4 left-4 p-2 rounded-lg shadow-lg backdrop-blur-sm border transition-all duration-200 ${
+        className={`lg:hidden fixed z-50 top-4 right-4 left-auto p-2 rounded-lg shadow-lg backdrop-blur-sm border transition-all duration-200 ${
           showMenu 
             ? "bg-gray-800 dark:bg-gray-200 border-gray-600 dark:border-gray-400" 
             : "bg-white/90 dark:bg-gray-800/90 border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700"
@@ -127,6 +127,12 @@ export const Menu = ({
                     <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Map</span>
                   </div>
                 </Link>
+                <Link to="/graph" onClick={() => setShowMenu(false)} className="block">
+                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Graph</span>
+                    <span className="text-xs bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded">Experimental</span>
+                  </div>
+                </Link>
                 <Link to="/nodes" onClick={() => setShowMenu(false)} className="block">
                   <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
                     <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Nodes</span>
@@ -152,6 +158,55 @@ export const Menu = ({
                     <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Traceroutes</span>
                   </div>
                 </Link>
+                <Link to="/logs" onClick={() => setShowMenu(false)} className="block">
+                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Logs</span>
+                  </div>
+                </Link>
+              </div>
+
+              <div className="space-y-1">
+                <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 py-2">Tools</h3>
+                {(config?.mesh?.tools ?? defaultTools).map((tool, index) => (
+                  <a
+                    key={`mobile-tools-${index}`}
+                    href={tool.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => setShowMenu(false)}
+                    className="block"
+                  >
+                    <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
+                      <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{tool.name}</span>
+                    </div>
+                  </a>
+                ))}
+              </div>
+
+              <div className="space-y-1">
+                <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 py-2">Meshtastic Addons</h3>
+                <a
+                  href="https://github.com/armooo/meshtastic_dopewars"
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => setShowMenu(false)}
+                  className="block"
+                >
+                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">DopeWars</span>
+                  </div>
+                </a>
+                <a
+                  href="https://github.com/TheCommsChannel/TC2-BBS-mesh"
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => setShowMenu(false)}
+                  className="block"
+                >
+                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
+                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">TheCommsChannel BBS</span>
+                  </div>
+                </a>
               </div>
             </div>
 
@@ -201,8 +256,7 @@ export const Menu = ({
             <h3 className="font-bold">Mesh</h3>
             <div className="mb-1">
               <Link
-                to="chat"
-                relative="path"
+                to="/chat"
                 className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
               >
                 <img
@@ -218,7 +272,7 @@ export const Menu = ({
             </div>
             <div className="mb-1">
               <Link
-                to="map"
+                to="/map"
                 className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
               >
                 <img
@@ -234,7 +288,26 @@ export const Menu = ({
             </div>
             <div className="mb-1">
               <Link
-                to="nodes"
+                to="/graph"
+                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
+              >
+                <img
+                  src={`${import.meta.env.BASE_URL}images/icons/graph.svg`}
+                  width="20"
+                  height="20"
+                  className="inline-block mr-2 dark:invert"
+                  alt="graph icon"
+                  style={{ verticalAlign: "middle" }}
+                />
+                Graph
+                <span className="ml-1 text-xs text-amber-600 dark:text-amber-400">
+                  Experimental
+                </span>
+              </Link>
+            </div>
+            <div className="mb-1">
+              <Link
+                to="/nodes"
                 className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
               >
                 <img
@@ -250,7 +323,7 @@ export const Menu = ({
             </div>
             <div className="mb-1">
               <Link
-                to="neighbors"
+                to="/neighbors"
                 className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
               >
                 <img
@@ -266,7 +339,7 @@ export const Menu = ({
             </div>
             <div className="mb-1">
               <Link
-                to="stats"
+                to="/stats"
                 className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
               >
                 <img
@@ -282,7 +355,7 @@ export const Menu = ({
             </div>
             <div className="mb-1">
               <Link
-                to="telemetry"
+                to="/telemetry"
                 className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
               >
                 <img
@@ -298,7 +371,7 @@ export const Menu = ({
             </div>
             <div className="mb-1">
               <Link
-                to="traceroutes"
+                to="/traceroutes"
                 className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
               >
                 <img
@@ -312,24 +385,20 @@ export const Menu = ({
                 Traceroutes
               </Link>
             </div>
-          </nav>
-
-          <nav className="flex flex-col flex-1">
-            <h3 className="font-bold">Logs</h3>
             <div className="mb-1">
               <Link
-                to="mesh-log"
+                to="/logs"
                 className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
               >
-                Mesh Messages
-              </Link>
-            </div>
-            <div className="mb-1">
-              <Link
-                to="mqtt-log"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                MQTT Messages
+                <img
+                  src={`${import.meta.env.BASE_URL}images/icons/logs.svg`}
+                  width="20"
+                  height="20"
+                  className="inline-block mr-2 dark:invert"
+                  alt="logs icon"
+                  style={{ verticalAlign: "middle" }}
+                />
+                Logs
               </Link>
             </div>
           </nav>

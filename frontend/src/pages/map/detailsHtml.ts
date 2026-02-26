@@ -24,7 +24,7 @@ export function buildNodeDetailsHtml(opts: {
 
   let panel =
     `<b>${escapeHtml(node.longname ?? "")}</b><br/>${escapeHtml(node.shortname ?? "")} / ${escapeHtml(node.id)}<br/><br/>` +
-    `<b>Position</b><br/>${escapeHtml(node.position.toString())}<br/><br/>` +
+    `<b>Position</b><br/>LAT: ${escapeHtml(node.position[1].toString())}<br/>LON: ${escapeHtml(node.position[0].toString())}<br/><br/>` +
     `<b>Location</b><br/>${escapeHtml(displayName)}<br/><br/>` +
     `<b>Status</b><br/>${node.online ? "Online" : "Offline"}<br/><br/>` +
     `<b>Last Seen</b><br/>${escapeHtml(node.last_seen ?? "")}<br/><br/>`;

@@ -1,16 +1,15 @@
 {
   "mesh": {
-    "name": "Sac Valley Mesh",
-    "shortname": "SVM",
-    "description": "Serving Meshtastic to the Sacramento Valley and surrounding areas.",
-    "url": "https://sacvalleymesh.com",
-    "contact": "https://sacvalleymesh.com",
+    "name": "Central Valley Mesh",
+    "shortname": "CVM",
+    "description": "Serving Meshtastic to the California Central Valley and surrounding areas.",
+    "url": "https://CVME.sh",
+    "contact": "https://CVME.sh",
     "country": "US",
     "region": "California",
-    "metro": "Sacramento",
-    "latitude": 38.58,
-    "longitude": -121.49,
-    "zoom": 9.5,
+    "metro": "Fresno, Modesto, Bakersfield",
+    "latitude": 36.72,
+    "longitude": -119.78,
     "altitude": 0,
     "timezone": "America/Los_Angeles",
     "announce": {
@@ -34,7 +33,17 @@
     "client_id_prefix": "meshinfo-dev",
     "topics": [
       "msh/US/CA/SacValley/#",
-      "msh/US/CA/sacvalley/#"
+      "msh/US/CA/sacvalley/#",
+      "msh/US/CA/centralvalley/#",
+      "msh/US/CA/sandiegocounty/#",
+      "msh/US/CA/socalmesh/#"
+    ],
+    "topic_tags": [
+      { "prefix": "public/msh/", "tag": "public", "label": "Public MQTT" },
+      { "prefix": "msh/US/CA/centralvalley/", "tag": "centralvalley", "label": "Central Valley" },
+      { "prefix": "msh/US/CA/socalmesh/", "tag": "socalmesh", "label": "SoCalMesh" },
+      { "prefix": "msh/US/CA/sandiegocounty/", "tag": "sandiegocounty", "label": "San Diego County" },
+      { "prefix": "msh/US/CA/sacvalley/", "tag": "sacvalley", "label": "Sac Valley" }
     ],
     "decoders": {
       "protobuf": { "enabled": true },
@@ -44,7 +53,49 @@
       "encryption": [
         { "key": "1PG7OiApB1nwvP+rz05pAQ==", "key_name": "Default" }
       ],
-      "display": [ "0" ]
+      "display": ["0", "1", "2", "3", "4", "5", "6", "7", "8"],
+      "meta": {
+        "0": {
+          "label": "MediumFast",
+          "short": "MF",
+          "preset": "MediumFast",
+          "description": "Primary mesh channel"
+        },
+        "8": {
+          "label": "LongFast (legacy)",
+          "short": "LF",
+          "preset": "LongFast",
+          "description": "Legacy / interop channel"
+        },
+        "1": { "label": "Channel 1", "short": "1" },
+        "2": { "label": "Channel 2", "short": "2" },
+        "3": { "label": "Channel 3", "short": "3" },
+        "4": { "label": "Channel 4", "short": "4" },
+        "5": { "label": "Channel 5", "short": "5" },
+        "6": { "label": "Channel 6", "short": "6" },
+        "7": { "label": "Channel 7", "short": "7" }
+      },
+      "views": [
+        {
+          "id": "mf",
+          "label": "MediumFast",
+          "short": "MF",
+          "channels": ["0"]
+        },
+        {
+          "id": "lf",
+          "label": "LongFast",
+          "short": "LF",
+          "channels": ["8"],
+          "default": true
+        },
+        {
+          "id": "all",
+          "label": "All Channels",
+          "short": "ALL",
+          "channels": ["0", "1", "2", "3", "4", "5", "6", "7", "8"]
+        }
+      ]
     }
   },
   "paths": {
@@ -54,9 +105,9 @@
     "templates": "templates"
   },
   "server": {
-    "node_id": "4355f528",
+    "node_id": "c7181daf",
     "base_url": "REPLACE_WITH_THE_URL_OF_THIS_SERVER_WITHOUT_TRAILING_SLASH",
-    "node_activity_prune_threshold": 7200,
+    "node_activity_prune_threshold": 259200,
     "timezone": "America/Los_Angeles",
     "intervals": {
       "data_save": 300,
@@ -92,17 +143,17 @@
     }
   },
   "storage": {
-    "read_from": "json",
+    "read_from": "postgres",
     "write_to": ["json", "postgres"],
     "postgres": {
-      "enabled": false,
+      "enabled": true,
       "host": "postgres",
       "port": 5432,
       "database": "meshinfo",
       "username": "postgres",
       "password": "password",
-      "min_pool_size": 5,
-      "max_pool_size": 20
+      "min_pool_size": 1,
+      "max_pool_size": 5
     }
   },
   "debug": false

@@ -3964,6 +3964,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"highlight.js@npm:^11.11.1":
+  version: 11.11.1
+  resolution: "highlight.js@npm:11.11.1"
+  checksum: 10c0/40f53ac19dac079891fcefd5bd8a21cf2e8931fd47da5bd1dca73b7e4375c1defed0636fc39120c639b9c44119b7d110f7f0c15aa899557a5a1c8910f3c0144c
+  languageName: node
+  linkType: hard
+
 "html-encoding-sniffer@npm:^4.0.0":
   version: 4.0.0
   resolution: "html-encoding-sniffer@npm:4.0.0"
@@ -4878,6 +4885,7 @@ __metadata:
     eslint-plugin-simple-import-sort: "npm:^12.1.0"
     eslint-plugin-sort-keys-fix: "npm:^1.1.2"
     express: "npm:^4.20.0"
+    highlight.js: "npm:^11.11.1"
     jsdom: "npm:^24.0.0"
     mapbox-gl: "npm:^3.17.0"
     ol: "npm:^9.2.4"
@@ -4888,6 +4896,7 @@ __metadata:
     react-dom: "npm:^18.2.0"
     react-redux: "npm:^9.1.2"
     react-router-dom: "npm:^6.23.1"
+    react-virtuoso: "npm:^4.18.1"
     tailwindcss: "npm:^3.4.4"
     typescript: "npm:^5.2.2"
     vite: "npm:^5.4.21"
@@ -6061,6 +6070,16 @@ __metadata:
   peerDependencies:
     react: ">=16.8"
   checksum: 10c0/463078e740462b42bb5ba8004448f33fc9e63778f432a4ed55c57b93c5b519e25fb17913ee8435b0fda33c6b9f75df8ef6fcb2c3a4f8db84fb546d202e29aa51
+  languageName: node
+  linkType: hard
+
+"react-virtuoso@npm:^4.18.1":
+  version: 4.18.1
+  resolution: "react-virtuoso@npm:4.18.1"
+  peerDependencies:
+    react: ">=16 || >=17 || >= 18 || >= 19"
+    react-dom: ">=16 || >=17 || >= 18 || >=19"
+  checksum: 10c0/ed17f580ad8d625ef9e0278ed12190bbadbacf7e39434047b7994e4967ad9d868b66eaee8a66a2890d2964d99d9b266a4657375488c19b1e58de252fb2e8d3e5
   languageName: node
   linkType: hard
 
