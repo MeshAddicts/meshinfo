@@ -143,6 +143,7 @@
     }
   },
   "storage": {
+    "_note": "PostgreSQL is REQUIRED. JSON storage is deprecated and will be removed in the next version.",
     "read_from": "postgres",
     "write_to": ["json", "postgres"],
     "postgres": {

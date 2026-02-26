@@ -134,6 +134,20 @@ class MemoryDataStore:
     read_from = storage.get("read_from", "json")
     write_to = storage.get("write_to", [])
 
+    # ── Deprecation warning (issue #225) ──────────────────────────────
+    # This runs on every startup so operators see it in their logs.
+    json_in_use = read_from == "json" or "json" in (write_to if isinstance(write_to, list) else [])
+    if json_in_use:
+      logger.error("=" * 70)
+      logger.error("DEPRECATION: Filesystem (JSON) storage will be removed in the next version.")
+      logger.error("Please migrate to PostgreSQL-only storage as soon as possible.")
+      if read_from == "json":
+        logger.error("  -> storage.read_from is 'json' — change to 'postgres' after migrating")
+      if "json" in (write_to if isinstance(write_to, list) else []):
+        logger.error("  -> storage.write_to includes 'json' — remove it, keep only ['postgres']")
+      logger.error("  -> Migration guide: docker exec -it meshinfo-meshinfo-1 python3 scripts/migrate_json_to_postgres.py")
+      logger.error("=" * 70)
+
     # If Postgres is used for writes (dual-write), initialize it even if read_from is JSON.
     if "postgres" in write_to and read_from != "postgres":
       logger.info("Postgres is enabled for writes; initializing Postgres pool/schema")
@@ -304,6 +318,16 @@ class MemoryDataStore:
       since_last_backfill, self.config['server']['enrich']['interval'],
       since_last_backup, self.config['server']['backups']['interval'],
     )
+
+    # Periodic deprecation reminder (issue #225)
+    storage = self.config.get("storage", {})
+    save_write_to = storage.get("write_to", [])
+    save_read_from = storage.get("read_from", "json")
+    if save_read_from == "json" or "json" in (save_write_to if isinstance(save_write_to, list) else []):
+      logger.warning(
+        "DEPRECATION REMINDER: JSON storage is still in use. "
+        "Migrate to PostgreSQL before the next release."
+      )
 
     if 'enrich' in self.config['server'] and self.config['server']['enrich']['enabled']:
       if since_last_backfill >= self.config['server']['enrich']['interval']:

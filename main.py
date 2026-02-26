@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 from api import api
 from bot import discord as discord_bot
-from config import Config
+from config import Config, StorageDeprecationError
 from memory_data_store import MemoryDataStore
 from mqtt import MQTT
 
@@ -197,3 +197,12 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Application stopped by user")
+    except StorageDeprecationError as e:
+        # StorageDeprecationError is raised during config validation (before
+        # the event loop is fully running) when PostgreSQL is not enabled.
+        logger.error("=" * 70)
+        logger.error("MESHINFO CANNOT START")
+        logger.error("=" * 70)
+        logger.error(str(e))
+        logger.error("=" * 70)
+        raise SystemExit(1)
