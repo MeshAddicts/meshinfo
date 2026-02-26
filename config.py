@@ -1,11 +1,12 @@
 """
 Config loading, validation, and defaults for MeshInfo.
 
-Addresses GitHub issue #81: Config parsing and validation.
+Addresses GitHub issue #225: Deprecate filesystem writes.
 - Validates all config fields at startup
 - Provides sensible defaults for optional fields
 - Logs warnings for missing or invalid values
 - Fails fast (with clear error messages) only for truly required fields
+- Requires PostgreSQL to be enabled; JSON storage is deprecated
 """
 
 import datetime
@@ -170,6 +171,19 @@ class ConfigValidationError(Exception):
     pass
 
 
+class StorageDeprecationError(Exception):
+    """
+    Raised when PostgreSQL is not configured at all.
+
+    This is separate from ConfigValidationError so that main.py can catch it
+    and display user-friendly migration instructions instead of a generic
+    config error.
+
+    See GitHub issue #225: Deprecate filesystem writes.
+    """
+    pass
+
+
 def _validate_type(
     config: dict,
     path: str,
@@ -271,6 +285,7 @@ def validate(config: dict) -> list[str]:
     Validate the merged config and return a list of warning messages.
 
     Raises ConfigValidationError only for truly fatal problems.
+    Raises StorageDeprecationError if PostgreSQL is not enabled (issue #225).
     Everything else is logged as a warning and collected in the return list.
     """
     warnings: list[str] = []
@@ -386,15 +401,64 @@ def validate(config: dict) -> list[str]:
         if target not in ("json", "postgres"):
             warn(f"Unknown storage write target: {target!r}. Expected 'json' or 'postgres'.")
 
-    # If postgres is being used, validate its config
-    needs_postgres = read_from == "postgres" or "postgres" in write_to_list
+    # ── PostgreSQL required check (issue #225) ────────────────────────
+    # PostgreSQL must be enabled. If it's not configured at all, raise
+    # StorageDeprecationError which main.py catches for a graceful exit.
     pg_cfg = storage_cfg.get("postgres", {})
-    if needs_postgres:
-        if not pg_cfg.get("enabled"):
-            warn(
-                "Postgres is referenced in storage.read_from or storage.write_to, "
-                "but storage.postgres.enabled is False. This may cause errors."
+    if not pg_cfg.get("enabled"):
+        raise StorageDeprecationError(
+            "PostgreSQL is required but not enabled in your config.\n"
+            "\n"
+            "Starting with this version, MeshInfo requires PostgreSQL.\n"
+            "Filesystem (JSON) storage is deprecated and will be removed in the next release.\n"
+            "\n"
+            "To fix this:\n"
+            "  1. Add a PostgreSQL service to your docker-compose.yml (see docker-compose.yml.sample)\n"
+            "  2. Enable PostgreSQL in config.json:\n"
+            '     "storage": {\n'
+            '       "read_from": "postgres",\n'
+            '       "write_to": ["postgres"],\n'
+            '       "postgres": {\n'
+            '         "enabled": true,\n'
+            '         "host": "postgres",\n'
+            '         "port": 5432,\n'
+            '         "database": "meshinfo",\n'
+            '         "username": "postgres",\n'
+            '         "password": "your_password"\n'
+            "       }\n"
+            "     }\n"
+            "  3. If migrating from JSON, run: docker exec -it meshinfo-meshinfo-1 python3 scripts/migrate_json_to_postgres.py\n"
+            "  4. Restart MeshInfo\n"
+        )
+
+    # ── JSON deprecation warnings (issue #225) ────────────────────────
+    # JSON still works during the deprecation period.
+    json_in_use = read_from == "json" or "json" in write_to_list
+
+    if json_in_use:
+        deprecation_msg = (
+            "DEPRECATION WARNING: Filesystem (JSON) storage is deprecated and will be "
+            "removed in the next version of MeshInfo. Please migrate to PostgreSQL-only storage. "
+            "See https://github.com/MeshAddicts/meshinfo for migration instructions."
+        )
+        # Log at ERROR level
+        logger.error(deprecation_msg)
+        warn(deprecation_msg)
+
+        if read_from == "json":
+            logger.error(
+                "storage.read_from is set to 'json'. Change it to 'postgres' after running "
+                "the migration script (scripts/migrate_json_to_postgres.py)."
             )
+        if "json" in write_to_list:
+            logger.error(
+                "storage.write_to includes 'json'. Remove 'json' from write_to and keep only 'postgres' "
+                "once you have confirmed PostgreSQL is working correctly."
+            )
+
+    # ── Postgres config validation ────────────────────────────────────
+    needs_postgres = read_from == "postgres" or "postgres" in write_to_list
+    if needs_postgres:
         check(_validate_type(config, "storage.postgres.host", str))
         check(_validate_port(config, "storage.postgres.port"))
         check(_validate_type(config, "storage.postgres.database", str))
@@ -512,8 +576,7 @@ class Config:
                 d = d.get(key)
                 if d is None:
                     break
-            # If we successfully reached a dict that contains a sensitive key,
-            # redact its value.
+            # redact sensitive keys in dicts
             if isinstance(d, dict) and path[-1] in d:
                 d[path[-1]] = "***REDACTED***"
 
