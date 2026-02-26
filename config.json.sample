@@ -80,14 +80,14 @@
           "id": "mf",
           "label": "MediumFast",
           "short": "MF",
-          "channels": ["0"],
-          "default": true
+          "channels": ["0"]
         },
         {
           "id": "lf",
           "label": "LongFast",
           "short": "LF",
-          "channels": ["8"]
+          "channels": ["8"],
+          "default": true
         },
         {
           "id": "all",
@@ -143,10 +143,10 @@
     }
   },
   "storage": {
-    "read_from": "json",
+    "read_from": "postgres",
     "write_to": ["json", "postgres"],
     "postgres": {
-      "enabled": false,
+      "enabled": true,
       "host": "postgres",
       "port": 5432,
       "database": "meshinfo",
