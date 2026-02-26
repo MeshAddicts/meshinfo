@@ -1113,6 +1113,88 @@ export const Chat = () => {
       requireVia,
     ]);
 
+  // ── Loading skeleton ──
+  const isFirstLoad = !chat;
+
+  if (isFirstLoad) {
+    return (
+      <div className="w-full h-[100dvh] overflow-hidden flex flex-col">
+        <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur border-b border-gray-200 dark:border-gray-800">
+          <div className="mx-auto max-w-[1600px] pl-3 pr-14 sm:px-5 py-2 sm:py-3">
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+              <div>
+                <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
+                  Chat
+                </h1>
+                <div className="mt-1 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                  <span className="animate-pulse">Loading chat data…</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Skeleton channel pills */}
+            <div className="mt-3 flex gap-2">
+              {[120, 140].map((w, i) => (
+                <div
+                  key={i}
+                  className="animate-pulse rounded-full border border-gray-300/40 dark:border-gray-700/40 bg-gray-200/50 dark:bg-gray-800/50"
+                  style={{ width: w, height: 34 }}
+                />
+              ))}
+            </div>
+
+            {/* Skeleton search bar */}
+            <div className="mt-3">
+              <div className="animate-pulse rounded-md border border-gray-300/40 dark:border-gray-700/40 bg-gray-200/30 dark:bg-gray-800/30 h-[38px] w-full" />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-hidden flex flex-col">
+          <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-full min-h-0">
+              {/* Skeleton message list */}
+              <div className="lg:col-span-2 min-h-0 flex flex-col">
+                <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col flex-1">
+                  <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
+                    <div className="animate-pulse h-4 w-48 rounded bg-gray-200/60 dark:bg-gray-800/60" />
+                  </div>
+                  <div className="flex-1 p-4 space-y-4">
+                    {Array.from({ length: 8 }).map((_, i) => (
+                      <div key={i} className="animate-pulse space-y-2">
+                        <div className="flex items-center gap-2">
+                          <div className="h-5 w-12 rounded-full bg-gray-200/60 dark:bg-gray-800/60" />
+                          <div className="h-3 w-6 rounded bg-gray-200/40 dark:bg-gray-800/40" />
+                          <div className="h-5 w-10 rounded-full bg-gray-200/60 dark:bg-gray-800/60" />
+                          <div className="h-5 w-16 rounded-full bg-gray-200/50 dark:bg-gray-800/50" />
+                          <div className="ml-auto h-3 w-28 rounded bg-gray-200/40 dark:bg-gray-800/40" />
+                        </div>
+                        <div className="h-4 rounded bg-gray-200/40 dark:bg-gray-800/40" style={{ width: `${55 + (i * 7) % 35}%` }} />
+                        <div className="h-3 w-16 rounded bg-gray-200/30 dark:bg-gray-800/30" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Skeleton sidebar */}
+              <div className="hidden lg:flex lg:col-span-1 flex-col gap-4">
+                <div className="rounded-xl border border-gray-200 dark:border-gray-800 p-4 space-y-3">
+                  <div className="animate-pulse h-4 w-24 rounded bg-gray-200/60 dark:bg-gray-800/60" />
+                  <div className="animate-pulse h-9 w-full rounded-md border border-gray-300/40 dark:border-gray-700/40 bg-gray-200/30 dark:bg-gray-800/30" />
+                </div>
+                <div className="rounded-xl border border-gray-200 dark:border-gray-800 p-4 space-y-3">
+                  <div className="animate-pulse h-4 w-32 rounded bg-gray-200/60 dark:bg-gray-800/60" />
+                  <div className="animate-pulse h-3 w-48 rounded bg-gray-200/40 dark:bg-gray-800/40" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="w-full h-[100dvh] overflow-hidden flex flex-col">
       <FiltersDrawer
