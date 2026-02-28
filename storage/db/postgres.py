@@ -189,9 +189,6 @@ class PostgresStorage:
                 except ValueError:
                     return None
 
-            if v.isdigit():
-                return f"{int(v) & 0xFFFFFFFF:08x}"
-
             v = v.lower()
             if all(c in "0123456789abcdef" for c in v):
                 if len(v) < 8:
