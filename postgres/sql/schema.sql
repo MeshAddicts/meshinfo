@@ -244,3 +244,6 @@ DROP TRIGGER IF EXISTS update_node_telemetry_current_updated_at ON node_telemetr
 CREATE TRIGGER update_node_telemetry_current_updated_at
 BEFORE UPDATE ON node_telemetry_current
 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_channel_timestamp
+ON chat_messages (channel_id, timestamp DESC);
