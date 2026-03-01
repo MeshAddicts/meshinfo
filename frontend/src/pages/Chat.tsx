@@ -1,36 +1,39 @@
 import {
-  ReactNode,
-  useCallback,
-  useDeferredValue,
   useEffect,
   useMemo,
-  useRef,
   useState,
+  useDeferredValue,
+  useRef,
+  useCallback,
+  ReactNode,
 } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { VirtuosoHandle } from "react-virtuoso";
 
-import { HeardBy } from "../components/HeardBy";
 import { useChatSearchParams } from "../hooks/useChatSearchParams";
+
+import { HeardBy } from "../components/HeardBy";
 import {
   useGetChatsQuery,
   useGetConfigQuery,
   useGetNodesQuery,
 } from "../slices/apiSlice";
+
 import {
-  csvEscape,
   DirKey,
-  downloadBlob,
   FocusMode,
-  isBroadcast,
   RangeKey,
   SortKey,
+  csvEscape,
+  downloadBlob,
+  isBroadcast,
 } from "./chat/chatUtils";
-import { DetailsPanel } from "./chat/DetailsPanel";
-import { ExportMenu } from "./chat/ExportMenu";
+
 import { FiltersDrawer } from "./chat/FiltersDrawer";
-import { FocusPanel } from "./chat/FocusPanel";
+import { ExportMenu } from "./chat/ExportMenu";
 import { MessageList } from "./chat/MessageList";
+import { FocusPanel } from "./chat/FocusPanel";
+import { DetailsPanel } from "./chat/DetailsPanel";
 
 type ViewDef = {
   key: string; // canonical URL key: "mediumfast"
@@ -142,11 +145,20 @@ function StatusChip({
 }
 
 export const Chat = () => {
-  const { data: chat, fulfilledTimeStamp: dataUpdatedAt, isFetching, refetch } = useGetChatsQuery();
+  // ── 1. Non-chat data queries ──
   const { data: nodes = {} } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
 
-  // ---- Channel metadata (from broker config)
+  // ── 2. Raw URL params for early channel resolution ──
+  // We need channel + range BEFORE the full views pipeline runs,
+  // so we read them directly from the URL here to break the
+  // circular dependency (channelEntries → views → selectedChannel
+  // → chat query → channelEntries).
+  const [searchParamsRaw] = useSearchParams();
+  const rawCh = normalizeKey(searchParamsRaw.get("ch") || "");
+  const rawRange = (searchParamsRaw.get("r") || "24h") as string;
+
+  // ── 3. Channel metadata helpers (from broker config) ──
   const channelMeta = (config?.broker?.channels as any)?.meta ?? {};
   const rawChannelLabel = (id: string) =>
     channelMeta?.[id]?.label ? String(channelMeta[id].label) : `Channel ${id}`;
@@ -173,22 +185,84 @@ export const Chat = () => {
     return parts.join("\n");
   };
 
-  // ---- Available channels from data (source of messages)
+  // ── 4. Resolve channel ID from config + raw URL ──
+  // This lets the chat query fire immediately using only config
+  // data, without waiting for chat data to build the full views.
+  const resolvedChannelId = useMemo(() => {
+    const viewsConfig = (config?.broker?.channels as any)?.views;
+    if (!Array.isArray(viewsConfig) || viewsConfig.length === 0)
+      return undefined;
+
+    // Try matching the raw URL ch param against config views
+    if (rawCh) {
+      for (const v of viewsConfig) {
+        const chans = Array.isArray(v?.channels)
+          ? v.channels.map(String)
+          : [];
+        if (chans.length !== 1) continue;
+
+        const key = normalizeKey(String(v?.label ?? v?.id ?? ""));
+        const id = normalizeKey(String(v?.id ?? ""));
+        const short = normalizeKey(String(v?.short ?? ""));
+        const channelId = chans[0];
+
+        if (
+          rawCh === key ||
+          rawCh === id ||
+          rawCh === short ||
+          rawCh === channelId
+        ) {
+          return channelId;
+        }
+      }
+    }
+
+    // Fall back to the default view's channel
+    const def =
+      viewsConfig.find((v: any) => v.default) ?? viewsConfig[0];
+    return def?.channels?.[0] ? String(def.channels[0]) : undefined;
+  }, [config, rawCh]);
+
+  // ── 5. Chat query (fires with resolved channel + range) ──
+  const chatQueryParams = useMemo(() => {
+    const params: { channel?: string; range?: string } = {};
+    if (resolvedChannelId) params.channel = resolvedChannelId;
+    params.range = rawRange;
+    return params;
+  }, [resolvedChannelId, rawRange]);
+
+  const {
+    data: chat,
+    fulfilledTimeStamp: dataUpdatedAt,
+    isFetching,
+    refetch,
+  } = useGetChatsQuery(chatQueryParams);
+
+  // ── 6. Stable chat ref (prevents skeleton flash on filter change) ──
+  const prevChatRef = useRef(chat);
+  if (chat) prevChatRef.current = chat;
+  const effectiveChat = chat ?? prevChatRef.current;
+
+  // ── 7. Channel entries from chat data (now below query) ──
   const channelEntries = useMemo(() => {
-    const entries = Object.entries(chat?.channels ?? {});
+    const entries = Object.entries(effectiveChat?.channels ?? {});
     const allow = config?.broker?.channels?.display;
     if (Array.isArray(allow) && allow.length > 0) {
       return entries.filter(([id]) => allow.includes(id));
     }
     return entries;
-  }, [chat?.channels, config?.broker?.channels?.display]);
+  }, [effectiveChat?.channels, config?.broker?.channels?.display]);
 
+  // null = chat hasn't loaded yet, allow all views through
   const availableChannelIds = useMemo(
-    () => new Set(channelEntries.map(([id]) => String(id))),
+    () =>
+      channelEntries.length > 0
+        ? new Set(channelEntries.map(([id]) => String(id)))
+        : null,
     [channelEntries]
   );
 
-  // ---- Build “views” from broker.channels.views (single-channel ones)
+  // ── 8. Build "views" from broker.channels.views (single-channel ones) ──
   const views: ViewDef[] = useMemo(() => {
     const vraw = (config?.broker?.channels as any)?.views;
     const out: ViewDef[] = [];
@@ -198,7 +272,7 @@ export const Chat = () => {
         const chans = Array.isArray(v?.channels) ? v.channels.map(String) : [];
         if (chans.length !== 1) continue;
         const channelId = chans[0];
-        if (!availableChannelIds.has(channelId)) continue;
+        if (availableChannelIds && !availableChannelIds.has(channelId)) continue;
 
         const label = String(v?.label ?? v?.id ?? rawChannelLabel(channelId));
         const short = v?.short ? String(v.short) : rawChannelShort(channelId);
@@ -254,13 +328,12 @@ export const Chat = () => {
     }
 
     return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- rawChannel* helpers are stable
   }, [config, channelEntries, availableChannelIds]);
 
   const defaultViewKey =
     views.find((v) => v.isDefault)?.key ?? views[0]?.key ?? "";
 
-  // ---- URL + canonicalization (ch becomes preset slug)
+  // ── 9. URL + canonicalization (ch becomes preset slug) ──
   const {
     searchParams,
     urlCh,
@@ -287,14 +360,41 @@ export const Chat = () => {
     defaultCh: defaultViewKey,
   });
 
-  // UI state
+  // ── 10. Selected view (for display / pills) ──
+  const selectedView = useMemo(() => {
+    const v = views.find((x) => x.key === urlCh);
+    return v ?? views.find((x) => x.key === defaultViewKey) ?? views[0];
+  }, [views, urlCh, defaultViewKey]);
+
+  const selectedChannel = selectedView?.channelId;
+
+  // ── View-based label helpers ──
+  const channelLabel = (id: string) => {
+    const v = views.find((x) => x.channelId === id);
+    return v?.label ?? rawChannelLabel(id);
+  };
+
+  const channelTooltip = (id: string) => {
+    const v = views.find((x) => x.channelId === id);
+    return v?.tooltip ?? rawChannelTooltip(id);
+  };
+
+  // ── 11. Derived state from chat data ──
+  const selectedChannelObj = useMemo(() => {
+    if (!selectedChannel) return undefined;
+    return (effectiveChat?.channels as any)?.[selectedChannel];
+  }, [effectiveChat?.channels, selectedChannel]);
+
+  const totalMessages = selectedChannelObj?.totalMessages ?? 0;
+
+  // ── UI state ──
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
   // Mobile sheets
   const [mobileSheet, setMobileSheet] = useState<MobileSheetKey | null>(null);
 
-// Track lg breakpoint (1024px) to gate mobile/desktop behaviors
+  // Track lg breakpoint (1024px) to gate mobile/desktop behaviors
   const [isLgUp, setIsLgUp] = useState(() => {
     if (typeof window === "undefined") return true;
     return window.matchMedia("(min-width: 1024px)").matches;
@@ -331,7 +431,6 @@ export const Chat = () => {
     if (urlMsg && urlMsg !== prev) {
       setMobileSheet("details");
     }
-
   }, [urlMsg, isLgUp]);
 
   // Live / auto-follow toggle
@@ -351,9 +450,9 @@ export const Chat = () => {
     []
   );
 
-    // Export menu
-    const [exportOpen, setExportOpen] = useState(false);
-    const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  // Export menu
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement | null>(null);
 
   // Search input
   const [qInput, setQInput] = useState(urlQ);
@@ -367,7 +466,7 @@ export const Chat = () => {
   // Keep local search input synced on back/forward
   useEffect(() => {
     setQInput(urlQ);
-     
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlQ]);
 
   // Update URL q from deferred input (replace)
@@ -376,30 +475,6 @@ export const Chat = () => {
     setParam("q", qDeferred, "replace");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qDeferred]);
-
-  const selectedView = useMemo(() => {
-    const v = views.find((x) => x.key === urlCh);
-    return v ?? views.find((x) => x.key === defaultViewKey) ?? views[0];
-  }, [views, urlCh, defaultViewKey]);
-
-  const selectedChannel = selectedView?.channelId;
-
-  const channelLabel = (id: string) => {
-    const v = views.find((x) => x.channelId === id);
-    return v?.label ?? rawChannelLabel(id);
-  };
-
-  const channelTooltip = (id: string) => {
-    const v = views.find((x) => x.channelId === id);
-    return v?.tooltip ?? rawChannelTooltip(id);
-  };
-
-  const selectedChannelObj = useMemo(() => {
-    if (!selectedChannel) return undefined;
-    return (chat?.channels as any)?.[selectedChannel];
-  }, [chat?.channels, selectedChannel]);
-
-  const totalMessages = selectedChannelObj?.totalMessages ?? 0;
 
   // Range threshold
   const rangeThreshold = useMemo(() => {
@@ -416,7 +491,7 @@ export const Chat = () => {
   // Messages (filtered + sorted)
   const messages = useMemo(() => {
     if (!selectedChannel) return [];
-    const channelObj = (chat?.channels as any)?.[selectedChannel];
+    const channelObj = (effectiveChat?.channels as any)?.[selectedChannel];
     if (!channelObj?.messages) return [];
 
     let msgs = [...channelObj.messages];
@@ -505,7 +580,7 @@ export const Chat = () => {
 
     return msgs;
   }, [
-    chat?.channels,
+    effectiveChat?.channels,
     selectedChannel,
     rangeThreshold,
     urlType,
@@ -834,7 +909,7 @@ export const Chat = () => {
   // Virtualized list ref
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
 
-  // Scroll selected message into view (Commit 8)
+  // Scroll selected message into view
   const pendingScrollRef = useRef<string | null>(null);
   useEffect(() => {
     if (!urlMsg) {
@@ -877,7 +952,7 @@ export const Chat = () => {
     return () => {
       timers.forEach(clearTimeout);
     };
-     
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlMsg, messages, selectedChannel]);
 
   // Export menu click-outside (desktop only)
@@ -936,7 +1011,7 @@ export const Chat = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtersOpen, exportOpen, urlMsg, mobileSheet]);
 
-  // ---- Export rows + handlers (Commit 6)
+  // ---- Export rows + handlers ----
   const exportRows = useMemo(() => {
     const ch = selectedChannel ?? "";
     return (messages as any[]).map((m) => {
@@ -1091,28 +1166,28 @@ export const Chat = () => {
     return `Auto-follow is active at the ${edge}.`;
   }, [liveEnabled, followState.selectionPinned, followState.atEdge, followEdge]);
 
-    const advancedCount = useMemo(() => {
-      let n = 0;
-      if (typeof urlHopsMin === "number") n += 1;
-      if (typeof urlHopsMax === "number") n += 1;
-      if (urlFrom.trim()) n += 1;
-      if (urlTo.trim()) n += 1;
-      if (urlVia.trim()) n += 1;
-      if (onlyUnknownEndpoints) n += 1;
-      if (requireVia) n += 1;
-      return n;
-    }, [
-      urlHopsMin,
-      urlHopsMax,
-      urlFrom,
-      urlTo,
-      urlVia,
-      onlyUnknownEndpoints,
-      requireVia,
-    ]);
+  const advancedCount = useMemo(() => {
+    let n = 0;
+    if (typeof urlHopsMin === "number") n += 1;
+    if (typeof urlHopsMax === "number") n += 1;
+    if (urlFrom.trim()) n += 1;
+    if (urlTo.trim()) n += 1;
+    if (urlVia.trim()) n += 1;
+    if (onlyUnknownEndpoints) n += 1;
+    if (requireVia) n += 1;
+    return n;
+  }, [
+    urlHopsMin,
+    urlHopsMax,
+    urlFrom,
+    urlTo,
+    urlVia,
+    onlyUnknownEndpoints,
+    requireVia,
+  ]);
 
   // ── Loading skeleton ──
-  const isFirstLoad = !chat;
+  const isFirstLoad = !effectiveChat;
 
   if (isFirstLoad) {
     return (
@@ -1337,7 +1412,7 @@ export const Chat = () => {
           <div className="mt-3 flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
             {views.map((v) => {
               const active = v.key === selectedView?.key;
-              const chObj: any = (chat?.channels as any)?.[v.channelId];
+              const chObj: any = (effectiveChat?.channels as any)?.[v.channelId];
               const count = chObj?.totalMessages ?? 0;
 
               return (

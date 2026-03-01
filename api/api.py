@@ -236,7 +236,25 @@ class API:
         @app.get("/v1/chat")
         async def chat(request: Request) -> JSONResponse:
             if self.read_from_postgres:
-                chat_data = await self.data.pg_storage.query_all_chat()
+                # Parse query params
+                channel = request.query_params.get("channel")  # e.g. "8", "0"
+                range_param = request.query_params.get("range", "24h")  # "1h","24h","7d","all"
+
+                range_map = {
+                    "1h": 3600,
+                    "24h": 86400,
+                    "7d": 604800,
+                    "all": None,
+                }
+                range_seconds = range_map.get(range_param)
+                # If range_param is unrecognized, default to 24h
+                if range_param not in range_map:
+                    range_seconds = 86400
+
+                chat_data = await self.data.pg_storage.query_chat_filtered(
+                    channel_id=channel,
+                    range_seconds=range_seconds,
+                )
                 return jsonable_encoder(chat_data)
             else:
                 return jsonable_encoder(self.data.chat)

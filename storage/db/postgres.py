@@ -1502,6 +1502,115 @@ class PostgresStorage:
             logger.error(f"Failed to query chat from PostgreSQL: {e}")
             return {"channels": {"0": {"name": "General", "messages": []}}}
 
+    async def query_chat_filtered(
+        self,
+        channel_id: Optional[str] = None,
+        range_seconds: Optional[int] = None,
+        limit: int = 10000,
+    ) -> Dict[str, Any]:
+        """
+        Query chat channels with optional filtering by channel and time range.
+
+        Always returns all channels with totalMessages counts (for UI pills).
+        Only populates the messages array for the requested channel.
+
+        Args:
+            channel_id: If provided, only include messages for this channel.
+                        Other channels get empty messages arrays.
+            range_seconds: If provided, only include messages with
+                        timestamp >= (now_unix - range_seconds).
+            limit: Max messages to return.
+
+        Returns:
+            Chat structure: { channels: { "<id>": { name, totalMessages, messages[] } } }
+        """
+        if not self.enabled or not self.pool:
+            return {"channels": {"0": {"name": "General", "totalMessages": 0, "messages": []}}}
+
+        try:
+            async with self.pool.acquire() as conn:
+                chat: Dict[str, Any] = {"channels": {}}
+
+                # ── 1. Load ALL channels with their total message counts ──
+                channel_rows = await conn.fetch(
+                    """
+                    SELECT cc.id, cc.name, COUNT(cm.id) AS total_messages
+                    FROM chat_channels cc
+                    LEFT JOIN chat_messages cm ON cc.id = cm.channel_id
+                    GROUP BY cc.id, cc.name
+                    ORDER BY cc.id
+                    """
+                )
+
+                for row in channel_rows:
+                    chat["channels"][row["id"]] = {
+                        "name": row["name"],
+                        "totalMessages": row["total_messages"],
+                        "messages": [],
+                    }
+
+                # ── 2. Load messages for the target channel(s) ──
+                where_parts = []
+                params: list = []
+                param_num = 1
+
+                if channel_id is not None:
+                    where_parts.append(f"channel_id = ${param_num}")
+                    params.append(channel_id)
+                    param_num += 1
+
+                if range_seconds is not None:
+                    import time
+                    threshold = int(time.time()) - range_seconds
+                    where_parts.append(f"timestamp >= ${param_num}")
+                    params.append(threshold)
+                    param_num += 1
+
+                where_clause = " AND ".join(where_parts) if where_parts else "TRUE"
+
+                params.append(limit)
+                limit_param = f"${param_num}"
+
+                message_rows = await conn.fetch(
+                    f"""
+                    SELECT * FROM chat_messages
+                    WHERE {where_clause}
+                    ORDER BY timestamp DESC
+                    LIMIT {limit_param}
+                    """,
+                    *params,
+                )
+
+                for row in message_rows:
+                    ch_id = row["channel_id"] or "0"
+                    if ch_id not in chat["channels"]:
+                        chat["channels"][ch_id] = {
+                            "name": f"Channel {ch_id}",
+                            "totalMessages": 0,
+                            "messages": [],
+                        }
+
+                    chat["channels"][ch_id]["messages"].append(
+                        {
+                            "id": row["id"],
+                            "from": row["from_node_id"],
+                            "to": row["to_node_id"],
+                            "sender": row["sender_node_id"],
+                            "channel": ch_id,
+                            "text": row["text"],
+                            "timestamp": row["timestamp"],
+                            "hops_away": row["hops_away"],
+                            "rssi": row["rssi"],
+                            "snr": row["snr"],
+                        }
+                    )
+
+                return chat
+
+        except Exception as e:
+            logger.error(f"Failed to query filtered chat from PostgreSQL: {e}")
+            return {"channels": {"0": {"name": "General", "totalMessages": 0, "messages": []}}}
+
     async def query_all_telemetry(self, limit: int = 1000) -> List[Dict[str, Any]]:
         """Query all telemetry records."""
         if not self.enabled or not self.pool:
