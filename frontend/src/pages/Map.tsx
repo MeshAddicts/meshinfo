@@ -5,7 +5,6 @@ import mapboxgl, {
   GeoJSONSource as MbGeoJSONSource,
   Map as MbMap,
 } from "mapbox-gl";
-
 import { Feature, Map as OlMap, View } from "ol";
 import { Coordinate } from "ol/coordinate";
 import { click } from "ol/events/condition";
@@ -23,9 +22,12 @@ import { createBaseTileLayer, type OsmBasemap } from "../maps/baseLayer";
 import { reverseGeocode } from "../maps/geocoder";
 import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
-
-import type { IFeatureNode, IMapNode, MapProvider, NodeLike } from "./map/types";
+import { clearDetailsPanel, getDetailsDom, setDetailsPanelContent } from "./map/detailsDom";
+import { buildMapboxLinkFeatureCollection, buildNodeDetailsHtml } from "./map/detailsHtml";
+import { MapDetailsPanel } from "./map/MapDetailsPanel";
+import { MapSettingsPanel } from "./map/MapSettingsPanel";
 import { LS_KEYS, readJson, toMapboxStyleUrl, writeJson } from "./map/storage";
+import type { IFeatureNode, IMapNode, MapProvider, NodeLike } from "./map/types";
 import {
   applyMapboxClusterVisibility,
   buildNodesGeoJSON,
@@ -33,10 +35,6 @@ import {
   computeRecentNodes,
   emptyLineFeatureCollection,
 } from "./map/utils";
-import { clearDetailsPanel, getDetailsDom, setDetailsPanelContent } from "./map/detailsDom";
-import { buildMapboxLinkFeatureCollection, buildNodeDetailsHtml } from "./map/detailsHtml";
-import { MapDetailsPanel } from "./map/MapDetailsPanel";
-import { MapSettingsPanel } from "./map/MapSettingsPanel";
 
 // --------------------
 // OpenLayers styles

@@ -1,5 +1,6 @@
-import React, { useRef, useEffect, useState, useMemo } from "react";
-import { type GraphNode, type GraphEdge, roleColor, clamp } from "./graphUtils";
+import React, { useEffect, useMemo,useRef, useState } from "react";
+
+import { clamp,type GraphEdge, type GraphNode, roleColor } from "./graphUtils";
 
 interface Props {
   nodes: GraphNode[];

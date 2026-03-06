@@ -1,34 +1,31 @@
 import {
+  ReactNode,
   useCallback,
   useDeferredValue,
   useEffect,
   useMemo,
   useRef,
   useState,
-  ReactNode,
 } from "react";
 import { VirtuosoHandle } from "react-virtuoso";
 
 import { HeardBy } from "../components/HeardBy";
-import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";
-
-import { ExportMenu } from "./chat/ExportMenu";
-import { csvEscape, downloadBlob } from "./chat/chatUtils";
-
 import { useNodesSearchParams } from "../hooks/useNodesSearchParams";
+import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";
+import { csvEscape, downloadBlob } from "./chat/chatUtils";
+import { ExportMenu } from "./chat/ExportMenu";
+import { NodeDetailsPanel } from "./nodes/NodeDetailsPanel";
+import { type NodeListItem,NodesList } from "./nodes/NodesList";
+import { NodesOverviewPanel } from "./nodes/NodesOverviewPanel";
 import {
-  RangeKey,
   cleanNodeId,
   getLatLon,
   getTelemetrySnapshot,
   isNodeOnline,
+  RangeKey,
   roleLabel,
   safeLastSeenMs,
 } from "./nodes/nodesUtils";
-
-import { NodesList, type NodeListItem } from "./nodes/NodesList";
-import { NodesOverviewPanel } from "./nodes/NodesOverviewPanel";
-import { NodeDetailsPanel } from "./nodes/NodeDetailsPanel";
 
 type MobileSheetKey = "controls" | "details";
 
@@ -194,7 +191,7 @@ export const Nodes = () => {
   // keep search input in sync with back/forward
   useEffect(() => {
     setQInput(urlQ);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [urlQ]);
 
   // update URL q (replace, don’t spam history)

@@ -19,6 +19,8 @@ postgres/data/*
 config.json
 spa
 
+.claude/
+
 .pnp.*
 .yarn/*
 !.yarn/patches

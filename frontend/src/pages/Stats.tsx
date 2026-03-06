@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { HeardBy } from "../components/HeardBy";
 import { useGetStatsQuery } from "../slices/apiSlice";
-
 import {
   BarMeter,
   Icon,

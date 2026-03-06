@@ -3,11 +3,11 @@ import { Virtuoso } from "react-virtuoso";
 
 import { formatTimestamp } from "../../utils/formatTimestamp";
 import {
-  type NodesById,
-  type TelemetryListItem,
   formatMetricValue,
   getNodeLabel,
+  type NodesById,
   safeTsMs,
+  type TelemetryListItem,
   toNumberLoose,
 } from "./telemetryUtils";
 

@@ -1,4 +1,4 @@
-import { normNodeId, type GraphEdge } from "./graphUtils";
+import { type GraphEdge,normNodeId } from "./graphUtils";
 
 export function buildNeighborEdges(nodesById: Record<string, any>): GraphEdge[] {
   const wByKey = new Map<string, { w: number; snr: number }>();

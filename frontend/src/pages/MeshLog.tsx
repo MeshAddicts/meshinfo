@@ -34,7 +34,7 @@ export const MeshLog = () => {
             .slice()
             .reverse()
             .map((message, index) => (
-              // eslint-disable-next-line react/no-array-index-key
+               
               <tr key={`messages-${index}`}>
                 <td className="p-1 border border-gray-400">
                   {formatTimestamp(message.timestamp) || <span className="text-gray-500">Unknown</span>}

@@ -1,4 +1,4 @@
-/* eslint-disable no-param-reassign */
+ 
 import { createSlice } from "@reduxjs/toolkit";
 
 interface InitialState {}
@@ -11,4 +11,4 @@ export const appSlice = createSlice({
   reducers: {},
 });
 
-export const {} = appSlice.actions;
+// Actions will be exported here when reducers are added

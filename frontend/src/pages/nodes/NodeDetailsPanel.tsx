@@ -1,12 +1,14 @@
 import { Link } from "react-router-dom";
 
+import { Avatar } from "../../components/Avatar";
 import { HardwareImg } from "../../components/HardwareImg";
 import { Role } from "../../components/Role";
-import { Avatar } from "../../components/Avatar";
-
 import { INode } from "../../types";
+import {
+  convertNodeIdFromHexToInt,
+} from "../../utils/convertNodeId";
+import { calculateDistanceBetweenNodes } from "../../utils/getDistanceBetweenTwoNodes";
 import { NodeMap } from "../NodeMap";
-
 import {
   cleanNodeId,
   getLatLon,
@@ -14,11 +16,6 @@ import {
   isNodeOnline,
   roleLabel,
 } from "./nodesUtils";
-
-import {
-  convertNodeIdFromHexToInt,
-} from "../../utils/convertNodeId";
-import { calculateDistanceBetweenNodes } from "../../utils/getDistanceBetweenTwoNodes";
 
 function KV({
   k,

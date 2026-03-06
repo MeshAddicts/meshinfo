@@ -2,18 +2,17 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { formatTimestamp } from "../../utils/formatTimestamp";
+import { MiniBarChart } from "./MiniCharts";
 import {
-  type NodesById,
-  type RangeKey,
-  type TelemetryEvent,
-  type TelemetryNodeSummary,
   formatMetricValue,
   getNodeLabel,
+  type NodesById,
+  type RangeKey,
   safeTsMs,
+  type TelemetryEvent,
+  type TelemetryNodeSummary,
   toNumberLoose,
 } from "./telemetryUtils";
-
-import { MiniBarChart } from "./MiniCharts";
 
 // ---------------------- clipboard helper ----------------------
 
@@ -183,7 +182,7 @@ function formatAnyMetricValue(key: MetricKey, v: any): string {
   if (v == null) return "—";
 
   // formatMetricValue is typed to a narrower union; cast is safe because we only call for known keys.
-  const useFmt = (k: any) => formatMetricValue(k, v);
+  const fmt = (k: any) => formatMetricValue(k, v);
 
   switch (key) {
     case "battery_level":
@@ -197,7 +196,7 @@ function formatAnyMetricValue(key: MetricKey, v: any): string {
     case "uptime_seconds":
     case "rssi":
     case "snr":
-      return useFmt(key as any);
+      return fmt(key as any);
     default:
       return String(v);
   }

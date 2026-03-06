@@ -1,3 +1,7 @@
+import "highlight.js/styles/github-dark-dimmed.css";
+
+import hljs from "highlight.js/lib/core";
+import json from "highlight.js/lib/languages/json";
 import {
   useCallback,
   useDeferredValue,
@@ -16,9 +20,6 @@ import {
   useGetMqttMessagesQuery,
 } from "../slices/apiSlice";
 import { formatTimestamp } from "../utils/formatTimestamp";
-import hljs from "highlight.js/lib/core";
-import json from "highlight.js/lib/languages/json";
-import "highlight.js/styles/github-dark-dimmed.css";
 
 type RangeKey = "1h" | "24h" | "7d" | "all";
 type SortKey = "desc" | "asc";
@@ -436,7 +437,7 @@ export const Log = () => {
 
   useEffect(() => {
     setQInput(urlQ);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [urlQ]);
 
   useEffect(() => {

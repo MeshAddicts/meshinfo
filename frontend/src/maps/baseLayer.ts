@@ -1,6 +1,6 @@
 import TileLayer from "ol/layer/Tile";
-import type TileSource from "ol/source/Tile";
 import OSM from "ol/source/OSM";
+import type TileSource from "ol/source/Tile";
 import XYZ from "ol/source/XYZ";
 
 type MapProvider = "osm" | "mapbox";

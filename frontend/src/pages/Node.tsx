@@ -322,7 +322,7 @@ export const Node = () => {
                   const nid = convertNodeIdFromIntToHex(neighbor.node_id);
                   const nnode = nodes[nid] || null;
                   return (
-                    // eslint-disable-next-line react/no-array-index-key
+                     
                     <tr key={`neighbors-${index}`}>
                       <td className="w-1/3 p-1 text-nowrap">
                         {nnode ? (
@@ -363,7 +363,7 @@ export const Node = () => {
                         convertNodeIdFromIntToHex(neighbor.node_id) === node.id
                       ) {
                         return (
-                          // eslint-disable-next-line react/no-array-index-key
+                           
                           <tr key={`neighbors-heard-by-${index}-${subIndex}`}>
                             <td className="w-1/3 p-1 text-nowrap">
                               {iid in nodes ? (

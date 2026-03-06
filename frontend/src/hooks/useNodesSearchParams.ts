@@ -1,15 +1,16 @@
 import { useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
+
 import {
-  RangeKey,
-  StatusKey,
-  SortByKey,
-  SortDir,
+  cleanNodeId,
   parseRangeKey,
   parseSortByKey,
   parseSortDir,
   parseStatusKey,
-  cleanNodeId,
+  RangeKey,
+  SortByKey,
+  SortDir,
+  StatusKey,
 } from "../pages/nodes/nodesUtils";
 
 type SetMode = "push" | "replace";
@@ -128,6 +129,7 @@ export function useNodesSearchParams() {
       setParam,
       setParams,
     }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setParam/setParams are stable
     [searchParams, urlQ, urlRange, urlStatus, urlBy, urlDir, urlNode]
   );
 }
