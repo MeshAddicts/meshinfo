@@ -56,7 +56,7 @@ services:
       context: .
       dockerfile: Dockerfile
     volumes:
-      - ./config.json:/app/config.json
+      - ./config.toml:/app/config.toml
       - ./output:/app/output
       - ./templates:/app/templates
       - ./spa:/app/spa

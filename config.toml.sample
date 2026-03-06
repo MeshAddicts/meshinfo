@@ -1,0 +1,212 @@
+# MeshInfo Configuration
+# Copy this file to config.toml and edit it for your deployment.
+
+debug = false
+
+[mesh]
+name = "Central Valley Mesh"
+shortname = "CVM"
+description = "Serving Meshtastic to the California Central Valley and surrounding areas."
+url = "https://CVME.sh"
+contact = "https://CVME.sh"
+country = "US"
+region = "California"
+metro = "Fresno, Modesto, Bakersfield"
+latitude = 36.72
+longitude = -119.78
+altitude = 0
+timezone = "America/Los_Angeles"
+
+[mesh.announce]
+enabled = true
+interval = 60
+
+[[mesh.tools]]
+name = "Armooo's MeshView"
+url = "https://meshview.armooo.net"
+
+[[mesh.tools]]
+name = "Liam's Meshtastic Map"
+url = "https://meshtastic.liamcottle.net"
+
+[[mesh.tools]]
+name = "MeshMap"
+url = "https://meshmap.net"
+
+[[mesh.tools]]
+name = "Bay Mesh Explorer"
+url = "https://app.bayme.sh"
+
+[[mesh.tools]]
+name = "HWT Path Profiler"
+url = "https://heywhatsthat.com/profiler.html"
+
+[broker]
+enabled = true
+host = "mqtt.meshtastic.org"
+port = 1883
+username = "meshdev"
+password = "large4cats"
+client_id_prefix = "meshinfo-dev"
+topics = [
+  "msh/US/CA/SacValley/#",
+  "msh/US/CA/sacvalley/#",
+  "msh/US/CA/centralvalley/#",
+  "msh/US/CA/sandiegocounty/#",
+  "msh/US/CA/socalmesh/#",
+]
+
+[[broker.topic_tags]]
+prefix = "public/msh/"
+tag = "public"
+label = "Public MQTT"
+
+[[broker.topic_tags]]
+prefix = "msh/US/CA/centralvalley/"
+tag = "centralvalley"
+label = "Central Valley"
+
+[[broker.topic_tags]]
+prefix = "msh/US/CA/socalmesh/"
+tag = "socalmesh"
+label = "SoCalMesh"
+
+[[broker.topic_tags]]
+prefix = "msh/US/CA/sandiegocounty/"
+tag = "sandiegocounty"
+label = "San Diego County"
+
+[[broker.topic_tags]]
+prefix = "msh/US/CA/sacvalley/"
+tag = "sacvalley"
+label = "Sac Valley"
+
+[broker.decoders.protobuf]
+enabled = true
+
+[broker.decoders.json]
+enabled = true
+
+[broker.channels]
+display = ["0", "1", "2", "3", "4", "5", "6", "7", "8"]
+
+[[broker.channels.encryption]]
+key = "1PG7OiApB1nwvP+rz05pAQ=="
+key_name = "Default"
+
+[broker.channels.meta.0]
+label = "MediumFast"
+short = "MF"
+preset = "MediumFast"
+description = "Primary mesh channel"
+
+[broker.channels.meta.8]
+label = "LongFast (legacy)"
+short = "LF"
+preset = "LongFast"
+description = "Legacy / interop channel"
+
+[broker.channels.meta.1]
+label = "Channel 1"
+short = "1"
+
+[broker.channels.meta.2]
+label = "Channel 2"
+short = "2"
+
+[broker.channels.meta.3]
+label = "Channel 3"
+short = "3"
+
+[broker.channels.meta.4]
+label = "Channel 4"
+short = "4"
+
+[broker.channels.meta.5]
+label = "Channel 5"
+short = "5"
+
+[broker.channels.meta.6]
+label = "Channel 6"
+short = "6"
+
+[broker.channels.meta.7]
+label = "Channel 7"
+short = "7"
+
+[[broker.channels.views]]
+id = "mf"
+label = "MediumFast"
+short = "MF"
+channels = ["0"]
+
+[[broker.channels.views]]
+id = "lf"
+label = "LongFast"
+short = "LF"
+channels = ["8"]
+default = true
+
+[[broker.channels.views]]
+id = "all"
+label = "All Channels"
+short = "ALL"
+channels = ["0", "1", "2", "3", "4", "5", "6", "7", "8"]
+
+[paths]
+backups = "output/backups"
+data = "output/data"
+output = "output/static-html"
+templates = "templates"
+
+[server]
+node_id = "c7181daf"
+base_url = "REPLACE_WITH_THE_URL_OF_THIS_SERVER_WITHOUT_TRAILING_SLASH"
+node_activity_prune_threshold = 259200
+timezone = "America/Los_Angeles"
+
+[server.intervals]
+data_save = 300
+render = 5
+
+[server.backups]
+enabled = true
+interval = 86400
+max_backups = 7
+
+[server.enrich]
+enabled = true
+interval = 900
+provider = "world.meshinfo.network"
+
+[server.graph]
+enabled = true
+max_depth = 10
+
+[integrations.discord]
+enabled = false
+token = "REPLACE_WITH_TOKEN"
+guild = "REPLACE_WITH_GUILD_ID"
+
+[integrations.geocoding]
+enabled = false
+provider = "geocode.maps.co"
+
+[integrations.geocoding."geocode.maps.co"]
+api_key = "REPLACE_WITH_API_KEY"
+
+# PostgreSQL is REQUIRED. JSON storage is deprecated and will be removed
+# in the next version.
+[storage]
+read_from = "postgres"
+write_to = ["json", "postgres"]
+
+[storage.postgres]
+enabled = true
+host = "postgres"
+port = 5432
+database = "meshinfo"
+username = "postgres"
+password = "password"
+min_pool_size = 1
+max_pool_size = 5
