@@ -10,27 +10,24 @@ import { useSearchParams } from "react-router-dom";
 
 import { HeardBy } from "../components/HeardBy";
 import { useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
-
 import { ExportMenu } from "./chat/ExportMenu";
-
-import {
-  type NodesById,
-  type TracerouteEvent,
-  coerceEvent,
-  csvEscape,
-  downloadBlob,
-  groupTracerouteEvents,
-  routeHopsOf,
-  routeIdsOf,
-  safeTsMs,
-} from "./traceroutes/traceroutesUtils";
-
-import { TraceroutesList } from "./traceroutes/TraceroutesList";
 import { TracerouteDetailsPanel } from "./traceroutes/TracerouteDetailsPanel";
+import { TraceroutesList } from "./traceroutes/TraceroutesList";
 import {
   type TraceroutePairSummary,
   type TraceroutesListItem,
 } from "./traceroutes/traceroutesTypes";
+import {
+  coerceEvent,
+  csvEscape,
+  downloadBlob,
+  groupTracerouteEvents,
+  type NodesById,
+  routeHopsOf,
+  routeIdsOf,
+  safeTsMs,
+  type TracerouteEvent,
+} from "./traceroutes/traceroutesUtils";
 
 export type RangeKey = "all" | "1h" | "24h" | "7d";
 type SortKey =
@@ -314,7 +311,7 @@ export const Traceroutes = () => {
 
   useEffect(() => {
     setQInput(urlQ);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [urlQ]);
 
   useEffect(() => {
@@ -663,7 +660,7 @@ export const Traceroutes = () => {
       params: Object.fromEntries(searchParams.entries()),
       count: eventsSelected.length,
       rows: eventsSelected.map((e) => {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+         
         const { __idx, ...rest } = e as any;
         return rest;
       }),

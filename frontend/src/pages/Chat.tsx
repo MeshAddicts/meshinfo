@@ -1,39 +1,36 @@
 import {
+  ReactNode,
+  useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
-  useState,
-  useDeferredValue,
   useRef,
-  useCallback,
-  ReactNode,
+  useState,
 } from "react";
 import { Link } from "react-router-dom";
 import { VirtuosoHandle } from "react-virtuoso";
 
-import { useChatSearchParams } from "../hooks/useChatSearchParams";
-
 import { HeardBy } from "../components/HeardBy";
+import { useChatSearchParams } from "../hooks/useChatSearchParams";
 import {
   useGetChatsQuery,
   useGetConfigQuery,
   useGetNodesQuery,
 } from "../slices/apiSlice";
-
 import {
+  csvEscape,
   DirKey,
+  downloadBlob,
   FocusMode,
+  isBroadcast,
   RangeKey,
   SortKey,
-  csvEscape,
-  downloadBlob,
-  isBroadcast,
 } from "./chat/chatUtils";
-
-import { FiltersDrawer } from "./chat/FiltersDrawer";
-import { ExportMenu } from "./chat/ExportMenu";
-import { MessageList } from "./chat/MessageList";
-import { FocusPanel } from "./chat/FocusPanel";
 import { DetailsPanel } from "./chat/DetailsPanel";
+import { ExportMenu } from "./chat/ExportMenu";
+import { FiltersDrawer } from "./chat/FiltersDrawer";
+import { FocusPanel } from "./chat/FocusPanel";
+import { MessageList } from "./chat/MessageList";
 
 type ViewDef = {
   key: string; // canonical URL key: "mediumfast"
@@ -257,6 +254,7 @@ export const Chat = () => {
     }
 
     return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- rawChannel* helpers are stable
   }, [config, channelEntries, availableChannelIds]);
 
   const defaultViewKey =
@@ -369,7 +367,7 @@ export const Chat = () => {
   // Keep local search input synced on back/forward
   useEffect(() => {
     setQInput(urlQ);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [urlQ]);
 
   // Update URL q from deferred input (replace)
@@ -879,7 +877,7 @@ export const Chat = () => {
     return () => {
       timers.forEach(clearTimeout);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [urlMsg, messages, selectedChannel]);
 
   // Export menu click-outside (desktop only)

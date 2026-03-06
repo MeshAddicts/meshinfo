@@ -1,7 +1,8 @@
 import type { Dispatch, RefObject, SetStateAction } from "react";
+
 import type { OsmBasemap } from "../../maps/baseLayer";
-import type { MapProvider } from "./types";
 import { MapLegend } from "./MapLegend";
+import type { MapProvider } from "./types";
 
 export function MapSettingsPanel({
   settingsPanelRef,

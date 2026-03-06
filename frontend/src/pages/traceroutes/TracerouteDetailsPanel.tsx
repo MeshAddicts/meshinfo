@@ -2,16 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { formatTimestamp } from "../../utils/formatTimestamp";
-import {
-  type NodesById,
-  type TracerouteEvent,
-  type TracerouteGroup,
-  groupTracerouteEvents,
-  routeIdsOf,
-  safeTsMs,
-} from "./traceroutesUtils";
 import { type RangeKey } from "../Traceroutes"; // NOTE: if this import path causes a cycle in your setup, replace with: type RangeKey = "all" | "24h" | "7d" | "30d";
 import { type TraceroutesListItem } from "./traceroutesTypes";
+import {
+  groupTracerouteEvents,
+  type NodesById,
+  routeIdsOf,
+  safeTsMs,
+  type TracerouteEvent,
+  type TracerouteGroup,
+} from "./traceroutesUtils";
 
 async function copyTextToClipboard(text: string) {
   try {

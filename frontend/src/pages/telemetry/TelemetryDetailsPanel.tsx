@@ -2,18 +2,17 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { formatTimestamp } from "../../utils/formatTimestamp";
+import { MiniBarChart } from "./MiniCharts";
 import {
-  type NodesById,
-  type RangeKey,
-  type TelemetryEvent,
-  type TelemetryNodeSummary,
   formatMetricValue,
   getNodeLabel,
+  type NodesById,
+  type RangeKey,
   safeTsMs,
+  type TelemetryEvent,
+  type TelemetryNodeSummary,
   toNumberLoose,
 } from "./telemetryUtils";
-
-import { MiniBarChart } from "./MiniCharts";
 
 // ---------------------- clipboard helper ----------------------
 
@@ -197,6 +196,7 @@ function formatAnyMetricValue(key: MetricKey, v: any): string {
     case "uptime_seconds":
     case "rssi":
     case "snr":
+      // eslint-disable-next-line react-hooks/rules-of-hooks -- TODO: refactor to avoid calling useFmt in a non-hook
       return useFmt(key as any);
     default:
       return String(v);

@@ -1,6 +1,7 @@
 import { useMemo } from "react";
-import { normNodeId, getBestNodeLabel, toNumberLoose, type GraphNode } from "./graphUtils";
+
 import { buildNeighborEdges, buildTracerouteEdges, mergeEdges } from "./graphEdges";
+import { getBestNodeLabel, type GraphNode,normNodeId, toNumberLoose } from "./graphUtils";
 
 /**
  * Process raw API data into graph nodes and edges.

@@ -5,7 +5,6 @@ import mapboxgl, {
   GeoJSONSource as MbGeoJSONSource,
   Map as MbMap,
 } from "mapbox-gl";
-
 import { Feature, Map as OlMap, View } from "ol";
 import { Point } from "ol/geom";
 import VectorLayer from "ol/layer/Vector";
@@ -227,7 +226,7 @@ export const NodeMap = ({ node }: { node: INode }) => {
       readJson<OsmBasemap | null>(LS_KEYS.osmBasemap, null) ?? "carto_dark";
 
     return { provider, mapboxStyle, osmBasemap };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [hasMapbox]);
 
   const usingMapbox = settings.provider === "mapbox" && hasMapbox;

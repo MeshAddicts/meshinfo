@@ -39,7 +39,7 @@ export const MqttLog = () => {
             .slice()
             .reverse()
             .map((message, index) => (
-              // eslint-disable-next-line react/no-array-index-key
+               
               <tr key={`mqtt-message-${index}`}>
                 <td className="p-1 border border-gray-400 text-nowrap">
                   {message.timestamp ? (

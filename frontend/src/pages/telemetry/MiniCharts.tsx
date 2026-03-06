@@ -6,6 +6,7 @@ function clamp(n: number, a: number, b: number) {
   return Math.max(a, Math.min(b, n));
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function downsamplePoints(points: Point[], maxPoints: number): Point[] {
   if (points.length <= maxPoints) return points;
   const step = Math.ceil(points.length / maxPoints);

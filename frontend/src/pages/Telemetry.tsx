@@ -10,27 +10,24 @@ import { useSearchParams } from "react-router-dom";
 
 import { HeardBy } from "../components/HeardBy";
 import { useGetNodesQuery, useGetTelemetryQuery } from "../slices/apiSlice";
-
 import { ExportMenu } from "./chat/ExportMenu";
-
+import { TelemetryDetailsPanel } from "./telemetry/TelemetryDetailsPanel";
+import { TelemetryList } from "./telemetry/TelemetryList";
 import {
-  type NodesById,
-  type RangeKey,
-  type TelemetryEvent,
-  type TelemetryListItem,
-  type TelemetryNodeSummary,
-  RANGE_MS,
   clampSort,
   coerceTelemetryEvent,
   csvEscape,
   downloadBlob,
   getNodeLabel,
+  type NodesById,
+  RANGE_MS,
+  type RangeKey,
   safeTsMs,
+  type TelemetryEvent,
+  type TelemetryListItem,
+  type TelemetryNodeSummary,
   toNumberLoose,
 } from "./telemetry/telemetryUtils";
-
-import { TelemetryList } from "./telemetry/TelemetryList";
-import { TelemetryDetailsPanel } from "./telemetry/TelemetryDetailsPanel";
 
 type SortKey =
   | "last_desc"
@@ -240,7 +237,7 @@ export const Telemetry = () => {
 
   useEffect(() => {
     setQInput(urlQ);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [urlQ]);
 
   useEffect(() => {
@@ -565,7 +562,7 @@ export const Telemetry = () => {
       params: Object.fromEntries(searchParams.entries()),
       count: selectedEvents.length,
       rows: selectedEvents.map((e) => {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+         
         const { __idx, ...rest } = e as any;
         return rest;
       }),

@@ -1,9 +1,10 @@
 import React, { Suspense } from "react";
-import { createBrowserRouter, Outlet, Navigate } from "react-router-dom";
+import { createBrowserRouter, Navigate,Outlet } from "react-router-dom";
+
 import { Layout } from "./components/Layout";
 import { Chat } from "./pages/Chat";
-import { Map } from "./pages/Map";
 import { Log } from "./pages/Log";
+import { Map } from "./pages/Map";
 import { Neighbors } from "./pages/Neighbors";
 import { Node } from "./pages/Node";
 import { Nodes } from "./pages/Nodes";
@@ -11,8 +12,10 @@ import { Stats } from "./pages/Stats";
 import { Telemetry } from "./pages/Telemetry";
 import { Traceroutes } from "./pages/Traceroutes";
 
+// eslint-disable-next-line react-refresh/only-export-components
 const LazyGraph = React.lazy(() => import("./pages/Graph"));
 
+// eslint-disable-next-line react-refresh/only-export-components
 function GraphLoader() {
   return (
     <div className="h-full w-full flex items-center justify-center bg-white dark:bg-gray-950">

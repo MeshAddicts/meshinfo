@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 import { Link } from "react-router-dom";
+import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
 import { Avatar } from "../../components/Avatar";
 import { DateToSince } from "../../components/DateSince";

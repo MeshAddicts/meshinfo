@@ -1,4 +1,5 @@
 import type { Coordinate } from "ol/coordinate";
+
 import type { INode } from "../../types";
 
 export type MapProvider = "osm" | "mapbox";

@@ -1,11 +1,12 @@
 import { useCallback, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
+
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
-import { useGraphData } from "./graph/useGraphData";
+import { AdjacencyHeatmap } from "./graph/AdjacencyHeatmap";
+import { ArcDiagram } from "./graph/ArcDiagram";
 import { ROLE_LABELS, roleColor } from "./graph/graphUtils";
 import { HubSpoke } from "./graph/HubSpoke";
-import { ArcDiagram } from "./graph/ArcDiagram";
-import { AdjacencyHeatmap } from "./graph/AdjacencyHeatmap";
+import { useGraphData } from "./graph/useGraphData";
 
 type ViewMode = "hub" | "arc" | "matrix";
 

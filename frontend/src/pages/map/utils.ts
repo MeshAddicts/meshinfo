@@ -5,7 +5,6 @@ import type {
   LineString as GeoLineString,
   Point as GeoPoint,
 } from "geojson";
-
 import type { Map as MbMap } from "mapbox-gl";
 import type { Map as OlMap } from "ol";
 
