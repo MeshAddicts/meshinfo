@@ -499,9 +499,9 @@ class Config:
         validate, and return the final config dict.
         """
         # Load user config: prefer TOML, fall back to JSON
-        if os.path.exists("config.toml"):
+        if os.path.isfile("config.toml"):
             user_config = cls._load_toml("config.toml")
-        elif os.path.exists("config.json"):
+        elif os.path.isfile("config.json"):
             logger.warning(
                 "Loading config.json (JSON format is deprecated). "
                 "Please migrate to config.toml. See config.toml.sample for the format."
