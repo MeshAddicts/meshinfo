@@ -182,7 +182,7 @@ function formatAnyMetricValue(key: MetricKey, v: any): string {
   if (v == null) return "—";
 
   // formatMetricValue is typed to a narrower union; cast is safe because we only call for known keys.
-  const useFmt = (k: any) => formatMetricValue(k, v);
+  const fmt = (k: any) => formatMetricValue(k, v);
 
   switch (key) {
     case "battery_level":
@@ -196,8 +196,7 @@ function formatAnyMetricValue(key: MetricKey, v: any): string {
     case "uptime_seconds":
     case "rssi":
     case "snr":
-      // eslint-disable-next-line react-hooks/rules-of-hooks -- TODO: refactor to avoid calling useFmt in a non-hook
-      return useFmt(key as any);
+      return fmt(key as any);
     default:
       return String(v);
   }
