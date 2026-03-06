@@ -13,7 +13,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@reduxjs/toolkit": "^2.2.5",
+    "@reduxjs/toolkit": "^2.11.2",
     "autoprefixer": "^10.4.27",
     "date-fns": "^3.6.0",
     "date-fns-tz": "^3.1.3",
