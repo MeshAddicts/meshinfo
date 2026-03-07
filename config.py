@@ -12,6 +12,8 @@ Addresses GitHub issue #225: Deprecate filesystem writes.
 import datetime
 import json
 import logging
+import os
+import tomllib
 import uuid
 from copy import deepcopy
 from typing import Any
@@ -414,19 +416,19 @@ def validate(config: dict) -> list[str]:
             "\n"
             "To fix this:\n"
             "  1. Add a PostgreSQL service to your docker-compose.yml (see docker-compose.yml.sample)\n"
-            "  2. Enable PostgreSQL in config.json:\n"
-            '     "storage": {\n'
-            '       "read_from": "postgres",\n'
-            '       "write_to": ["postgres"],\n'
-            '       "postgres": {\n'
-            '         "enabled": true,\n'
-            '         "host": "postgres",\n'
-            '         "port": 5432,\n'
-            '         "database": "meshinfo",\n'
-            '         "username": "postgres",\n'
-            '         "password": "your_password"\n'
-            "       }\n"
-            "     }\n"
+            "  2. Enable PostgreSQL in config.toml:\n"
+            "     [storage]\n"
+            '     read_from = "postgres"\n'
+            '     write_to = ["postgres"]\n'
+            "\n"
+            "     [storage.postgres]\n"
+            "     enabled = true\n"
+            '     host = "postgres"\n'
+            "     port = 5432\n"
+            '     database = "meshinfo"\n'
+            '     username = "postgres"\n'
+            '     password = "your_password"\n'
+            "\n"
             "  3. If migrating from JSON, run: docker exec -it meshinfo-meshinfo-1 python3 scripts/migrate_json_to_postgres.py\n"
             "  4. Restart MeshInfo\n"
         )
@@ -493,11 +495,23 @@ class Config:
     @classmethod
     def load(cls) -> dict:
         """
-        Load config.json, merge with defaults, validate, and return
-        the final config dict.
+        Load config.toml (or config.json as fallback), merge with defaults,
+        validate, and return the final config dict.
         """
-        # Load user config
-        user_config = cls._load_from_file("config.json")
+        # Load user config: prefer TOML, fall back to JSON
+        if os.path.isfile("config.toml"):
+            user_config = cls._load_toml("config.toml")
+        elif os.path.isfile("config.json"):
+            logger.warning(
+                "Loading config.json (JSON format is deprecated). "
+                "Please migrate to config.toml. See config.toml.sample for the format."
+            )
+            user_config = cls._load_json("config.json")
+        else:
+            raise ConfigValidationError(
+                "No config file found. "
+                "Copy config.toml.sample to config.toml and edit it for your deployment."
+            )
 
         # Merge: defaults first, user overrides on top
         config = _deep_merge(DEFAULT_CONFIG, user_config)
@@ -515,7 +529,7 @@ class Config:
 
         # Version info (optional, best-effort)
         try:
-            version_info = cls._load_from_file("version-info.json")
+            version_info = cls._load_json("version-info.json")
             if version_info is not None:
                 config["server"]["version_info"] = version_info
         except (ConfigValidationError, FileNotFoundError, json.JSONDecodeError):
@@ -532,15 +546,30 @@ class Config:
         return config
 
     @classmethod
-    def _load_from_file(cls, path: str) -> dict:
-        """Load and parse a JSON file, with a clear error on failure."""
+    def _load_toml(cls, path: str) -> dict:
+        """Load and parse a TOML file, with a clear error on failure."""
+        try:
+            with open(path, "rb") as f:
+                return tomllib.load(f)
+        except FileNotFoundError:
+            raise ConfigValidationError(
+                f"Config file '{path}' not found. "
+                f"Copy config.toml.sample to config.toml and edit it for your deployment."
+            )
+        except tomllib.TOMLDecodeError as e:
+            raise ConfigValidationError(
+                f"Config file '{path}' contains invalid TOML: {e}"
+            )
+
+    @classmethod
+    def _load_json(cls, path: str) -> dict:
+        """Load and parse a JSON file (legacy format)."""
         try:
             with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
         except FileNotFoundError:
             raise ConfigValidationError(
-                f"Config file '{path}' not found. "
-                f"Copy config.json.sample to config.json and edit it for your deployment."
+                f"Config file '{path}' not found."
             )
         except json.JSONDecodeError as e:
             raise ConfigValidationError(
@@ -549,8 +578,11 @@ class Config:
 
     @classmethod
     def load_from_file(cls, path: str) -> dict:
-        """Public alias for backward compatibility."""
-        return cls._load_from_file(path)
+        """Load a config file by extension (TOML or JSON)."""
+        from pathlib import Path
+        if Path(path).suffix == ".toml":
+            return cls._load_toml(path)
+        return cls._load_json(path)
 
     @classmethod
     def cleanse(cls, config: dict) -> dict:

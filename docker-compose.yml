@@ -29,7 +29,7 @@ services:
   meshinfo:
     image: ghcr.io/meshaddicts/meshinfo:latest
     volumes:
-      - ./config.json:/app/config.json
+      - ./config.toml:/app/config.toml
       - ./output:/app/output
       - ./postgres:/app/postgres:ro
     environment:
