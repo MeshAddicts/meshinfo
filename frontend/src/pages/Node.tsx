@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router";
 
 import { HardwareImg } from "../components/HardwareImg";
 import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";

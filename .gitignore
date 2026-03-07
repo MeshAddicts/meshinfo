@@ -30,3 +30,4 @@ spa
 !.yarn/sdks
 !.yarn/versions
 
+config.toml
