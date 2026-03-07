@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 import { Avatar } from "../../components/Avatar";
 import { HardwareImg } from "../../components/HardwareImg";

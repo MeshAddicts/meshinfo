@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 
 import { HeardBy } from "../components/HeardBy";
 import { useGetNodesQuery, useGetTelemetryQuery } from "../slices/apiSlice";

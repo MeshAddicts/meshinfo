@@ -10,7 +10,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
 import { HeardBy } from "../components/HeardBy";

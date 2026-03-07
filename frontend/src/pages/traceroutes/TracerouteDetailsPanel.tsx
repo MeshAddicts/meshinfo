@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 import { formatTimestamp } from "../../utils/formatTimestamp";
 import { type RangeKey } from "../Traceroutes"; // NOTE: if this import path causes a cycle in your setup, replace with: type RangeKey = "all" | "24h" | "7d" | "30d";

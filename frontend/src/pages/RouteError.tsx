@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { isRouteErrorResponse, Link, useLocation, useRouteError } from "react-router-dom";
+import { isRouteErrorResponse, Link, useLocation, useRouteError } from "react-router";
 
 function BrokenNodeArt() {
   return (
