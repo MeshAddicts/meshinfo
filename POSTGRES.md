@@ -13,25 +13,22 @@ MeshInfo now supports PostgreSQL as an alternative storage backend alongside JSO
 
 ## Configuration
 
-Add the following to your `config.json`:
+Add the following to your `config.toml`:
 
-```json
-{
-  "storage": {
-    "read_from": "json",
-    "write_to": ["json", "postgres"],
-    "postgres": {
-      "enabled": false,
-      "host": "postgres",
-      "port": 5432,
-      "database": "meshinfo",
-      "username": "postgres",
-      "password": "password",
-      "min_pool_size": 5,
-      "max_pool_size": 20
-    }
-  }
-}
+```toml
+[storage]
+read_from = "json"
+write_to = ["json", "postgres"]
+
+[storage.postgres]
+enabled = false
+host = "postgres"
+port = 5432
+database = "meshinfo"
+username = "postgres"
+password = "password"
+min_pool_size = 5
+max_pool_size = 20
 ```
 
 ### Configuration Options
@@ -68,15 +65,10 @@ To migrate existing JSON data to PostgreSQL:
 
 ### Step 1: Enable PostgreSQL
 
-Update `config.json`:
-```json
-{
-  "storage": {
-    "postgres": {
-      "enabled": true
-    }
-  }
-}
+Update `config.toml`:
+```toml
+[storage.postgres]
+enabled = true
 ```
 
 ### Step 2: Start PostgreSQL
@@ -102,17 +94,14 @@ The script will:
 
 ### Step 4: Enable Dual-Write
 
-Update `config.json` to write to both backends:
-```json
-{
-  "storage": {
-    "read_from": "json",
-    "write_to": ["json", "postgres"],
-    "postgres": {
-      "enabled": true
-    }
-  }
-}
+Update `config.toml` to write to both backends:
+```toml
+[storage]
+read_from = "json"
+write_to = ["json", "postgres"]
+
+[storage.postgres]
+enabled = true
 ```
 
 ### Step 5: Verify Data Consistency
@@ -124,13 +113,10 @@ Update `config.json` to write to both backends:
 ### Step 6: Switch to PostgreSQL Reads
 
 Once confident in data consistency, switch to direct PostgreSQL queries:
-```json
-{
-  "storage": {
-    "read_from": "postgres",
-    "write_to": ["json", "postgres"]
-  }
-}
+```toml
+[storage]
+read_from = "postgres"
+write_to = ["json", "postgres"]
 ```
 
 **Important**: When `read_from: "postgres"`, the API queries PostgreSQL directly without loading data into memory. This provides:
@@ -222,7 +208,7 @@ Monitor these logs to ensure healthy operation.
 
 If PostgreSQL connection fails:
 1. Check that PostgreSQL container is running
-2. Verify connection settings in config.json
+2. Verify connection settings in config.toml
 3. Check network connectivity
 4. Review PostgreSQL logs
 
