@@ -438,14 +438,14 @@ async def main():
     try:
         config = Config.load()
     except Exception as e:
-        logger.error(f"Failed to load config.json: {e}")
-        logger.error("Make sure config.json exists and is valid")
+        logger.error(f"Failed to load config: {e}")
+        logger.error("Make sure config.toml (or config.json) exists and is valid")
         return 1
 
     # Check if PostgreSQL is configured
     pg_config = config.get('storage', {}).get('postgres', {})
     if not pg_config.get('enabled', False):
-        logger.error("PostgreSQL is not enabled in config.json")
+        logger.error("PostgreSQL is not enabled in config")
         logger.error("Set storage.postgres.enabled to true before running migration")
         return 1
 

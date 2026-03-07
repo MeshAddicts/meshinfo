@@ -369,7 +369,8 @@ class MemoryDataStore:
     os.makedirs(tmp_path, exist_ok=True)
     shutil.copytree("output/data", f"{tmp_path}/data")
     shutil.copytree("output/static-html", f"{tmp_path}/static-html")
-    shutil.copyfile("config.json", f"{tmp_path}/config.json")
+    config_file = "config.toml" if os.path.isfile("config.toml") else "config.json"
+    shutil.copyfile(config_file, f"{tmp_path}/{config_file}")
 
     shutil.make_archive(
       base_name,
