@@ -569,8 +569,7 @@ class Config:
                 return json.load(f)
         except FileNotFoundError:
             raise ConfigValidationError(
-                f"Config file '{path}' not found. "
-                f"Copy config.toml.sample to config.toml and edit it for your deployment."
+                f"Config file '{path}' not found."
             )
         except json.JSONDecodeError as e:
             raise ConfigValidationError(
@@ -580,7 +579,8 @@ class Config:
     @classmethod
     def load_from_file(cls, path: str) -> dict:
         """Load a config file by extension (TOML or JSON)."""
-        if ".toml" in path:
+        from pathlib import Path
+        if Path(path).suffix == ".toml":
             return cls._load_toml(path)
         return cls._load_json(path)
 
