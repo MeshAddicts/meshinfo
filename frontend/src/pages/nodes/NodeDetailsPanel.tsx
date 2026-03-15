@@ -1,4 +1,4 @@
-import { Link } from "react-router";
+import { useState } from "react";
 
 import { Avatar } from "../../components/Avatar";
 import { HardwareImg } from "../../components/HardwareImg";
@@ -62,6 +62,36 @@ function GaugeRow({
         <div className="h-full bg-indigo-600/80" style={{ width: `${safePct}%` }} />
       </div>
     </div>
+  );
+}
+
+function CopyLinkButton({ nodeId }: { nodeId: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.set("node", nodeId);
+      await navigator.clipboard.writeText(u.toString());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // fallback
+      const u = new URL(window.location.href);
+      u.searchParams.set("node", nodeId);
+      window.prompt("Copy link:", u.toString());
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      className="rounded-md px-2 py-1 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+      onClick={handleCopy}
+      title="Copy a direct link to this node"
+    >
+      {copied ? "Copied!" : "Copy link"}
+    </button>
   );
 }
 
@@ -131,12 +161,7 @@ export function NodeDetailsPanel({
             </div>
 
             <div className="flex items-center gap-2">
-              <Link
-                to={`/nodes/${id}`}
-                className="rounded-md px-2 py-1 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-              >
-                Open page
-              </Link>
+              <CopyLinkButton nodeId={id} />
               <button
                 type="button"
                 className="rounded-md px-2 py-1 text-sm border border-indigo-300/70 dark:border-indigo-800/70 text-indigo-700 dark:text-indigo-200 hover:bg-indigo-50/60 dark:hover:bg-indigo-900/20 transition"

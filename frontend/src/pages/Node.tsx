@@ -326,12 +326,12 @@ export const Node = () => {
                     <tr key={`neighbors-${index}`}>
                       <td className="w-1/3 p-1 text-nowrap">
                         {nnode ? (
-                          <a
+                          <Link
                             className="text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
-                            href={`node_${nnode.id}.html`}
+                            to={`/nodes?node=${nnode.id}`}
                           >
                             {nnode.shortname}
-                          </a>
+                          </Link>
                         ) : (
                           <span className="text-gray-500 dark:text-gray-400">UNK</span>
                         )}
@@ -367,9 +367,9 @@ export const Node = () => {
                           <tr key={`neighbors-heard-by-${index}-${subIndex}`}>
                             <td className="w-1/3 p-1 text-nowrap">
                               {iid in nodes ? (
-                                <a href={`node_${iid}.html`}>
+                                <Link to={`/nodes?node=${iid}`}>
                                   {nodes[iid].shortname}
-                                </a>
+                                </Link>
                               ) : (
                                 <span className="text-gray-500 dark:text-gray-400">UNK</span>
                               )}

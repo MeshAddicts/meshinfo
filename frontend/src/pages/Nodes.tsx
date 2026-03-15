@@ -401,8 +401,54 @@ export const Nodes = () => {
     if (selectedId && selectedId !== prev) setMobileSheet("details");
   }, [selectedId, isLgUp]);
 
-  // Virtuoso ref (optional future: scroll selected into view)
+  // Virtuoso ref – used for scroll-into-view
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
+
+  // Flash node id (brief highlight after scroll-to)
+  const [flashNodeId, setFlashNodeId] = useState<string>("");
+
+  // Auto-scroll list to selected node when arriving via URL (e.g. from Neighbors page)
+  const pendingScrollRef = useRef<string>("");
+  useEffect(() => {
+    if (!selectedId) {
+      pendingScrollRef.current = "";
+      return;
+    }
+
+    // Only scroll when selection actually changes
+    if (pendingScrollRef.current === selectedId) return;
+    pendingScrollRef.current = selectedId;
+
+    // Find index in filtered list
+    const tryScroll = () => {
+      const idx = filteredItems.findIndex((x) => x.id === selectedId);
+      if (idx < 0) return false;
+      virtuosoRef.current?.scrollToIndex({
+        index: idx,
+        align: "center",
+        behavior: "smooth",
+      });
+      return true;
+    };
+
+    // Retry at increasing delays (data/virtuoso may not be ready yet)
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    for (const delay of [50, 150, 400, 800]) {
+      timers.push(setTimeout(() => {
+        if (pendingScrollRef.current !== selectedId) return;
+        tryScroll();
+      }, delay));
+    }
+
+    // Flash highlight
+    setFlashNodeId(selectedId);
+    const flashTimer = setTimeout(() => setFlashNodeId(""), 2500);
+
+    return () => {
+      timers.forEach(clearTimeout);
+      clearTimeout(flashTimer);
+    };
+  }, [selectedId, filteredItems]);
 
   // Export menu
   const [exportOpen, setExportOpen] = useState(false);
@@ -875,6 +921,7 @@ export const Nodes = () => {
                 <NodesList
                   items={filteredItems}
                   selectedId={selectedId}
+                  flashId={flashNodeId}
                   onSelect={onSelect}
                   totalSeen={Object.keys(nodes as any).length}
                   virtuosoRef={virtuosoRef}
