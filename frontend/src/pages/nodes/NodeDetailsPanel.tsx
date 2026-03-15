@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router";
 
 import { Avatar } from "../../components/Avatar";
 import { HardwareImg } from "../../components/HardwareImg";
@@ -294,8 +295,18 @@ export function NodeDetailsPanel({
 
           {/* Map */}
           <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-sm">
-            <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-              Location
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                Location
+              </div>
+              {ll && (
+                <Link
+                  to={`/map?node=${id}`}
+                  className="text-xs underline hover:no-underline text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
+                >
+                  View on map
+                </Link>
+              )}
             </div>
             <div className="mt-3">
               {ll ? (
