@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
 import { Avatar } from "../../components/Avatar";
@@ -36,12 +35,14 @@ function pillClass(active: boolean) {
 export function NodesList({
   items,
   selectedId,
+  flashId,
   onSelect,
   totalSeen,
   virtuosoRef,
 }: {
   items: NodeListItem[];
   selectedId: string;
+  flashId?: string;
   onSelect: (id: string) => void;
   totalSeen: number;
   virtuosoRef: React.RefObject<VirtuosoHandle | null>;
@@ -88,6 +89,7 @@ export function NodesList({
             const hw = n?.hardware;
 
             const isSelected = !!selectedId && item.id === selectedId;
+            const isFlashing = !!flashId && item.id === flashId;
 
             return (
               <button
@@ -96,9 +98,11 @@ export function NodesList({
                 className={[
                   "w-full text-left px-4 py-3 border-b border-gray-200 dark:border-gray-800 transition",
                   "hover:bg-gray-50/70 dark:hover:bg-gray-900/40",
-                  isSelected
-                    ? "bg-indigo-50/50 dark:bg-indigo-900/15"
-                    : "bg-transparent",
+                  isFlashing
+                    ? "animate-pulse ring-2 ring-indigo-400/50 bg-indigo-50/60 dark:bg-indigo-900/20"
+                    : isSelected
+                      ? "bg-indigo-50/50 dark:bg-indigo-900/15"
+                      : "bg-transparent",
                 ].join(" ")}
               >
                 <div className="flex items-center gap-3">
@@ -168,17 +172,6 @@ export function NodesList({
                         <span className="opacity-50">no position</span>
                       )}
 
-                      {/* quick open link (does not steal selection click) */}
-                      <span className="ml-auto">
-                        <Link
-                          to={`/nodes/${item.id}`}
-                          onClick={(e) => e.stopPropagation()}
-                          className="underline hover:no-underline text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
-                          title="Open the dedicated node page"
-                        >
-                          open
-                        </Link>
-                      </span>
                     </div>
                   </div>
                 </div>

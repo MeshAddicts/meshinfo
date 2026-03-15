@@ -254,7 +254,7 @@ function NeighborDetailPanel({
 
       {/* View node link */}
       <Link
-        to={`/nodes/${item.id}`}
+        to={`/nodes?node=${item.id}`}
         className="inline-block text-sm text-indigo-600 dark:text-indigo-400 hover:underline"
       >
         View full node details &rarr;
@@ -274,7 +274,7 @@ function NeighborDetailPanel({
             {item.neighborsHeard.map((nb) => (
               <Link
                 key={`detail-heard-${item.id}-${nb.id}`}
-                to={`/nodes/${nb.id}`}
+                to={`/nodes?node=${nb.id}`}
                 className="flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm
                   bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
               >
@@ -307,7 +307,7 @@ function NeighborDetailPanel({
             {item.heardBy.map((nb) => (
               <Link
                 key={`detail-by-${item.id}-${nb.id}`}
-                to={`/nodes/${nb.id}`}
+                to={`/nodes?node=${nb.id}`}
                 className="flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm
                   bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
               >
@@ -427,7 +427,7 @@ function NeighborsOverviewPanel({
           {topHeard.map((item) => (
             <Link
               key={`top-heard-${item.id}`}
-              to={`/nodes/${item.id}`}
+              to={`/nodes?node=${item.id}`}
               className="flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm
                 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
             >
@@ -451,7 +451,7 @@ function NeighborsOverviewPanel({
           {topHeardBy.map((item) => (
             <Link
               key={`top-by-${item.id}`}
-              to={`/nodes/${item.id}`}
+              to={`/nodes?node=${item.id}`}
               className="flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm
                 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
             >

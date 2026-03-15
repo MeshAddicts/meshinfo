@@ -1,16 +1,21 @@
 import React, { Suspense } from "react";
-import { createBrowserRouter, Navigate,Outlet } from "react-router";
+import { createBrowserRouter, Navigate, Outlet, useParams } from "react-router";
 
 import { Layout } from "./components/Layout";
 import { Chat } from "./pages/Chat";
 import { Log } from "./pages/Log";
 import { Map } from "./pages/Map";
 import { Neighbors } from "./pages/Neighbors";
-import { Node } from "./pages/Node";
 import { Nodes } from "./pages/Nodes";
 import { Stats } from "./pages/Stats";
 import { Telemetry } from "./pages/Telemetry";
 import { Traceroutes } from "./pages/Traceroutes";
+
+/** Redirect legacy /nodes/:id to the split-view /nodes?node=:id */
+function NodeRedirect() {
+  const { id } = useParams<{ id: string }>();
+  return <Navigate to={`/nodes?node=${id}`} replace />;
+}
 
 // eslint-disable-next-line react-refresh/only-export-components
 const LazyGraph = React.lazy(() => import("./pages/Graph"));
@@ -50,7 +55,7 @@ export const router = createBrowserRouter([
       },
       { path: "/map", element: <Map /> },
       { path: "/nodes", element: <Nodes /> },
-      { path: "/nodes/:id", element: <Node /> },
+      { path: "/nodes/:id", element: <NodeRedirect /> },
       { path: "/neighbors", element: <Neighbors /> },
       { path: "/stats", element: <Stats /> },
       { path: "/telemetry", element: <Telemetry /> },
