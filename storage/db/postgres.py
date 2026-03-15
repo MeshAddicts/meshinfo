@@ -1515,8 +1515,8 @@ class PostgresStorage:
         Only populates the messages array for the requested channel.
 
         Args:
-            channel_id: If provided, only include messages for this channel.
-                        Other channels get empty messages arrays.
+            channel_id: Only include messages for this channel (defaults to "0"
+                        at the API layer). Other channels get empty messages arrays.
             range_seconds: If provided, only include messages with
                         timestamp >= (now_unix - range_seconds).
             limit: Max messages to return.

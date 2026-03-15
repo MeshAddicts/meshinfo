@@ -190,8 +190,12 @@ export const Chat = () => {
   // data, without waiting for chat data to build the full views.
   const resolvedChannelId = useMemo(() => {
     const viewsConfig = (config?.broker?.channels as any)?.views;
-    if (!Array.isArray(viewsConfig) || viewsConfig.length === 0)
-      return undefined;
+    if (!Array.isArray(viewsConfig) || viewsConfig.length === 0) {
+      // No views config — fall back to the raw URL channel if it looks
+      // like a numeric channel id, otherwise default to "0".
+      if (rawCh && /^[0-9]+$/.test(rawCh)) return rawCh;
+      return "0";
+    }
 
     // Try matching the raw URL ch param against config views
     if (rawCh) {
@@ -220,7 +224,10 @@ export const Chat = () => {
     // Fall back to the default view's channel
     const def =
       viewsConfig.find((v: any) => v.default) ?? viewsConfig[0];
-    return def?.channels?.[0] ? String(def.channels[0]) : undefined;
+    if (def?.channels?.[0]) return String(def.channels[0]);
+    // Views exist but no channel resolved — still scope the query
+    if (rawCh && /^[0-9]+$/.test(rawCh)) return rawCh;
+    return "0";
   }, [config, rawCh]);
 
   // ── 5. Chat query (fires with resolved channel + range) ──

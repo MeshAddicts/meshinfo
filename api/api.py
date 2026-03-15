@@ -237,7 +237,7 @@ class API:
         async def chat(request: Request) -> JSONResponse:
             if self.read_from_postgres:
                 # Parse query params
-                channel = request.query_params.get("channel")  # e.g. "8", "0"
+                channel = request.query_params.get("channel") or "0"  # e.g. "8", "0"
                 range_param = request.query_params.get("range", "24h")  # "1h","24h","7d","all"
 
                 range_map = {
