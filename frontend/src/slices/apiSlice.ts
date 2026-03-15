@@ -33,38 +33,50 @@ export const apiSlice = createApi({
         response.config,
       providesTags: [{ type: "Config", id: "LIST" }],
     }),
-    getChats: builder.query<IChatResponse, void>({
-      query: () => "chat",
-      transformResponse: (response: IChatResponse) => {
+    getChats: builder.query<
+        IChatResponse,
+        { channel?: string; range?: string } | void
+    >({
+        query: (params) => {
+        const sp = new URLSearchParams();
+        if (params && params.channel) sp.set("channel", params.channel);
+        if (params && params.range) sp.set("range", params.range);
+        const qs = sp.toString();
+        return qs ? `chat?${qs}` : "chat";
+        },
+        transformResponse: (response: IChatResponse) => {
         const channels = Object.fromEntries(
-          Object.entries(response.channels).map(([id, channel]) => [
+            Object.entries(response.channels).map(([id, channel]) => [
             id,
             {
-              ...channel,
-              totalMessages: channel.messages.length,
-              messages: Object.values(
+                ...channel,
+                // Use backend-provided totalMessages if available,
+                // fall back to response array length for backward compat
+                totalMessages:
+                (channel as any).totalMessages ?? channel.messages.length,
+                messages: Object.values(
                 channel.messages.reduce(
-                  (acc, message) => ({
+                    (acc, message) => ({
                     ...acc,
                     [message.id]: {
-                      ...message,
-                      sender: (acc[message.id]?.sender ?? []).concat(
+                        ...message,
+                        sender: (acc[message.id]?.sender ?? []).concat(
                         message.sender
-                      ),
+                        ),
                     },
-                  }),
-                  {} as Record<
+                    }),
+                    {} as Record<
                     string,
                     IChatResponse["channels"]["0"]["messages"][0]
-                  >
+                    >
                 )
-              ).sort((a, b) => b.timestamp - a.timestamp),
+                ).sort((a, b) => b.timestamp - a.timestamp),
             },
-          ])
+            ])
         );
         return { channels };
-      },
-      providesTags: [{ type: "Chat", id: "LIST" }],
+        },
+        providesTags: [{ type: "Chat", id: "LIST" }],
     }),
     getNodes: builder.query<INodesResponse, void | { status: "online" }>({
       query: () => "nodes",
