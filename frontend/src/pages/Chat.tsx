@@ -40,7 +40,7 @@ type ViewDef = {
   label: string; // "MediumFast"
   short?: string; // "MF"
   channelId: string; // "0"
-  aliases: string[]; // ["mf","0","MediumFast",...]D
+  aliases: string[]; // ["mf","0","MediumFast",...]
   tooltip?: string;
   isDefault?: boolean;
 };
