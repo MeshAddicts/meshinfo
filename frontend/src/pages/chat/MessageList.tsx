@@ -191,7 +191,7 @@ export function MessageList({
     }
 
     setFlashMsgId(mid);
-    const t = window.setTimeout(() => setFlashMsgId(""), 4000);
+    const t = window.setTimeout(() => setFlashMsgId(""), 2000);
     return () => window.clearTimeout(t);
   }, [urlMsg, msgPresentInList, selectedChannel]);
 

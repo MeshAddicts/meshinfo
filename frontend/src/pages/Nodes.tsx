@@ -7,7 +7,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { VirtuosoHandle } from "react-virtuoso";
 
 import { HeardBy } from "../components/HeardBy";
 import { useNodesSearchParams } from "../hooks/useNodesSearchParams";
@@ -401,54 +400,32 @@ export const Nodes = () => {
     if (selectedId && selectedId !== prev) setMobileSheet("details");
   }, [selectedId, isLgUp]);
 
-  // Virtuoso ref – used for scroll-into-view
-  const virtuosoRef = useRef<VirtuosoHandle | null>(null);
-
-  // Flash node id (brief highlight after scroll-to)
+  // Scroll-to + flash: driven by selectedId changes
+  const [scrollToId, setScrollToId] = useState<string>("");
   const [flashNodeId, setFlashNodeId] = useState<string>("");
+  const prevSelectedRef = useRef<string>("");
 
-  // Auto-scroll list to selected node when arriving via URL (e.g. from Neighbors page)
-  const pendingScrollRef = useRef<string>("");
+  // Trigger scroll when selection changes
   useEffect(() => {
-    if (!selectedId) {
-      pendingScrollRef.current = "";
-      return;
-    }
-
-    // Only scroll when selection actually changes
-    if (pendingScrollRef.current === selectedId) return;
-    pendingScrollRef.current = selectedId;
-
-    // Find index in filtered list
-    const tryScroll = () => {
-      const idx = filteredItems.findIndex((x) => x.id === selectedId);
-      if (idx < 0) return false;
-      virtuosoRef.current?.scrollToIndex({
-        index: idx,
-        align: "center",
-        behavior: "smooth",
-      });
-      return true;
-    };
-
-    // Retry at increasing delays (data/virtuoso may not be ready yet)
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    for (const delay of [50, 150, 400, 800]) {
-      timers.push(setTimeout(() => {
-        if (pendingScrollRef.current !== selectedId) return;
-        tryScroll();
-      }, delay));
-    }
-
-    // Flash highlight
+    const prev = prevSelectedRef.current;
+    prevSelectedRef.current = selectedId;
+    if (!selectedId || selectedId === prev) return;
+    setScrollToId(selectedId);
     setFlashNodeId(selectedId);
-    const flashTimer = setTimeout(() => setFlashNodeId(""), 2500);
+  }, [selectedId]);
 
-    return () => {
-      timers.forEach(clearTimeout);
-      clearTimeout(flashTimer);
-    };
-  }, [selectedId, filteredItems]);
+  // Separate effect to clear flash — not affected by StrictMode double-invoke
+  useEffect(() => {
+    if (!flashNodeId) return;
+    const t = setTimeout(() => setFlashNodeId(""), 2000);
+    return () => clearTimeout(t);
+  }, [flashNodeId]);
+
+  // Track whether list is scrolled to top — pause polling when not
+  const [listAtTop, setListAtTop] = useState(true);
+  const onAtTopChange = useCallback((atTop: boolean) => {
+    setListAtTop(atTop);
+  }, []);
 
   // Export menu
   const [exportOpen, setExportOpen] = useState(false);
@@ -498,18 +475,24 @@ export const Nodes = () => {
 
   // Header live pill
   const liveUiMode = useMemo(() => {
-    return liveEnabled ? ("live" as const) : ("off" as const);
-  }, [liveEnabled]);
+    if (!liveEnabled) return "off" as const;
+    if (!listAtTop) return "paused" as const;
+    return "live" as const;
+  }, [liveEnabled, listAtTop]);
 
   const livePillText = useMemo(() => {
-    return liveEnabled ? "Live" : "Live off";
-  }, [liveEnabled]);
+    if (liveUiMode === "live") return "Live";
+    if (liveUiMode === "paused") return "Paused";
+    return "Live off";
+  }, [liveUiMode]);
 
   const livePillTitle = useMemo(() => {
     if (!liveEnabled)
       return "Live mode is off. Auto-refresh is disabled (no polling / focus / reconnect). Click to enable.";
+    if (!listAtTop)
+      return "Auto-refresh paused while scrolled. Scroll to top or click to resume.";
     return "Live mode is on. Auto-refresh polls every 5 seconds (paused when tab is unfocused). Click to disable.";
-  }, [liveEnabled]);
+  }, [liveEnabled, listAtTop]);
 
   // Export rows
   const exportRows = useMemo(() => {
@@ -697,7 +680,9 @@ export const Nodes = () => {
                     "rounded-full px-2 py-0.5 text-[11px] font-medium border transition",
                     liveUiMode === "live"
                       ? "bg-emerald-600 text-white border-emerald-600"
-                      : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
+                      : liveUiMode === "paused"
+                        ? "bg-amber-500 text-white border-amber-500"
+                        : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
                   ].join(" ")}
                   onClick={() => setLiveEnabled((v) => !v)}
                   title={livePillTitle}
@@ -744,7 +729,9 @@ export const Nodes = () => {
                     "rounded-full px-2 py-0.5 text-[11px] font-medium border transition",
                     liveUiMode === "live"
                       ? "bg-emerald-600 text-white border-emerald-600"
-                      : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
+                      : liveUiMode === "paused"
+                        ? "bg-amber-500 text-white border-amber-500"
+                        : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
                   ].join(" ")}
                   onClick={() => setLiveEnabled((v) => !v)}
                   title={livePillTitle}
@@ -922,9 +909,10 @@ export const Nodes = () => {
                   items={filteredItems}
                   selectedId={selectedId}
                   flashId={flashNodeId}
+                  scrollToId={scrollToId}
                   onSelect={onSelect}
+                  onAtTopChange={onAtTopChange}
                   totalSeen={Object.keys(nodes as any).length}
-                  virtuosoRef={virtuosoRef}
                 />
               </div>
             </div>
