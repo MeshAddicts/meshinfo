@@ -1005,7 +1005,7 @@ export function Map() {
     const { nodePanel, nodeTitle, nodeSubtitle, nodeContent } = getDetailsDom();
     if (!nodePanel || !nodeTitle || !nodeSubtitle || !nodeContent) return;
 
-    const neighborLayers: VectorLayer<Feature<Geometry>>[] = [];
+    const neighborLayers: VectorLayer<VectorSource<Feature<Geometry>>>[] = [];
 
     const selectedStyle = new Style({
       image: new Circle({
