@@ -28,12 +28,12 @@ export function calculateDistanceBetweenNodes(
     Math.round(
       getDistanceBetweenTwoPoints(
         [
-          node1.position.latitude_i / 10000000,
           node1.position.longitude_i / 10000000,
+          node1.position.latitude_i / 10000000,
         ],
         [
-          node2.position.latitude_i / 10000000,
           node2.position.longitude_i / 10000000,
+          node2.position.latitude_i / 10000000,
         ]
       ) * 100
     ) / 100

@@ -52,14 +52,14 @@ export function MapSettingsPanel({
   usingMapbox: boolean;
 }) {
   return (
-    <div className="fixed bottom-4 right-4 z-[1100] min-w-[14rem]">
+    <div className="fixed bottom-4 right-4 z-1100 min-w-56">
       {/* Toggle button - shows when closed */}
       {!settingsPanelOpen && (
         <button
           ref={settingsToggleRef}
           type="button"
           onClick={() => setSettingsPanelOpen(true)}
-          className="mb-2 ml-auto block p-2 rounded-lg shadow-lg backdrop-blur-sm border
+          className="mb-2 ml-auto block p-2 rounded-lg shadow-lg backdrop-blur-xs border
                       bg-white/90 dark:bg-gray-800/90 border-gray-200 dark:border-gray-600
                       hover:bg-gray-50 dark:hover:bg-gray-700"
           aria-label="Open Map Settings"
@@ -128,7 +128,7 @@ export function MapSettingsPanel({
                 <select
                   id="provider-select"
                   aria-label="Map provider selection"
-                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
+                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-hidden focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
                   value={provider}
                   onChange={(e) => setProvider(e.target.value as MapProvider)}
                 >
@@ -152,7 +152,7 @@ export function MapSettingsPanel({
                   <select
                     id="mapbox-style-select"
                     aria-label="Mapbox map style selection"
-                    className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
+                    className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-hidden focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
                     value={mapboxStyle}
                     onChange={(e) => setMapboxStyle(e.target.value)}
                   >
@@ -174,7 +174,7 @@ export function MapSettingsPanel({
                   <select
                     id="osm-basemap-select"
                     aria-label="OpenStreetMap basemap selection"
-                    className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
+                    className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-hidden focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
                     value={osmBasemap}
                     onChange={(e) => setOsmBasemap(e.target.value as OsmBasemap)}
                   >
@@ -197,7 +197,7 @@ export function MapSettingsPanel({
                 <select
                   id="recent-days-select"
                   aria-label="Filter nodes by last seen timeframe"
-                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
+                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-hidden focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
                   value={recentDays}
                   onChange={(e) => setRecentDays(Number(e.target.value))}
                 >
@@ -230,7 +230,7 @@ export function MapSettingsPanel({
                     checked={clusterEnabled}
                     onChange={(e) => setClusterEnabled(e.target.checked)}
                     disabled={!usingMapbox}
-                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                    className="h-4 w-4 rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
                     aria-label="Toggle node clustering (Mapbox only)"
                   />
                 </div>
@@ -240,7 +240,7 @@ export function MapSettingsPanel({
               {!canUseMapbox && (
                 <div className="text-xs text-gray-500 dark:text-gray-400 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
                   Mapbox features are disabled because{" "}
-                  <code className="bg-gray-200 dark:bg-gray-700 px-1 py-0.5 rounded text-xs">
+                  <code className="bg-gray-200 dark:bg-gray-700 px-1 py-0.5 rounded-sm text-xs">
                     VITE_MAPBOX_TOKEN
                   </code>{" "}
                   is not configured.

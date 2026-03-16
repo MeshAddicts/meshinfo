@@ -504,7 +504,7 @@ function Histogram({ values, label }: { values: number[]; label: string }) {
               {counts.map((c, i) => (
                 <div
                   key={`bin-${i}`}
-                  className="flex-1 rounded-sm bg-indigo-600/70 dark:bg-indigo-400/40"
+                  className="flex-1 rounded-xs bg-indigo-600/70 dark:bg-indigo-400/40"
                   style={{ height: `${(c / maxCount) * 100}%` }}
                   title={`bin ${i + 1}: ${c}`}
                 />

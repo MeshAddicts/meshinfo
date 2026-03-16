@@ -335,9 +335,9 @@ export const Stats = () => {
   }, [derived]);
 
   return (
-    <div className="w-full h-[100dvh] overflow-hidden flex flex-col">
+    <div className="w-full h-dvh overflow-hidden flex flex-col">
       {/* ── Sticky header (matches Nodes) ── */}
-      <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur border-b border-gray-200 dark:border-gray-800">
+      <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
         <div className="mx-auto max-w-[1600px] pl-3 pr-14 sm:px-5 py-2 sm:py-3">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
@@ -511,8 +511,8 @@ export const Stats = () => {
               {!stats ? (
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
                   <div className="lg:col-span-7">
-                    <div className="h-6 w-56 rounded bg-gray-800/50" />
-                    <div className="mt-3 h-4 w-96 rounded bg-gray-800/30" />
+                    <div className="h-6 w-56 rounded-sm bg-gray-800/50" />
+                    <div className="mt-3 h-4 w-96 rounded-sm bg-gray-800/30" />
                     <div className="mt-6 grid grid-cols-2 gap-3">
                       <SkeletonKpiCard />
                       <SkeletonKpiCard />
@@ -670,12 +670,12 @@ export const Stats = () => {
 
               {!stats ? (
                 <div className="mt-4 space-y-3">
-                  <div className="h-4 w-48 rounded bg-gray-800/30" />
-                  <div className="h-2 w-full rounded bg-gray-800/20" />
-                  <div className="h-4 w-56 rounded bg-gray-800/30" />
-                  <div className="h-2 w-full rounded bg-gray-800/20" />
-                  <div className="h-4 w-52 rounded bg-gray-800/30" />
-                  <div className="h-2 w-full rounded bg-gray-800/20" />
+                  <div className="h-4 w-48 rounded-sm bg-gray-800/30" />
+                  <div className="h-2 w-full rounded-sm bg-gray-800/20" />
+                  <div className="h-4 w-56 rounded-sm bg-gray-800/30" />
+                  <div className="h-2 w-full rounded-sm bg-gray-800/20" />
+                  <div className="h-4 w-52 rounded-sm bg-gray-800/30" />
+                  <div className="h-2 w-full rounded-sm bg-gray-800/20" />
                 </div>
               ) : (
                 <div className="mt-4 space-y-3">
@@ -752,9 +752,9 @@ export const Stats = () => {
               <div className="mt-4 space-y-2">
                 {!stats ? (
                   <>
-                    <div className="h-10 w-full rounded bg-gray-800/20" />
-                    <div className="h-10 w-full rounded bg-gray-800/20" />
-                    <div className="h-10 w-full rounded bg-gray-800/20" />
+                    <div className="h-10 w-full rounded-sm bg-gray-800/20" />
+                    <div className="h-10 w-full rounded-sm bg-gray-800/20" />
+                    <div className="h-10 w-full rounded-sm bg-gray-800/20" />
                   </>
                 ) : insights.length === 0 ? (
                   <div className="text-sm text-gray-600 dark:text-gray-400">No insights yet.</div>

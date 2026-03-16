@@ -40,7 +40,7 @@ function StatCard({
   sub?: string;
 }) {
   return (
-    <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-sm">
+    <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-xs">
       <div className="text-xs text-gray-600 dark:text-gray-400">{title}</div>
       <div className="mt-1 text-lg font-semibold text-gray-900 dark:text-gray-100 tabular-nums">
         {value}
@@ -154,7 +154,7 @@ export function NodesOverviewPanel({
 
   return (
     <div className="flex flex-col gap-4 min-h-0">
-      <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col">
+      <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-xs flex flex-col">
         <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40">
           <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
             Overview
@@ -178,7 +178,7 @@ export function NodesOverviewPanel({
           </div>
 
           <div className="grid grid-cols-1 gap-3">
-            <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-sm">
+            <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-xs">
               <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
                 Telemetry snapshot
               </div>
@@ -212,7 +212,7 @@ export function NodesOverviewPanel({
               </div>
             </div>
 
-            <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-sm">
+            <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-xs">
               <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
                 Last seen distribution
               </div>
@@ -228,7 +228,7 @@ export function NodesOverviewPanel({
               </div>
             </div>
 
-            <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-sm">
+            <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-xs">
               <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
                 Top roles
               </div>
@@ -251,7 +251,7 @@ export function NodesOverviewPanel({
         </div>
       </div>
 
-      <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-4 shadow-sm">
+      <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-4 shadow-xs">
         <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
           Pro tips
         </div>

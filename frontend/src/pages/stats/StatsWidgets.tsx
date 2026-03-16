@@ -21,7 +21,7 @@ export function Panel({
   return (
     <div
       className={
-        "rounded-2xl border border-gray-800/60 bg-gray-950/35 p-5 shadow-sm backdrop-blur " +
+        "rounded-2xl border border-gray-800/60 bg-gray-950/35 p-5 shadow-xs backdrop-blur-sm " +
         className
       }
     >
@@ -48,7 +48,7 @@ export function KpiCard({
   return (
     <div
       className={
-        "group rounded-2xl border border-gray-800/60 bg-gray-950/35 p-4 shadow-sm backdrop-blur transition " +
+        "group rounded-2xl border border-gray-800/60 bg-gray-950/35 p-4 shadow-xs backdrop-blur-sm transition " +
         "hover:bg-gray-950/55 hover:border-gray-700/70"
       }
       title={hint}
@@ -82,9 +82,9 @@ export function KpiCard({
 export function SkeletonKpiCard() {
   return (
     <div className="rounded-2xl border border-gray-800/50 bg-gray-950/25 p-4">
-      <div className="h-3 w-32 rounded bg-gray-800/30" />
-      <div className="mt-3 h-6 w-24 rounded bg-gray-800/40" />
-      <div className="mt-2 h-3 w-40 rounded bg-gray-800/20" />
+      <div className="h-3 w-32 rounded-sm bg-gray-800/30" />
+      <div className="mt-3 h-6 w-24 rounded-sm bg-gray-800/40" />
+      <div className="mt-2 h-3 w-40 rounded-sm bg-gray-800/20" />
     </div>
   );
 }

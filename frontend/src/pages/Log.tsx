@@ -800,8 +800,8 @@ export const Log = () => {
   }, [refetchMesh, refetchMqtt]);
 
   return (
-    <div className="w-full h-[100dvh] overflow-hidden flex flex-col">
-      <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur border-b border-gray-200 dark:border-gray-800">
+    <div className="w-full h-dvh overflow-hidden flex flex-col">
+      <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
         <div className="mx-auto max-w-[1600px] pl-3 pr-14 sm:px-5 py-2 sm:py-3">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
@@ -917,7 +917,7 @@ export const Log = () => {
                   className={[
                     "whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-medium border transition",
                     active
-                      ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                      ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
                       : "bg-transparent text-gray-700 dark:text-gray-200 border-gray-300/60 dark:border-gray-600/60 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
                   ].join(" ")}
                   onClick={() =>
@@ -951,7 +951,7 @@ export const Log = () => {
                 value={qInput}
                 onChange={(e) => setQInput(e.target.value)}
                 placeholder="Search logs… (press / to focus)"
-                className="w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+                className="w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/60"
               />
             </div>
 
@@ -1050,7 +1050,7 @@ export const Log = () => {
 
       <div className="flex-1 overflow-hidden flex flex-col">
         <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
-          <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col min-h-0 flex-1">
+          <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-xs flex flex-col min-h-0 flex-1">
             <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex items-center justify-between">
               <div className="text-sm text-gray-800 dark:text-gray-200">
                 <span className="font-semibold">
@@ -1184,7 +1184,7 @@ export const Log = () => {
       {/* Mobile bottom nav */}
       <div className="fixed inset-x-0 bottom-0 z-30 lg:hidden">
         <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
-          <div className="mb-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white/90 dark:bg-gray-900/85 backdrop-blur shadow-sm overflow-hidden">
+          <div className="mb-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm shadow-xs overflow-hidden">
             <button
               type="button"
               className="w-full py-3 text-sm font-medium text-gray-800 dark:text-gray-100 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"

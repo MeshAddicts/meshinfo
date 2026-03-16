@@ -1198,8 +1198,8 @@ export const Chat = () => {
 
   if (isFirstLoad) {
     return (
-      <div className="w-full h-[100dvh] overflow-hidden flex flex-col">
-        <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur border-b border-gray-200 dark:border-gray-800">
+      <div className="w-full h-dvh overflow-hidden flex flex-col">
+        <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
           <div className="mx-auto max-w-[1600px] pl-3 pr-14 sm:px-5 py-2 sm:py-3">
             <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
               <div>
@@ -1235,22 +1235,22 @@ export const Chat = () => {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-full min-h-0">
               {/* Skeleton message list */}
               <div className="lg:col-span-2 min-h-0 flex flex-col">
-                <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col flex-1">
+                <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-xs flex flex-col flex-1">
                   <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-                    <div className="animate-pulse h-4 w-48 rounded bg-gray-200/60 dark:bg-gray-800/60" />
+                    <div className="animate-pulse h-4 w-48 rounded-sm bg-gray-200/60 dark:bg-gray-800/60" />
                   </div>
                   <div className="flex-1 p-4 space-y-4">
                     {Array.from({ length: 8 }).map((_, i) => (
                       <div key={i} className="animate-pulse space-y-2">
                         <div className="flex items-center gap-2">
                           <div className="h-5 w-12 rounded-full bg-gray-200/60 dark:bg-gray-800/60" />
-                          <div className="h-3 w-6 rounded bg-gray-200/40 dark:bg-gray-800/40" />
+                          <div className="h-3 w-6 rounded-sm bg-gray-200/40 dark:bg-gray-800/40" />
                           <div className="h-5 w-10 rounded-full bg-gray-200/60 dark:bg-gray-800/60" />
                           <div className="h-5 w-16 rounded-full bg-gray-200/50 dark:bg-gray-800/50" />
-                          <div className="ml-auto h-3 w-28 rounded bg-gray-200/40 dark:bg-gray-800/40" />
+                          <div className="ml-auto h-3 w-28 rounded-sm bg-gray-200/40 dark:bg-gray-800/40" />
                         </div>
-                        <div className="h-4 rounded bg-gray-200/40 dark:bg-gray-800/40" style={{ width: `${55 + (i * 7) % 35}%` }} />
-                        <div className="h-3 w-16 rounded bg-gray-200/30 dark:bg-gray-800/30" />
+                        <div className="h-4 rounded-sm bg-gray-200/40 dark:bg-gray-800/40" style={{ width: `${55 + (i * 7) % 35}%` }} />
+                        <div className="h-3 w-16 rounded-sm bg-gray-200/30 dark:bg-gray-800/30" />
                       </div>
                     ))}
                   </div>
@@ -1260,12 +1260,12 @@ export const Chat = () => {
               {/* Skeleton sidebar */}
               <div className="hidden lg:flex lg:col-span-1 flex-col gap-4">
                 <div className="rounded-xl border border-gray-200 dark:border-gray-800 p-4 space-y-3">
-                  <div className="animate-pulse h-4 w-24 rounded bg-gray-200/60 dark:bg-gray-800/60" />
+                  <div className="animate-pulse h-4 w-24 rounded-sm bg-gray-200/60 dark:bg-gray-800/60" />
                   <div className="animate-pulse h-9 w-full rounded-md border border-gray-300/40 dark:border-gray-700/40 bg-gray-200/30 dark:bg-gray-800/30" />
                 </div>
                 <div className="rounded-xl border border-gray-200 dark:border-gray-800 p-4 space-y-3">
-                  <div className="animate-pulse h-4 w-32 rounded bg-gray-200/60 dark:bg-gray-800/60" />
-                  <div className="animate-pulse h-3 w-48 rounded bg-gray-200/40 dark:bg-gray-800/40" />
+                  <div className="animate-pulse h-4 w-32 rounded-sm bg-gray-200/60 dark:bg-gray-800/60" />
+                  <div className="animate-pulse h-3 w-48 rounded-sm bg-gray-200/40 dark:bg-gray-800/40" />
                 </div>
               </div>
             </div>
@@ -1276,7 +1276,7 @@ export const Chat = () => {
   }
 
   return (
-    <div className="w-full h-[100dvh] overflow-hidden flex flex-col">
+    <div className="w-full h-dvh overflow-hidden flex flex-col">
       <FiltersDrawer
         open={filtersOpen}
         onClose={() => setFiltersOpen(false)}
@@ -1292,7 +1292,7 @@ export const Chat = () => {
         setParam={setParam}
       />
 
-      <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur border-b border-gray-200 dark:border-gray-800">
+      <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
         <div className="mx-auto max-w-[1600px] pl-3 pr-14 sm:px-5 py-2 sm:py-3">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
@@ -1429,7 +1429,7 @@ export const Chat = () => {
                   className={[
                     "whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-medium border transition",
                     active
-                      ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                      ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
                       : "bg-transparent text-gray-700 dark:text-gray-200 border-gray-300/60 dark:border-gray-600/60 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
                   ].join(" ")}
                   onClick={() => {
@@ -1467,7 +1467,7 @@ export const Chat = () => {
                 value={qInput}
                 onChange={(e) => setQInput(e.target.value)}
                 placeholder="Search messages… (press / to focus)"
-                className="w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+                className="w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/60"
               />
             </div>
 
@@ -1748,7 +1748,7 @@ export const Chat = () => {
       {/* Mobile bottom nav */}
       <div className="fixed inset-x-0 bottom-0 z-30 lg:hidden">
         <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
-          <div className="mb-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white/90 dark:bg-gray-900/85 backdrop-blur shadow-sm overflow-hidden">
+          <div className="mb-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm shadow-xs overflow-hidden">
             <div className="grid grid-cols-3 divide-x divide-gray-200 dark:divide-gray-800">
               <button
                 type="button"

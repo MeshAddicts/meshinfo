@@ -290,7 +290,7 @@ export function MessageList({
     newCount > 0 ? `New messages (${newCount.toLocaleString()})` : pausedLabel;
 
   return (
-    <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col min-h-0 flex-1">
+    <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-xs flex flex-col min-h-0 flex-1">
       <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex items-center justify-between">
         <div className="text-sm text-gray-800 dark:text-gray-200">
           {selectedChannel ? (
@@ -391,7 +391,7 @@ export function MessageList({
                 <button
                   type="button"
                   className={[
-                    "pointer-events-auto rounded-full px-4 py-2 text-sm font-medium shadow-sm border transition",
+                    "pointer-events-auto rounded-full px-4 py-2 text-sm font-medium shadow-xs border transition",
                     newCount > 0
                       ? "bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700"
                       : "bg-gray-900 text-white border-gray-900 hover:bg-gray-800",
@@ -483,7 +483,7 @@ export function MessageList({
                   <div
                     id={`msg-${msgId}`}
                     className={[
-                      "group px-4 py-3 cursor-pointer transition outline-none border-b border-gray-200 dark:border-gray-800",
+                      "group px-4 py-3 cursor-pointer transition outline-hidden border-b border-gray-200 dark:border-gray-800",
                       isSelected
                         ? "bg-indigo-50/70 dark:bg-indigo-900/20 ring-1 ring-indigo-400/30"
                         : "hover:bg-gray-50 dark:hover:bg-gray-900/30",
@@ -577,7 +577,7 @@ export function MessageList({
                       </div>
                     </div>
 
-                    <div className="mt-2 text-sm text-gray-900 dark:text-gray-100 whitespace-pre-wrap break-words">
+                    <div className="mt-2 text-sm text-gray-900 dark:text-gray-100 whitespace-pre-wrap wrap-break-word">
                       {renderHighlightedText(String(m.text ?? ""), urlQ)}
                     </div>
 

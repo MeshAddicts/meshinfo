@@ -126,7 +126,7 @@ export function NodeDetailsPanel({
 
   return (
     <div className="flex flex-col gap-4 min-h-0">
-      <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col">
+      <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-xs flex flex-col">
         <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
@@ -192,7 +192,7 @@ export function NodeDetailsPanel({
 
         <div className="p-4 space-y-4">
           {/* Gauges */}
-          <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-sm">
+          <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-xs">
             <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
               Utilization
             </div>
@@ -211,7 +211,7 @@ export function NodeDetailsPanel({
           </div>
 
           {/* Details */}
-          <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-sm">
+          <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-xs">
             <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
               Details
             </div>
@@ -294,7 +294,7 @@ export function NodeDetailsPanel({
           </div>
 
           {/* Map */}
-          <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-sm">
+          <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-xs">
             <div className="flex items-center justify-between">
               <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
                 Location
@@ -320,7 +320,7 @@ export function NodeDetailsPanel({
           </div>
 
           {/* Elsewhere */}
-          <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-sm">
+          <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-xs">
             <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
               Elsewhere
             </div>

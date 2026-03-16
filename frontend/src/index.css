@@ -1,3 +1,48 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+  Tailwind v4 uses oklch colors which shift the indigo palette more blue.
+  Override with v3 hex values to preserve the original softer indigo look.
+*/
+@theme {
+  --color-indigo-300: #a5b4fc;
+  --color-indigo-400: #818cf8;
+  --color-indigo-500: #6366f1;
+  --color-indigo-600: #4f46e5;
+  --color-indigo-700: #4338ca;
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
+
+/*
+  Tailwind v4 puts utilities in @layer, which loses to unlayered styles.
+  External CSS (ol.css, mapbox-gl.css) sets link colors outside layers,
+  overriding dark mode utilities. These unlayered rules fix dark mode links.
+*/
+.dark a {
+  color: #818cf8;
+}
+.dark a:visited {
+  color: #818cf8;
+}
+.dark a:hover {
+  color: #6366f1;
+}

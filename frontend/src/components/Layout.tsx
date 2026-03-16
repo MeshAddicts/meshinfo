@@ -67,7 +67,7 @@ const isFullBleed = isMap || isChat || isLog || isTraceroutes || isTelemetry || 
   }, []);
 
   return (
-    <div className={isFullBleed ? "h-[100dvh] overflow-hidden" : ""}>
+    <div className={isFullBleed ? "h-dvh overflow-hidden" : ""}>
       <Menu isDark={isDark} onDarkChange={(dark) => setIsDark(dark)} />
 
       <div

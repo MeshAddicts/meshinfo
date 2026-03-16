@@ -58,7 +58,7 @@ export const renderHighlightedText = (text: string, query: string) => {
       return (
         <mark
           key={`hl-${i}`}
-          className="rounded px-0.5 bg-yellow-200/70 dark:bg-yellow-400/20 text-gray-900 dark:text-yellow-100"
+          className="rounded-sm px-0.5 bg-yellow-200/70 dark:bg-yellow-400/20 text-gray-900 dark:text-yellow-100"
         >
           {p}
         </mark>

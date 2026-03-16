@@ -92,7 +92,7 @@ export function TraceroutesList({
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") onSelect(it.key);
                 }}
-                className={`rounded-xl border p-3 shadow-sm transition cursor-pointer ${
+                className={`rounded-xl border p-3 shadow-xs transition cursor-pointer ${
                   isSelected
                     ? "border-indigo-500/40 bg-indigo-50/60 dark:bg-indigo-900/10"
                     : "border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-950/20 hover:bg-gray-50 dark:hover:bg-gray-900/30"
@@ -135,7 +135,7 @@ export function TraceroutesList({
               onKeyDown={(ev) => {
                 if (ev.key === "Enter" || ev.key === " ") onSelect(it.key);
               }}
-              className={`rounded-xl border p-3 shadow-sm transition cursor-pointer ${
+              className={`rounded-xl border p-3 shadow-xs transition cursor-pointer ${
                 isSelected
                   ? "border-indigo-500/40 bg-indigo-50/60 dark:bg-indigo-900/10"
                   : "border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-950/20 hover:bg-gray-50 dark:hover:bg-gray-900/30"
