@@ -24,7 +24,7 @@ export function FocusPanel({
   const focusNodeObj = urlNode ? nodes?.[urlNode] : null;
 
   return (
-    <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col max-h-[40vh] min-h-0">
+    <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-xs flex flex-col max-h-[40vh] min-h-0">
       <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex items-center justify-between">
         <div className="text-sm font-medium text-gray-800 dark:text-gray-200">
           Node focus
@@ -52,7 +52,7 @@ export function FocusPanel({
                 value={focusPicker}
                 onChange={(e) => setFocusPicker(e.target.value)}
                 placeholder="Type 2+ chars… (id, shortname, longname)"
-                className="w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+                className="w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/60"
               />
             </div>
 

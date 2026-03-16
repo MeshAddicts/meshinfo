@@ -122,9 +122,9 @@ export function RouteError() {
   }
 
   return (
-    <div className="min-h-[100dvh] bg-white dark:bg-gray-950">
+    <div className="min-h-dvh bg-white dark:bg-gray-950">
       {/* simple “in-app-ish” header */}
-      <div className="sticky top-0 z-10 border-b border-gray-200 dark:border-gray-800 bg-white/85 dark:bg-gray-900/70 backdrop-blur">
+      <div className="sticky top-0 z-10 border-b border-gray-200 dark:border-gray-800 bg-white/85 dark:bg-gray-900/70 backdrop-blur-sm">
         <div className="mx-auto max-w-[1600px] px-3 sm:px-5 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-indigo-600 dark:text-indigo-400">
@@ -166,7 +166,7 @@ export function RouteError() {
       </div>
 
       <div className="mx-auto max-w-[1600px] px-3 sm:px-5 py-6">
-        <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-sm overflow-hidden">
+        <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-xs overflow-hidden">
           <div className="p-5 sm:p-6">
             <div className="flex items-start gap-4">
               <div className="text-indigo-600 dark:text-indigo-400 shrink-0">

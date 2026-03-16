@@ -373,7 +373,7 @@ export function TracerouteDetailsPanel({
 
                           <div className="mt-3">
                             <RouteChips nodes={nodes} routeIds={g.route_ids} />
-                            <div className="mt-2 text-xs text-gray-500 break-words">
+                            <div className="mt-2 text-xs text-gray-500 wrap-break-word">
                               {routeText || "—"}
                             </div>
                           </div>
@@ -452,7 +452,7 @@ export function TracerouteDetailsPanel({
 
                         <div className="mt-3">
                           <RouteChips nodes={nodes} routeIds={g.route_ids} />
-                          <div className="mt-2 text-xs text-gray-500 break-words">
+                          <div className="mt-2 text-xs text-gray-500 wrap-break-word">
                             {routeText || "—"}
                           </div>
 

@@ -630,8 +630,8 @@ export const Telemetry = () => {
 
   if (!nodes || !telemetryRaw) {
     return (
-      <div className="w-full h-[100dvh] overflow-hidden flex flex-col">
-        <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur border-b border-gray-200 dark:border-gray-800">
+      <div className="w-full h-dvh overflow-hidden flex flex-col">
+        <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
           <div className="mx-auto max-w-[1600px] pl-3 pr-14 sm:px-5 py-2 sm:py-3">
             <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
               Telemetry
@@ -647,9 +647,9 @@ export const Telemetry = () => {
   }
 
   return (
-    <div className="w-full h-[100dvh] overflow-hidden flex flex-col">
+    <div className="w-full h-dvh overflow-hidden flex flex-col">
       {/* Sticky header (Chat-style) */}
-      <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur border-b border-gray-200 dark:border-gray-800">
+      <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
         <div className="mx-auto max-w-[1600px] pl-3 pr-14 sm:px-5 py-2 sm:py-3">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
@@ -785,7 +785,7 @@ export const Telemetry = () => {
                 value={qInput}
                 onChange={(e) => setQInput(e.target.value)}
                 placeholder="Search nodes… (press / to focus)"
-                className="w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+                className="w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/60"
               />
             </div>
 
@@ -886,7 +886,7 @@ export const Telemetry = () => {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
             {/* List */}
             <div className="min-h-0 flex flex-col h-full">
-              <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col min-h-0 flex-1">
+              <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-xs flex flex-col min-h-0 flex-1">
                 <div className="flex-1 min-h-0 overflow-hidden">
                   <TelemetryList
                     items={listItems}
@@ -900,7 +900,7 @@ export const Telemetry = () => {
 
             {/* Details */}
             <div className="lg:col-span-2 min-h-0 flex flex-col">
-              <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col min-h-0">
+              <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-xs flex flex-col min-h-0">
                 <TelemetryDetailsPanel
                   nodes={nodes}
                   selectedKey={selectedKey}

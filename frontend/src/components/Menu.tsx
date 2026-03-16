@@ -42,7 +42,7 @@ export const Menu = ({
       {/* Mobile Hamburger Button */}
       <button
         type="button"
-        className={`lg:hidden fixed z-50 top-4 right-4 left-auto p-2 rounded-lg shadow-lg backdrop-blur-sm border transition-all duration-200 ${
+        className={`lg:hidden fixed z-50 top-4 right-4 left-auto p-2 rounded-lg shadow-lg backdrop-blur-xs border transition-all duration-200 ${
           showMenu 
             ? "bg-gray-800 dark:bg-gray-200 border-gray-600 dark:border-gray-400" 
             : "bg-white/90 dark:bg-gray-800/90 border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700"
@@ -76,7 +76,7 @@ export const Menu = ({
 
       {/* Mobile Backdrop */}
       <div 
-        className={`lg:hidden fixed inset-0 bg-black/20 backdrop-blur-sm z-40 transition-opacity duration-200 ${
+        className={`lg:hidden fixed inset-0 bg-black/20 backdrop-blur-xs z-40 transition-opacity duration-200 ${
           showMenu ? "opacity-100" : "opacity-0 pointer-events-none"
         }`}
         onClick={() => setShowMenu(false)}
@@ -130,7 +130,7 @@ export const Menu = ({
                 <Link to="/graph" onClick={() => setShowMenu(false)} className="block">
                   <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
                     <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Graph</span>
-                    <span className="text-xs bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded">Experimental</span>
+                    <span className="text-xs bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded-sm">Experimental</span>
                   </div>
                 </Link>
                 <Link to="/nodes" onClick={() => setShowMenu(false)} className="block">
@@ -443,7 +443,7 @@ export const Menu = ({
             </div>
           </nav>
 
-          <div className="flex-grow" />
+          <div className="grow" />
 
           <div className="flex flex-col">
             <h5 className="mb-2">

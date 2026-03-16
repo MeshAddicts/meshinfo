@@ -110,7 +110,7 @@ export function DetailsPanel({
     "bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700";
 
   return (
-    <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex-1 min-h-0 flex flex-col">
+    <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-xs flex-1 min-h-0 flex flex-col">
       <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex items-center justify-between">
         <div className="text-sm font-medium text-gray-800 dark:text-gray-200">
           Message details
@@ -183,7 +183,7 @@ export function DetailsPanel({
               <div className="text-sm font-medium text-gray-800 dark:text-gray-200">
                 Text
               </div>
-              <div className="mt-2 whitespace-pre-wrap break-words rounded-md border border-gray-200 dark:border-gray-800 p-3 bg-white dark:bg-gray-900/30 text-sm text-gray-900 dark:text-gray-100">
+              <div className="mt-2 whitespace-pre-wrap wrap-break-word rounded-md border border-gray-200 dark:border-gray-800 p-3 bg-white dark:bg-gray-900/30 text-sm text-gray-900 dark:text-gray-100">
                 {renderHighlightedText(String(selectedMessage.text ?? ""), urlQ)}
               </div>
             </div>

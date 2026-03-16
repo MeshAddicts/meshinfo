@@ -113,7 +113,7 @@ export function NodesList({
   // we just provide a jumpToTop callback)
 
   return (
-    <div className="relative rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col min-h-0 flex-1">
+    <div className="relative rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-xs flex flex-col min-h-0 flex-1">
       <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex items-center justify-between">
         <div className="text-sm text-gray-800 dark:text-gray-200">
           <span className="font-semibold">{items.length}</span> shown{" "}
@@ -133,7 +133,7 @@ export function NodesList({
           <div className="pointer-events-none absolute z-10 left-1/2 -translate-x-1/2 top-3">
             <button
               type="button"
-              className="pointer-events-auto rounded-full px-4 py-2 text-sm font-medium shadow-sm border transition
+              className="pointer-events-auto rounded-full px-4 py-2 text-sm font-medium shadow-xs border transition
                 bg-gray-900 text-white border-gray-900 hover:bg-gray-800
                 dark:bg-gray-100 dark:text-gray-900 dark:border-gray-100 dark:hover:bg-gray-200"
               onClick={() => {

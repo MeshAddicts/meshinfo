@@ -80,8 +80,8 @@ export const Graph = () => {
             <h1 className="text-base font-semibold text-gray-100">Graph</h1>
             <span className="text-xs text-gray-500">{config?.mesh?.shortname || config?.mesh?.name || ""}</span>
             <div className="flex items-center gap-1.5 text-xs text-gray-400">
-              <span className="rounded border border-gray-700/70 px-1.5 py-0.5">{stats.nodeCount} nodes</span>
-              <span className="rounded border border-gray-700/70 px-1.5 py-0.5">
+              <span className="rounded-sm border border-gray-700/70 px-1.5 py-0.5">{stats.nodeCount} nodes</span>
+              <span className="rounded-sm border border-gray-700/70 px-1.5 py-0.5">
                 {stats.totalEdges} links
                 {stats.nbrEdges > 0 && stats.trEdges > 0 && (
                   <span className="text-gray-500 ml-1">({stats.nbrEdges}n+{stats.trEdges}tr)</span>
@@ -103,7 +103,7 @@ export const Graph = () => {
             </div>
 
             <select value={edgeFilter} onChange={(e) => setParam("edges", e.target.value === "all" ? null : e.target.value)}
-              className="rounded-lg border border-gray-700/70 bg-transparent px-2 py-1.5 text-xs text-gray-300 outline-none">
+              className="rounded-lg border border-gray-700/70 bg-transparent px-2 py-1.5 text-xs text-gray-300 outline-hidden">
               <option value="all">All edges</option>
               <option value="neighbor">Neighbor only</option>
               <option value="traceroute">Traceroute only</option>
@@ -192,19 +192,19 @@ export const Graph = () => {
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 text-[11px]">
-                    <div className="rounded border border-gray-800 p-2">
+                    <div className="rounded-sm border border-gray-800 p-2">
                       <div className="text-gray-500">Links</div>
                       <div className="text-gray-200 mt-0.5">{selected.degree}</div>
                     </div>
-                    <div className="rounded border border-gray-800 p-2">
+                    <div className="rounded-sm border border-gray-800 p-2">
                       <div className="text-gray-500">Role</div>
                       <div className="text-gray-200 mt-0.5">{ROLE_LABELS[selected.role] ?? selected.role}</div>
                     </div>
-                    <div className="rounded border border-gray-800 p-2">
+                    <div className="rounded-sm border border-gray-800 p-2">
                       <div className="text-gray-500">Neighborinfo</div>
                       <div className="text-gray-200 mt-0.5">{selected.hasNeighborInfo ? "Yes" : "No"}</div>
                     </div>
-                    <div className="rounded border border-gray-800 p-2">
+                    <div className="rounded-sm border border-gray-800 p-2">
                       <div className="text-gray-500">GPS</div>
                       <div className="text-gray-200 mt-0.5">{selected.lat != null ? "Yes" : "No"}</div>
                     </div>
@@ -219,7 +219,7 @@ export const Graph = () => {
                           const peer = nodeById.get(peerId);
                           return (
                             <button key={i} type="button" onClick={() => setSelectedId(peerId)}
-                              className="w-full flex items-center justify-between px-2 py-1 rounded text-left text-[11px] hover:bg-gray-800/50">
+                              className="w-full flex items-center justify-between px-2 py-1 rounded-sm text-left text-[11px] hover:bg-gray-800/50">
                               <span className="flex items-center gap-1.5 text-gray-300 min-w-0">
                                 <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: roleColor(peer?.role) }} />
                                 <span className="truncate">{peer?.label ?? peerId}</span>
@@ -236,7 +236,7 @@ export const Graph = () => {
                   )}
 
                   <button type="button" onClick={() => { navigator.clipboard.writeText(selected.id).catch(() => {}); }}
-                    className="rounded border border-gray-700 px-2.5 py-1.5 text-[11px] text-gray-400 hover:text-gray-200 hover:bg-gray-800/50">
+                    className="rounded-sm border border-gray-700 px-2.5 py-1.5 text-[11px] text-gray-400 hover:text-gray-200 hover:bg-gray-800/50">
                     Copy ID
                   </button>
                 </div>

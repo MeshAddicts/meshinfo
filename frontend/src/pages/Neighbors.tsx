@@ -915,9 +915,9 @@ export const Neighbors = () => {
   }
 
   return (
-    <div className="w-full h-[100dvh] overflow-hidden flex flex-col">
+    <div className="w-full h-dvh overflow-hidden flex flex-col">
       {/* Sticky header */}
-      <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur border-b border-gray-200 dark:border-gray-800">
+      <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
         <div className="mx-auto max-w-[1600px] pl-3 pr-14 sm:px-5 py-2 sm:py-3">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
@@ -1029,7 +1029,7 @@ export const Neighbors = () => {
                 value={qInput}
                 onChange={(e) => setQInput(e.target.value)}
                 placeholder="Search neighbors… (press / to focus)"
-                className="w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
+                className="w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/60"
               />
             </div>
 
@@ -1122,7 +1122,7 @@ export const Neighbors = () => {
             <div className="lg:col-span-2 min-h-0 flex flex-col h-full">
               <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                 {/* Card wrapper */}
-                <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-sm flex flex-col min-h-0 flex-1">
+                <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-xs flex flex-col min-h-0 flex-1">
                   {/* List header */}
                   <div className="shrink-0 flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/50">
                     <span className="text-xs text-gray-600 dark:text-gray-400 tabular-nums">
@@ -1177,7 +1177,7 @@ export const Neighbors = () => {
       {/* Mobile bottom nav */}
       <div className="fixed inset-x-0 bottom-0 z-30 lg:hidden">
         <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
-          <div className="mb-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white/90 dark:bg-gray-900/85 backdrop-blur shadow-sm overflow-hidden">
+          <div className="mb-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm shadow-xs overflow-hidden">
             <div className="grid grid-cols-2 divide-x divide-gray-200 dark:divide-gray-800">
               <button
                 type="button"
