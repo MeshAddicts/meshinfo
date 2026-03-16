@@ -776,13 +776,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@mapbox/whoots-js@npm:^3.1.0":
-  version: 3.1.0
-  resolution: "@mapbox/whoots-js@npm:3.1.0"
-  checksum: 10c0/fe9e959a9049bcbc2c05d9d1156e050191ad697a1bd95e41cdfa069051ff1d6f2930ced234a8d68d5a0bf78091feab30d76497418ec800d90f0aac8691fe4fd4
-  languageName: node
-  linkType: hard
-
 "@napi-rs/wasm-runtime@npm:^1.1.1":
   version: 1.1.1
   resolution: "@napi-rs/wasm-runtime@npm:1.1.1"
@@ -1354,13 +1347,6 @@ __metadata:
   version: 7.0.15
   resolution: "@types/json-schema@npm:7.0.15"
   checksum: 10c0/a996a745e6c5d60292f36731dd41341339d4eeed8180bb09226e5c8d23759067692b1d88e5d91d72ee83dfc00d3aca8e7bd43ea120516c17922cbcb7c3e252db
-  languageName: node
-  linkType: hard
-
-"@types/mapbox__point-geometry@npm:^0.1.4":
-  version: 0.1.4
-  resolution: "@types/mapbox__point-geometry@npm:0.1.4"
-  checksum: 10c0/670191664ea0a6ccb4563500fe815a9aba029ba2f0528d42f9eb560ccb44f6542ba8674e2a3f6d41bd10ad8855b4df4782b5340c980ca182ef9fe6752f2737b8
   languageName: node
   linkType: hard
 
@@ -3828,9 +3814,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"mapbox-gl@npm:^3.17.0":
-  version: 3.17.0
-  resolution: "mapbox-gl@npm:3.17.0"
+"mapbox-gl@npm:^3.20.0":
+  version: 3.20.0
+  resolution: "mapbox-gl@npm:3.20.0"
   dependencies:
     "@mapbox/jsonlint-lines-primitives": "npm:^2.0.2"
     "@mapbox/mapbox-gl-supported": "npm:^3.0.0"
@@ -3838,10 +3824,8 @@ __metadata:
     "@mapbox/tiny-sdf": "npm:^2.0.6"
     "@mapbox/unitbezier": "npm:^0.0.1"
     "@mapbox/vector-tile": "npm:^2.0.4"
-    "@mapbox/whoots-js": "npm:^3.1.0"
     "@types/geojson": "npm:^7946.0.16"
     "@types/geojson-vt": "npm:^3.2.5"
-    "@types/mapbox__point-geometry": "npm:^0.1.4"
     "@types/pbf": "npm:^3.0.5"
     "@types/supercluster": "npm:^7.1.3"
     cheap-ruler: "npm:^4.0.0"
@@ -3851,25 +3835,25 @@ __metadata:
     gl-matrix: "npm:^3.4.4"
     grid-index: "npm:^1.1.0"
     kdbush: "npm:^4.0.2"
-    martinez-polygon-clipping: "npm:^0.7.4"
+    martinez-polygon-clipping: "npm:^0.8.1"
     murmurhash-js: "npm:^1.0.0"
     pbf: "npm:^4.0.1"
     potpack: "npm:^2.0.0"
     quickselect: "npm:^3.0.0"
     supercluster: "npm:^8.0.1"
     tinyqueue: "npm:^3.0.0"
-  checksum: 10c0/37b5da3d3e119c355a90b24d66abdf107b7be546fda7cd7814b8b096e5d747d6687fa8de038a35ff19ab76c758947ff9dba17800439d5ab0c64c617690427ffb
+  checksum: 10c0/ae2b6d0bf9f6a1cf955ed72db4c6798c9ea1a55b71b118b02a9c5fb43f230d24361db6df1d36174a4ed44183be2bbe863fb092745f86db1c54e1765ffc50aa28
   languageName: node
   linkType: hard
 
-"martinez-polygon-clipping@npm:^0.7.4":
-  version: 0.7.4
-  resolution: "martinez-polygon-clipping@npm:0.7.4"
+"martinez-polygon-clipping@npm:^0.8.1":
+  version: 0.8.1
+  resolution: "martinez-polygon-clipping@npm:0.8.1"
   dependencies:
     robust-predicates: "npm:^2.0.4"
     splaytree: "npm:^0.1.4"
-    tinyqueue: "npm:^1.2.0"
-  checksum: 10c0/0230c06056f2714994c0e65cb98cf487c45dfdffcef3b1c00e080577fdd52af80b71e87e7548283ac5cba7b2b2f9a5164e148fd88d17fd484e87f5d678bf199a
+    tinyqueue: "npm:3.0.0"
+  checksum: 10c0/f02420eebd37cfda170be30bc1aae28de15d4baeafa68fa41629f27439f913e01f347900cb976727efee994ff0abdba8628b2f6680860ecac2519c8d79789567
   languageName: node
   linkType: hard
 
@@ -3924,7 +3908,7 @@ __metadata:
     globals: "npm:^17.4.0"
     highlight.js: "npm:^11.11.1"
     jsdom: "npm:^24.0.0"
-    mapbox-gl: "npm:^3.17.0"
+    mapbox-gl: "npm:^3.20.0"
     ol: "npm:^10.8.0"
     postcss: "npm:^8.5.8"
     prettier: "npm:^3.8.1"
@@ -5456,14 +5440,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"tinyqueue@npm:^1.2.0":
-  version: 1.2.3
-  resolution: "tinyqueue@npm:1.2.3"
-  checksum: 10c0/413b1ad64f700ef9d8d07242190ceb6ff921d0ab5b47f5b67ff7d3d2a394260914363b0e2c18039b900df793b26763fabc93da61e1b489f910795af6643b0355
-  languageName: node
-  linkType: hard
-
-"tinyqueue@npm:^3.0.0":
+"tinyqueue@npm:3.0.0, tinyqueue@npm:^3.0.0":
   version: 3.0.0
   resolution: "tinyqueue@npm:3.0.0"
   checksum: 10c0/edd6f1a6146aa3aa7bc85b44b3aacf44cddfa805b0901019272d7e9235894b4f28b2f9d09c1bce500ae48883b03708b6b871aa33920e895d2943720f7a9ad3ba
