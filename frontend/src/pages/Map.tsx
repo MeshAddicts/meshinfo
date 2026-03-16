@@ -8,7 +8,7 @@ import mapboxgl, {
 import { Feature, Map as OlMap, View } from "ol";
 import { Coordinate } from "ol/coordinate";
 import { click } from "ol/events/condition";
-import { Geometry, LineString } from "ol/geom";
+import { LineString } from "ol/geom";
 import Point from "ol/geom/Point";
 import Select from "ol/interaction/Select";
 import VectorLayer from "ol/layer/Vector";
@@ -1005,7 +1005,7 @@ export function Map() {
     const { nodePanel, nodeTitle, nodeSubtitle, nodeContent } = getDetailsDom();
     if (!nodePanel || !nodeTitle || !nodeSubtitle || !nodeContent) return;
 
-    const neighborLayers: VectorLayer<Feature<Geometry>>[] = [];
+    const neighborLayers: VectorLayer<Feature>[] = [];
 
     const selectedStyle = new Style({
       image: new Circle({
