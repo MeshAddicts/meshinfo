@@ -17,6 +17,7 @@ import { Vector } from "ol/source";
 import VectorSource from "ol/source/Vector";
 import { Circle, Fill, Stroke, Style } from "ol/style";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
 
 import { createBaseTileLayer, type OsmBasemap } from "../maps/baseLayer";
 import { reverseGeocode } from "../maps/geocoder";
@@ -235,6 +236,74 @@ export function Map() {
     clusterEnabledRef.current = clusterEnabled;
   }, [clusterEnabled]);
 
+  // ----------------------------
+  // Deep-link: ?node=<id> flies to a specific node
+  // ----------------------------
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlNodeId = searchParams.get("node") ?? "";
+  const urlNodeIdRef = useRef(urlNodeId);
+  urlNodeIdRef.current = urlNodeId;
+
+  // Resolve the target node's coords (used both by init override and fly-to)
+  const flyToTarget = useMemo(() => {
+    if (!urlNodeId) return null;
+    const node = nodes[urlNodeId] ?? nodes[`!${urlNodeId}`];
+    if (!node?.map_position) return null;
+    return node.map_position as [number, number]; // [lon, lat]
+  }, [urlNodeId, nodes]);
+  const flyToTargetRef = useRef(flyToTarget);
+  flyToTargetRef.current = flyToTarget;
+
+  const flyToHandledRef = useRef<string>("");
+
+  // Retry-based fly-to: waits for the map to be ready
+  useEffect(() => {
+    if (!urlNodeId || !flyToTarget) return;
+    if (flyToHandledRef.current === urlNodeId) return;
+
+    const [lon, lat] = flyToTarget;
+
+    const tryFlyTo = () => {
+      if (flyToHandledRef.current === urlNodeId) return true;
+
+      // Mapbox path
+      const mbMap = mbMapRef.current;
+      if (mbMap) {
+        flyToHandledRef.current = urlNodeId;
+        mbMap.easeTo({ center: [lon, lat], zoom: 14, duration: 1200 });
+        setSearchParams((prev) => { prev.delete("node"); return prev; }, { replace: true });
+        return true;
+      }
+
+      // OpenLayers path
+      if (olMap) {
+        flyToHandledRef.current = urlNodeId;
+        olMap.getView().animate({
+          center: fromLonLat([lon, lat]),
+          zoom: 14,
+          duration: 1200,
+        });
+        setSearchParams((prev) => { prev.delete("node"); return prev; }, { replace: true });
+        return true;
+      }
+
+      return false;
+    };
+
+    // Try immediately, then retry at increasing delays for map init
+    if (tryFlyTo()) return;
+
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    for (const delay of [200, 500, 1000, 2000, 3500]) {
+      timers.push(setTimeout(() => {
+        if (urlNodeIdRef.current !== urlNodeId) return;
+        tryFlyTo();
+      }, delay));
+    }
+
+    return () => timers.forEach(clearTimeout);
+  }, [urlNodeId, flyToTarget, olMap, setSearchParams]);
+
   function clearMapboxSelectionAndOverlays() {
     const map = mbMapRef.current;
     const selectedId = mbSelectedIdRef.current;
@@ -325,17 +394,20 @@ export function Map() {
     const savedLon = typeof saved[0] === "number" ? saved[0] : undefined;
     const savedLat = typeof saved[1] === "number" ? saved[1] : undefined;
 
-    const initialCenter: [number, number] = [
-      savedLon ?? centerPos.longitude,
-      savedLat ?? centerPos.latitude,
-    ];
+    // If deep-linking to a node, override initial center/zoom
+    const flyTarget = flyToTargetRef.current;
+    const initialCenter: [number, number] = flyTarget
+      ? [flyTarget[0], flyTarget[1]]
+      : [savedLon ?? centerPos.longitude, savedLat ?? centerPos.latitude];
 
-    let initialZoom = 9.5;
-    try {
-      const z = JSON.parse(localStorage.getItem("savedZoom") ?? "9.5");
-      if (typeof z === "number" && Number.isFinite(z)) initialZoom = z;
-    } catch {
-      // ignore
+    let initialZoom = flyTarget ? 14 : 9.5;
+    if (!flyTarget) {
+      try {
+        const z = JSON.parse(localStorage.getItem("savedZoom") ?? "9.5");
+        if (typeof z === "number" && Number.isFinite(z)) initialZoom = z;
+      } catch {
+        // ignore
+      }
     }
 
     const styleUrl = toMapboxStyleUrl(mapboxStyle);
@@ -844,14 +916,20 @@ export function Map() {
     const savedLon = typeof saved[0] === "number" ? saved[0] : undefined;
     const savedLat = typeof saved[1] === "number" ? saved[1] : undefined;
 
-    const initialCenter = fromLonLat([savedLon ?? centerPos.longitude, savedLat ?? centerPos.latitude]);
+    // If deep-linking to a node, override initial center/zoom
+    const flyTarget = flyToTargetRef.current;
+    const initialCenter = flyTarget
+      ? fromLonLat([flyTarget[0], flyTarget[1]])
+      : fromLonLat([savedLon ?? centerPos.longitude, savedLat ?? centerPos.latitude]);
 
-    let initialZoom = 9.5;
-    try {
-      const z = JSON.parse(localStorage.getItem("savedZoom") ?? "9.5");
-      if (typeof z === "number" && Number.isFinite(z)) initialZoom = z;
-    } catch {
-      // ignore
+    let initialZoom = flyTarget ? 14 : 9.5;
+    if (!flyTarget) {
+      try {
+        const z = JSON.parse(localStorage.getItem("savedZoom") ?? "9.5");
+        if (typeof z === "number" && Number.isFinite(z)) initialZoom = z;
+      } catch {
+        // ignore
+      }
     }
 
     const tileLayer = createBaseTileLayer({
