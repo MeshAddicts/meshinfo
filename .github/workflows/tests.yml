@@ -30,4 +30,5 @@ jobs:
       - run: corepack enable
       - run: corepack prepare yarn@4.2.2 --activate
       - run: yarn install
+      - run: yarn tsc --noEmit
       - run: yarn test
