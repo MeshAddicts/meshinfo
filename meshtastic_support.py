@@ -29,7 +29,7 @@ class HardwareModel(Enum):
   LORA_TYPE = 19
   WIPHONE = 20
   WIO_WM1110 = 21
-  RAK2560 = 22
+  WISMESH_HUB = 22
   HELTEC_HRU_3601 = 23
   STATION_G1 = 25
   RAK11310 = 26
@@ -39,7 +39,7 @@ class HardwareModel(Enum):
   RP2040_LORA = 30
   STATION_G2 = 31
   LORA_RELAY_V1 = 32
-  NRF52840DK = 33
+  T_ECHO_PLUS = 33
   PPR = 34
   GENIEBLOCKS = 35
   NRF52_UNKNOWN = 36
@@ -72,6 +72,22 @@ class HardwareModel(Enum):
   NRF52_PROMICRO_DIY = 63
   RADIOMASTER_900_BANDIT_NANO = 64
   HELTEC_CAPSULE_SENSOR_V3 = 65
+  HELTEC_VISION_MASTER_T190 = 66
+  HELTEC_VISION_MASTER_E213 = 67
+  HELTEC_VISION_MASTER_E290 = 68
+  HELTEC_MESH_NODE_T114 = 69
+  SENSECAP_INDICATOR = 70
+  TRACKER_T1000_E = 71
+  SEEED_XIAO_S3 = 81
+  WISMESH_TAP = 84
+  XIAO_NRF52_KIT = 88
+  THINKNODE_M1 = 89
+  THINKNODE_M2 = 90
+  MUZI_BASE = 93
+  HELTEC_MESH_POCKET = 94
+  SEEED_SOLAR_NODE = 95
+  WISMESH_TAG = 105
+  THINKNODE_M5 = 107
   PRIVATE_HW = 255
 
 HARDWARE_PHOTOS = {
@@ -99,4 +115,22 @@ HARDWARE_PHOTOS = {
   HardwareModel.T_ECHO: "T_ECHO.png",
   HardwareModel.T_WATCH_S3: "T_WATCH_S3.png",
   HardwareModel.PRIVATE_HW: "PRIVATE_HW.png",
+  HardwareModel.HELTEC_VISION_MASTER_T190: "heltec-vision-master-t190.webp",
+  HardwareModel.HELTEC_VISION_MASTER_E213: "heltec-vision-master-e213.webp",
+  HardwareModel.HELTEC_VISION_MASTER_E290: "heltec-vision-master-e290.webp",
+  HardwareModel.HELTEC_MESH_NODE_T114: "heltec-mesh-node-t114.webp",
+  HardwareModel.SENSECAP_INDICATOR: "seeed-sensecap-indicator.webp",
+  HardwareModel.TRACKER_T1000_E: "tracker-t1000-e.webp",
+  HardwareModel.SEEED_XIAO_S3: "seeed-xiao-s3.webp",
+  HardwareModel.WISMESH_TAP: "rak-wismeshtap.webp",
+  HardwareModel.XIAO_NRF52_KIT: "seeed_xiao_nrf52_kit.webp",
+  HardwareModel.THINKNODE_M1: "thinknode_m1.webp",
+  HardwareModel.THINKNODE_M2: "thinknode_m2.webp",
+  HardwareModel.THINKNODE_M5: "thinknode_m1.webp",
+  HardwareModel.MUZI_BASE: "muzi_base.webp",
+  HardwareModel.HELTEC_MESH_POCKET: "heltec_mesh_pocket.webp",
+  HardwareModel.SEEED_SOLAR_NODE: "seeed_solar.webp",
+  HardwareModel.WISMESH_TAG: "rak_wismesh_tag.webp",
+  HardwareModel.WISMESH_HUB: "rak2560.webp",
+  HardwareModel.T_ECHO_PLUS: "t-echo_plus.svg",
 }

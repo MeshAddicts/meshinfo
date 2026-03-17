@@ -22,7 +22,9 @@ def convert_node_id_from_int_to_hex(id: int):
   return id_hex
 def convert_node_id_from_hex_to_int(id: str):
   if id.startswith('!'):
-      id = id.replace('!', '')
+      id = id[1:]
+  if not all(c in '0123456789abcdefABCDEF' for c in id):
+      return None
   return int(id, 16)
 def days_since_datetime(dt: datetime.datetime):
   # Returns the number of days since the given datetime using UTC

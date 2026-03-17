@@ -23,7 +23,7 @@ class DataRenderer:
     for id, node in self.data.nodes.items():
         if id.startswith('!'):
           id = id.replace('!', '')
-        if len(id) != 8: # 8 hex chars required, if not, we abandon it
+        if len(id) != 8 or not all(c in '0123456789abcdefABCDEF' for c in id):
           continue
         nodes[id] = node
     self.save_file("nodes.json", nodes)
