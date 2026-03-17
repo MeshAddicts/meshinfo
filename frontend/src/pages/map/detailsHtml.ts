@@ -6,7 +6,7 @@ import type {
 } from "geojson";
 
 import type { ElsewhereLink } from "../../types/config";
-import { defaultElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLinks";
+import { getElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLinks";
 import type { IMapNode, NodeLike } from "./types";
 import { calculateGeodesicDistance, escapeHtml } from "./utils";
 
@@ -108,7 +108,7 @@ export function buildNodeDetailsHtml(opts: {
 
   panel += "<b>Elsewhere</b><br/>";
   const nodeIdInt = parseInt(node.id, 16);
-  const links = opts.elsewhereLinks ?? defaultElsewhereLinks;
+  const links = getElsewhereLinks(opts.elsewhereLinks);
   for (const link of links) {
     const url = resolveElsewhereUrl(link.url ?? "", node.id, nodeIdInt);
     panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="${escapeHtml(url)}" target="_blank">${escapeHtml(link.name ?? "")}</a><br/>`;

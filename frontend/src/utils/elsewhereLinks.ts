@@ -7,6 +7,10 @@ export const defaultElsewhereLinks: ElsewhereLink[] = [
   { name: "MeshMap", url: "https://meshmap.net/#{node_id_int}" },
 ];
 
+export function getElsewhereLinks(configured?: ElsewhereLink[]): ElsewhereLink[] {
+  return configured?.length ? configured : defaultElsewhereLinks;
+}
+
 export function resolveElsewhereUrl(
   urlTemplate: string,
   nodeIdHex: string,

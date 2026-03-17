@@ -9,7 +9,7 @@ import { INode } from "../../types";
 import {
   convertNodeIdFromHexToInt,
 } from "../../utils/convertNodeId";
-import { defaultElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLinks";
+import { getElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLinks";
 import { calculateDistanceBetweenNodes } from "../../utils/getDistanceBetweenTwoNodes";
 import { NodeMap } from "../NodeMap";
 import {
@@ -329,7 +329,7 @@ export function NodeDetailsPanel({
             </div>
 
             <div className="mt-2 text-sm text-gray-700 dark:text-gray-200 space-y-1">
-              {(config?.mesh?.elsewhere_links ?? defaultElsewhereLinks).map((link, i) => (
+              {getElsewhereLinks(config?.mesh?.elsewhere_links).map((link, i) => (
                 <a
                   key={i}
                   className="underline hover:no-underline text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300 block"

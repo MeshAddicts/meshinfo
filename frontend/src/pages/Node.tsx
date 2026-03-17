@@ -7,7 +7,7 @@ import {
   convertNodeIdFromHexToInt,
   convertNodeIdFromIntToHex,
 } from "../utils/convertNodeId";
-import { defaultElsewhereLinks, resolveElsewhereUrl } from "../utils/elsewhereLinks";
+import { getElsewhereLinks, resolveElsewhereUrl } from "../utils/elsewhereLinks";
 import { calculateDistanceBetweenNodes } from "../utils/getDistanceBetweenTwoNodes";
 import { NodeMap } from "./NodeMap";
 
@@ -122,7 +122,7 @@ export const Node = () => {
           <div>
             <h3 className="font-bold text-gray-600 dark:text-gray-300">Elsewhere</h3>
             <div>
-              {(config?.mesh?.elsewhere_links ?? defaultElsewhereLinks).map((link, i) => {
+              {getElsewhereLinks(config?.mesh?.elsewhere_links).map((link, i) => {
                 const url = resolveElsewhereUrl(
                   link.url ?? "",
                   node.id,
