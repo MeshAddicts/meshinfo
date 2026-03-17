@@ -765,11 +765,11 @@ export const Neighbors = () => {
   }, [selectedId, isLgUp]);
 
   // Virtuoso ref
-  const virtuosoRef = useRef<VirtuosoHandle | null>(null);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
 
   // Export
   const [exportOpen, setExportOpen] = useState(false);
-  const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!exportOpen || !isLgUp) return;

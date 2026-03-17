@@ -211,7 +211,7 @@ export const Telemetry = () => {
 
   // Export menu (desktop)
   const [exportOpen, setExportOpen] = useState(false);
-  const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
 
   // Export menu click-outside (desktop only)
   useEffect(() => {

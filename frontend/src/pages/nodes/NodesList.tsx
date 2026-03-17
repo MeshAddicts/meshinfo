@@ -52,7 +52,7 @@ export function NodesList({
   onAtTopChange?: (atTop: boolean) => void;
   totalSeen: number;
 }) {
-  const virtuosoRef = useRef<VirtuosoHandle | null>(null);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
 
   // Keep the "Seen X sec" counters smooth without re-rendering the entire page.
   const [currentDate, setCurrentDate] = useState(() => new Date());
