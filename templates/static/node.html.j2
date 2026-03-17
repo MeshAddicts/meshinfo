@@ -91,10 +91,14 @@
       <div>
         <h3 class="font-bold text-gray-600">Elsewhere</h3>
         <div>
-          <a href="https://meshview.armooo.net/packet_list/{{ utils.convert_node_id_from_hex_to_int(node.id) }}" target="_blank">Armooo's MeshView</a><br/>
-          <a href="https://app.bayme.sh/node/{{ node.id }}" target="_blank">Bay Mesh Explorer</a><br/>
-          <a href="https://meshtastic.liamcottle.net/?node_id={{ utils.convert_node_id_from_hex_to_int(node.id) }}" target="_blank">Liam's Map</a><br/>
-          <a href="https://meshmap.net/#{{ utils.convert_node_id_from_hex_to_int(node.id) }}" target="_blank">MeshMap</a>
+          {% for link in config.mesh.get('elsewhere_links', [
+            {'name': "Armooo's MeshView", 'url': 'https://meshview.armooo.net/packet_list/{node_id_int}'},
+            {'name': 'Bay Mesh Explorer', 'url': 'https://app.bayme.sh/node/{node_id_hex}'},
+            {'name': "Liam's Map", 'url': 'https://meshtastic.liamcottle.net/?node_id={node_id_int}'},
+            {'name': 'MeshMap', 'url': 'https://meshmap.net/#{node_id_int}'},
+          ]) %}
+          <a href="{{ link.url.replace('{node_id_hex}', node.id).replace('{node_id_int}', utils.convert_node_id_from_hex_to_int(node.id)|string) }}" target="_blank">{{ link.name }}</a>{% if not loop.last %}<br/>{% endif %}
+          {% endfor %}
         </div>
       </div>
     </div>

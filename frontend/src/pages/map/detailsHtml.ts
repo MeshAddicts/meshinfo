@@ -5,6 +5,8 @@ import type {
   LineString as GeoLineString,
 } from "geojson";
 
+import type { ElsewhereLink } from "../../types/config";
+import { defaultElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLinks";
 import type { IMapNode, NodeLike } from "./types";
 import { calculateGeodesicDistance, escapeHtml } from "./utils";
 
@@ -18,6 +20,7 @@ export function buildNodeDetailsHtml(opts: {
   node: NodeLike;
   liveNodes: Record<string, IMapNode>;
   displayName: string | null | undefined;
+  elsewhereLinks?: ElsewhereLink[];
 }): { html: string; heardBy: string[] } {
   const { node, liveNodes } = opts;
   const displayName = opts.displayName || "Unknown";
@@ -104,11 +107,12 @@ export function buildNodeDetailsHtml(opts: {
   panel += "<br/><br/>";
 
   panel += "<b>Elsewhere</b><br/>";
-  const nodeId = parseInt(node.id, 16);
-  panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://meshview.armooo.net/packet_list/${nodeId}" target="_blank">Armooo's MeshView</a><br/>`;
-  panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://app.bayme.sh/node/${encodeURIComponent(node.id)}" target="_blank">Bay Mesh Explorer</a><br/>`;
-  panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://meshtastic.liamcottle.net/?node_id=${nodeId}" target="_blank">Liam's Map</a><br/>`;
-  panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="https://meshmap.net/#${nodeId}" target="_blank">MeshMap</a><br/>`;
+  const nodeIdInt = parseInt(node.id, 16);
+  const links = opts.elsewhereLinks ?? defaultElsewhereLinks;
+  for (const link of links) {
+    const url = resolveElsewhereUrl(link.url ?? "", node.id, nodeIdInt);
+    panel += `<a class="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500" href="${escapeHtml(url)}" target="_blank">${escapeHtml(link.name ?? "")}</a><br/>`;
+  }
 
   return { html: panel, heardBy };
 }

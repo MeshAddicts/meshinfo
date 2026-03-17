@@ -7,6 +7,7 @@ import {
   convertNodeIdFromHexToInt,
   convertNodeIdFromIntToHex,
 } from "../utils/convertNodeId";
+import { defaultElsewhereLinks, resolveElsewhereUrl } from "../utils/elsewhereLinks";
 import { calculateDistanceBetweenNodes } from "../utils/getDistanceBetweenTwoNodes";
 import { NodeMap } from "./NodeMap";
 
@@ -121,37 +122,21 @@ export const Node = () => {
           <div>
             <h3 className="font-bold text-gray-600 dark:text-gray-300">Elsewhere</h3>
             <div>
-              <a
-                href={`https://meshview.armooo.net/packet_list/${convertNodeIdFromHexToInt(node.id)}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Armooo&apos;s MeshView
-              </a>
-              <br />
-              <a
-                href={`https://app.bayme.sh/node/${node.id}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Bay Mesh Explorer
-              </a>
-              <br />
-              <a
-                href={`https://meshtastic.liamcottle.net/?node_id=${convertNodeIdFromHexToInt(node.id)}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Liam&apos;s Map
-              </a>
-              <br />
-              <a
-                href={`https://meshmap.net/#${convertNodeIdFromHexToInt(node.id)}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                MeshMap
-              </a>
+              {(config?.mesh?.elsewhere_links ?? defaultElsewhereLinks).map((link, i) => {
+                const url = resolveElsewhereUrl(
+                  link.url ?? "",
+                  node.id,
+                  convertNodeIdFromHexToInt(node.id)
+                );
+                return (
+                  <span key={i}>
+                    {i > 0 && <br />}
+                    <a href={url} target="_blank" rel="noreferrer">
+                      {link.name}
+                    </a>
+                  </span>
+                );
+              })}
             </div>
           </div>
         </div>

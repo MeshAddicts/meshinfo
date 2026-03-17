@@ -4,10 +4,12 @@ import { Link } from "react-router";
 import { Avatar } from "../../components/Avatar";
 import { HardwareImg } from "../../components/HardwareImg";
 import { Role } from "../../components/Role";
+import { useGetConfigQuery } from "../../slices/apiSlice";
 import { INode } from "../../types";
 import {
   convertNodeIdFromHexToInt,
 } from "../../utils/convertNodeId";
+import { defaultElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLinks";
 import { calculateDistanceBetweenNodes } from "../../utils/getDistanceBetweenTwoNodes";
 import { NodeMap } from "../NodeMap";
 import {
@@ -107,6 +109,7 @@ export function NodeDetailsPanel({
   serverNode: INode | null;
   onClearSelection: () => void;
 }) {
+  const { data: config } = useGetConfigQuery();
   const n: any = node as any;
   const id = cleanNodeId(n?.id ?? "");
   const short = String(n?.shortname ?? "UNK");
@@ -326,41 +329,17 @@ export function NodeDetailsPanel({
             </div>
 
             <div className="mt-2 text-sm text-gray-700 dark:text-gray-200 space-y-1">
-              <a
-                className="underline hover:no-underline text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
-                href={`https://meshview.armooo.net/packet_list/${convertNodeIdFromHexToInt(id)}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Armooo&apos;s MeshView
-              </a>
-              <div />
-              <a
-                className="underline hover:no-underline text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
-                href={`https://app.bayme.sh/node/${id}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Bay Mesh Explorer
-              </a>
-              <div />
-              <a
-                className="underline hover:no-underline text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
-                href={`https://meshtastic.liamcottle.net/?node_id=${convertNodeIdFromHexToInt(id)}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Liam&apos;s Map
-              </a>
-              <div />
-              <a
-                className="underline hover:no-underline text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
-                href={`https://meshmap.net/#${convertNodeIdFromHexToInt(id)}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                MeshMap
-              </a>
+              {(config?.mesh?.elsewhere_links ?? defaultElsewhereLinks).map((link, i) => (
+                <a
+                  key={i}
+                  className="underline hover:no-underline text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300 block"
+                  href={resolveElsewhereUrl(link.url ?? "", id, convertNodeIdFromHexToInt(id))}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {link.name}
+                </a>
+              ))}
             </div>
           </div>
         </div>

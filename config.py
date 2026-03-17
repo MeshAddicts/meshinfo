@@ -49,6 +49,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "interval": 60,
         },
         "tools": [],
+        "elsewhere_links": [],
     },
     "broker": {
         "enabled": True,
