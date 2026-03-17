@@ -45,7 +45,7 @@ export function MessageList({
   applyFocus: (nodeId: string) => void;
   clearFilters: () => void;
   setRangeAll: () => void;
-  virtuosoRef: React.RefObject<VirtuosoHandle>;
+  virtuosoRef: React.RefObject<VirtuosoHandle | null>;
   liveEnabled: boolean;
   setLiveEnabled: (v: boolean) => void;
   followEdge: FollowEdge;
