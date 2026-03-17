@@ -173,7 +173,7 @@ class MemoryDataStore:
         for id, node in nodes.items():
           if id.startswith('!'):
             id = id.replace('!', '')
-          if len(id) != 8: # 8 hex chars required, if not, we abandon it
+          if len(id) != 8 or not all(c in '0123456789abcdefABCDEF' for c in id):
              continue
           if node['active'] is None:
             node['active'] = False
@@ -445,7 +445,7 @@ class MemoryDataStore:
     return self.nodes.get(utils.convert_node_id_from_int_to_hex(id), None)
 
   def find_node_by_hex_id(self, id: str, include_neighbors: bool = False):
-    if not isinstance(id, str) or len(id) != 8:
+    if not isinstance(id, str) or len(id) != 8 or not all(c in '0123456789abcdefABCDEF' for c in id):
       return None
 
     n = self.nodes.get(id, None)
