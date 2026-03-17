@@ -459,7 +459,7 @@ export const Chat = () => {
 
   // Export menu
   const [exportOpen, setExportOpen] = useState(false);
-  const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
 
   // Search input
   const [qInput, setQInput] = useState(urlQ);
@@ -914,7 +914,7 @@ export const Chat = () => {
   }, [messages, urlNode]);
 
   // Virtualized list ref
-  const virtuosoRef = useRef<VirtuosoHandle | null>(null);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
 
   // Scroll selected message into view
   const pendingScrollRef = useRef<string | null>(null);

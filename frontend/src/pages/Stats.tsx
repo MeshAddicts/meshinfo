@@ -107,7 +107,7 @@ export const Stats = () => {
 
   const [copied, setCopied] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
-  const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
 
   // click-outside for export menu
   useEffect(() => {

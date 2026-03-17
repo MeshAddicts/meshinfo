@@ -429,7 +429,7 @@ export const Nodes = () => {
 
   // Export menu
   const [exportOpen, setExportOpen] = useState(false);
-  const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
 
   // click-outside for export menu (desktop)
   useEffect(() => {

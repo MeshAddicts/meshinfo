@@ -610,7 +610,7 @@ export const Log = () => {
 
   // Export popover
   const [exportOpen, setExportOpen] = useState(false);
-  const exportMenuRef = useRef<HTMLDivElement | null>(null);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!exportOpen) return;
@@ -781,7 +781,7 @@ export const Log = () => {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [controlsOpen, exportOpen]);
 
-  const virtuosoRef = useRef<VirtuosoHandle | null>(null);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
 
   const activeFilterCount = useMemo(() => {
     let n = 0;
