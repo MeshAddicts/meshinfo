@@ -13,7 +13,7 @@ export function ExportMenu({
   exportRowsCount: number;
   doExportCsv: () => void;
   doExportJson: () => void;
-  exportMenuRef: RefObject<HTMLDivElement>;
+  exportMenuRef: RefObject<HTMLDivElement | null>;
 }) {
   return (
     <div className="relative" ref={exportMenuRef}>

@@ -28,8 +28,8 @@ export function MapSettingsPanel({
   canUseMapbox,
   usingMapbox,
 }: {
-  settingsPanelRef: RefObject<HTMLDivElement>;
-  settingsToggleRef: RefObject<HTMLButtonElement>;
+  settingsPanelRef: RefObject<HTMLDivElement | null>;
+  settingsToggleRef: RefObject<HTMLButtonElement | null>;
   settingsPanelOpen: boolean;
   setSettingsPanelOpen: Dispatch<SetStateAction<boolean>>;
 
