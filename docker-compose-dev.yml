@@ -58,14 +58,12 @@ services:
     volumes:
       - ./config.toml:/app/config.toml
       - ./output:/app/output
-      - ./templates:/app/templates
-      - ./spa:/app/spa
       - ./postgres:/app/postgres:ro
     ports:
       - 9000:9000
     environment:
       - PYTHONUNBUFFERED="1"
-      - ALLOW_ORIGINS="*""
+      - ALLOW_ORIGINS="*"
     restart: unless-stopped
     depends_on:
       caddy:

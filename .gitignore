@@ -18,7 +18,6 @@ mosquitto/data/*
 postgres/data/*
 config.json
 config.toml
-spa
 
 .claude/
 
