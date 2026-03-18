@@ -49,17 +49,20 @@ jobs:
           REF="${{ github.ref_name }}"
           if [[ "$REF" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             VERSION="$REF"
+            MAJOR=$(echo "$REF" | cut -d. -f1)
+            MINOR=$(echo "$REF" | cut -d. -f2)
+            PATCH=$(echo "$REF" | cut -d. -f3)
           else
             VERSION="$REF-dev"
+            MAJOR=0
+            MINOR=0
+            PATCH=0
           fi
-          MAJOR=$(echo "$VERSION" | cut -d. -f1)
-          MINOR=$(echo "$VERSION" | cut -d. -f2)
-          PATCH=$(echo "$VERSION" | cut -d. -f3 | cut -d- -f1)
           jq -n \
             --arg version "$VERSION" \
-            --argjson major "${MAJOR:-0}" \
-            --argjson minor "${MINOR:-0}" \
-            --argjson patch "${PATCH:-0}" \
+            --argjson major "$MAJOR" \
+            --argjson minor "$MINOR" \
+            --argjson patch "$PATCH" \
             --arg build_date "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
             --arg git_sha "${GITHUB_SHA::7}" \
             '{version:$version,major:$major,minor:$minor,patch:$patch,build_date_iso_8601:$build_date,git_sha:$git_sha}' \
@@ -131,17 +134,20 @@ jobs:
           REF="${{ github.ref_name }}"
           if [[ "$REF" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             VERSION="$REF"
+            MAJOR=$(echo "$REF" | cut -d. -f1)
+            MINOR=$(echo "$REF" | cut -d. -f2)
+            PATCH=$(echo "$REF" | cut -d. -f3)
           else
             VERSION="$REF-dev"
+            MAJOR=0
+            MINOR=0
+            PATCH=0
           fi
-          MAJOR=$(echo "$VERSION" | cut -d. -f1)
-          MINOR=$(echo "$VERSION" | cut -d. -f2)
-          PATCH=$(echo "$VERSION" | cut -d. -f3 | cut -d- -f1)
           jq -n \
             --arg version "$VERSION" \
-            --argjson major "${MAJOR:-0}" \
-            --argjson minor "${MINOR:-0}" \
-            --argjson patch "${PATCH:-0}" \
+            --argjson major "$MAJOR" \
+            --argjson minor "$MINOR" \
+            --argjson patch "$PATCH" \
             --arg build_date "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
             --arg git_sha "${GITHUB_SHA::7}" \
             '{version:$version,major:$major,minor:$minor,patch:$patch,build_date_iso_8601:$build_date,git_sha:$git_sha}' \
@@ -267,17 +273,20 @@ jobs:
           REF="${{ github.ref_name }}"
           if [[ "$REF" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             VERSION="$REF"
+            MAJOR=$(echo "$REF" | cut -d. -f1)
+            MINOR=$(echo "$REF" | cut -d. -f2)
+            PATCH=$(echo "$REF" | cut -d. -f3)
           else
             VERSION="$REF-dev"
+            MAJOR=0
+            MINOR=0
+            PATCH=0
           fi
-          MAJOR=$(echo "$VERSION" | cut -d. -f1)
-          MINOR=$(echo "$VERSION" | cut -d. -f2)
-          PATCH=$(echo "$VERSION" | cut -d. -f3 | cut -d- -f1)
           jq -n \
             --arg version "$VERSION" \
-            --argjson major "${MAJOR:-0}" \
-            --argjson minor "${MINOR:-0}" \
-            --argjson patch "${PATCH:-0}" \
+            --argjson major "$MAJOR" \
+            --argjson minor "$MINOR" \
+            --argjson patch "$PATCH" \
             --arg build_date "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
             --arg git_sha "${GITHUB_SHA::7}" \
             '{version:$version,major:$major,minor:$minor,patch:$patch,build_date_iso_8601:$build_date,git_sha:$git_sha}' \
@@ -350,17 +359,20 @@ jobs:
           REF="${{ github.ref_name }}"
           if [[ "$REF" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             VERSION="$REF"
+            MAJOR=$(echo "$REF" | cut -d. -f1)
+            MINOR=$(echo "$REF" | cut -d. -f2)
+            PATCH=$(echo "$REF" | cut -d. -f3)
           else
             VERSION="$REF-dev"
+            MAJOR=0
+            MINOR=0
+            PATCH=0
           fi
-          MAJOR=$(echo "$VERSION" | cut -d. -f1)
-          MINOR=$(echo "$VERSION" | cut -d. -f2)
-          PATCH=$(echo "$VERSION" | cut -d. -f3 | cut -d- -f1)
           jq -n \
             --arg version "$VERSION" \
-            --argjson major "${MAJOR:-0}" \
-            --argjson minor "${MINOR:-0}" \
-            --argjson patch "${PATCH:-0}" \
+            --argjson major "$MAJOR" \
+            --argjson minor "$MINOR" \
+            --argjson patch "$PATCH" \
             --arg build_date "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
             --arg git_sha "${GITHUB_SHA::7}" \
             '{version:$version,major:$major,minor:$minor,patch:$patch,build_date_iso_8601:$build_date,git_sha:$git_sha}' \
