@@ -17,6 +17,6 @@ export function resolveElsewhereUrl(
   nodeIdInt: number
 ): string {
   return urlTemplate
-    .replace("{node_id_hex}", nodeIdHex)
-    .replace("{node_id_int}", String(nodeIdInt));
+    .replaceAll("{node_id_hex}", nodeIdHex)
+    .replaceAll("{node_id_int}", String(nodeIdInt));
 }

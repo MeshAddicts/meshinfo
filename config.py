@@ -313,6 +313,18 @@ def validate(config: dict) -> list[str]:
     check(_validate_type(config, "mesh.announce.enabled", bool))
     check(_validate_positive_number(config, "mesh.announce.interval"))
     check(_validate_type(config, "mesh.tools", list))
+    check(_validate_type(config, "mesh.elsewhere_links", list))
+    elsewhere_links = _get_nested(config, "mesh", "elsewhere_links") or []
+    if isinstance(elsewhere_links, list):
+        for i, item in enumerate(elsewhere_links):
+            if not isinstance(item, dict):
+                warn(f"Config field 'mesh.elsewhere_links[{i}]' must be a dict, got {type(item).__name__}")
+            else:
+                for key in ("name", "url"):
+                    if key not in item:
+                        warn(f"Config field 'mesh.elsewhere_links[{i}]' is missing required key '{key}'")
+                    elif not isinstance(item[key], str):
+                        warn(f"Config field 'mesh.elsewhere_links[{i}].{key}' must be a str, got {type(item[key]).__name__}")
 
     # ── broker section ────────────────────────────────────────────────
     _validate_type(config, "broker", dict, required=True)
