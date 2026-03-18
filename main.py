@@ -118,7 +118,6 @@ async def main() -> None:
         logger.info("Version file not found/invalid; continuing without version info")
 
     # Ensure directories exist
-    os.makedirs(config["paths"]["output"], exist_ok=True)
     os.makedirs(config["paths"]["data"], exist_ok=True)
 
     # Timezone

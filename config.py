@@ -74,8 +74,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "paths": {
         "backups": "output/backups",
         "data": "output/data",
-        "output": "output/static-html",
-        "templates": "templates",
+"templates": "templates",
     },
     "server": {
         "node_id": "",
@@ -85,7 +84,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "timezone": "UTC",
         "intervals": {
             "data_save": 300,
-            "render": 5,
         },
         "backups": {
             "enabled": True,
@@ -346,7 +344,6 @@ def validate(config: dict) -> list[str]:
     # ── paths section ─────────────────────────────────────────────────
     _validate_type(config, "paths", dict, required=True)
     _validate_type(config, "paths.data", str, required=True)
-    _validate_type(config, "paths.output", str, required=True)
     check(_validate_type(config, "paths.backups", str))
     check(_validate_type(config, "paths.templates", str))
 
@@ -358,7 +355,6 @@ def validate(config: dict) -> list[str]:
     check(_validate_positive_number(config, "server.node_activity_prune_threshold"))
     check(_validate_type(config, "server.intervals", dict))
     check(_validate_positive_number(config, "server.intervals.data_save"))
-    check(_validate_positive_number(config, "server.intervals.render"))
     check(_validate_type(config, "server.backups", dict))
     check(_validate_type(config, "server.backups.enabled", bool))
     check(_validate_positive_number(config, "server.backups.interval"))
