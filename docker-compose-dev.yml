@@ -64,6 +64,11 @@ services:
     environment:
       - PYTHONUNBUFFERED="1"
       - ALLOW_ORIGINS="*"
+    # Uncomment if node enrichment fails with "Name or service not known"
+    # (some Docker setups don't inherit host DNS for external lookups)
+    # dns:
+    #   - 1.1.1.1
+    #   - 1.0.0.1
     restart: unless-stopped
     depends_on:
       caddy:
