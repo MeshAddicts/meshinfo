@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@reduxjs/toolkit": "^2.11.2",
-    "@tailwindcss/postcss": "^4.2.1",
+    "@tailwindcss/postcss": "^4.2.2",
     "date-fns": "^4.1.0",
     "date-fns-tz": "^3.2.0",
     "express": "^4.20.0",
