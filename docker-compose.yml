@@ -34,9 +34,11 @@ services:
       - ./postgres:/app/postgres:ro
     environment:
       - PYTHONUNBUFFERED=1
-    dns:
-      - 1.1.1.1
-      - 1.0.0.1
+    # Uncomment if node enrichment fails with "Name or service not known"
+    # (some Docker setups don't inherit host DNS for external lookups)
+    # dns:
+    #   - 1.1.1.1
+    #   - 1.0.0.1
     ports:
       - 9000:9000
     restart: unless-stopped
