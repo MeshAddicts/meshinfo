@@ -707,6 +707,7 @@ export function Map() {
           node: nodeLike,
           liveNodes,
           displayName,
+          elsewhereLinks: config?.mesh?.elsewhere_links,
         });
 
         setDetailsPanelContent({
@@ -1049,6 +1050,7 @@ export function Map() {
         node: nodeLike,
         liveNodes: nodes,
         displayName,
+        elsewhereLinks: config?.mesh?.elsewhere_links,
       });
 
       setDetailsPanelContent({

@@ -47,6 +47,24 @@ url = "https://app.bayme.sh"
 name = "HWT Path Profiler"
 url = "https://heywhatsthat.com/profiler.html"
 
+# "Elsewhere" links shown on node detail pages
+# URLs support {node_id_hex} and {node_id_int} placeholders
+[[mesh.elsewhere_links]]
+name = "Armooo's MeshView"
+url = "https://meshview.armooo.net/packet_list/{node_id_int}"
+
+[[mesh.elsewhere_links]]
+name = "Bay Mesh Explorer"
+url = "https://app.bayme.sh/node/{node_id_hex}"
+
+[[mesh.elsewhere_links]]
+name = "Liam's Map"
+url = "https://meshtastic.liamcottle.net/?node_id={node_id_int}"
+
+[[mesh.elsewhere_links]]
+name = "MeshMap"
+url = "https://meshmap.net/#{node_id_int}"
+
 # MQTT Broker
 # Connects to an MQTT broker to receive Meshtastic mesh traffic.
 [broker]

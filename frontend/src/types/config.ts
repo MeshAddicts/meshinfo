@@ -75,6 +75,7 @@ export interface Mesh {
   timezone?: string;
   announce?: Announce;
   tools?: Tool[];
+  elsewhere_links?: ElsewhereLink[];
 }
 
 export interface Announce {
@@ -83,6 +84,11 @@ export interface Announce {
 }
 
 export interface Tool {
+  name?: string;
+  url?: string;
+}
+
+export interface ElsewhereLink {
   name?: string;
   url?: string;
 }
