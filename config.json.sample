@@ -106,9 +106,7 @@
   },
   "paths": {
     "backups": "output/backups",
-    "data": "output/data",
-    "output": "output/static-html",
-    "templates": "templates"
+    "data": "output/data"
   },
   "server": {
     "node_id": "c7181daf",
@@ -116,8 +114,7 @@
     "node_activity_prune_threshold": 259200,
     "timezone": "America/Los_Angeles",
     "intervals": {
-      "data_save": 300,
-      "render": 5
+      "data_save": 300
     },
     "backups": {
       "enabled": true,

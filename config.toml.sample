@@ -194,8 +194,6 @@ channels = ["0", "1", "2", "3", "4", "5", "6", "7", "8"]
 [paths]
 backups = "output/backups"
 data = "output/data"
-output = "output/static-html"
-templates = "templates"
 
 # Server Settings
 # Controls runtime behavior, scheduling intervals, and feature toggles.
@@ -208,7 +206,6 @@ timezone = "America/Los_Angeles"
 # How often periodic tasks run
 [server.intervals]
 data_save = 300                       # seconds between data saves to disk
-render = 5                            # seconds between static HTML renders
 
 # Automatic backups of data and config
 [server.backups]

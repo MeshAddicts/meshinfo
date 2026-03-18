@@ -63,7 +63,6 @@ services:
     volumes:
       - ./caddy/data:/data/caddy
       - ./Caddyfile:/etc/caddy/Caddyfile
-      - ./output/static-html:/srv
       - ./public/images:/srv/images
     environment:
       - CADDY_AGREE=true

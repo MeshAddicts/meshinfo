@@ -14,7 +14,6 @@ import aiohttp
 from data_renderer import DataRenderer
 from encoders import _JSONDecoder
 from models.node import Node
-from static_html_renderer import StaticHTMLRenderer
 from storage.db.postgres import PostgresStorage
 import utils
 
@@ -305,16 +304,13 @@ class MemoryDataStore:
     save_start = datetime.now(ZoneInfo(self.config['server']['timezone']))
     last_data = self.config['server']['last_data_save'] if 'last_data_save' in self.config['server'] else self.config['server']['start_time']
     since_last_data = (save_start - last_data).total_seconds()
-    last_render = self.config['server']['last_render'] if 'last_render' in self.config['server'] else self.config['server']['start_time']
-    since_last_render = (save_start - last_render).total_seconds()
     last_backfill = self.config['server']['last_backfill'] if 'last_backfill' in self.config['server'] else self.config['server']['start_time']
     since_last_backfill = (save_start - last_backfill).total_seconds()
     last_backup = self.config['server']['last_backup'] if 'last_backup' in self.config['server'] else self.config['server']['start_time']
     since_last_backup = (save_start - last_backup).total_seconds()
     logger.debug(
-      "Save (since last): data: %s (threshold: %s), render: %s (threshold: %s), enrich: %s (threshold: %s), backup: %s (threshold: %s)",
+      "Save (since last): data: %s (threshold: %s), enrich: %s (threshold: %s), backup: %s (threshold: %s)",
       since_last_data, self.config['server']['intervals']['data_save'],
-      since_last_render, self.config['server']['intervals']['render'],
       since_last_backfill, self.config['server']['enrich']['interval'],
       since_last_backup, self.config['server']['backups']['interval'],
     )
@@ -344,13 +340,6 @@ class MemoryDataStore:
         self.config['server']['last_data_save'] = end
         self.graph = self.graph_node(self.config['server']['node_id'])
 
-    if since_last_render >= self.config['server']['intervals']['render']:
-        static_html_renderer = StaticHTMLRenderer(self.config, copy.deepcopy(self))
-        await static_html_renderer.render()
-        end = datetime.now(ZoneInfo(self.config['server']['timezone']))
-        logger.debug("Rendered in %.2f seconds", end.timestamp() - save_start.timestamp())
-        self.config['server']['last_render'] = end
-
     if 'backups' in self.config['server'] and self.config['server']['backups']['enabled']:
       if since_last_backup >= self.config['server']['backups']['interval']:
         await self.backup()
@@ -368,7 +357,6 @@ class MemoryDataStore:
     logger.info("Backing up to %s.tar.bz2", base_name)
     os.makedirs(tmp_path, exist_ok=True)
     shutil.copytree("output/data", f"{tmp_path}/data")
-    shutil.copytree("output/static-html", f"{tmp_path}/static-html")
     config_file = "config.toml" if os.path.isfile("config.toml") else "config.json"
     shutil.copyfile(config_file, f"{tmp_path}/{config_file}")
 
