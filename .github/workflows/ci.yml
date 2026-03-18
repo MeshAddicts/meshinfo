@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-main:
-    name: Build Dockerfile
+  build-frontend:
+    name: Build Frontend
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -17,25 +17,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "20"
-      - name: Enable yarn
-        run: corepack enable
-      - name: Install dependencies
-        run: yarn
-        working-directory: ./frontend
-      - name: Run build
-        run: yarn build
-        working-directory: ./frontend
-  build-spa:
-    name: Build Dockerfile.spa
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "20"
+          node-version: "25"
       - name: Enable yarn
         run: corepack enable
       - name: Install dependencies
