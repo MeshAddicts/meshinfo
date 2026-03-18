@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-main:
-    name: Build Dockerfile
+  build-frontend:
+    name: Build Frontend
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
