@@ -106,8 +106,7 @@
   },
   "paths": {
     "backups": "output/backups",
-    "data": "output/data",
-    "templates": "templates"
+    "data": "output/data"
   },
   "server": {
     "node_id": "c7181daf",

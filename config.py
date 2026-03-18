@@ -74,7 +74,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "paths": {
         "backups": "output/backups",
         "data": "output/data",
-"templates": "templates",
     },
     "server": {
         "node_id": "",
@@ -345,7 +344,6 @@ def validate(config: dict) -> list[str]:
     _validate_type(config, "paths", dict, required=True)
     _validate_type(config, "paths.data", str, required=True)
     check(_validate_type(config, "paths.backups", str))
-    check(_validate_type(config, "paths.templates", str))
 
     # ── server section ────────────────────────────────────────────────
     _validate_type(config, "server", dict, required=True)
