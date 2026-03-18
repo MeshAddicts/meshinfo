@@ -18,7 +18,7 @@ app.use((req, res, next) => {
 });
 
 // Handle every other route with index.html, which will contain a script tag to your application's JavaScript
-app.get("/*", (req, res) => {
+app.get("/*splat", (req, res) => {
   res.sendFile(path.join(__dirname, "../dist", "index.html"));
 });
 
