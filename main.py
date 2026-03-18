@@ -87,21 +87,7 @@ async def supervise(
 async def main() -> None:
     config, data = init_runtime()
 
-    # --- Apply log level from config ---
-    log_level_name = config.get("server", {}).get("log_level", "INFO").upper()
-    valid_levels = logging.getLevelNamesMapping()
-    if log_level_name in valid_levels:
-        effective_log_level = valid_levels[log_level_name]
-    else:
-        logger.warning(
-            "Invalid log level '%s' in config; falling back to INFO",
-            log_level_name,
-        )
-        effective_log_level = logging.INFO
-    logging.getLogger().setLevel(effective_log_level)
-    logger.info("Log level set to: %s", logging.getLevelName(effective_log_level))
-
-    # Banner + version: best-effort only
+    # Banner + version: best-effort only, shown first
     # NOTE: Banner intentionally uses print() for clean stdout display
     banner = _read_text_file("banner")
     if banner:
@@ -116,6 +102,20 @@ async def main() -> None:
         )
     else:
         logger.info("Version file not found/invalid; continuing without version info")
+
+    # --- Apply log level from config ---
+    log_level_name = config.get("server", {}).get("log_level", "INFO").upper()
+    valid_levels = logging.getLevelNamesMapping()
+    if log_level_name in valid_levels:
+        effective_log_level = valid_levels[log_level_name]
+    else:
+        logger.warning(
+            "Invalid log level '%s' in config; falling back to INFO",
+            log_level_name,
+        )
+        effective_log_level = logging.INFO
+    logging.getLogger().setLevel(effective_log_level)
+    logger.info("Log level set to: %s", logging.getLevelName(effective_log_level))
 
     # Ensure directories exist
     os.makedirs(config["paths"]["data"], exist_ok=True)
