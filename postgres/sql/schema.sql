@@ -247,3 +247,20 @@ FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE INDEX IF NOT EXISTS idx_chat_messages_channel_timestamp
 ON chat_messages (channel_id, timestamp DESC);
+
+-- Idempotent migrations: add columns introduced after initial schema deployment.
+-- Safe to run on any existing database; no-ops on fresh installs.
+ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS current REAL;
+ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS wind_gust REAL;
+ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS wind_lull REAL;
+ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS radiation REAL;
+ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS rainfall_1h REAL;
+ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS rainfall_24h REAL;
+ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS soil_moisture INTEGER;
+ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS soil_temperature REAL;
+ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS power_metrics JSONB;
+ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS air_quality_metrics JSONB;
+ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS local_stats JSONB;
+ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS health_metrics JSONB;
+ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS host_metrics JSONB;
+ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS traffic_management_stats JSONB;
