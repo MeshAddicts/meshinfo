@@ -4,8 +4,7 @@ import os
 from fastapi.encoders import jsonable_encoder
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import Config
@@ -13,7 +12,6 @@ import utils
 
 logger = logging.getLogger(__name__)
 
-templates = Jinja2Templates(directory="./templates/api")
 app = FastAPI()
 
 class API:
@@ -23,9 +21,9 @@ class API:
         self.read_from_postgres = config.get('storage', {}).get('read_from') == 'postgres'
 
     async def serve(self):
-        @app.get("/", response_class=HTMLResponse)
-        async def root(request: Request):
-            return templates.TemplateResponse(request=request, name="index.html.j2", context={})
+        @app.get("/")
+        async def root():
+            return {"status": "ok", "service": "meshinfo-api"}
 
         @app.get("/v1/nodes")
         async def nodes(request: Request) -> JSONResponse:
