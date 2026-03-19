@@ -1,7 +1,3 @@
-{
-	debug
-}
-
 YOUR_FQDN_OR_HOSTNAME {
 	encode gzip
 	tls YOUR_EMAIL_ADDRESS
@@ -10,15 +6,17 @@ YOUR_FQDN_OR_HOSTNAME {
 		output file /var/log/caddy.log
 	}
 
+	# --- API ---
 	handle_path /api/* {
 		reverse_proxy meshinfo:9000
 	}
-	handle /next {
-		respond "Gone" 410
+
+	# --- API (direct /v1/* access, used by the SPA) ---
+	handle /v1/* {
+		reverse_proxy meshinfo:9000
 	}
-	handle /next/* {
-		respond "Gone" 410
-	}
+
+	# --- Frontend ---
 	handle {
 		reverse_proxy frontend:80
 	}
