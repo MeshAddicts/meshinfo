@@ -365,10 +365,26 @@ def validate(config: dict) -> list[str]:
     check(_validate_type(config, "storage.write_to", list))
 
     storage_cfg = config.get("storage", {})
-    write_to = storage_cfg.get("write_to", ["postgres"])
     read_from = storage_cfg.get("read_from", "postgres")
 
-    write_to_list = write_to if isinstance(write_to, list) else []
+    if "write_to" not in storage_cfg:
+        raise ConfigValidationError(
+            "storage.write_to is required. "
+            "Set write_to = ['postgres'] under [storage] in your config.toml."
+        )
+    write_to = storage_cfg["write_to"]
+    if not isinstance(write_to, list) or not write_to:
+        raise ConfigValidationError(
+            "storage.write_to must be a non-empty list containing 'postgres'. "
+            "Set write_to = ['postgres'] under [storage] in your config.toml."
+        )
+    write_to_list = write_to
+
+    if "postgres" not in write_to_list:
+        raise ConfigValidationError(
+            "storage.write_to must include 'postgres'. "
+            "Use write_to = ['postgres'] in your config.toml."
+        )
 
     if read_from != "postgres":
         raise ConfigValidationError(
