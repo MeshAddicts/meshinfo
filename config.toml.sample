@@ -105,64 +105,105 @@ enabled = true
 [broker.decoders.json]
 enabled = true
 
+# ─────────────────────────────────────────────────────────────────────────────
 # Channel Configuration
-# Controls which Meshtastic channels are decoded, displayed, and grouped.
+# ─────────────────────────────────────────────────────────────────────────────
+# Meshtastic firmware 2.5+ identifies channels by a hash value derived from
+# the channel name and PSK — not a slot index (0-7). The hashes below are
+# computed for the default PSK (1PG7OiApB1nwvP+rz05pAQ==). If your network
+# uses a custom PSK, your channel hashes will differ.
+#
+# To discover which channel hashes are active on your network, query your DB:
+#   SELECT channel_id, COUNT(*) as msgs FROM chat_messages
+#   GROUP BY channel_id ORDER BY msgs DESC;
+# ─────────────────────────────────────────────────────────────────────────────
+
 [broker.channels]
-# Which channel indices to show in the UI
-display = ["0", "1", "2", "3", "4", "5", "6", "7", "8"]
+# Channel hashes to show in the UI. Channels with no data are hidden
+# automatically — it is safe to list all presets here.
+display = ["8", "31", "24", "15", "55", "119", "112", "9", "14"]
 
 # Encryption keys for decoding channel traffic (base64-encoded)
 [[broker.channels.encryption]]
 key = "1PG7OiApB1nwvP+rz05pAQ=="
 key_name = "Default"
 
-# Channel metadata by index -- labels and presets shown in the UI
-[broker.channels.meta.0]
+# ─────────────────────────────────────────────────────────────────────────────
+# Standard Meshtastic Preset Channel Hashes
+# Computed from: XOR_bytes(channel_name) ^ XOR_bytes(PSK)
+# These values assume the default PSK above. Verified against live traffic.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[broker.channels.meta.8]
+label = "LongFast"
+short = "LF"
+preset = "LongFast"
+description = "LongFast modem preset (default PSK hash: 8)"
+
+[broker.channels.meta.31]
 label = "MediumFast"
 short = "MF"
 preset = "MediumFast"
-description = "MediumFast modem preset"
+description = "MediumFast modem preset (default PSK hash: 31)"
 
-[broker.channels.meta.8]
-label = "LongFast (legacy)"
-short = "LF"
-preset = "LongFast"
-description = "Longfast modem preset"
+[broker.channels.meta.24]
+label = "MediumSlow"
+short = "MS"
+preset = "MediumSlow"
+description = "MediumSlow modem preset (default PSK hash: 24)"
 
-[broker.channels.meta.1]
-label = "Channel 1"
-short = "1"
+[broker.channels.meta.15]
+label = "LongSlow"
+short = "LS"
+preset = "LongSlow"
+description = "LongSlow modem preset (default PSK hash: 15)"
 
-[broker.channels.meta.2]
-label = "Channel 2"
-short = "2"
+[broker.channels.meta.55]
+label = "VeryLongSlow"
+short = "VLS"
+preset = "VeryLongSlow"
+description = "VeryLongSlow modem preset (default PSK hash: 55)"
 
-[broker.channels.meta.3]
-label = "Channel 3"
-short = "3"
+[broker.channels.meta.119]
+label = "ShortSlow"
+short = "SS"
+preset = "ShortSlow"
+description = "ShortSlow modem preset (default PSK hash: 119)"
 
-[broker.channels.meta.4]
-label = "Channel 4"
-short = "4"
+[broker.channels.meta.112]
+label = "ShortFast"
+short = "SF"
+preset = "ShortFast"
+description = "ShortFast modem preset (default PSK hash: 112)"
 
-[broker.channels.meta.5]
-label = "Channel 5"
-short = "5"
+[broker.channels.meta.9]
+label = "LongModerate"
+short = "LM"
+preset = "LongModerate"
+description = "LongModerate modem preset (default PSK hash: 9)"
 
-[broker.channels.meta.6]
-label = "Channel 6"
-short = "6"
+[broker.channels.meta.14]
+label = "ShortTurbo"
+short = "ST"
+preset = "ShortTurbo"
+description = "ShortTurbo modem preset (default PSK hash: 14)"
 
-[broker.channels.meta.7]
-label = "Channel 7"
-short = "7"
+# ─────────────────────────────────────────────────────────────────────────────
+# Custom Channel Hashes
+# Add entries here for private or regional channels your network monitors.
+# Find the hash by querying your database (see comment at top of this section).
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Channel views group channels together in the UI (e.g. tabs/filters)
-[[broker.channels.views]]
-id = "mf"
-label = "MediumFast"
-short = "MF"
-channels = ["0"]
+# Example:
+# [broker.channels.meta.42]
+# label = "My Region"
+# short = "MR"
+# description = "Private channel for My Region mesh network"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Channel Views — tabs shown in the Chat UI
+# Only single-channel views are supported. Views with no data are hidden.
+# ─────────────────────────────────────────────────────────────────────────────
 
 [[broker.channels.views]]
 id = "lf"
@@ -172,10 +213,10 @@ channels = ["8"]
 default = true                        # shown by default in the UI
 
 [[broker.channels.views]]
-id = "all"
-label = "All Channels"
-short = "ALL"
-channels = ["0", "1", "2", "3", "4", "5", "6", "7", "8"]
+id = "mf"
+label = "MediumFast"
+short = "MF"
+channels = ["31"]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Mesh Network Metadata — Required
