@@ -1,12 +1,11 @@
 """
 Config loading, validation, and defaults for MeshInfo.
 
-Addresses GitHub issue #225: Deprecate filesystem writes.
 - Validates all config fields at startup
 - Provides sensible defaults for optional fields
 - Logs warnings for missing or invalid values
 - Fails fast (with clear error messages) only for truly required fields
-- Requires PostgreSQL to be enabled; JSON storage is deprecated
+- Requires PostgreSQL
 """
 
 import datetime
@@ -25,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Default configuration
 # ---------------------------------------------------------------------------
 # Every key that MeshInfo might read should appear here.  When a user's
-# config.json is loaded, it is deep-merged on top of these defaults so that
+# config.toml is loaded, it is deep-merged on top of these defaults so that
 # any missing keys automatically get a safe value.
 # ---------------------------------------------------------------------------
 
@@ -71,10 +70,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "views": [],
         },
     },
-    "paths": {
-        "backups": "output/backups",
-        "data": "output/data",
-    },
     "server": {
         "node_id": "",
         "base_url": "",
@@ -82,12 +77,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "node_activity_prune_threshold": 259200,
         "timezone": "UTC",
         "intervals": {
-            "data_save": 300,
-        },
-        "backups": {
-            "enabled": True,
-            "interval": 86400,
-            "max_backups": 7,
+            "data_save": 300,  # seconds between graph rebuilds
         },
         "enrich": {
             "enabled": False,
@@ -114,8 +104,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         },
     },
     "storage": {
-        "read_from": "json",
-        "write_to": ["json"],
+        "read_from": "postgres",
+        "write_to": ["postgres"],
         "postgres": {
             "enabled": False,
             "host": "postgres",
@@ -168,19 +158,6 @@ def _get_nested(d: dict, *keys: str, default: Any = None) -> Any:
 
 class ConfigValidationError(Exception):
     """Raised when a *required* config value is missing or fatally invalid."""
-    pass
-
-
-class StorageDeprecationError(Exception):
-    """
-    Raised when PostgreSQL is not configured at all.
-
-    This is separate from ConfigValidationError so that main.py can catch it
-    and display user-friendly migration instructions instead of a generic
-    config error.
-
-    See GitHub issue #225: Deprecate filesystem writes.
-    """
     pass
 
 
@@ -285,7 +262,6 @@ def validate(config: dict) -> list[str]:
     Validate the merged config and return a list of warning messages.
 
     Raises ConfigValidationError only for truly fatal problems.
-    Raises StorageDeprecationError if PostgreSQL is not enabled (issue #225).
     Everything else is logged as a warning and collected in the return list.
     """
     warnings: list[str] = []
@@ -340,11 +316,6 @@ def validate(config: dict) -> list[str]:
     check(_validate_type(config, "broker.decoders", dict))
     check(_validate_type(config, "broker.channels", dict))
 
-    # ── paths section ─────────────────────────────────────────────────
-    _validate_type(config, "paths", dict, required=True)
-    _validate_type(config, "paths.data", str, required=True)
-    check(_validate_type(config, "paths.backups", str))
-
     # ── server section ────────────────────────────────────────────────
     _validate_type(config, "server", dict, required=True)
     check(_validate_type(config, "server.node_id", str))
@@ -353,11 +324,6 @@ def validate(config: dict) -> list[str]:
     check(_validate_positive_number(config, "server.node_activity_prune_threshold"))
     check(_validate_type(config, "server.intervals", dict))
     check(_validate_positive_number(config, "server.intervals.data_save"))
-    check(_validate_type(config, "server.backups", dict))
-    check(_validate_type(config, "server.backups.enabled", bool))
-    check(_validate_positive_number(config, "server.backups.interval"))
-    check(_validate_type(config, "server.backups.max_backups", int))
-    check(_validate_positive_number(config, "server.backups.max_backups"))
     check(_validate_type(config, "server.enrich", dict))
     check(_validate_type(config, "server.enrich.enabled", bool))
     check(_validate_positive_number(config, "server.enrich.interval"))
@@ -396,91 +362,76 @@ def validate(config: dict) -> list[str]:
 
     # ── storage section ───────────────────────────────────────────────
     check(_validate_type(config, "storage", dict))
-    check(_validate_one_of(config, "storage.read_from", ["json", "postgres"]))
     check(_validate_type(config, "storage.write_to", list))
 
     storage_cfg = config.get("storage", {})
-    write_to = storage_cfg.get("write_to", [])
-    read_from = storage_cfg.get("read_from", "json")
+    read_from = storage_cfg.get("read_from", "postgres")
 
-    # Ensure we only iterate and check membership on a proper list
-    write_to_list = write_to if isinstance(write_to, list) else []
+    if "write_to" not in storage_cfg:
+        raise ConfigValidationError(
+            "storage.write_to is required. "
+            "Set write_to = ['postgres'] under [storage] in your config.toml."
+        )
+    write_to = storage_cfg["write_to"]
+    if not isinstance(write_to, list) or not write_to:
+        raise ConfigValidationError(
+            "storage.write_to must be a non-empty list containing 'postgres'. "
+            "Set write_to = ['postgres'] under [storage] in your config.toml."
+        )
+    write_to_list = write_to
+
+    if "postgres" not in write_to_list:
+        raise ConfigValidationError(
+            "storage.write_to must include 'postgres'. "
+            "Use write_to = ['postgres'] in your config.toml."
+        )
+
+    if read_from != "postgres":
+        raise ConfigValidationError(
+            f"storage.read_from = {read_from!r} is no longer supported. "
+            "JSON storage has been removed. Set read_from = 'postgres' in your config.toml."
+        )
 
     for target in write_to_list:
-        if target not in ("json", "postgres"):
-            warn(f"Unknown storage write target: {target!r}. Expected 'json' or 'postgres'.")
+        if target != "postgres":
+            raise ConfigValidationError(
+                f"Storage write target {target!r} is no longer supported. "
+                "JSON storage has been removed. Use write_to = ['postgres'] in your config.toml."
+            )
 
-    # ── PostgreSQL required check (issue #225) ────────────────────────
-    # PostgreSQL must be enabled. If it's not configured at all, raise
-    # StorageDeprecationError which main.py catches for a graceful exit.
+    # ── PostgreSQL required ────────────────────────────────────────────
     pg_cfg = storage_cfg.get("postgres", {})
     if not pg_cfg.get("enabled"):
-        raise StorageDeprecationError(
+        raise ConfigValidationError(
             "PostgreSQL is required but not enabled in your config.\n"
             "\n"
-            "Starting with this version, MeshInfo requires PostgreSQL.\n"
-            "Filesystem (JSON) storage is deprecated and will be removed in the next release.\n"
+            "Set enabled = true under [storage.postgres] in your config.toml:\n"
             "\n"
-            "To fix this:\n"
-            "  1. Add a PostgreSQL service to your docker-compose.yml (see docker-compose.yml.sample)\n"
-            "  2. Enable PostgreSQL in config.toml:\n"
-            "     [storage]\n"
-            '     read_from = "postgres"\n'
-            '     write_to = ["postgres"]\n'
+            "  [storage.postgres]\n"
+            "  enabled = true\n"
+            '  host = "postgres"\n'
+            "  port = 5432\n"
+            '  database = "meshinfo"\n'
+            '  username = "postgres"\n'
+            '  password = "your_password"\n'
             "\n"
-            "     [storage.postgres]\n"
-            "     enabled = true\n"
-            '     host = "postgres"\n'
-            "     port = 5432\n"
-            '     database = "meshinfo"\n'
-            '     username = "postgres"\n'
-            '     password = "your_password"\n'
-            "\n"
-            "  3. If migrating from JSON, run: docker exec -it meshinfo-meshinfo-1 python3 scripts/migrate_json_to_postgres.py\n"
-            "  4. Restart MeshInfo\n"
+            "See config.toml.sample for the full example configuration.\n"
         )
-
-    # ── JSON deprecation warnings (issue #225) ────────────────────────
-    # JSON still works during the deprecation period.
-    json_in_use = read_from == "json" or "json" in write_to_list
-
-    if json_in_use:
-        deprecation_msg = (
-            "DEPRECATION WARNING: Filesystem (JSON) storage is deprecated and will be "
-            "removed in the next version of MeshInfo. Please migrate to PostgreSQL-only storage. "
-            "See https://github.com/MeshAddicts/meshinfo for migration instructions."
-        )
-        # Log at ERROR level
-        logger.error(deprecation_msg)
-        warn(deprecation_msg)
-
-        if read_from == "json":
-            logger.error(
-                "storage.read_from is set to 'json'. Change it to 'postgres' after running "
-                "the migration script (scripts/migrate_json_to_postgres.py)."
-            )
-        if "json" in write_to_list:
-            logger.error(
-                "storage.write_to includes 'json'. Remove 'json' from write_to and keep only 'postgres' "
-                "once you have confirmed PostgreSQL is working correctly."
-            )
 
     # ── Postgres config validation ────────────────────────────────────
-    needs_postgres = read_from == "postgres" or "postgres" in write_to_list
-    if needs_postgres:
-        check(_validate_type(config, "storage.postgres.host", str))
-        check(_validate_port(config, "storage.postgres.port"))
-        check(_validate_type(config, "storage.postgres.database", str))
-        check(_validate_positive_number(config, "storage.postgres.min_pool_size"))
-        check(_validate_positive_number(config, "storage.postgres.max_pool_size"))
+    check(_validate_type(config, "storage.postgres.host", str))
+    check(_validate_port(config, "storage.postgres.port"))
+    check(_validate_type(config, "storage.postgres.database", str))
+    check(_validate_positive_number(config, "storage.postgres.min_pool_size"))
+    check(_validate_positive_number(config, "storage.postgres.max_pool_size"))
 
-        min_pool = pg_cfg.get("min_pool_size", 1)
-        max_pool = pg_cfg.get("max_pool_size", 5)
-        if isinstance(min_pool, int) and isinstance(max_pool, int) and min_pool > max_pool:
-            warn(
-                f"Postgres min_pool_size ({min_pool}) is greater than max_pool_size ({max_pool}). "
-                "This will likely cause connection errors."
-            )
+    min_pool = pg_cfg.get("min_pool_size", 1)
+    max_pool = pg_cfg.get("max_pool_size", 5)
+    if isinstance(min_pool, int) and isinstance(max_pool, int) and min_pool > max_pool:
+        warn(
+            f"Postgres min_pool_size ({min_pool}) is greater than max_pool_size ({max_pool}). "
+            "This will likely cause connection errors."
+        )
 
     # ── debug ─────────────────────────────────────────────────────────
     check(_validate_type(config, "debug", bool))
@@ -502,18 +453,10 @@ class Config:
     @classmethod
     def load(cls) -> dict:
         """
-        Load config.toml (or config.json as fallback), merge with defaults,
-        validate, and return the final config dict.
+        Load config.toml, merge with defaults, validate, and return the final config dict.
         """
-        # Load user config: prefer TOML, fall back to JSON
         if os.path.isfile("config.toml"):
             user_config = cls._load_toml("config.toml")
-        elif os.path.isfile("config.json"):
-            logger.warning(
-                "Loading config.json (JSON format is deprecated). "
-                "Please migrate to config.toml. See config.toml.sample for the format."
-            )
-            user_config = cls._load_json("config.json")
         else:
             raise ConfigValidationError(
                 "No config file found. "
@@ -570,7 +513,7 @@ class Config:
 
     @classmethod
     def _load_json(cls, path: str) -> dict:
-        """Load and parse a JSON file (legacy format)."""
+        """Load and parse a JSON file."""
         try:
             with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)

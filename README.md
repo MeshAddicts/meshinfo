@@ -6,7 +6,7 @@ Realtime web UI to run against a Meshtastic regional or private mesh network.
 
 ## Overview
 
-MeshInfo is written in Python and connects to an MQTT server that is receiving Meshtastic messages for the purpose of visualizing and inspecting traffic. It (currently) uses a filesystem to persist content, such as node info and telemetry. There are plans to optionally support Postgres and SQLite3 as optional persistance storage methods.
+MeshInfo is written in Python and connects to an MQTT server that is receiving Meshtastic messages for the purpose of visualizing and inspecting traffic. It uses PostgreSQL to persist content such as node info and telemetry.
 
 To make deployment to run an instance for your mesh easy, Docker support is included. We recommend using Docker Compose with a personalized version of the `docker-compose.yml` file to most easily deploy it, but any seasoned Docker user can also use the Docker image alone.
 
@@ -72,7 +72,7 @@ cd meshinfo
 
 ##### Edit Configuration
 
-1. Copy and then edit the `config.toml.sample` to `config.toml` (or `config.json.sample` to `config.json` for legacy JSON format).
+1. Copy and then edit the `config.toml.sample` to `config.toml`.
 2. Copy `Caddyfile.sample` to `Caddyfile` then edit the `Caddyfile` and be sure it is setup for your hostname (FQDN if requiring Let's Encrypt cert to be generated) and your email address for the TLS line.
 
  - Caddy will request a cert of the FQDN, be sure to specify any subdomain. For example: `https://meshinfo.domain.com`.  

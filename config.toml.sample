@@ -2,71 +2,59 @@
 # Copy this file to config.toml and edit it for your deployment.
 # Full documentation: https://github.com/MeshAddicts/meshinfo
 
-# Enable verbose debug logging
+# Enable verbose debug logging (set to true to troubleshoot)
 debug = false
 
-# Mesh Network Metadata
-# Describes your mesh network; shown in the web UI and used for announcements.
-[mesh]
-name = "Central Valley Mesh"
-shortname = "CVM"
-description = "Serving Meshtastic to the California Central Valley and surrounding areas."
-url = "https://CVME.sh"
-contact = "https://CVME.sh"
-country = "US"
-region = "California"
-metro = "Fresno, Modesto, Bakersfield"
-latitude = 36.72
-longitude = -119.78
-altitude = 0                          # meters above sea level
+# ─────────────────────────────────────────────────────────────────────────────
+# Storage — Required
+# PostgreSQL is the only supported storage backend.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[storage]
+read_from = "postgres"
+write_to = ["postgres"]
+
+[storage.postgres]
+enabled = true
+host = "postgres"                     # use "localhost" if not using Docker
+port = 5432
+database = "meshinfo"
+username = "postgres"
+password = "password"
+min_pool_size = 1                     # minimum database connection pool size
+max_pool_size = 5                     # maximum database connection pool size
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Server — Required
+# Core runtime identity and behavior.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[server]
+node_id = "c7181daf"                  # your central mesh node's hex ID
+base_url = "REPLACE_WITH_THE_URL_OF_THIS_SERVER_WITHOUT_TRAILING_SLASH"
+node_activity_prune_threshold = 259200  # seconds (default: 3 days)
 timezone = "America/Los_Angeles"      # IANA timezone (e.g. "UTC", "Europe/London")
 
-# Announce this MeshInfo instance to the mesh network discovery service
-[mesh.announce]
+# How often the neighbor graph is rebuilt
+[server.intervals]
+data_save = 300                       # seconds between graph rebuilds
+
+# Node enrichment via external data sources
+[server.enrich]
 enabled = true
-interval = 60  # minutes
+interval = 900                        # seconds between enrichment runs
+provider = "world.meshinfo.network"
 
-# External tools shown in the web UI sidebar
-[[mesh.tools]]
-name = "Armooo's MeshView"
-url = "https://meshview.armooo.net"
+# Network graph generation
+[server.graph]
+enabled = true
+max_depth = 10                        # maximum hop depth for neighbor graph
 
-[[mesh.tools]]
-name = "Liam's Meshtastic Map"
-url = "https://meshtastic.liamcottle.net"
-
-[[mesh.tools]]
-name = "MeshMap"
-url = "https://meshmap.net"
-
-[[mesh.tools]]
-name = "Bay Mesh Explorer"
-url = "https://app.bayme.sh"
-
-[[mesh.tools]]
-name = "HWT Path Profiler"
-url = "https://heywhatsthat.com/profiler.html"
-
-# "Elsewhere" links shown on node detail pages
-# URLs support {node_id_hex} and {node_id_int} placeholders
-[[mesh.elsewhere_links]]
-name = "Armooo's MeshView"
-url = "https://meshview.armooo.net/packet_list/{node_id_int}"
-
-[[mesh.elsewhere_links]]
-name = "Bay Mesh Explorer"
-url = "https://app.bayme.sh/node/{node_id_hex}"
-
-[[mesh.elsewhere_links]]
-name = "Liam's Map"
-url = "https://meshtastic.liamcottle.net/?node_id={node_id_int}"
-
-[[mesh.elsewhere_links]]
-name = "MeshMap"
-url = "https://meshmap.net/#{node_id_int}"
-
-# MQTT Broker
+# ─────────────────────────────────────────────────────────────────────────────
+# MQTT Broker — Required
 # Connects to an MQTT broker to receive Meshtastic mesh traffic.
+# ─────────────────────────────────────────────────────────────────────────────
+
 [broker]
 enabled = true
 host = "mqtt.meshtastic.org"
@@ -133,13 +121,13 @@ key_name = "Default"
 label = "MediumFast"
 short = "MF"
 preset = "MediumFast"
-description = "Primary mesh channel"
+description = "MediumFast modem preset"
 
 [broker.channels.meta.8]
 label = "LongFast (legacy)"
 short = "LF"
 preset = "LongFast"
-description = "Legacy / interop channel"
+description = "Longfast modem preset"
 
 [broker.channels.meta.1]
 label = "Channel 1"
@@ -189,51 +177,35 @@ label = "All Channels"
 short = "ALL"
 channels = ["0", "1", "2", "3", "4", "5", "6", "7", "8"]
 
-# File Paths
-# Directories for data output and templates relative to the app root.
-[paths]
-backups = "output/backups"
-data = "output/data"
+# ─────────────────────────────────────────────────────────────────────────────
+# Mesh Network Metadata — Required
+# Describes your mesh network; shown in the web UI and announcements.
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Server Settings
-# Controls runtime behavior, scheduling intervals, and feature toggles.
-[server]
-node_id = "c7181daf"                  # central mesh node (needs clarifying/rework)
-base_url = "REPLACE_WITH_THE_URL_OF_THIS_SERVER_WITHOUT_TRAILING_SLASH"
-node_activity_prune_threshold = 259200  # seconds (default: 3 days)
-timezone = "America/Los_Angeles"
+[mesh]
+name = "Central Valley Mesh"
+shortname = "CVM"
+description = "Serving Meshtastic to the California Central Valley and surrounding areas."
+url = "https://CVME.sh"
+contact = "https://CVME.sh"
+country = "US"
+region = "California"
+metro = "Fresno, Modesto, Bakersfield"
+latitude = 36.72
+longitude = -119.78
+altitude = 0                          # meters above sea level
+timezone = "America/Los_Angeles"      # IANA timezone (e.g. "UTC", "Europe/London")
 
-# How often periodic tasks run
-[server.intervals]
-data_save = 300                       # seconds between data saves to disk
-
-# Automatic backups of data and config
-[server.backups]
+# Announce this MeshInfo instance to the mesh network discovery service
+[mesh.announce]
 enabled = true
-interval = 86400                      # seconds between backups (default: 24 hours)
-max_backups = 7                       # number of backup archives to keep
+interval = 60                         # minutes
 
-# Node enrichment via external data sources
-[server.enrich]
-enabled = true
-interval = 900                        # seconds between enrichment runs
-provider = "world.meshinfo.network"
+# ─────────────────────────────────────────────────────────────────────────────
+# Integrations — Optional
+# ─────────────────────────────────────────────────────────────────────────────
 
-# Network graph generation
-[server.graph]
-enabled = true
-max_depth = 10                        # maximum hop depth for neighbor graph
-
-# Integrations
-# Optional third-party service connections.
-
-# Discord bot for mesh notifications
-[integrations.discord]
-enabled = false
-token = "REPLACE_WITH_TOKEN"
-guild = "REPLACE_WITH_GUILD_ID"
-
-# Reverse geocoding (coordinates to human-readable addresses)
+# Reverse geocoding
 [integrations.geocoding]
 enabled = false
 provider = "geocode.maps.co"
@@ -241,20 +213,52 @@ provider = "geocode.maps.co"
 [integrations.geocoding."geocode.maps.co"]
 api_key = "REPLACE_WITH_API_KEY"
 
-# Storage
-# PostgreSQL is REQUIRED. JSON storage is deprecated and will be removed
-# in a future version.
+# Discord bot for mesh notifications
+[integrations.discord]
+enabled = false
+token = "REPLACE_WITH_TOKEN"
+guild = "REPLACE_WITH_GUILD_ID"
 
-[storage]
-read_from = "postgres"                # "postgres" or "json" (deprecated)
-write_to = ["json", "postgres"]       # backends that receive writes
+# ─────────────────────────────────────────────────────────────────────────────
+# UI Customization — Optional
+# External tools and node detail links shown in the web UI.
+# ─────────────────────────────────────────────────────────────────────────────
 
-[storage.postgres]
-enabled = true
-host = "postgres"                     # use "localhost" if not using Docker
-port = 5432
-database = "meshinfo"
-username = "postgres"
-password = "password"
-min_pool_size = 1                     # minimum database connection pool size
-max_pool_size = 5                     # maximum database connection pool size
+# External tools shown in the web UI sidebar
+[[mesh.tools]]
+name = "Armooo's MeshView"
+url = "https://meshview.armooo.net"
+
+[[mesh.tools]]
+name = "Liam's Meshtastic Map"
+url = "https://meshtastic.liamcottle.net"
+
+[[mesh.tools]]
+name = "MeshMap"
+url = "https://meshmap.net"
+
+[[mesh.tools]]
+name = "Bay Mesh Explorer"
+url = "https://app.bayme.sh"
+
+[[mesh.tools]]
+name = "HWT Path Profiler"
+url = "https://heywhatsthat.com/profiler.html"
+
+# "Elsewhere" links shown on node detail pages
+# URLs support {node_id_hex} and {node_id_int} placeholders
+[[mesh.elsewhere_links]]
+name = "Armooo's MeshView"
+url = "https://meshview.armooo.net/packet_list/{node_id_int}"
+
+[[mesh.elsewhere_links]]
+name = "Bay Mesh Explorer"
+url = "https://app.bayme.sh/node/{node_id_hex}"
+
+[[mesh.elsewhere_links]]
+name = "Liam's Map"
+url = "https://meshtastic.liamcottle.net/?node_id={node_id_int}"
+
+[[mesh.elsewhere_links]]
+name = "MeshMap"
+url = "https://meshmap.net/#{node_id_int}"

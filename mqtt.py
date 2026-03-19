@@ -355,8 +355,6 @@ class MQTT:
                 if self.config.get('debug'):
                     logger.debug("Postgres write traceback", exc_info=True)
 
-        with open(f'{self.config["paths"]["data"]}/message-log.jsonl', 'a', encoding='utf-8') as f:
-            f.write(json.dumps(clean_msg, ensure_ascii=False, default=str) + "\n")
 
     async def handle_neighborinfo(self, msg):
         msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
