@@ -438,6 +438,27 @@ export function updateOlSpiderfyPositions(map: OlMap): void {
 }
 
 /**
+ * Check if all children of a cluster are co-located (within ~5px of each other).
+ * This means they can't separate further by zooming — same as Mapbox's
+ * "expansion zoom >= max zoom" check.
+ */
+function areChildrenColocated(map: OlMap, children: Feature[]): boolean {
+  if (children.length < 2) return false;
+
+  const first = (children[0].getGeometry() as Point).getCoordinates();
+  const resolution = map.getView().getResolution() ?? 1;
+  // ~5 pixels — truly overlapping, not just nearby
+  const threshold = 5 * resolution;
+
+  return children.every((c) => {
+    const pos = (c.getGeometry() as Point).getCoordinates();
+    const dx = pos[0] - first[0];
+    const dy = pos[1] - first[1];
+    return Math.sqrt(dx * dx + dy * dy) < threshold;
+  });
+}
+
+/**
  * Auto-spiderfy visible clusters that can't expand further.
  * For OL, we check if any cluster at high zoom still has > 1 child.
  */
@@ -457,20 +478,9 @@ export function autoOlSpiderfy(
     const children = (cf.get("features") ?? []) as Feature[];
     if (children.length < 2) continue;
 
-    // At high zoom, if children share (nearly) the same position, spiderfy
-    // Check if all children are within a tiny distance of each other
-    const first = (children[0].getGeometry() as Point).getCoordinates();
-    const resolution = map.getView().getResolution() ?? 1;
-    const threshold = CLUSTER_DISTANCE * resolution; // cluster distance in map units
-
-    const allClose = children.every((c) => {
-      const pos = (c.getGeometry() as Point).getCoordinates();
-      const dx = pos[0] - first[0];
-      const dy = pos[1] - first[1];
-      return Math.sqrt(dx * dx + dy * dy) < threshold;
-    });
-
-    if (allClose) {
+    // Only auto-spiderfy truly co-located nodes (within ~5px of each other)
+    // This matches the Mapbox behavior of only spiderfying when nodes can't separate
+    if (areChildrenColocated(map, children)) {
       olSpiderfy(map, cf);
       return; // one at a time
     }
@@ -563,17 +573,17 @@ export function handleOlClusterClick(
     return (children[0].get("node") as IFeatureNode) ?? null;
   }
 
-  // It's a cluster — check if we should zoom in or spiderfy
+  // It's a cluster — check if nodes are co-located (can't separate) or just nearby
   const view = map.getView();
   const zoom = view.getZoom() ?? 0;
 
-  // At high zoom, spiderfy instead of zooming
-  if (zoom >= AUTO_SPIDERFY_MIN_ZOOM) {
+  if (areChildrenColocated(map, children)) {
+    // Nodes are at the same position — spiderfy (zooming won't help)
     olSpiderfy(map, feature);
     return null;
   }
 
-  // Zoom in to try to separate the cluster
+  // Nodes are nearby but separable — zoom in to split the cluster
   const geom = feature.getGeometry() as Point;
   const coords = geom.getCoordinates();
   view.animate({
