@@ -31,6 +31,16 @@ import { MapSettingsPanel } from "./map/MapSettingsPanel";
 import { LS_KEYS, readJson, toMapboxStyleUrl, writeJson } from "./map/storage";
 import type { IFeatureNode, IMapNode, MapProvider, NodeLike } from "./map/types";
 import {
+  autoSpiderfyVisibleClusters,
+  removeSpiderfyLayers,
+  spiderfy,
+  unspiderfy,
+  updateSpiderfyPositions,
+  SPIDERFY_LAYER_NODES,
+  SPIDERFY_LAYER_LABELS,
+  SPIDERFY_SOURCE_NODES,
+} from "./map/spiderfy";
+import {
   applyMapboxClusterVisibility,
   buildNodesGeoJSON,
   bumpOlRender,
@@ -82,6 +92,7 @@ export function Map() {
   const mbSelectedIdRef = useRef<string | null>(null);
   const mbHandlersBoundRef = useRef(false);
   const mbCurrentStyleUrlRef = useRef<string | null>(null);
+  const mbKeydownHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
 
   const { data: rawNodes = {} } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
@@ -310,18 +321,14 @@ export function Map() {
     const selectedId = mbSelectedIdRef.current;
 
     if (map && selectedId) {
-      // Clear selection ring (feature-state) for both sources (clustered + plain)
-      try {
-        if (map.getSource("nodes_clustered")) {
-          map.setFeatureState({ source: "nodes_clustered", id: selectedId }, { selected: false });
-        }
-      } catch {}
-
-      try {
-        if (map.getSource("nodes_plain")) {
-          map.setFeatureState({ source: "nodes_plain", id: selectedId }, { selected: false });
-        }
-      } catch {}
+      // Clear selection ring (feature-state) for all node sources
+      for (const src of ["nodes_clustered", "nodes_plain", SPIDERFY_SOURCE_NODES]) {
+        try {
+          if (map.getSource(src)) {
+            map.setFeatureState({ source: src, id: selectedId }, { selected: false });
+          }
+        } catch {}
+      }
     }
 
     mbSelectedIdRef.current = null;
@@ -431,21 +438,20 @@ export function Map() {
 
     mbMapRef.current = map;
 
+    const NODE_SOURCES = ["nodes_clustered", "nodes_plain", SPIDERFY_SOURCE_NODES] as const;
+
     const clearSelected = () => {
       const prev = mbSelectedIdRef.current;
       if (!prev) return;
-      try {
-        map.setFeatureState({ source: "nodes_clustered", id: prev }, { selected: false });
-      } catch (error) {
-        if (process.env.NODE_ENV !== "production") {
-          console.error("Failed to clear feature state for nodes_clustered", error);
-        }
-      }
-      try {
-        map.setFeatureState({ source: "nodes_plain", id: prev }, { selected: false });
-      } catch (error) {
-        if (process.env.NODE_ENV !== "production") {
-          console.error("Failed to clear feature state for nodes_plain", error);
+      for (const src of NODE_SOURCES) {
+        try {
+          if (map.getSource(src)) {
+            map.setFeatureState({ source: src, id: prev }, { selected: false });
+          }
+        } catch (error) {
+          if (process.env.NODE_ENV !== "production") {
+            console.error(`Failed to clear feature state for ${src}`, error);
+          }
         }
       }
       mbSelectedIdRef.current = null;
@@ -458,18 +464,15 @@ export function Map() {
 
       mbSelectedIdRef.current = id;
 
-      try {
-        map.setFeatureState({ source: "nodes_clustered", id }, { selected: true });
-      } catch (error) {
-        if (process.env.NODE_ENV !== "production") {
-          console.error("Failed to set feature state for nodes_clustered", error);
-        }
-      }
-      try {
-        map.setFeatureState({ source: "nodes_plain", id }, { selected: true });
-      } catch (error) {
-        if (process.env.NODE_ENV !== "production") {
-          console.error("Failed to set feature state for nodes_plain", error);
+      for (const src of NODE_SOURCES) {
+        try {
+          if (map.getSource(src)) {
+            map.setFeatureState({ source: src, id }, { selected: true });
+          }
+        } catch (error) {
+          if (process.env.NODE_ENV !== "production") {
+            console.error(`Failed to set feature state for ${src}`, error);
+          }
         }
       }
     };
@@ -507,7 +510,7 @@ export function Map() {
           data: buildNodesGeoJSON(nodesRef.current, recentDaysRef.current),
           cluster: true,
           clusterRadius: 50,
-          clusterMaxZoom: 14,
+          clusterMaxZoom: 24,
         });
       }
 
@@ -736,7 +739,7 @@ export function Map() {
       bindHover("clusters");
       bindHover("plain-nodes");
 
-      // Clicking a cluster zooms in
+      // Clicking a cluster: zoom in, or spiderfy if can't expand further
       map.on("click", "clusters", (e) => {
         const features = map.queryRenderedFeatures(e.point, { layers: ["clusters"] });
         const cluster = features[0];
@@ -751,7 +754,17 @@ export function Map() {
           if (zoom == null) return;
 
           const [lng, lat] = (cluster.geometry as any).coordinates as [number, number];
-          map.easeTo({ center: [lng, lat], zoom });
+          const maxZoom = map.getMaxZoom();
+
+          if (zoom >= maxZoom) {
+            // Can't expand further — spiderfy the nodes
+            clearMapboxSelectionAndOverlays();
+            void spiderfy(map, clusterId, [lng, lat], map.getZoom());
+          } else {
+            // Zoom in, collapsing any existing spiderfy
+            removeSpiderfyLayers(map);
+            map.easeTo({ center: [lng, lat], zoom });
+          }
         });
       });
 
@@ -773,23 +786,63 @@ export function Map() {
         void handleNodeClick(id);
       });
 
-      // Clicking empty space clears
+      // Clicking spiderfied nodes
+      map.on("click", SPIDERFY_LAYER_NODES, (e) => {
+        const feature = e.features?.[0];
+        if (!feature) return;
+        const id = (feature.properties?.id ?? "") as string;
+        if (!id) return;
+        void handleNodeClick(id);
+      });
+
+      bindHover(SPIDERFY_LAYER_NODES);
+
+      // Clicking empty space clears selection and collapses spiderfy
       map.on("click", (e) => {
-        const hitNode =
-          map.queryRenderedFeatures(e.point, {
-            layers: ["unclustered-nodes", "plain-nodes", "unclustered-labels", "plain-labels"],
-          }).length > 0;
+        // Build the list of interactive layers, including spiderfy layers if present
+        const nodeLayers = ["unclustered-nodes", "plain-nodes", "unclustered-labels", "plain-labels"];
+        if (map.getLayer(SPIDERFY_LAYER_NODES)) nodeLayers.push(SPIDERFY_LAYER_NODES);
+        if (map.getLayer(SPIDERFY_LAYER_LABELS)) nodeLayers.push(SPIDERFY_LAYER_LABELS);
+
+        const hitNode = map.queryRenderedFeatures(e.point, { layers: nodeLayers }).length > 0;
         const hitCluster =
           map.queryRenderedFeatures(e.point, { layers: ["clusters"] }).length > 0;
         if (hitNode || hitCluster) return;
 
+        void unspiderfy(map);
         clearMapboxSelectionAndOverlays();
       });
+
+      // Update spiderfy positions when zoom changes (keeps fan-out consistent)
+      map.on("zoomend", () => {
+        updateSpiderfyPositions(map);
+      });
+
+      // Auto-spiderfy clusters that can't expand further
+      map.on("idle", () => {
+        if (clusterEnabledRef.current) {
+          void autoSpiderfyVisibleClusters(map);
+        }
+      });
+
+      // Escape key collapses spiderfy
+      const handleKeydown = (e: KeyboardEvent) => {
+        if (e.key === "Escape") {
+          void unspiderfy(map);
+          clearMapboxSelectionAndOverlays();
+        }
+      };
+      mbKeydownHandlerRef.current = handleKeydown;
+      document.addEventListener("keydown", handleKeydown);
     };
 
     map.on("style.load", ensureSourcesAndLayers);
 
     return () => {
+      if (mbKeydownHandlerRef.current) {
+        document.removeEventListener("keydown", mbKeydownHandlerRef.current);
+        mbKeydownHandlerRef.current = null;
+      }
       if (mbMapRef.current) {
         mbMapRef.current.remove();
         mbMapRef.current = null;

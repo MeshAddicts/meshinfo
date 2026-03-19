@@ -8,6 +8,7 @@ import type {
 import type { Map as MbMap } from "mapbox-gl";
 import type { Map as OlMap } from "ol";
 
+import { removeSpiderfyLayers } from "./spiderfy";
 import type { IMapNode } from "./types";
 
 export function escapeHtml(text: string): string {
@@ -117,4 +118,9 @@ export function applyMapboxClusterVisibility(map: MbMap, enabled: boolean): void
   // plain set
   set("plain-nodes", !enabled);
   set("plain-labels", !enabled);
+
+  // Clear spiderfy when switching away from clustered mode
+  if (!enabled) {
+    removeSpiderfyLayers(map);
+  }
 }
