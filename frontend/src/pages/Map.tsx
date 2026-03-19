@@ -41,6 +41,14 @@ import {
   SPIDERFY_SOURCE_NODES,
 } from "./map/spiderfy";
 import {
+  autoOlSpiderfy,
+  createOlClusterLayer,
+  handleOlClusterClick,
+  removeOlSpiderfy,
+  updateOlSpiderfyPositions,
+  type OlClusterSetup,
+} from "./map/spiderfy-ol";
+import {
   applyMapboxClusterVisibility,
   buildNodesGeoJSON,
   bumpOlRender,
@@ -86,6 +94,7 @@ export function Map() {
   const [olMap, setOlMap] = useState<OlMap>();
   const olBaseLayerRef = useRef<ReturnType<typeof createBaseTileLayer> | null>(null);
   const olNodesSourceRef = useRef<VectorSource<Feature<Point>> | null>(null);
+  const olClusterSetupRef = useRef<OlClusterSetup | null>(null);
 
   // Mapbox refs (Mapbox path)
   const mbMapRef = useRef<MbMap | null>(null);
@@ -1048,46 +1057,31 @@ export function Map() {
       })
       .filter((f): f is Feature<Point> => Boolean(f));
 
+    // Create both plain and clustered layers — toggle via clusterEnabled
     const nodeSource = new VectorSource({ features });
     olNodesSourceRef.current = nodeSource;
 
-    const vectorLayer = new VectorLayer({
+    const plainLayer = new VectorLayer({
       style: defaultStyle,
       source: nodeSource,
     });
-    map.addLayer(vectorLayer);
+
+    const clusterSetup = createOlClusterLayer(features);
+    olClusterSetupRef.current = clusterSetup;
+
+    // Add the appropriate layer based on cluster setting
+    if (clusterEnabledRef.current) {
+      map.addLayer(clusterSetup.clusterLayer);
+    } else {
+      map.addLayer(plainLayer);
+    }
 
     const { nodePanel, nodeTitle, nodeSubtitle, nodeContent } = getDetailsDom();
     if (!nodePanel || !nodeTitle || !nodeSubtitle || !nodeContent) return;
 
     const neighborLayers: VectorLayer<VectorSource<Feature>, Feature>[] = [];
 
-    const selectedStyle = new Style({
-      image: new Circle({
-        radius: 6,
-        fill: new Fill({ color: "rgba(0, 0, 240, 1)" }),
-        stroke: new Stroke({ color: "orange", width: 2 }),
-      }),
-    });
-
-    const select = new Select({ condition: click, style: selectedStyle });
-    map.addInteraction(select);
-
-    map.on("singleclick", async (event) => {
-      neighborLayers.forEach((layer) => map.removeLayer(layer));
-      neighborLayers.length = 0;
-
-      if (map.hasFeatureAtPixel(event.pixel) !== true) {
-        clearDetailsPanel();
-        return;
-      }
-
-      const feature = map.forEachFeatureAtPixel(event.pixel, (f) => f);
-      if (!feature) return;
-
-      const props = feature.getProperties();
-      const { node } = props as { node: IFeatureNode };
-
+    const handleNodeDetails = async (node: IFeatureNode) => {
       const displayName = await reverseGeocode(node.position[0], node.position[1]);
 
       const nodeLike: NodeLike = {
@@ -1113,19 +1107,17 @@ export function Map() {
         html,
       });
 
-      // Draw neighbor lines (OpenLayers map overlay)
+      // Draw neighbor lines
       node.neighbors?.forEach((neighbor) => {
         const nnode = nodes[neighbor.id];
         if (!nnode?.map_position) return;
 
         const points: Coordinate[] = [node.position, nnode.map_position];
-
         for (let i = 0; i < points.length; i++) {
           points[i] = transform(points[i], "EPSG:4326", "EPSG:3857");
         }
 
         const featureLine = new Feature({ geometry: new LineString(points) });
-
         const vectorLine = new Vector({});
         vectorLine.addFeature(featureLine);
 
@@ -1139,7 +1131,71 @@ export function Map() {
         neighborLayers.push(vectorLineLayer);
         map.addLayer(vectorLineLayer);
       });
+    };
+
+    // Select interaction for non-clustered mode
+    const selectedStyle = new Style({
+      image: new Circle({
+        radius: 6,
+        fill: new Fill({ color: "rgba(0, 0, 240, 1)" }),
+        stroke: new Stroke({ color: "orange", width: 2 }),
+      }),
     });
+
+    const select = new Select({ condition: click, style: selectedStyle });
+    map.addInteraction(select);
+
+    map.on("singleclick", async (event) => {
+      neighborLayers.forEach((layer) => map.removeLayer(layer));
+      neighborLayers.length = 0;
+
+      if (clusterEnabledRef.current) {
+        // Clustered mode — use spiderfy-aware click handler
+        const node = handleOlClusterClick(map, clusterSetup.clusterSource, event.pixel);
+        if (node) {
+          select.getFeatures().clear();
+          void handleNodeDetails(node);
+        } else if (!map.hasFeatureAtPixel(event.pixel)) {
+          clearDetailsPanel();
+        }
+        return;
+      }
+
+      // Plain mode — original behavior
+      if (map.hasFeatureAtPixel(event.pixel) !== true) {
+        clearDetailsPanel();
+        return;
+      }
+
+      const feature = map.forEachFeatureAtPixel(event.pixel, (f) => f);
+      if (!feature) return;
+
+      const props = feature.getProperties();
+      const { node } = props as { node: IFeatureNode };
+      if (!node?.id) return;
+
+      void handleNodeDetails(node);
+    });
+
+    // Zoom handlers for OL spiderfy
+    map.getView().on("change:resolution", () => {
+      updateOlSpiderfyPositions(map);
+    });
+
+    map.on("moveend", () => {
+      if (clusterEnabledRef.current) {
+        autoOlSpiderfy(map, clusterSetup.clusterSource);
+      }
+    });
+
+    // Escape key for OL spiderfy
+    const olKeydownHandler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        removeOlSpiderfy(map);
+        clearDetailsPanel();
+      }
+    };
+    document.addEventListener("keydown", olKeydownHandler);
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider, serverNode, olMap]);
@@ -1148,10 +1204,6 @@ export function Map() {
   useEffect(() => {
     if (provider !== "osm") return;
     if (!olMap) return;
-    if (!olNodesSourceRef.current) return;
-
-    const src = olNodesSourceRef.current;
-    src.clear();
 
     const nodeEntries = computeRecentNodes(nodes, recentDays);
     const features = nodeEntries
@@ -1176,7 +1228,38 @@ export function Map() {
       })
       .filter((f): f is Feature<Point> => Boolean(f));
 
-    src.addFeatures(features);
+    // Update plain source
+    if (olNodesSourceRef.current) {
+      olNodesSourceRef.current.clear();
+      olNodesSourceRef.current.addFeatures(features);
+    }
+
+    // Update cluster source (uses its own feature source)
+    if (olClusterSetupRef.current) {
+      removeOlSpiderfy(olMap); // clear spiderfy before updating features
+      olClusterSetupRef.current.featureSource.clear();
+      // Re-create features for cluster source (separate instances)
+      const clusterFeatures = nodeEntries
+        .map(([id, node]) => {
+          if (!node.map_position) return null;
+          const f = new Feature({
+            geometry: new Point(fromLonLat([node.map_position[0], node.map_position[1]])),
+            node: {
+              id,
+              shortname: node.shortname,
+              longname: node.longname,
+              last_seen: node.last_seen,
+              position: [node.map_position[0], node.map_position[1]] as Coordinate,
+              online: node.online,
+              neighbors: node.neighbors,
+            } satisfies IFeatureNode,
+          });
+          f.setStyle(node.online ? onlineStyle : offlineStyle);
+          return f;
+        })
+        .filter((f): f is Feature<Point> => Boolean(f));
+      olClusterSetupRef.current.featureSource.addFeatures(clusterFeatures as Feature[]);
+    }
   }, [nodes, recentDays, provider, olMap]);
 
   // OpenLayers: swap basemap live
@@ -1192,6 +1275,51 @@ export function Map() {
 
     bumpOlRender(olMap);
   }, [osmBasemap, provider, olMap]);
+
+  // OpenLayers: cluster toggle — swap between plain and clustered layers
+  useEffect(() => {
+    if (provider !== "osm") return;
+    if (!olMap) return;
+
+    const clusterSetup = olClusterSetupRef.current;
+    if (!clusterSetup) return;
+
+    // Remove spiderfy when toggling
+    removeOlSpiderfy(olMap);
+
+    const layers = olMap.getLayers();
+
+    if (clusterEnabled) {
+      // Remove any plain node layer (index 1+), add cluster layer
+      for (let i = layers.getLength() - 1; i >= 1; i--) {
+        const layer = layers.item(i);
+        // Only remove plain vector layers that use our node source
+        if (layer instanceof VectorLayer && (layer as VectorLayer<VectorSource>).getSource() === olNodesSourceRef.current) {
+          layers.removeAt(i);
+        }
+      }
+      if (!layers.getArray().includes(clusterSetup.clusterLayer)) {
+        olMap.addLayer(clusterSetup.clusterLayer);
+      }
+    } else {
+      // Remove cluster layer, add plain layer
+      if (layers.getArray().includes(clusterSetup.clusterLayer)) {
+        olMap.removeLayer(clusterSetup.clusterLayer);
+      }
+      // Re-add a plain layer if not present
+      const hasPlain = layers.getArray().some(
+        (l) => l instanceof VectorLayer && (l as VectorLayer<VectorSource>).getSource() === olNodesSourceRef.current
+      );
+      if (!hasPlain && olNodesSourceRef.current) {
+        olMap.addLayer(
+          new VectorLayer({
+            style: defaultStyle,
+            source: olNodesSourceRef.current,
+          })
+        );
+      }
+    }
+  }, [clusterEnabled, provider, olMap]);
 
   // ----------------------------
   // Settings panel UI

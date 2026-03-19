@@ -220,7 +220,7 @@ export function MapSettingsPanel({
                     Node Clustering
                   </label>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    {!usingMapbox ? "Mapbox only" : "Group nearby nodes"}
+                    Group nearby nodes
                   </p>
                 </div>
                 <div className="relative">
@@ -229,9 +229,8 @@ export function MapSettingsPanel({
                     type="checkbox"
                     checked={clusterEnabled}
                     onChange={(e) => setClusterEnabled(e.target.checked)}
-                    disabled={!usingMapbox}
                     className="h-4 w-4 rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
-                    aria-label="Toggle node clustering (Mapbox only)"
+                    aria-label="Toggle node clustering"
                   />
                 </div>
               </div>
