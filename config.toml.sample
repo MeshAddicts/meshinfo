@@ -189,12 +189,6 @@ label = "All Channels"
 short = "ALL"
 channels = ["0", "1", "2", "3", "4", "5", "6", "7", "8"]
 
-# File Paths
-# Directories for data output and templates relative to the app root.
-[paths]
-backups = "output/backups"
-data = "output/data"
-
 # Server Settings
 # Controls runtime behavior, scheduling intervals, and feature toggles.
 [server]
@@ -205,13 +199,7 @@ timezone = "America/Los_Angeles"
 
 # How often periodic tasks run
 [server.intervals]
-data_save = 300                       # seconds between data saves to disk
-
-# Automatic backups of data and config
-[server.backups]
-enabled = true
-interval = 86400                      # seconds between backups (default: 24 hours)
-max_backups = 7                       # number of backup archives to keep
+data_save = 300                       # seconds between graph rebuilds
 
 # Node enrichment via external data sources
 [server.enrich]
@@ -242,12 +230,11 @@ provider = "geocode.maps.co"
 api_key = "REPLACE_WITH_API_KEY"
 
 # Storage
-# PostgreSQL is REQUIRED. JSON storage is deprecated and will be removed
-# in a future version.
+# PostgreSQL is the only supported storage backend.
 
 [storage]
-read_from = "postgres"                # "postgres" or "json" (deprecated)
-write_to = ["json", "postgres"]       # backends that receive writes
+read_from = "postgres"
+write_to = ["postgres"]
 
 [storage.postgres]
 enabled = true

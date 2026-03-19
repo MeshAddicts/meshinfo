@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 from api import api
 from bot import discord as discord_bot
-from config import Config, StorageDeprecationError
+from config import Config, ConfigValidationError
 from memory_data_store import MemoryDataStore
 from mqtt import MQTT
 
@@ -117,9 +117,6 @@ async def main() -> None:
     logging.getLogger().setLevel(effective_log_level)
     logger.info("Log level set to: %s", logging.getLevelName(effective_log_level))
 
-    # Ensure directories exist
-    os.makedirs(config["paths"]["data"], exist_ok=True)
-
     # Timezone
     tz = config["server"]["timezone"]
     os.environ["TZ"] = tz
@@ -180,13 +177,7 @@ async def main() -> None:
         if background_tasks:
             await asyncio.gather(*background_tasks, return_exceptions=True)
 
-        # Close Postgres if it was used for reads OR writes
-        storage = config.get("storage", {})
-        read_from = storage.get("read_from", "json")
-        write_to = storage.get("write_to", [])
-
-        if read_from == "postgres" or "postgres" in write_to:
-            await data.pg_storage.close()
+        await data.pg_storage.close()
 
         logger.info("Shutdown complete")
 
@@ -196,11 +187,9 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Application stopped by user")
-    except StorageDeprecationError as e:
-        # StorageDeprecationError is raised during config validation (before
-        # the event loop is fully running) when PostgreSQL is not enabled.
+    except ConfigValidationError as e:
         logger.error("=" * 70)
-        logger.error("MESHINFO CANNOT START")
+        logger.error("MESHINFO CANNOT START: Configuration error")
         logger.error("=" * 70)
         logger.error(str(e))
         logger.error("=" * 70)

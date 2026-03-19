@@ -3,16 +3,10 @@
 import asyncio
 import copy
 from datetime import datetime, timedelta
-import glob
-import json
 import logging
-import os
-import shutil
 from zoneinfo import ZoneInfo
 import aiohttp
 
-from data_renderer import DataRenderer
-from encoders import _JSONDecoder
 from models.node import Node
 from storage.db.postgres import PostgresStorage
 import utils
@@ -111,7 +105,7 @@ class MemoryDataStore:
     n['last_seen'] = datetime.now().astimezone(ZoneInfo(self.config['server']['timezone']))
     self.nodes[id] = n
 
-    # Real-time write to Postgres if enabled (dual-write pattern)
+    # Real-time write to Postgres (non-blocking)
     if (
       'postgres' in self.config.get('storage', {}).get('write_to', [])
       and self.pg_storage is not None
@@ -129,133 +123,8 @@ class MemoryDataStore:
         logger.error("Failed to write node %s to Postgres (non-blocking): %s", id, e)
 
   async def load(self):
-    storage = self.config.get("storage", {})
-    read_from = storage.get("read_from", "json")
-    write_to = storage.get("write_to", [])
-
-    # ── Deprecation warning (issue #225) ──────────────────────────────
-    # This runs on every startup so operators see it in their logs.
-    json_in_use = read_from == "json" or "json" in (write_to if isinstance(write_to, list) else [])
-    if json_in_use:
-      logger.error("=" * 70)
-      logger.error("DEPRECATION: Filesystem (JSON) storage will be removed in the next version.")
-      logger.error("Please migrate to PostgreSQL-only storage as soon as possible.")
-      if read_from == "json":
-        logger.error("  -> storage.read_from is 'json' — change to 'postgres' after migrating")
-      if "json" in (write_to if isinstance(write_to, list) else []):
-        logger.error("  -> storage.write_to includes 'json' — remove it, keep only ['postgres']")
-      logger.error("  -> Migration guide: docker exec -it meshinfo-meshinfo-1 python3 scripts/migrate_json_to_postgres.py")
-      logger.error("=" * 70)
-
-    # If Postgres is used for writes (dual-write), initialize it even if read_from is JSON.
-    if "postgres" in write_to and read_from != "postgres":
-      logger.info("Postgres is enabled for writes; initializing Postgres pool/schema")
-      ok = await self.pg_storage.connect()
-      if ok:
-        await self.pg_storage.ensure_schema()
-      else:
-        logger.warning("Postgres connect failed; disabling Postgres writes for this run")
-        storage["write_to"] = [x for x in write_to if x != "postgres"]
-
-    if read_from == "postgres":
-      logger.info("Loading data from PostgreSQL")
-      await self._load_from_postgres()
-    else:
-      logger.info("Loading data from JSON files")
-      self._load_from_json()
-
-  def _load_from_json(self):
-    """Load data from JSON files (existing implementation)."""
-    try:
-      nodes = self.load_json_file(f"{self.config['paths']['data']}/nodes.json")
-      if nodes is not None:
-        for id, node in nodes.items():
-          if id.startswith('!'):
-            id = id.replace('!', '')
-          if len(id) != 8 or not all(c in '0123456789abcdefABCDEF' for c in id):
-             continue
-          if node['active'] is None:
-            node['active'] = False
-          if 'last_seen' not in node:
-            node['last_seen'] = None
-          if 'since' not in node:
-            node['since'] = None
-          nodes[id] = node
-        self.nodes = nodes
-      logger.info("Loaded %d existing nodes from file (%s/nodes.json)", len(self.nodes), self.config['paths']['data'])
-    except FileNotFoundError:
-      self.nodes = {}
-    if self.config['server']['node_id'] not in self.nodes:
-      self.nodes[self.config['server']['node_id']] = Node.default_node(self.config['server']['node_id'])
-    self.nodes['ffffffff'] = Node.default_node('ffffffff')
-
-    try:
-      nodes_overrides: dict|None = self.load_json_file(f"{self.config['paths']['data']}/nodes-overrides.json")
-      if nodes_overrides is not None:
-        for id, node_override in nodes_overrides.items():
-          if id in self.nodes:
-            logger.debug("Overriding node %s", id)
-            node = self.nodes[id]
-            if 'position' in node_override:
-              logger.debug("Overriding node %s position", id)
-              node['position'] = node_override['position']
-            self.nodes[id] = node
-        logger.info("Loaded %d nodes overrides from file (%s/nodes-overrides.json)", len(nodes_overrides.keys()), self.config['paths']['data'])
-    except FileNotFoundError:
-      pass
-
-    try:
-      chat = self.load_json_file(f"{self.config['paths']['data']}/chat.json")
-      if chat is not None:
-        self.chat = chat
-      logger.info("Loaded %d chat messages from file (%s/chat.json)", len(self.chat['channels']['0']['messages']), self.config['paths']['data'])
-    except FileNotFoundError:
-      self.chat = {
-          'channels': {
-              '0': {
-                'name': 'General',
-                'messages': []
-              }
-          }
-      }
-
-    try:
-      telemetry = self.load_json_file(f"{self.config['paths']['data']}/telemetry.json")
-      if telemetry is not None:
-        self.telemetry = telemetry
-      else:
-        self.telemetry = []
-      if self.telemetry_by_node is None or len(self.telemetry_by_node) == 0:
-        self.telemetry_by_node = {}
-      for msg in self.telemetry:
-        id = msg['from']
-        if id not in self.telemetry_by_node:
-          self.telemetry_by_node[id] = []
-        self.telemetry_by_node[id].insert(0, msg)
-      logger.info("Loaded %d telemetry messages from file (%s/telemetry.json)", len(self.telemetry), self.config['paths']['data'])
-      logger.info("Loaded telemetry data for %d nodes", len(self.telemetry_by_node))
-    except FileNotFoundError:
-      self.telemetry = []
-      self.telemetry_by_node = {}
-
-    try:
-        traceroutes = self.load_json_file(f"{self.config['paths']['data']}/traceroutes.json")
-        if traceroutes is not None:
-          self.traceroutes = traceroutes
-        else:
-          self.traceroutes = []
-        if self.traceroutes_by_node is None or len(self.traceroutes_by_node) == 0:
-          self.traceroutes_by_node = {}
-        for msg in self.traceroutes:
-          id = msg['from']
-          if id not in self.traceroutes_by_node:
-            self.traceroutes_by_node[id] = []
-          self.traceroutes_by_node[id].insert(0, msg)
-        logger.info("Loaded %d traceroutes from file (%s/traceroutes.json)", len(self.traceroutes), self.config['paths']['data'])
-        logger.info("Loaded traceroutes data for %d nodes", len(self.traceroutes_by_node))
-    except FileNotFoundError:
-        self.traceroutes = []
-        self.traceroutes_by_node = {}
+    logger.info("Loading data from PostgreSQL")
+    await self._load_from_postgres()
 
   async def _load_from_postgres(self):
     """Initialize PostgreSQL connection and prepare postgres-backed mode."""
@@ -288,17 +157,8 @@ class MemoryDataStore:
       logger.info("PostgreSQL mode: Data will be queried directly from database")
 
     except Exception as e:
-      logger.exception("Failed to initialize PostgreSQL connection, falling back to JSON: %s", e)
-      self._load_from_json()
-
-  def load_json_file(self, filename):
-    if os.path.exists(filename):
-        with open(filename, "r", encoding='utf-8') as f:
-            n = json.load(f, cls=_JSONDecoder)
-            return n
-    else:
-        return None
-
+      logger.exception("Failed to initialize PostgreSQL connection: %s", e)
+      raise
 
   async def save(self):
     save_start = datetime.now(ZoneInfo(self.config['server']['timezone']))
@@ -306,24 +166,11 @@ class MemoryDataStore:
     since_last_data = (save_start - last_data).total_seconds()
     last_backfill = self.config['server']['last_backfill'] if 'last_backfill' in self.config['server'] else self.config['server']['start_time']
     since_last_backfill = (save_start - last_backfill).total_seconds()
-    last_backup = self.config['server']['last_backup'] if 'last_backup' in self.config['server'] else self.config['server']['start_time']
-    since_last_backup = (save_start - last_backup).total_seconds()
     logger.debug(
-      "Save (since last): data: %s (threshold: %s), enrich: %s (threshold: %s), backup: %s (threshold: %s)",
+      "Save (since last): graph: %s (threshold: %s), enrich: %s (threshold: %s)",
       since_last_data, self.config['server']['intervals']['data_save'],
       since_last_backfill, self.config['server']['enrich']['interval'],
-      since_last_backup, self.config['server']['backups']['interval'],
     )
-
-    # Periodic deprecation reminder (issue #225)
-    storage = self.config.get("storage", {})
-    save_write_to = storage.get("write_to", [])
-    save_read_from = storage.get("read_from", "json")
-    if save_read_from == "json" or "json" in (save_write_to if isinstance(save_write_to, list) else []):
-      logger.warning(
-        "DEPRECATION REMINDER: JSON storage is still in use. "
-        "Migrate to PostgreSQL before the next release."
-      )
 
     if 'enrich' in self.config['server'] and self.config['server']['enrich']['enabled']:
       if since_last_backfill >= self.config['server']['enrich']['interval']:
@@ -333,49 +180,12 @@ class MemoryDataStore:
         self.config['server']['last_backfill'] = end
 
     if since_last_data >= self.config['server']['intervals']['data_save']:
-        data_renderer = DataRenderer(self.config, copy.deepcopy(self))
-        await data_renderer.render()
         end = datetime.now(ZoneInfo(self.config['server']['timezone']))
-        logger.debug("Saved json data in %.2f seconds", end.timestamp() - save_start.timestamp())
+        logger.debug("Rebuilt graph in %.2f seconds", end.timestamp() - save_start.timestamp())
         self.config['server']['last_data_save'] = end
         self.graph = self.graph_node(self.config['server']['node_id'])
 
-    if 'backups' in self.config['server'] and self.config['server']['backups']['enabled']:
-      if since_last_backup >= self.config['server']['backups']['interval']:
-        await self.backup()
-        end = datetime.now(ZoneInfo(self.config['server']['timezone']))
-        logger.debug("Backed up in %.2f seconds", end.timestamp() - save_start.timestamp())
-        self.config['server']['last_backup'] = end
-
   ### helpers
-
-  async def backup(self):
-    now = f"{datetime.now(ZoneInfo(self.config['server']['timezone'])).strftime('%Y%m%d-%H%M%S')}"
-    base_name = f"{self.config['paths']['backups']}/backup-{now}"
-    tmp_path = f"/tmp/meshinfo/backup-{now}"
-
-    logger.info("Backing up to %s.tar.bz2", base_name)
-    os.makedirs(tmp_path, exist_ok=True)
-    shutil.copytree("output/data", f"{tmp_path}/data")
-    config_file = "config.toml" if os.path.isfile("config.toml") else "config.json"
-    shutil.copyfile(config_file, f"{tmp_path}/{config_file}")
-
-    shutil.make_archive(
-      base_name,
-      'bztar',
-      root_dir=tmp_path,
-      base_dir=".",
-      verbose=True)
-    logger.info("Backed up to %s.tar.bz2", base_name)
-    shutil.rmtree(tmp_path)
-
-    if 'max_backups' in self.config['server']['backups'] and self.config['server']['backups']['max_backups'] > 0:
-      files = glob.glob(f"{self.config['paths']['backups']}/*")
-      files.sort(key=os.path.getmtime)
-      logger.debug("Deleting old backups (max %d, found %d)", self.config['server']['backups']['max_backups'], len(files))
-      for file in files[:-self.config['server']['backups']['max_backups']]:
-        logger.debug("Deleting old backup: %s", file)
-        os.remove(file)
 
   async def backfill_node_infos(self):
     nodes_needing_enrichment = {}
