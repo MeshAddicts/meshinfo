@@ -1,3 +1,7 @@
+// This file intentionally mixes a router config export with small helper
+// components (NodeRedirect, GraphLoader) that are only used here. Fast refresh
+// is not meaningful for a router module, so the rule is disabled file-wide.
+/* eslint-disable react-refresh/only-export-components */
 import React, { Suspense } from "react";
 import { createBrowserRouter, Navigate, Outlet, useParams } from "react-router";
 
@@ -17,10 +21,8 @@ function NodeRedirect() {
   return <Navigate to={`/nodes?node=${id}`} replace />;
 }
 
-// eslint-disable-next-line react-refresh/only-export-components
 const LazyGraph = React.lazy(() => import("./pages/Graph"));
 
-// eslint-disable-next-line react-refresh/only-export-components
 function GraphLoader() {
   return (
     <div className="h-full w-full flex items-center justify-center bg-white dark:bg-gray-950">

@@ -1,39 +1,36 @@
 import {
+  ReactNode,
+  useCallback,
+  useDeferredValue,
   useEffect,
   useMemo,
-  useState,
-  useDeferredValue,
   useRef,
-  useCallback,
-  ReactNode,
+  useState,
 } from "react";
 import { Link, useSearchParams } from "react-router";
 import { VirtuosoHandle } from "react-virtuoso";
 
-import { useChatSearchParams } from "../hooks/useChatSearchParams";
-
 import { HeardBy } from "../components/HeardBy";
+import { useChatSearchParams } from "../hooks/useChatSearchParams";
 import {
   useGetChatsQuery,
   useGetConfigQuery,
   useGetNodesQuery,
 } from "../slices/apiSlice";
-
 import {
+  csvEscape,
   DirKey,
+  downloadBlob,
   FocusMode,
+  isBroadcast,
   RangeKey,
   SortKey,
-  csvEscape,
-  downloadBlob,
-  isBroadcast,
 } from "./chat/chatUtils";
-
-import { FiltersDrawer } from "./chat/FiltersDrawer";
-import { ExportMenu } from "./chat/ExportMenu";
-import { MessageList } from "./chat/MessageList";
-import { FocusPanel } from "./chat/FocusPanel";
 import { DetailsPanel } from "./chat/DetailsPanel";
+import { ExportMenu } from "./chat/ExportMenu";
+import { FiltersDrawer } from "./chat/FiltersDrawer";
+import { FocusPanel } from "./chat/FocusPanel";
+import { MessageList } from "./chat/MessageList";
 
 type ViewDef = {
   key: string; // canonical URL key: "mediumfast"
@@ -159,31 +156,42 @@ export const Chat = () => {
   const rawRange = (searchParamsRaw.get("r") || "24h") as string;
 
   // ── 3. Channel metadata helpers (from broker config) ──
-  const channelMeta = (config?.broker?.channels as any)?.meta ?? {};
-  const rawChannelLabel = (id: string) =>
-    channelMeta?.[id]?.label ? String(channelMeta[id].label) : `Channel ${id}`;
-  const rawChannelShort = (id: string) =>
-    channelMeta?.[id]?.short ? String(channelMeta[id].short) : id;
-
-  const rawChannelTooltip = (id: string) => {
-    const meta = channelMeta?.[id] ?? {};
-    const label = rawChannelLabel(id);
-    const short = rawChannelShort(id);
-    const desc =
-      meta.description ??
-      meta.desc ??
-      meta.tooltip ??
-      meta.notes ??
-      meta.presetDescription ??
-      "";
-    const preset = meta.preset ?? meta.modemPreset ?? meta.profile ?? "";
-    const parts = [
-      `${label} (ch ${id}${short ? ` • ${short}` : ""})`,
-      preset ? `Preset: ${preset}` : "",
-      desc ? String(desc) : "",
-    ].filter(Boolean);
-    return parts.join("\n");
-  };
+  const channelMeta = useMemo(
+    () => (config?.broker?.channels as any)?.meta ?? {},
+    [config]
+  );
+  const rawChannelLabel = useCallback(
+    (id: string) =>
+      channelMeta?.[id]?.label ? String(channelMeta[id].label) : `Channel ${id}`,
+    [channelMeta]
+  );
+  const rawChannelShort = useCallback(
+    (id: string) =>
+      channelMeta?.[id]?.short ? String(channelMeta[id].short) : id,
+    [channelMeta]
+  );
+  const rawChannelTooltip = useCallback(
+    (id: string) => {
+      const meta = channelMeta?.[id] ?? {};
+      const label = rawChannelLabel(id);
+      const short = rawChannelShort(id);
+      const desc =
+        meta.description ??
+        meta.desc ??
+        meta.tooltip ??
+        meta.notes ??
+        meta.presetDescription ??
+        "";
+      const preset = meta.preset ?? meta.modemPreset ?? meta.profile ?? "";
+      const parts = [
+        `${label} (ch ${id}${short ? ` • ${short}` : ""})`,
+        preset ? `Preset: ${preset}` : "",
+        desc ? String(desc) : "",
+      ].filter(Boolean);
+      return parts.join("\n");
+    },
+    [channelMeta, rawChannelLabel, rawChannelShort]
+  );
 
   // ── 4. Resolve channel ID from config + raw URL ──
   // This lets the chat query fire immediately using only config
@@ -335,7 +343,7 @@ export const Chat = () => {
     }
 
     return out;
-  }, [config, channelEntries, availableChannelIds]);
+  }, [config, channelEntries, availableChannelIds, rawChannelLabel, rawChannelShort, rawChannelTooltip]);
 
   const defaultViewKey =
     views.find((v) => v.isDefault)?.key ?? views[0]?.key ?? "";
@@ -473,7 +481,7 @@ export const Chat = () => {
   // Keep local search input synced on back/forward
   useEffect(() => {
     setQInput(urlQ);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [urlQ]);
 
   // Update URL q from deferred input (replace)
@@ -959,7 +967,7 @@ export const Chat = () => {
     return () => {
       timers.forEach(clearTimeout);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [urlMsg, messages, selectedChannel]);
 
   // Export menu click-outside (desktop only)

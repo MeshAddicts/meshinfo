@@ -47,6 +47,7 @@ jobs:
       - name: Generate version.json
         run: |
           REF="${{ github.ref_name }}"
+          REF="${REF#v}"
           if [[ "$REF" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             VERSION="$REF"
             MAJOR=$(echo "$REF" | cut -d. -f1)
@@ -132,6 +133,7 @@ jobs:
       - name: Generate version.json
         run: |
           REF="${{ github.ref_name }}"
+          REF="${REF#v}"
           if [[ "$REF" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             VERSION="$REF"
             MAJOR=$(echo "$REF" | cut -d. -f1)
@@ -271,6 +273,7 @@ jobs:
       - name: Generate version.json
         run: |
           REF="${{ github.ref_name }}"
+          REF="${REF#v}"
           if [[ "$REF" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             VERSION="$REF"
             MAJOR=$(echo "$REF" | cut -d. -f1)
@@ -357,6 +360,7 @@ jobs:
       - name: Generate version.json
         run: |
           REF="${{ github.ref_name }}"
+          REF="${REF#v}"
           if [[ "$REF" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             VERSION="$REF"
             MAJOR=$(echo "$REF" | cut -d. -f1)

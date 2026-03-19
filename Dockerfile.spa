@@ -1,4 +1,3 @@
-# trunk-ignore-all(checkov/CKV_DOCKER_3)
 FROM node:25.8.1-alpine AS build
 
 LABEL org.opencontainers.image.source="https://github.com/MeshAddicts/meshinfo"
@@ -20,5 +19,11 @@ RUN yarn install --immutable
 
 COPY frontend/ ./
 
+RUN yarn build --base=/
+
+FROM caddy:2-alpine
+
+COPY --from=build /frontend/dist /srv
+COPY Caddyfile.frontend /etc/caddy/Caddyfile
+
 EXPOSE 80
-CMD ["/frontend/scripts/run-frontend.sh"]
