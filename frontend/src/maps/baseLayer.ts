@@ -1,4 +1,5 @@
 import TileLayer from "ol/layer/Tile";
+import { env } from "../env";
 import OSM from "ol/source/OSM";
 import type TileSource from "ol/source/Tile";
 import XYZ from "ol/source/XYZ";
@@ -71,19 +72,16 @@ export function createBaseTileLayer(
 ): TileLayer<TileSource> {
   const provider =
     (opts.provider ??
-      (import.meta.env.VITE_MAP_PROVIDER ?? "osm")) as MapProvider;
+      (env.MAP_PROVIDER ?? "osm")) as MapProvider;
 
   const osmBasemap = (opts.osmBasemap ?? "osm") as OsmBasemap;
 
   const token =
-    (opts.mapboxToken ??
-      (import.meta.env.VITE_MAPBOX_TOKEN as string | undefined)) as
-      | string
-      | undefined;
+    (opts.mapboxToken ?? env.MAPBOX_TOKEN) as string | undefined;
 
   const styleRaw =
     (opts.mapboxStyle ??
-      (import.meta.env.VITE_MAPBOX_STYLE ?? "mapbox/streets-v12")) as string;
+      (env.MAPBOX_STYLE ?? "mapbox/streets-v12")) as string;
 
   // Mapbox raster tiles (Styles API). EPSG:3857-compatible.
   // If provider=mapbox but token is missing, intentionally fall back to OSM variants

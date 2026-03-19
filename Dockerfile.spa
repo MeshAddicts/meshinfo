@@ -25,5 +25,9 @@ FROM caddy:2-alpine
 
 COPY --from=build /frontend/dist /srv
 COPY Caddyfile.frontend /etc/caddy/Caddyfile
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
 EXPOSE 80
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
