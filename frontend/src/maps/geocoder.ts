@@ -16,12 +16,14 @@ type MapboxResponse = {
   }>;
 };
 
+import { env } from "../env";
+
 function pickProvider(): "nominatim" | "mapbox" {
-  const configured = (import.meta.env.VITE_GEOCODER_PROVIDER ?? "auto").toLowerCase();
+  const configured = (env.GEOCODER_PROVIDER ?? "auto").toLowerCase();
   if (configured === "nominatim" || configured === "mapbox") return configured;
 
-  // auto: follow basemap provider 
-  const mapProvider = (import.meta.env.VITE_MAP_PROVIDER ?? "osm").toLowerCase();
+  // auto: follow basemap provider
+  const mapProvider = (env.MAP_PROVIDER ?? "osm").toLowerCase();
   return mapProvider === "mapbox" ? "mapbox" : "nominatim";
 }
 
@@ -29,11 +31,11 @@ export async function reverseGeocode(lon: number, lat: number): Promise<string> 
   const provider = pickProvider();
 
   if (provider === "mapbox") {
-    const token = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
+    const token = env.MAPBOX_TOKEN;
     if (!token) return "";
 
-    const country = import.meta.env.VITE_MAPBOX_GEOCODER_COUNTRY as string | undefined;
-    const language = import.meta.env.VITE_MAPBOX_GEOCODER_LANGUAGE as string | undefined;
+    const country = env.MAPBOX_GEOCODER_COUNTRY;
+    const language = env.MAPBOX_GEOCODER_LANGUAGE;
 
     const params = new URLSearchParams({
       access_token: token,
@@ -51,7 +53,7 @@ export async function reverseGeocode(lon: number, lat: number): Promise<string> 
   }
 
   // nominatim
-  const email = import.meta.env.VITE_NOMINATIM_EMAIL as string | undefined;
+  const email = env.NOMINATIM_EMAIL;
   const params = new URLSearchParams({
     format: "json",
     addressdetails: "1",

@@ -1,4 +1,5 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
+import { env } from "../env";
 
 import {
   IChatResponse,
@@ -24,7 +25,7 @@ export const apiSlice = createApi({
     "MqttMessages",
   ],
   baseQuery: fetchBaseQuery({
-    baseUrl: `${import.meta.env.VITE_API_BASE_URL ?? window.location.origin}/v1`,
+    baseUrl: `${env.API_BASE_URL ?? window.location.origin}/v1`,
   }),
   endpoints: (builder) => ({
     getConfig: builder.query<IConfigResponse, void>({

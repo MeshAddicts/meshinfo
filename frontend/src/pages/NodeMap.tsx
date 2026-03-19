@@ -13,6 +13,7 @@ import VectorSource from "ol/source/Vector";
 import { Circle, Fill, Stroke, Style } from "ol/style";
 import { useEffect, useMemo, useRef } from "react";
 
+import { env } from "../env";
 import { createBaseTileLayer, type OsmBasemap } from "../maps/baseLayer";
 import { INode } from "../types";
 
@@ -208,7 +209,7 @@ export const NodeMap = ({ node }: { node: INode }) => {
   const cancelOlBumpRef = useRef<(() => void) | null>(null);
   const cancelMbBumpRef = useRef<(() => void) | null>(null);
 
-  const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
+  const mapboxToken = env.MAPBOX_TOKEN;
   const hasMapbox = Boolean(mapboxToken);
 
   // Read preferences once per mount (mirrors Map.tsx)
@@ -219,7 +220,7 @@ export const NodeMap = ({ node }: { node: INode }) => {
 
     const mapboxStyle =
       readJson<string | null>(LS_KEYS.mapboxStyle, null) ??
-      (import.meta.env.VITE_MAPBOX_STYLE as string | undefined) ??
+      env.MAPBOX_STYLE ??
       "mapbox/dark-v11";
 
     const osmBasemap =

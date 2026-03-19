@@ -19,6 +19,7 @@ import { Circle, Fill, Stroke, Style } from "ol/style";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
+import { env } from "../env";
 import { createBaseTileLayer, type OsmBasemap } from "../maps/baseLayer";
 import { reverseGeocode } from "../maps/geocoder";
 import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";
@@ -86,7 +87,7 @@ export function Map() {
   const { data: config } = useGetConfigQuery();
 
   // ----- env capabilities
-  const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
+  const mapboxToken = env.MAPBOX_TOKEN;
   const hasMapbox = Boolean(mapboxToken);
 
   // ----- UI settings persistence
@@ -102,7 +103,7 @@ export function Map() {
     const stored = readJson<string | null>(LS_KEYS.mapboxStyle, null);
     return (
       stored ??
-      (import.meta.env.VITE_MAPBOX_STYLE as string | undefined) ??
+      env.MAPBOX_STYLE ??
       "mapbox/dark-v11"
     );
   });
