@@ -35,7 +35,7 @@ export function buildNodeDetailsHtml(opts: {
   const nodeLink = (id: string, label: string) => {
     const target = liveNodes[id];
     if (target?.map_position) {
-      return `<a style="${linkStyle}" data-select-node="${escapeHtml(id)}">${escapeHtml(label)}</a>`;
+      return `<button type="button" style="${linkStyle}" data-select-node="${escapeHtml(id)}">${escapeHtml(label)}</button>`;
     }
     return escapeHtml(label);
   };
