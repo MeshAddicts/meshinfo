@@ -100,14 +100,16 @@ function CopyLinkButton({ nodeId }: { nodeId: string }) {
 
 export function NodeDetailsPanel({
   node,
-  nodes: _nodes,
+  nodes,
   serverNode,
   onClearSelection,
+  onSelectNode,
 }: {
   node: INode;
   nodes: Record<string, INode>;
   serverNode: INode | null;
   onClearSelection: () => void;
+  onSelectNode?: (id: string) => void;
 }) {
   const { data: config } = useGetConfigQuery();
   const n: any = node as any;
@@ -292,6 +294,27 @@ export function NodeDetailsPanel({
               <KV
                 k="Neighbors (count)"
                 v={n?.neighborinfo?.neighbors_count != null ? String(n.neighborinfo.neighbors_count) : "—"}
+              />
+              <KV
+                k="Gateway"
+                v={(() => {
+                  const gw = n?.gateway;
+                  if (!gw) return "—";
+                  const gwNode = nodes[gw];
+                  const label = gwNode?.shortname || gwNode?.longname || gw;
+                  if (onSelectNode) {
+                    return (
+                      <button
+                        type="button"
+                        className="underline hover:no-underline text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
+                        onClick={() => onSelectNode(gw)}
+                      >
+                        {label}
+                      </button>
+                    );
+                  }
+                  return label;
+                })()}
               />
             </div>
           </div>
