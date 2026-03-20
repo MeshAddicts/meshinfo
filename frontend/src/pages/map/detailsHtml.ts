@@ -65,6 +65,17 @@ export function buildNodeDetailsHtml(opts: {
     `<b>Last Seen</b> &nbsp;${escapeHtml(node.last_seen ?? "")}` +
     `</div>`;
 
+  // Gateway
+  if (node.gateway) {
+    const gwNode = liveNodes[node.gateway];
+    const gwLabel = gwNode?.shortname || gwNode?.longname || node.gateway;
+    if (gwNode?.map_position) {
+      panel += `<b>Gateway</b> &nbsp;<a style="${linkStyle}" data-select-node="${escapeHtml(node.gateway)}">${escapeHtml(gwLabel)}</a><br/>`;
+    } else {
+      panel += `<b>Gateway</b> &nbsp;${escapeHtml(gwLabel)}<br/>`;
+    }
+  }
+
   // --- Neighbors Heard ---
   panel += "<b>Neighbors Heard</b>";
   if ((node.neighbors?.length ?? 0) === 0) {

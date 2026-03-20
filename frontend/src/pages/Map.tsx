@@ -417,6 +417,7 @@ export function Map() {
           online: Boolean(node.online),
           position: node.map_position,
           neighbors: node.neighbors,
+          gateway: node.gateway,
         };
         const heardBy = computeHeardByIds(liveNodes, id);
         const neighborFC = buildMapboxLinkFeatureCollection({ node: nodeLike, liveNodes, heardBy });
@@ -882,6 +883,7 @@ export function Map() {
           online: Boolean(node.online),
           position: node.map_position,
           neighbors: node.neighbors,
+          gateway: node.gateway,
         };
 
         const { html, heardBy } = buildNodeDetailsHtml({
@@ -1322,6 +1324,7 @@ export function Map() {
             position: [node.map_position[0], node.map_position[1]] as Coordinate,
             online: node.online,
             neighbors: node.neighbors,
+            gateway: node.gateway,
           } satisfies IFeatureNode,
         });
 
@@ -1365,6 +1368,7 @@ export function Map() {
         online: Boolean(node.online),
         position: node.position,
         neighbors: node.neighbors,
+        gateway: node.gateway,
       };
 
       const { html } = buildNodeDetailsHtml({
@@ -1390,6 +1394,7 @@ export function Map() {
             position: [targetNode.map_position[0], targetNode.map_position[1]] as Coordinate,
             online: Boolean(targetNode.online),
             neighbors: targetNode.neighbors,
+            gateway: targetNode.gateway,
           });
         },
       });
@@ -1564,6 +1569,7 @@ export function Map() {
             position: [node.map_position[0], node.map_position[1]] as Coordinate,
             online: node.online,
             neighbors: node.neighbors,
+            gateway: node.gateway,
           } satisfies IFeatureNode,
         });
 

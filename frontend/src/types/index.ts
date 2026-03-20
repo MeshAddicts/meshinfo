@@ -129,6 +129,7 @@ export interface INode {
   last_seen: string;
   hardware: number | null;
   role?: NodeRole;
+  gateway?: string | null;
   position?: INodePosition;
   telemetry?: { [key: string]: number } | null;
   neighborinfo?: {

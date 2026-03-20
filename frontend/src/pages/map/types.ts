@@ -21,6 +21,7 @@ export type IFeatureNode = {
   shortname?: string;
   longname?: string;
   last_seen?: string;
+  gateway?: string | null;
   position: Coordinate; // [lon, lat]
   online: boolean;
   neighbors?: {
@@ -36,6 +37,7 @@ export type NodeLike = {
   shortname?: string;
   longname?: string;
   last_seen?: string;
+  gateway?: string | null;
   online: boolean;
   position: Coordinate; // [lon, lat]
   neighbors?: {
