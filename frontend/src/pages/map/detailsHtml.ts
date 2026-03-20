@@ -22,60 +22,67 @@ export function buildNodeDetailsHtml(opts: {
   liveNodes: Record<string, IMapNode>;
   displayName: string | null | undefined;
   elsewhereLinks?: ElsewhereLink[];
+  traceroutes?: ITraceroutesResponse[];
 }): { html: string; heardBy: string[] } {
   const { node, liveNodes } = opts;
   const displayName = opts.displayName || "Unknown";
+  const tblClass = "border border-gray-300 dark:border-gray-600";
+  const thStyle = "font-weight:600;padding:2px 4px;";
+  const tdStyle = "padding:2px 4px;";
 
   let panel =
-    `<b>${escapeHtml(node.longname ?? "")}</b><br/>${escapeHtml(node.shortname ?? "")} / ${escapeHtml(node.id)}<br/><br/>` +
-    `<b>Position</b><br/>LAT: ${escapeHtml(node.position[1].toString())}<br/>LON: ${escapeHtml(node.position[0].toString())}<br/><br/>` +
-    `<b>Location</b><br/>${escapeHtml(displayName)}<br/><br/>` +
-    `<b>Status</b><br/>${node.online ? "Online" : "Offline"}<br/><br/>` +
-    `<b>Last Seen</b><br/>${escapeHtml(node.last_seen ?? "")}<br/><br/>`;
+    `<b>${escapeHtml(node.longname ?? "")}</b><br/>` +
+    `<span style="opacity:.7">${escapeHtml(node.shortname ?? "")} / ${escapeHtml(node.id)}</span><br/>` +
+    `<div style="margin:6px 0">` +
+    `<b>Position</b> &nbsp;${escapeHtml(node.position[1].toFixed(6))}, ${escapeHtml(node.position[0].toFixed(6))}<br/>` +
+    `<b>Location</b> &nbsp;${escapeHtml(displayName)}<br/>` +
+    `<b>Status</b> &nbsp;${node.online ? "Online" : "Offline"}<br/>` +
+    `<b>Last Seen</b> &nbsp;${escapeHtml(node.last_seen ?? "")}` +
+    `</div>`;
 
-  panel += "<b>Neighbors Heard</b><br/>";
+  // --- Neighbors Heard ---
+  panel += "<b>Neighbors Heard</b>";
   if ((node.neighbors?.length ?? 0) === 0) {
-    panel += "None";
+    panel += " &mdash; <span style='opacity:.5'>None</span>";
   } else {
-    panel += "<table border=1 cellpadding=2 cellspacing=0 width=100% class='border border-gray-300'>";
-    panel += "<tr><th width=33% align=left>Node</th><th width=33% align=center>SNR</th><th width=33% align=right>Distance</th></tr>";
+    panel += `<table border=0 cellpadding=0 cellspacing=0 width=100% class='${tblClass}' style='margin:2px 0 0'>`;
+    panel += `<tr><th style="${thStyle}" align=left>Node</th><th style="${thStyle}" align=center>SNR</th><th style="${thStyle}" align=right>Distance</th></tr>`;
 
     panel += (node.neighbors ?? [])
       .map((neighbor) => {
         const nnode = liveNodes[neighbor.id];
         if (!nnode) {
-          return `<tr><td class="text-gray-600">UNK</td><td align=center>${neighbor.snr}</td><td></td></tr>`;
+          return `<tr><td style="${tdStyle}" class="text-gray-600">UNK</td><td style="${tdStyle}" align=center>${neighbor.snr}</td><td style="${tdStyle}"></td></tr>`;
         }
 
         let distance;
         if (nnode.map_position) {
           distance = calculateGeodesicDistance(
-            node.position[1],
-            node.position[0],
-            nnode.map_position[1],
-            nnode.map_position[0]
+            node.position[1], node.position[0],
+            nnode.map_position[1], nnode.map_position[0]
           );
         }
 
-        return `<tr><td align=left>${escapeHtml(nnode.shortname ?? "")}</td><td align=center>${neighbor.snr}</td><td align=right>${
-          distance ? distance.toFixed(2) : "unk"
-        } km</td></tr>`;
+        return `<tr><td style="${tdStyle}" align=left>${escapeHtml(nnode.shortname ?? "")}</td><td style="${tdStyle}" align=center>${neighbor.snr}</td><td style="${tdStyle}" align=right>${
+          distance ? distance.toFixed(2) + " km" : ""
+        }</td></tr>`;
       })
       .join("");
 
     panel += "</table>";
   }
 
-  panel += "<br/><br/>";
+  panel += "<br/>";
 
-  panel += "<b>Heard By Neighbors</b><br/>";
+  // --- Heard By Neighbors ---
   const heardBy = computeHeardByIds(liveNodes, node.id);
+  panel += "<b>Heard By Neighbors</b>";
 
   if (heardBy.length === 0) {
-    panel += "None<br/>";
+    panel += " &mdash; <span style='opacity:.5'>None</span>";
   } else {
-    panel += "<table border=1 cellpadding=2 cellspacing=0 width=100% class='border border-gray-300'>";
-    panel += "<tr><th width=33% align=left>Node</th><th width=33% align=center>SNR</th><th width=33% align=right>Distance</th></tr>";
+    panel += `<table border=0 cellpadding=0 cellspacing=0 width=100% class='${tblClass}' style='margin:2px 0 0'>`;
+    panel += `<tr><th style="${thStyle}" align=left>Node</th><th style="${thStyle}" align=center>SNR</th><th style="${thStyle}" align=right>Distance</th></tr>`;
 
     panel += heardBy
       .map((nid) => {
@@ -83,30 +90,73 @@ export function buildNodeDetailsHtml(opts: {
         const neighbor = nnode?.neighbors?.find((n) => n.id === node.id);
 
         if (!nnode) {
-          return `<tr><td class="text-gray-600">UNK</td><td align=center>${neighbor?.snr}</td><td></td></tr>`;
+          return `<tr><td style="${tdStyle}" class="text-gray-600">UNK</td><td style="${tdStyle}" align=center>${neighbor?.snr}</td><td style="${tdStyle}"></td></tr>`;
         }
 
         let distance;
         if (nnode.map_position) {
           distance = calculateGeodesicDistance(
-            node.position[1],
-            node.position[0],
-            nnode.map_position[1],
-            nnode.map_position[0]
+            node.position[1], node.position[0],
+            nnode.map_position[1], nnode.map_position[0]
           );
         }
 
-        return `<tr><td align=left>${escapeHtml(nnode.shortname ?? "")}</td><td align=center>${neighbor?.snr}</td><td align=right>${
-          distance ? distance.toFixed(2) : "unk"
-        } km</td></tr>`;
+        return `<tr><td style="${tdStyle}" align=left>${escapeHtml(nnode.shortname ?? "")}</td><td style="${tdStyle}" align=center>${neighbor?.snr}</td><td style="${tdStyle}" align=right>${
+          distance ? distance.toFixed(2) + " km" : ""
+        }</td></tr>`;
       })
       .join("");
 
     panel += "</table>";
   }
 
-  panel += "<br/><br/>";
+  panel += "<br/>";
 
+  // --- Traceroute Links ---
+  const traceroutes = opts.traceroutes ?? [];
+  const normId = normNodeId(node.id);
+  // Find all nodes this node connects to via traceroute hops
+  const trLinkCounts = new Map<string, number>();
+  for (const tr of traceroutes) {
+    const from = normNodeId(tr.from);
+    const to = normNodeId(tr.to);
+    const hops = (tr.route_ids ?? tr.route ?? []).map((r: string) => normNodeId(r));
+    const path = [from, ...hops, to].filter(Boolean);
+    const idx = path.indexOf(normId);
+    if (idx === -1) continue;
+    // Adjacent nodes in the path are direct links
+    if (idx > 0) {
+      const prev = path[idx - 1];
+      trLinkCounts.set(prev, (trLinkCounts.get(prev) ?? 0) + 1);
+    }
+    if (idx < path.length - 1) {
+      const next = path[idx + 1];
+      trLinkCounts.set(next, (trLinkCounts.get(next) ?? 0) + 1);
+    }
+  }
+
+  panel += "<b>Traceroute Links</b>";
+
+  if (trLinkCounts.size === 0) {
+    panel += " &mdash; <span style='opacity:.5'>None</span>";
+  } else {
+    // Sort by count descending
+    const sorted = [...trLinkCounts.entries()].sort((a, b) => b[1] - a[1]);
+    panel += `<table border=0 cellpadding=0 cellspacing=0 width=100% class='${tblClass}' style='margin:2px 0 0'>`;
+    panel += `<tr><th style="${thStyle}" align=left>Node</th><th style="${thStyle}" align=right>Routes</th></tr>`;
+
+    for (const [linkedId, count] of sorted) {
+      const linkedNode = liveNodes[linkedId];
+      const label = linkedNode?.shortname ? escapeHtml(linkedNode.shortname) : escapeHtml(linkedId);
+      panel += `<tr><td style="${tdStyle}" align=left>${label}</td><td style="${tdStyle}" align=right>${count}</td></tr>`;
+    }
+
+    panel += "</table>";
+  }
+
+  panel += "<br/>";
+
+  // --- Elsewhere ---
   panel += "<b>Elsewhere</b><br/>";
   const nodeIdInt = parseInt(node.id, 16);
   const links = getElsewhereLinks(opts.elsewhereLinks);

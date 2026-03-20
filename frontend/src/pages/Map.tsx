@@ -886,6 +886,7 @@ export function Map() {
           liveNodes,
           displayName,
           elsewhereLinks: config?.mesh?.elsewhere_links,
+          traceroutes: traceroutesRef.current,
         });
 
         setDetailsPanelContent({
@@ -1367,6 +1368,7 @@ export function Map() {
         liveNodes: nodes,
         displayName,
         elsewhereLinks: config?.mesh?.elsewhere_links,
+        traceroutes: traceroutesRef.current,
       });
 
       setDetailsPanelContent({
