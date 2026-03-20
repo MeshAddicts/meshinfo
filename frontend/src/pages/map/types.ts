@@ -3,6 +3,7 @@ import type { Coordinate } from "ol/coordinate";
 import type { INode } from "../../types";
 
 export type MapProvider = "osm" | "mapbox";
+export type LinkMode = "selected" | "all" | "mynode";
 
 export type IMapNode = INode & {
   online: boolean;
