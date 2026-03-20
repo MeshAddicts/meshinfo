@@ -29,13 +29,38 @@ export function buildNodeDetailsHtml(opts: {
   const tblClass = "border border-gray-300 dark:border-gray-600";
   const thStyle = "font-weight:600;padding:2px 4px;";
   const tdStyle = "padding:2px 4px;";
+  const linkStyle = "color:#818cf8;cursor:pointer;text-decoration:none;";
+
+  /** Render a node name — clickable if it has a map position, plain text otherwise. */
+  const nodeLink = (id: string, label: string) => {
+    const target = liveNodes[id];
+    if (target?.map_position) {
+      return `<a style="${linkStyle}" data-select-node="${escapeHtml(id)}">${escapeHtml(label)}</a>`;
+    }
+    return escapeHtml(label);
+  };
+
+  /** Shorten a geocoded address to ~city, state. */
+  function shortenLocation(full: string): string {
+    // Typical format: "123 Street, City, State ZIP, Country"
+    const parts = full.split(",").map((s) => s.trim());
+    if (parts.length >= 3) {
+      // Take city (2nd-to-last-1) and state+zip (2nd-to-last), drop street and country
+      const city = parts[parts.length - 3];
+      const stateZip = parts[parts.length - 2];
+      // Strip ZIP from state
+      const state = stateZip.replace(/\s+\d{5}(-\d{4})?$/, "");
+      return `${city}, ${state}`;
+    }
+    return full;
+  }
 
   let panel =
     `<b>${escapeHtml(node.longname ?? "")}</b><br/>` +
     `<span style="opacity:.7">${escapeHtml(node.shortname ?? "")} / ${escapeHtml(node.id)}</span><br/>` +
     `<div style="margin:6px 0">` +
     `<b>Position</b> &nbsp;${escapeHtml(node.position[1].toFixed(6))}, ${escapeHtml(node.position[0].toFixed(6))}<br/>` +
-    `<b>Location</b> &nbsp;${escapeHtml(displayName)}<br/>` +
+    `<b>Location</b> &nbsp;<span title="${escapeHtml(displayName)}" style="cursor:help;border-bottom:1px dotted currentColor">${escapeHtml(shortenLocation(displayName))}</span><br/>` +
     `<b>Status</b> &nbsp;${node.online ? "Online" : "Offline"}<br/>` +
     `<b>Last Seen</b> &nbsp;${escapeHtml(node.last_seen ?? "")}` +
     `</div>`;
@@ -63,7 +88,7 @@ export function buildNodeDetailsHtml(opts: {
           );
         }
 
-        return `<tr><td style="${tdStyle}" align=left>${escapeHtml(nnode.shortname ?? "")}</td><td style="${tdStyle}" align=center>${neighbor.snr}</td><td style="${tdStyle}" align=right>${
+        return `<tr><td style="${tdStyle}" align=left>${nodeLink(neighbor.id, nnode.shortname ?? neighbor.id)}</td><td style="${tdStyle}" align=center>${neighbor.snr}</td><td style="${tdStyle}" align=right>${
           distance ? distance.toFixed(2) + " km" : ""
         }</td></tr>`;
       })
@@ -101,7 +126,7 @@ export function buildNodeDetailsHtml(opts: {
           );
         }
 
-        return `<tr><td style="${tdStyle}" align=left>${escapeHtml(nnode.shortname ?? "")}</td><td style="${tdStyle}" align=center>${neighbor?.snr}</td><td style="${tdStyle}" align=right>${
+        return `<tr><td style="${tdStyle}" align=left>${nodeLink(nid, nnode.shortname ?? nid)}</td><td style="${tdStyle}" align=center>${neighbor?.snr}</td><td style="${tdStyle}" align=right>${
           distance ? distance.toFixed(2) + " km" : ""
         }</td></tr>`;
       })
@@ -147,8 +172,8 @@ export function buildNodeDetailsHtml(opts: {
 
     for (const [linkedId, count] of sorted) {
       const linkedNode = liveNodes[linkedId];
-      const label = linkedNode?.shortname ? escapeHtml(linkedNode.shortname) : escapeHtml(linkedId);
-      panel += `<tr><td style="${tdStyle}" align=left>${label}</td><td style="${tdStyle}" align=right>${count}</td></tr>`;
+      const label = linkedNode?.shortname ?? linkedId;
+      panel += `<tr><td style="${tdStyle}" align=left>${nodeLink(linkedId, label)}</td><td style="${tdStyle}" align=right>${count}</td></tr>`;
     }
 
     panel += "</table>";

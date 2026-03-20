@@ -893,6 +893,7 @@ export function Map() {
           title: node.longname ?? "",
           subtitle: node.shortname ?? "",
           html,
+          onNodeSelect: (targetId) => void handleNodeClick(targetId),
         });
 
         // Draw links (neighbor + traceroute)
@@ -1375,6 +1376,19 @@ export function Map() {
         title: node.longname ?? "",
         subtitle: node.shortname ?? "",
         html,
+        onNodeSelect: (targetId) => {
+          const targetNode = nodes[targetId];
+          if (!targetNode?.map_position) return;
+          void handleNodeDetails({
+            id: targetId,
+            shortname: targetNode.shortname,
+            longname: targetNode.longname,
+            last_seen: targetNode.last_seen,
+            position: [targetNode.map_position[0], targetNode.map_position[1]] as Coordinate,
+            online: Boolean(targetNode.online),
+            neighbors: targetNode.neighbors,
+          });
+        },
       });
 
       // Draw neighbor lines
