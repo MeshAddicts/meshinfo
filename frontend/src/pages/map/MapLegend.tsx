@@ -49,6 +49,10 @@ export function MapLegend({
           <div className="w-4 h-0.5 bg-[#FF66FF] rounded-full shrink-0" />
           <span>Mutual Connection</span>
         </div>
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-0.5 bg-[#F59E0B] rounded-full shrink-0" />
+          <span>Traceroute Link</span>
+        </div>
 
         {/* Threshold note */}
         <div className="border-t border-gray-200 dark:border-gray-700 my-1" />

@@ -22,10 +22,10 @@ import { useSearchParams } from "react-router";
 import { env } from "../env";
 import { createBaseTileLayer, type OsmBasemap } from "../maps/baseLayer";
 import { reverseGeocode } from "../maps/geocoder";
-import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";
+import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { clearDetailsPanel, getDetailsDom, setDetailsPanelContent } from "./map/detailsDom";
-import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildNodeDetailsHtml, computeHeardByIds } from "./map/detailsHtml";
+import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildNodeDetailsHtml, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/detailsHtml";
 import { MapDetailsPanel } from "./map/MapDetailsPanel";
 import { MapSettingsPanel } from "./map/MapSettingsPanel";
 import { LS_KEYS, readJson, toMapboxStyleUrl, writeJson } from "./map/storage";
@@ -106,6 +106,7 @@ export function Map() {
 
   const { data: rawNodes = {} } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
+  const { data: rawTraceroutes = [] } = useGetTraceroutesQuery();
 
   // ----- env capabilities
   const mapboxToken = env.MAPBOX_TOKEN;
@@ -254,6 +255,7 @@ export function Map() {
   // Refs to avoid stale closures (Mapbox handlers)
   // ----------------------------
   const nodesRef = useRef(nodes);
+  const traceroutesRef = useRef(rawTraceroutes);
   const recentDaysRef = useRef(recentDays);
   const clusterEnabledRef = useRef(clusterEnabled);
   const linkModeRef = useRef(linkMode);
@@ -262,6 +264,10 @@ export function Map() {
   useEffect(() => {
     nodesRef.current = nodes;
   }, [nodes]);
+
+  useEffect(() => {
+    traceroutesRef.current = rawTraceroutes;
+  }, [rawTraceroutes]);
 
   useEffect(() => {
     recentDaysRef.current = recentDays;
@@ -366,13 +372,37 @@ export function Map() {
     }, 2000);
   }
 
-  /** Compute the persistent link GeoJSON for the current linkMode (all/mynode). */
+  /** Collect neighbor edge keys (for deduplication with traceroute links). */
+  function collectNeighborEdgeKeys(liveNodes: Record<string, IMapNode>): Set<string> {
+    const keys = new Set<string>();
+    for (const [nodeId, node] of Object.entries(liveNodes)) {
+      if (!node.neighbors?.length) continue;
+      for (const nb of node.neighbors) {
+        const normA = normNodeId(nodeId);
+        const normB = normNodeId(nb.id);
+        if (!normA || !normB || normA === normB) continue;
+        const a = normA < normB ? normA : normB;
+        const b = normA < normB ? normB : normA;
+        keys.add(`${a}|${b}`);
+      }
+    }
+    return keys;
+  }
+
+  /** Compute the persistent link GeoJSON for the current linkMode (all/mynode), including traceroute-inferred links. */
   function computePersistentLinks() {
     const mode = linkModeRef.current;
     const liveNodes = nodesRef.current;
+    const traceroutes = traceroutesRef.current;
 
     if (mode === "all") {
-      return buildAllLinksFeatureCollection(liveNodes);
+      const neighborFC = buildAllLinksFeatureCollection(liveNodes);
+      const neighborKeys = collectNeighborEdgeKeys(liveNodes);
+      const tracerouteFC = buildTracerouteLinkFeatureCollection(traceroutes, liveNodes, neighborKeys);
+      return {
+        type: "FeatureCollection" as const,
+        features: [...neighborFC.features, ...tracerouteFC.features],
+      };
     }
 
     if (mode === "mynode") {
@@ -389,7 +419,23 @@ export function Map() {
           neighbors: node.neighbors,
         };
         const heardBy = computeHeardByIds(liveNodes, id);
-        return buildMapboxLinkFeatureCollection({ node: nodeLike, liveNodes, heardBy });
+        const neighborFC = buildMapboxLinkFeatureCollection({ node: nodeLike, liveNodes, heardBy });
+        // For "mynode", also include traceroute links involving this node
+        const tracerouteFC = buildTracerouteLinkFeatureCollection(
+          traceroutes.filter((tr) => {
+            const norm = normNodeId(id);
+            const from = normNodeId(tr.from);
+            const to = normNodeId(tr.to);
+            if (from === norm || to === norm) return true;
+            const hops = (tr.route_ids ?? tr.route ?? []).map((r: string) => normNodeId(r));
+            return hops.includes(norm);
+          }),
+          liveNodes,
+        );
+        return {
+          type: "FeatureCollection" as const,
+          features: [...neighborFC.features, ...tracerouteFC.features],
+        };
       }
     }
 
@@ -405,7 +451,7 @@ export function Map() {
       );
       const line = new Feature({ geometry: new LineString(coords) });
       const kind = f.properties?.kind ?? "neighbor";
-      const color = kind === "both" ? "#FF66FF" : kind === "heard_by" ? "#6666FF" : "#66FF66";
+      const color = kind === "traceroute" ? "#F59E0B" : kind === "both" ? "#FF66FF" : kind === "heard_by" ? "#6666FF" : "#66FF66";
       line.setStyle(
         new Style({
           stroke: new Stroke({ color, width: 4 }),
@@ -678,6 +724,8 @@ export function Map() {
               "#6666FF",
               "both",
               "#FF66FF",
+              "traceroute",
+              "#F59E0B",
               "#FFFFFF",
             ],
           },
@@ -841,17 +889,45 @@ export function Map() {
           liveNodes,
           displayName,
           elsewhereLinks: config?.mesh?.elsewhere_links,
+          traceroutes: traceroutesRef.current,
         });
 
         setDetailsPanelContent({
           title: node.longname ?? "",
           subtitle: node.shortname ?? "",
           html,
+          onNodeSelect: (targetId) => void handleNodeClick(targetId),
         });
 
-        // Draw links
+        // Draw links (neighbor + traceroute)
+        const neighborFC = buildMapboxLinkFeatureCollection({ node: nodeLike, liveNodes, heardBy });
+        const tracerouteFC = buildTracerouteLinkFeatureCollection(
+          traceroutesRef.current.filter((tr) => {
+            const norm = normNodeId(id);
+            const from = normNodeId(tr.from);
+            const to = normNodeId(tr.to);
+            if (from === norm || to === norm) return true;
+            const hops = (tr.route_ids ?? tr.route ?? []).map((r: string) => normNodeId(r));
+            return hops.includes(norm);
+          }),
+          liveNodes,
+        );
+        const mergedFC = {
+          type: "FeatureCollection" as const,
+          features: [...neighborFC.features, ...tracerouteFC.features],
+        };
+
         const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
-        linksSource?.setData(buildMapboxLinkFeatureCollection({ node: nodeLike, liveNodes, heardBy }));
+        if (linkModeRef.current === "selected") {
+          linksSource?.setData(mergedFC);
+        } else {
+          // In all/mynode mode, merge with persistent links
+          const persistent = computePersistentLinks();
+          linksSource?.setData({
+            type: "FeatureCollection",
+            features: [...persistent.features, ...mergedFC.features],
+          });
+        }
       };
 
       // Cursor behaviors (both render modes)
@@ -1126,7 +1202,7 @@ export function Map() {
       refreshMapboxLinks();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [linkMode, myNodeId, nodes, provider]);
+  }, [linkMode, myNodeId, nodes, rawTraceroutes, provider]);
 
   // ----------------------------
   // OpenLayers: init (OSM path)
@@ -1296,12 +1372,26 @@ export function Map() {
         liveNodes: nodes,
         displayName,
         elsewhereLinks: config?.mesh?.elsewhere_links,
+        traceroutes: traceroutesRef.current,
       });
 
       setDetailsPanelContent({
         title: node.longname ?? "",
         subtitle: node.shortname ?? "",
         html,
+        onNodeSelect: (targetId) => {
+          const targetNode = nodes[targetId];
+          if (!targetNode?.map_position) return;
+          void handleNodeDetails({
+            id: targetId,
+            shortname: targetNode.shortname,
+            longname: targetNode.longname,
+            last_seen: targetNode.last_seen,
+            position: [targetNode.map_position[0], targetNode.map_position[1]] as Coordinate,
+            online: Boolean(targetNode.online),
+            neighbors: targetNode.neighbors,
+          });
+        },
       });
 
       // Draw neighbor lines
@@ -1581,7 +1671,7 @@ export function Map() {
     if (!olMap) return;
     refreshOlPersistentLinks(olMap);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [linkMode, myNodeId, nodes, provider, olMap]);
+  }, [linkMode, myNodeId, nodes, rawTraceroutes, provider, olMap]);
 
   // ----------------------------
   // Settings panel UI
