@@ -5,6 +5,8 @@ export const LS_KEYS = {
   recentDays: "meshinfo.map.recentDays",
   clusterEnabled: "meshinfo.map.clusterEnabled",
   settingsPanelOpen: "meshinfo.map.settingsPanelOpen",
+  linkMode: "meshinfo.map.linkMode",
+  myNodeId: "meshinfo.map.myNodeId",
 } as const;
 
 export function readJson<T>(key: string, fallback: T): T {

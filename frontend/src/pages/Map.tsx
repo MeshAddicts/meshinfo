@@ -25,11 +25,11 @@ import { reverseGeocode } from "../maps/geocoder";
 import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { clearDetailsPanel, getDetailsDom, setDetailsPanelContent } from "./map/detailsDom";
-import { buildMapboxLinkFeatureCollection, buildNodeDetailsHtml } from "./map/detailsHtml";
+import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildNodeDetailsHtml, computeHeardByIds } from "./map/detailsHtml";
 import { MapDetailsPanel } from "./map/MapDetailsPanel";
 import { MapSettingsPanel } from "./map/MapSettingsPanel";
 import { LS_KEYS, readJson, toMapboxStyleUrl, writeJson } from "./map/storage";
-import type { IFeatureNode, IMapNode, MapProvider, NodeLike } from "./map/types";
+import type { IFeatureNode, IMapNode, LinkMode, MapProvider, NodeLike } from "./map/types";
 import {
   autoSpiderfyVisibleClusters,
   removeSpiderfyLayers,
@@ -95,6 +95,7 @@ export function Map() {
   const olBaseLayerRef = useRef<ReturnType<typeof createBaseTileLayer> | null>(null);
   const olNodesSourceRef = useRef<VectorSource<Feature<Point>> | null>(null);
   const olClusterSetupRef = useRef<OlClusterSetup | null>(null);
+  const olPersistentLinksLayerRef = useRef<VectorLayer<VectorSource<Feature>, Feature> | null>(null);
 
   // Mapbox refs (Mapbox path)
   const mbMapRef = useRef<MbMap | null>(null);
@@ -143,6 +144,15 @@ export function Map() {
     return stored ?? true;
   });
 
+  const [linkMode, setLinkMode] = useState<LinkMode>(() => {
+    const stored = readJson<LinkMode | null>(LS_KEYS.linkMode, null);
+    return stored ?? "selected";
+  });
+
+  const [myNodeId, setMyNodeId] = useState<string>(() => {
+    return readJson<string>(LS_KEYS.myNodeId, "");
+  });
+
   // Settings panel visibility
   const [settingsPanelOpen, setSettingsPanelOpen] = useState<boolean>(() => {
     const stored = readJson<boolean | null>(LS_KEYS.settingsPanelOpen, null);
@@ -156,6 +166,8 @@ export function Map() {
   useEffect(() => writeJson(LS_KEYS.osmBasemap, osmBasemap), [osmBasemap]);
   useEffect(() => writeJson(LS_KEYS.recentDays, recentDays), [recentDays]);
   useEffect(() => writeJson(LS_KEYS.clusterEnabled, clusterEnabled), [clusterEnabled]);
+  useEffect(() => writeJson(LS_KEYS.linkMode, linkMode), [linkMode]);
+  useEffect(() => writeJson(LS_KEYS.myNodeId, myNodeId), [myNodeId]);
   useEffect(() => writeJson(LS_KEYS.settingsPanelOpen, settingsPanelOpen), [settingsPanelOpen]);
 
   // If token disappears / not configured, force provider to osm
@@ -244,6 +256,8 @@ export function Map() {
   const nodesRef = useRef(nodes);
   const recentDaysRef = useRef(recentDays);
   const clusterEnabledRef = useRef(clusterEnabled);
+  const linkModeRef = useRef(linkMode);
+  const myNodeIdRef = useRef(myNodeId);
 
   useEffect(() => {
     nodesRef.current = nodes;
@@ -256,6 +270,14 @@ export function Map() {
   useEffect(() => {
     clusterEnabledRef.current = clusterEnabled;
   }, [clusterEnabled]);
+
+  useEffect(() => {
+    linkModeRef.current = linkMode;
+  }, [linkMode]);
+
+  useEffect(() => {
+    myNodeIdRef.current = myNodeId;
+  }, [myNodeId]);
 
   // ----------------------------
   // Deep-link: ?node=<id> flies to a specific node
@@ -325,6 +347,104 @@ export function Map() {
     return () => timers.forEach(clearTimeout);
   }, [urlNodeId, flyToTarget, olMap, setSearchParams]);
 
+  /** Show a brief toast confirming "My Node" was set. */
+  function showMyNodeToast(name: string) {
+    const existing = document.getElementById("my-node-toast");
+    if (existing) existing.remove();
+
+    const toast = document.createElement("div");
+    toast.id = "my-node-toast";
+    toast.textContent = `My Node set to ${name}`;
+    toast.className =
+      "fixed top-4 left-1/2 -translate-x-1/2 z-[9999] px-4 py-2 rounded-lg shadow-lg " +
+      "bg-gray-900/95 text-white text-sm backdrop-blur-md border border-gray-700 " +
+      "transition-opacity duration-300";
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      toast.style.opacity = "0";
+      setTimeout(() => toast.remove(), 300);
+    }, 2000);
+  }
+
+  /** Compute the persistent link GeoJSON for the current linkMode (all/mynode). */
+  function computePersistentLinks() {
+    const mode = linkModeRef.current;
+    const liveNodes = nodesRef.current;
+
+    if (mode === "all") {
+      return buildAllLinksFeatureCollection(liveNodes);
+    }
+
+    if (mode === "mynode") {
+      const id = myNodeIdRef.current;
+      const node = liveNodes[id];
+      if (node?.map_position) {
+        const nodeLike: NodeLike = {
+          id,
+          shortname: node.shortname,
+          longname: node.longname,
+          last_seen: node.last_seen,
+          online: Boolean(node.online),
+          position: node.map_position,
+          neighbors: node.neighbors,
+        };
+        const heardBy = computeHeardByIds(liveNodes, id);
+        return buildMapboxLinkFeatureCollection({ node: nodeLike, liveNodes, heardBy });
+      }
+    }
+
+    return emptyLineFeatureCollection();
+  }
+
+  /** Build OL line features for the current persistent link mode. */
+  function buildOlPersistentLinkFeatures(): Feature<LineString>[] {
+    const geojson = computePersistentLinks();
+    return geojson.features.map((f) => {
+      const coords = f.geometry.coordinates.map((c) =>
+        transform([c[0], c[1]], "EPSG:4326", "EPSG:3857")
+      );
+      const line = new Feature({ geometry: new LineString(coords) });
+      const kind = f.properties?.kind ?? "neighbor";
+      const color = kind === "both" ? "#FF66FF" : kind === "heard_by" ? "#6666FF" : "#66FF66";
+      line.setStyle(
+        new Style({
+          stroke: new Stroke({ color, width: 4 }),
+        })
+      );
+      return line;
+    });
+  }
+
+  /** Refresh the OL persistent links layer. */
+  function refreshOlPersistentLinks(map: OlMap) {
+    // Remove old layer
+    if (olPersistentLinksLayerRef.current) {
+      map.removeLayer(olPersistentLinksLayerRef.current);
+      olPersistentLinksLayerRef.current = null;
+    }
+
+    const mode = linkModeRef.current;
+    if (mode === "selected") return;
+
+    const features = buildOlPersistentLinkFeatures();
+    if (features.length === 0) return;
+
+    const source = new VectorSource({ features: features as Feature[] });
+    const layer = new VectorLayer({ source });
+    olPersistentLinksLayerRef.current = layer;
+    map.addLayer(layer);
+  }
+
+  /** Push persistent link data to the Mapbox "links" source. */
+  function refreshMapboxLinks() {
+    const map = mbMapRef.current;
+    if (!map) return;
+    try {
+      const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
+      linksSource?.setData(computePersistentLinks());
+    } catch {}
+  }
+
   function clearMapboxSelectionAndOverlays() {
     const map = mbMapRef.current;
     const selectedId = mbSelectedIdRef.current;
@@ -342,11 +462,11 @@ export function Map() {
 
     mbSelectedIdRef.current = null;
 
-    // Clear link lines if present
+    // Restore persistent links (all/mynode) or clear if mode is "selected"
     if (map) {
       try {
         const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
-        linksSource?.setData(emptyLineFeatureCollection());
+        linksSource?.setData(computePersistentLinks());
       } catch {}
     }
 
@@ -834,6 +954,61 @@ export function Map() {
         }
       });
 
+      // Right-click / long-press: "Set as My Node"
+      const findNodeIdAtPoint = (point: mapboxgl.PointLike): string | null => {
+        const nodeLayers = ["unclustered-nodes", "plain-nodes"];
+        if (map.getLayer(SPIDERFY_LAYER_NODES)) nodeLayers.push(SPIDERFY_LAYER_NODES);
+        const features = map.queryRenderedFeatures(point, { layers: nodeLayers });
+        return (features[0]?.properties?.id as string) ?? null;
+      };
+
+      // Right-click (desktop)
+      map.on("contextmenu", (e) => {
+        const id = findNodeIdAtPoint(e.point);
+        if (!id) return;
+        e.preventDefault();
+        const node = nodesRef.current[id];
+        const name = node?.shortname || node?.longname || id;
+        showMyNodeToast(name);
+        setMyNodeId(id);
+        setLinkMode("mynode");
+      });
+
+      // Long-press (mobile) — 500ms threshold
+      let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+      let longPressPoint: mapboxgl.PointLike | null = null;
+
+      const canvas = map.getCanvas();
+      canvas.addEventListener("touchstart", (e) => {
+        if (e.touches.length !== 1) return;
+        const rect = canvas.getBoundingClientRect();
+        longPressPoint = [
+          e.touches[0].clientX - rect.left,
+          e.touches[0].clientY - rect.top,
+        ];
+        longPressTimer = setTimeout(() => {
+          if (!longPressPoint) return;
+          const id = findNodeIdAtPoint(longPressPoint);
+          if (!id) return;
+          const node = nodesRef.current[id];
+          const name = node?.shortname || node?.longname || id;
+          showMyNodeToast(name);
+          setMyNodeId(id);
+          setLinkMode("mynode");
+          longPressPoint = null;
+        }, 500);
+      }, { passive: true });
+
+      canvas.addEventListener("touchmove", () => {
+        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+        longPressPoint = null;
+      }, { passive: true });
+
+      canvas.addEventListener("touchend", () => {
+        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+        longPressPoint = null;
+      }, { passive: true });
+
       // Escape key collapses spiderfy
       const handleKeydown = (e: KeyboardEvent) => {
         if (e.key === "Escape") {
@@ -930,6 +1105,28 @@ export function Map() {
       }
     }
   }, [nodes, recentDays, provider]);
+
+  // Mapbox: react to linkMode / myNodeId / nodes changes for persistent links
+  useEffect(() => {
+    const map = mbMapRef.current;
+    if (!map) return;
+    if (provider !== "mapbox") return;
+
+    // In "selected" mode, don't override — handleNodeClick manages links
+    if (linkMode === "selected" && !mbSelectedIdRef.current) {
+      // Clear any lingering persistent links
+      try {
+        const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
+        linksSource?.setData(emptyLineFeatureCollection());
+      } catch {}
+      return;
+    }
+
+    if (linkMode !== "selected") {
+      refreshMapboxLinks();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkMode, myNodeId, nodes, provider]);
 
   // ----------------------------
   // OpenLayers: init (OSM path)
@@ -1145,6 +1342,63 @@ export function Map() {
     const select = new Select({ condition: click, style: selectedStyle });
     map.addInteraction(select);
 
+    // Draw persistent links if mode is all/mynode at init
+    refreshOlPersistentLinks(map);
+
+    // Right-click / long-press: "Set as My Node" (OL)
+    const findOlNodeAtPixel = (pixel: number[]): IFeatureNode | null => {
+      let found: IFeatureNode | null = null;
+      map.forEachFeatureAtPixel(pixel, (f) => {
+        const props = f.getProperties();
+        if (props.node?.id) found = props.node as IFeatureNode;
+      });
+      return found;
+    };
+
+    map.getViewport().addEventListener("contextmenu", (e) => {
+      const pixel = map.getEventPixel(e);
+      const node = findOlNodeAtPixel(pixel);
+      if (!node) return;
+      e.preventDefault();
+      const name = node.shortname || node.longname || node.id;
+      showMyNodeToast(name);
+      setMyNodeId(node.id);
+      setLinkMode("mynode");
+    });
+
+    // Long-press for mobile (OL)
+    let olLongPressTimer: ReturnType<typeof setTimeout> | null = null;
+    let olLongPressPixel: number[] | null = null;
+
+    map.getViewport().addEventListener("touchstart", (e) => {
+      if (e.touches.length !== 1) return;
+      const rect = map.getViewport().getBoundingClientRect();
+      olLongPressPixel = [
+        e.touches[0].clientX - rect.left,
+        e.touches[0].clientY - rect.top,
+      ];
+      olLongPressTimer = setTimeout(() => {
+        if (!olLongPressPixel) return;
+        const node = findOlNodeAtPixel(olLongPressPixel);
+        if (!node) return;
+        const name = node.shortname || node.longname || node.id;
+        showMyNodeToast(name);
+        setMyNodeId(node.id);
+        setLinkMode("mynode");
+        olLongPressPixel = null;
+      }, 500);
+    }, { passive: true });
+
+    map.getViewport().addEventListener("touchmove", () => {
+      if (olLongPressTimer) { clearTimeout(olLongPressTimer); olLongPressTimer = null; }
+      olLongPressPixel = null;
+    }, { passive: true });
+
+    map.getViewport().addEventListener("touchend", () => {
+      if (olLongPressTimer) { clearTimeout(olLongPressTimer); olLongPressTimer = null; }
+      olLongPressPixel = null;
+    }, { passive: true });
+
     map.on("singleclick", async (event) => {
       neighborLayers.forEach((layer) => map.removeLayer(layer));
       neighborLayers.length = 0;
@@ -1321,11 +1575,29 @@ export function Map() {
     }
   }, [clusterEnabled, provider, olMap]);
 
+  // OpenLayers: react to linkMode / myNodeId / nodes changes for persistent links
+  useEffect(() => {
+    if (provider !== "osm") return;
+    if (!olMap) return;
+    refreshOlPersistentLinks(olMap);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkMode, myNodeId, nodes, provider, olMap]);
+
   // ----------------------------
   // Settings panel UI
   // ----------------------------
   const canUseMapbox = hasMapbox;
   const usingMapbox = provider === "mapbox" && canUseMapbox;
+
+  // Flat sorted list of nodes with positions for the My Node picker
+  const nodeList = useMemo(
+    () =>
+      Object.entries(nodes)
+        .filter(([, n]) => n.map_position)
+        .map(([id, n]) => ({ id, shortname: n.shortname, longname: n.longname }))
+        .sort((a, b) => (a.shortname ?? "").localeCompare(b.shortname ?? "")),
+    [nodes]
+  );
 
   return (
     <div className="relative w-full h-full min-h-0 overflow-hidden overscroll-none">
@@ -1346,6 +1618,11 @@ export function Map() {
         setRecentDays={setRecentDays}
         clusterEnabled={clusterEnabled}
         setClusterEnabled={setClusterEnabled}
+        linkMode={linkMode}
+        setLinkMode={setLinkMode}
+        myNodeId={myNodeId}
+        setMyNodeId={setMyNodeId}
+        nodeList={nodeList}
         canUseMapbox={canUseMapbox}
         usingMapbox={usingMapbox}
       />

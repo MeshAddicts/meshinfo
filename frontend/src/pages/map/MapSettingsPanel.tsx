@@ -1,8 +1,14 @@
-import type { Dispatch, RefObject, SetStateAction } from "react";
+import { type Dispatch, type RefObject, type SetStateAction, useMemo, useState } from "react";
 
 import type { OsmBasemap } from "../../maps/baseLayer";
 import { MapLegend } from "./MapLegend";
-import type { MapProvider } from "./types";
+import type { LinkMode, MapProvider } from "./types";
+
+interface NodeOption {
+  id: string;
+  shortname?: string;
+  longname?: string;
+}
 
 export function MapSettingsPanel({
   settingsPanelRef,
@@ -24,6 +30,14 @@ export function MapSettingsPanel({
 
   clusterEnabled,
   setClusterEnabled,
+
+  linkMode,
+  setLinkMode,
+
+  myNodeId,
+  setMyNodeId,
+
+  nodeList,
 
   canUseMapbox,
   usingMapbox,
@@ -48,9 +62,41 @@ export function MapSettingsPanel({
   clusterEnabled: boolean;
   setClusterEnabled: Dispatch<SetStateAction<boolean>>;
 
+  linkMode: LinkMode;
+  setLinkMode: Dispatch<SetStateAction<LinkMode>>;
+
+  myNodeId: string;
+  setMyNodeId: Dispatch<SetStateAction<string>>;
+
+  nodeList: NodeOption[];
+
   canUseMapbox: boolean;
   usingMapbox: boolean;
 }) {
+  const [nodeSearch, setNodeSearch] = useState("");
+
+  const filteredNodes = useMemo(() => {
+    if (!nodeSearch) return nodeList.slice(0, 50);
+    const q = nodeSearch.toLowerCase();
+    return nodeList
+      .filter(
+        (n) =>
+          n.id.toLowerCase().includes(q) ||
+          n.shortname?.toLowerCase().includes(q) ||
+          n.longname?.toLowerCase().includes(q)
+      )
+      .slice(0, 50);
+  }, [nodeList, nodeSearch]);
+
+  const myNodeLabel = useMemo(() => {
+    if (!myNodeId) return "";
+    const node = nodeList.find((n) => n.id === myNodeId);
+    return node?.shortname || node?.longname || myNodeId;
+  }, [myNodeId, nodeList]);
+
+  const selectClasses =
+    "w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-hidden focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400";
+
   return (
     <div className="fixed bottom-4 right-4 z-1100 min-w-56">
       {/* Toggle button - shows when closed */}
@@ -86,7 +132,7 @@ export function MapSettingsPanel({
       {settingsPanelOpen && (
         <div
           ref={settingsPanelRef}
-          className="mb-2 w-56 max-w-[calc(100vw-2rem)] rounded-xl shadow-lg border border-gray-200/70 dark:border-gray-700/70 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md"
+          className="mb-2 w-64 max-w-[calc(100vw-2rem)] max-h-[calc(100vh-8rem)] overflow-y-auto rounded-xl shadow-lg border border-gray-200/70 dark:border-gray-700/70 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md"
         >
           <div className="p-4">
             <div className="flex items-center justify-between mb-4">
@@ -128,7 +174,7 @@ export function MapSettingsPanel({
                 <select
                   id="provider-select"
                   aria-label="Map provider selection"
-                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-hidden focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
+                  className={selectClasses}
                   value={provider}
                   onChange={(e) => setProvider(e.target.value as MapProvider)}
                 >
@@ -152,7 +198,7 @@ export function MapSettingsPanel({
                   <select
                     id="mapbox-style-select"
                     aria-label="Mapbox map style selection"
-                    className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-hidden focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
+                    className={selectClasses}
                     value={mapboxStyle}
                     onChange={(e) => setMapboxStyle(e.target.value)}
                   >
@@ -174,7 +220,7 @@ export function MapSettingsPanel({
                   <select
                     id="osm-basemap-select"
                     aria-label="OpenStreetMap basemap selection"
-                    className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-hidden focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
+                    className={selectClasses}
                     value={osmBasemap}
                     onChange={(e) => setOsmBasemap(e.target.value as OsmBasemap)}
                   >
@@ -197,7 +243,7 @@ export function MapSettingsPanel({
                 <select
                   id="recent-days-select"
                   aria-label="Filter nodes by last seen timeframe"
-                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-hidden focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400"
+                  className={selectClasses}
                   value={recentDays}
                   onChange={(e) => setRecentDays(Number(e.target.value))}
                 >
@@ -209,6 +255,100 @@ export function MapSettingsPanel({
                   <option value={1}>1 day</option>
                 </select>
               </div>
+
+              {/* Neighbor Links */}
+              <div>
+                <label
+                  htmlFor="link-mode-select"
+                  className="text-xs font-medium uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-2 block"
+                >
+                  Neighbor Links
+                </label>
+                <select
+                  id="link-mode-select"
+                  aria-label="Neighbor link display mode"
+                  className={selectClasses}
+                  value={linkMode}
+                  onChange={(e) => setLinkMode(e.target.value as LinkMode)}
+                >
+                  <option value="selected">Selected Node</option>
+                  <option value="all">All Nodes</option>
+                  <option value="mynode">My Node</option>
+                </select>
+              </div>
+
+              {/* My Node picker — shown when mode is "mynode" */}
+              {linkMode === "mynode" && (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label
+                      htmlFor="my-node-search"
+                      className="text-xs font-medium uppercase tracking-wide text-gray-600 dark:text-gray-300"
+                    >
+                      My Node
+                      {myNodeLabel && (
+                        <span className="ml-1 normal-case font-normal text-gray-500 dark:text-gray-400">
+                          ({myNodeLabel})
+                        </span>
+                      )}
+                    </label>
+                    {myNodeId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMyNodeId("");
+                          setLinkMode("selected");
+                        }}
+                        className="text-[10px] text-red-400 hover:text-red-300 transition-colors"
+                        aria-label="Clear My Node"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    id="my-node-search"
+                    type="text"
+                    placeholder="Search nodes..."
+                    className={selectClasses}
+                    value={nodeSearch}
+                    onChange={(e) => setNodeSearch(e.target.value)}
+                  />
+                  {nodeSearch && (
+                    <div className="mt-1 max-h-32 overflow-y-auto rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800">
+                      {filteredNodes.length === 0 && (
+                        <div className="px-3 py-2 text-xs text-gray-400">
+                          No nodes found
+                        </div>
+                      )}
+                      {filteredNodes.map((node) => (
+                        <button
+                          key={node.id}
+                          type="button"
+                          className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100 truncate"
+                          onClick={() => {
+                            setMyNodeId(node.id);
+                            setNodeSearch("");
+                          }}
+                        >
+                          <span className="font-medium">
+                            {node.shortname || node.id}
+                          </span>
+                          {node.longname && (
+                            <span className="ml-1 text-gray-500 dark:text-gray-400">
+                              {node.longname}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">
+                    Tip: right-click (or long-press) a node on the map to set it
+                    as My Node.
+                  </p>
+                </div>
+              )}
 
               {/* Clustering Toggle */}
               <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
@@ -251,7 +391,7 @@ export function MapSettingsPanel({
       )}
 
       {/* Legend */}
-      <MapLegend />
+      <MapLegend linkMode={linkMode} myNodeLabel={myNodeLabel} />
     </div>
   );
 }

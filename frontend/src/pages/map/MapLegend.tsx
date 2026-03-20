@@ -1,4 +1,19 @@
-export function MapLegend() {
+import type { LinkMode } from "./types";
+
+export function MapLegend({
+  linkMode = "selected",
+  myNodeLabel,
+}: {
+  linkMode?: LinkMode;
+  myNodeLabel?: string;
+}) {
+  const linkHint =
+    linkMode === "all"
+      ? "Showing links for all nodes."
+      : linkMode === "mynode"
+        ? `Showing links for ${myNodeLabel || "My Node"}.`
+        : "Links shown when a node is selected.";
+
   return (
     <div
       id="legend"
@@ -40,7 +55,7 @@ export function MapLegend() {
         <div className="text-[10px] text-gray-400 dark:text-gray-500 leading-tight">
           Online = seen in last 6 hours.
           <br />
-          Lines shown when a node is selected.
+          {linkHint}
         </div>
       </div>
     </div>

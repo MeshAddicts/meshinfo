@@ -153,3 +153,50 @@ export function buildMapboxLinkFeatureCollection(opts: {
 
   return { type: "FeatureCollection", features: linkFeatures };
 }
+
+/**
+ * Build link features for ALL nodes that have neighbor data.
+ * Deduplicates edges so A→B and B→A become a single "both" line.
+ */
+export function buildAllLinksFeatureCollection(
+  liveNodes: Record<string, IMapNode>,
+): FeatureCollection<GeoLineString, GeoJsonProperties> {
+  const linkFeatures: GeoFeature<GeoLineString, GeoJsonProperties>[] = [];
+
+  // Track edges we've already emitted (sorted key "idA|idB")
+  const seen = new Set<string>();
+
+  for (const [nodeId, node] of Object.entries(liveNodes)) {
+    if (!node.map_position || !node.neighbors?.length) continue;
+
+    for (const neighbor of node.neighbors) {
+      const other = liveNodes[neighbor.id];
+      if (!other?.map_position) continue;
+
+      const edgeKey = nodeId < neighbor.id
+        ? `${nodeId}|${neighbor.id}`
+        : `${neighbor.id}|${nodeId}`;
+
+      if (seen.has(edgeKey)) continue;
+      seen.add(edgeKey);
+
+      // Check if the reverse link also exists (mutual)
+      const reverseNeighbors = other.neighbors ?? [];
+      const isMutual = reverseNeighbors.some((n) => n.id === nodeId);
+
+      linkFeatures.push({
+        type: "Feature",
+        properties: { kind: isMutual ? "both" : "neighbor" },
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [node.map_position[0], node.map_position[1]],
+            [other.map_position[0], other.map_position[1]],
+          ],
+        },
+      });
+    }
+  }
+
+  return { type: "FeatureCollection", features: linkFeatures };
+}
