@@ -387,6 +387,7 @@ export function Map() {
           online: Boolean(node.online),
           position: node.map_position,
           neighbors: node.neighbors,
+          gateway: node.gateway,
         };
         const heardBy = computeHeardByIds(liveNodes, id);
         return buildMapboxLinkFeatureCollection({ node: nodeLike, liveNodes, heardBy });
@@ -834,6 +835,7 @@ export function Map() {
           online: Boolean(node.online),
           position: node.map_position,
           neighbors: node.neighbors,
+          gateway: node.gateway,
         };
 
         const { html, heardBy } = buildNodeDetailsHtml({
@@ -847,6 +849,7 @@ export function Map() {
           title: node.longname ?? "",
           subtitle: node.shortname ?? "",
           html,
+          onNodeSelect: (targetId) => void handleNodeClick(targetId),
         });
 
         // Draw links
@@ -1246,6 +1249,7 @@ export function Map() {
             position: [node.map_position[0], node.map_position[1]] as Coordinate,
             online: node.online,
             neighbors: node.neighbors,
+            gateway: node.gateway,
           } satisfies IFeatureNode,
         });
 
@@ -1289,6 +1293,7 @@ export function Map() {
         online: Boolean(node.online),
         position: node.position,
         neighbors: node.neighbors,
+        gateway: node.gateway,
       };
 
       const { html } = buildNodeDetailsHtml({
@@ -1302,6 +1307,20 @@ export function Map() {
         title: node.longname ?? "",
         subtitle: node.shortname ?? "",
         html,
+        onNodeSelect: (targetId) => {
+          const targetNode = nodes[targetId];
+          if (!targetNode?.map_position) return;
+          void handleNodeDetails({
+            id: targetId,
+            shortname: targetNode.shortname,
+            longname: targetNode.longname,
+            last_seen: targetNode.last_seen,
+            position: [targetNode.map_position[0], targetNode.map_position[1]] as Coordinate,
+            online: Boolean(targetNode.online),
+            neighbors: targetNode.neighbors,
+            gateway: targetNode.gateway,
+          });
+        },
       });
 
       // Draw neighbor lines
@@ -1474,6 +1493,7 @@ export function Map() {
             position: [node.map_position[0], node.map_position[1]] as Coordinate,
             online: node.online,
             neighbors: node.neighbors,
+            gateway: node.gateway,
           } satisfies IFeatureNode,
         });
 

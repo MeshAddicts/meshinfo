@@ -32,6 +32,17 @@ export function buildNodeDetailsHtml(opts: {
     `<b>Status</b><br/>${node.online ? "Online" : "Offline"}<br/><br/>` +
     `<b>Last Seen</b><br/>${escapeHtml(node.last_seen ?? "")}<br/><br/>`;
 
+  // Gateway
+  if (node.gateway) {
+    const gwNode = liveNodes[node.gateway];
+    const gwLabel = gwNode?.shortname || gwNode?.longname || node.gateway;
+    if (gwNode?.map_position) {
+      panel += `<b>Gateway</b><br/><a style="color:#818cf8;cursor:pointer;text-decoration:none;" data-select-node="${escapeHtml(node.gateway)}">${escapeHtml(gwLabel)}</a><br/><br/>`;
+    } else {
+      panel += `<b>Gateway</b><br/>${escapeHtml(gwLabel)}<br/><br/>`;
+    }
+  }
+
   panel += "<b>Neighbors Heard</b><br/>";
   if ((node.neighbors?.length ?? 0) === 0) {
     panel += "None";

@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS nodes (
     role INTEGER,
     active BOOLEAN DEFAULT TRUE,
     tc2_bbs BOOLEAN DEFAULT FALSE,
+    gateway VARCHAR(8),
     last_seen TIMESTAMP WITH TIME ZONE,
     since_seconds REAL,  -- Duration in seconds since last seen
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
