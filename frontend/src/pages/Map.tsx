@@ -353,24 +353,12 @@ export function Map() {
     return () => timers.forEach(clearTimeout);
   }, [urlNodeId, flyToTarget, olMap, setSearchParams]);
 
-  /** Show a brief toast confirming "My Node" was set. */
-  function showMyNodeToast(name: string) {
-    const existing = document.getElementById("my-node-toast");
-    if (existing) existing.remove();
-
-    const toast = document.createElement("div");
-    toast.id = "my-node-toast";
-    toast.textContent = `My Node set to ${name}`;
-    toast.className =
-      "fixed top-4 left-1/2 -translate-x-1/2 z-[9999] px-4 py-2 rounded-lg shadow-lg " +
-      "bg-gray-900/95 text-white text-sm backdrop-blur-md border border-gray-700 " +
-      "transition-opacity duration-300";
-    document.body.appendChild(toast);
-    setTimeout(() => {
-      toast.style.opacity = "0";
-      setTimeout(() => toast.remove(), 300);
-    }, 2000);
-  }
+  // Derive "My Node" label from current state
+  const myNodeLabel = useMemo(() => {
+    if (!myNodeId) return null;
+    const n = nodes[myNodeId];
+    return n?.shortname || n?.longname || myNodeId;
+  }, [myNodeId, nodes]);
 
   /** Collect neighbor edge keys (for deduplication with traceroute links). */
   function collectNeighborEdgeKeys(liveNodes: Record<string, IMapNode>): Set<string> {
@@ -508,6 +496,7 @@ export function Map() {
     }
 
     mbSelectedIdRef.current = null;
+
 
     // Restore persistent links (all/mynode) or clear if mode is "selected"
     if (map) {
@@ -873,6 +862,7 @@ export function Map() {
 
         setSelected(id);
 
+
         const displayName = await reverseGeocode(node.map_position[0], node.map_position[1]);
 
         const nodeLike: NodeLike = {
@@ -1045,9 +1035,6 @@ export function Map() {
         const id = findNodeIdAtPoint(e.point);
         if (!id) return;
         e.preventDefault();
-        const node = nodesRef.current[id];
-        const name = node?.shortname || node?.longname || id;
-        showMyNodeToast(name);
         setMyNodeId(id);
         setLinkMode("mynode");
       });
@@ -1068,9 +1055,6 @@ export function Map() {
           if (!longPressPoint) return;
           const id = findNodeIdAtPoint(longPressPoint);
           if (!id) return;
-          const node = nodesRef.current[id];
-          const name = node?.shortname || node?.longname || id;
-          showMyNodeToast(name);
           setMyNodeId(id);
           setLinkMode("mynode");
           longPressPoint = null;
@@ -1132,6 +1116,7 @@ export function Map() {
 
       // Clear selection & overlays to avoid stale feature-state during style swap
       mbSelectedIdRef.current = null;
+  
       clearDetailsPanel();
       const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
       linksSource?.setData(emptyLineFeatureCollection());
@@ -1176,6 +1161,7 @@ export function Map() {
         } catch {}
 
         mbSelectedIdRef.current = null;
+    
 
         const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
         linksSource?.setData(emptyLineFeatureCollection());
@@ -1358,6 +1344,7 @@ export function Map() {
     const neighborLayers: VectorLayer<VectorSource<Feature>, Feature>[] = [];
 
     const handleNodeDetails = async (node: IFeatureNode) => {
+
       const displayName = await reverseGeocode(node.position[0], node.position[1]);
 
       const nodeLike: NodeLike = {
@@ -1455,8 +1442,6 @@ export function Map() {
       const node = findOlNodeAtPixel(pixel);
       if (!node) return;
       e.preventDefault();
-      const name = node.shortname || node.longname || node.id;
-      showMyNodeToast(name);
       setMyNodeId(node.id);
       setLinkMode("mynode");
     });
@@ -1476,8 +1461,6 @@ export function Map() {
         if (!olLongPressPixel) return;
         const node = findOlNodeAtPixel(olLongPressPixel);
         if (!node) return;
-        const name = node.shortname || node.longname || node.id;
-        showMyNodeToast(name);
         setMyNodeId(node.id);
         setLinkMode("mynode");
         olLongPressPixel = null;
@@ -1505,6 +1488,7 @@ export function Map() {
           select.getFeatures().clear();
           void handleNodeDetails(node);
         } else if (!map.hasFeatureAtPixel(event.pixel)) {
+      
           clearDetailsPanel();
         }
         return;
@@ -1512,6 +1496,7 @@ export function Map() {
 
       // Plain mode — original behavior
       if (map.hasFeatureAtPixel(event.pixel) !== true) {
+    
         clearDetailsPanel();
         return;
       }
@@ -1541,6 +1526,7 @@ export function Map() {
     const olKeydownHandler = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         removeOlSpiderfy(map);
+    
         clearDetailsPanel();
       }
     };
@@ -1722,6 +1708,25 @@ export function Map() {
         canUseMapbox={canUseMapbox}
         usingMapbox={usingMapbox}
       />
+
+      {myNodeLabel && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-1060 px-4 py-2 rounded-lg shadow-lg bg-gray-900/95 text-white text-sm backdrop-blur-md border border-gray-700 flex items-center gap-3">
+          <span>My Node: <span className="font-semibold">{myNodeLabel}</span></span>
+          <button
+            type="button"
+            onClick={() => {
+              setMyNodeId("");
+              setLinkMode("selected");
+            }}
+            className="text-gray-400 hover:text-white transition-colors"
+            aria-label="Clear My Node"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      )}
 
       <MapDetailsPanel onClose={clearMapboxSelectionAndOverlays} />
 
