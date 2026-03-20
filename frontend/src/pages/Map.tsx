@@ -378,8 +378,11 @@ export function Map() {
     for (const [nodeId, node] of Object.entries(liveNodes)) {
       if (!node.neighbors?.length) continue;
       for (const nb of node.neighbors) {
-        const a = nodeId < nb.id ? nodeId : nb.id;
-        const b = nodeId < nb.id ? nb.id : nodeId;
+        const normA = normNodeId(nodeId);
+        const normB = normNodeId(nb.id);
+        if (!normA || !normB || normA === normB) continue;
+        const a = normA < normB ? normA : normB;
+        const b = normA < normB ? normB : normA;
         keys.add(`${a}|${b}`);
       }
     }
@@ -448,7 +451,7 @@ export function Map() {
       );
       const line = new Feature({ geometry: new LineString(coords) });
       const kind = f.properties?.kind ?? "neighbor";
-      const color = kind === "both" ? "#FF66FF" : kind === "heard_by" ? "#6666FF" : "#66FF66";
+      const color = kind === "traceroute" ? "#F59E0B" : kind === "both" ? "#FF66FF" : kind === "heard_by" ? "#6666FF" : "#66FF66";
       line.setStyle(
         new Style({
           stroke: new Stroke({ color, width: 4 }),

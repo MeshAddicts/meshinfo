@@ -171,9 +171,10 @@ export function buildNodeDetailsHtml(opts: {
     panel += `<tr><th style="${thStyle}" align=left>Node</th><th style="${thStyle}" align=right>Routes</th></tr>`;
 
     for (const [linkedId, count] of sorted) {
-      const linkedNode = liveNodes[linkedId];
+      const lookupId = liveNodes[linkedId] ? linkedId : liveNodes[`!${linkedId}`] ? `!${linkedId}` : linkedId;
+      const linkedNode = liveNodes[lookupId];
       const label = linkedNode?.shortname ?? linkedId;
-      panel += `<tr><td style="${tdStyle}" align=left>${nodeLink(linkedId, label)}</td><td style="${tdStyle}" align=right>${count}</td></tr>`;
+      panel += `<tr><td style="${tdStyle}" align=left>${nodeLink(lookupId, label)}</td><td style="${tdStyle}" align=right>${count}</td></tr>`;
     }
 
     panel += "</table>";
@@ -311,7 +312,7 @@ export function buildTracerouteLinkFeatureCollection(
   for (const tr of traceroutes) {
     const from = normNodeId(tr?.from);
     const to = normNodeId(tr?.to);
-    const route: string[] = (tr?.route ?? tr?.payload?.route ?? [])
+    const route: string[] = (tr?.route_ids ?? tr?.route ?? tr?.payload?.route ?? [])
       .map(normNodeId)
       .filter(Boolean);
     const path = [from, ...route, to].filter(Boolean);
