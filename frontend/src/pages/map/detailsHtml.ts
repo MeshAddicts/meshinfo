@@ -7,6 +7,7 @@ import type {
 
 import type { ElsewhereLink } from "../../types/config";
 import { getElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLinks";
+import type { ITraceroutesResponse } from "../../types";
 import type { IMapNode, NodeLike } from "./types";
 import { calculateGeodesicDistance, escapeHtml } from "./utils";
 
@@ -192,6 +193,79 @@ export function buildAllLinksFeatureCollection(
           coordinates: [
             [node.map_position[0], node.map_position[1]],
             [other.map_position[0], other.map_position[1]],
+          ],
+        },
+      });
+    }
+  }
+
+  return { type: "FeatureCollection", features: linkFeatures };
+}
+
+/** Normalize a node ID (int or hex string) to lowercase hex. */
+export function normNodeId(raw: unknown): string {
+  if (raw == null) return "";
+  if (typeof raw === "number") {
+    if (!Number.isFinite(raw) || raw <= 0) return "";
+    return (raw >>> 0).toString(16).toLowerCase();
+  }
+  let s = String(raw).trim();
+  if (/^\d+$/.test(s) && s.length > 6) {
+    const n = parseInt(s, 10);
+    if (Number.isFinite(n) && n > 0) return (n >>> 0).toString(16).toLowerCase();
+  }
+  if (s.startsWith("!")) s = s.slice(1);
+  if (s.startsWith("0x") || s.startsWith("0X")) s = s.slice(2);
+  return s.toLowerCase();
+}
+
+/**
+ * Build link features inferred from traceroute hops.
+ * Each consecutive pair in a traceroute path (from → hop1 → hop2 → to)
+ * is treated as a link. Deduplicates and only includes edges where both
+ * nodes have map positions.
+ */
+export function buildTracerouteLinkFeatureCollection(
+  traceroutes: ITraceroutesResponse[],
+  liveNodes: Record<string, IMapNode>,
+  neighborEdgeKeys?: Set<string>,
+): FeatureCollection<GeoLineString, GeoJsonProperties> {
+  const linkFeatures: GeoFeature<GeoLineString, GeoJsonProperties>[] = [];
+  const seen = new Set<string>();
+
+  for (const tr of traceroutes) {
+    const from = normNodeId(tr?.from);
+    const to = normNodeId(tr?.to);
+    const route: string[] = (tr?.route ?? tr?.payload?.route ?? [])
+      .map(normNodeId)
+      .filter(Boolean);
+    const path = [from, ...route, to].filter(Boolean);
+
+    for (let i = 0; i < path.length - 1; i++) {
+      const a = path[i], b = path[i + 1];
+      if (!a || !b || a === b) continue;
+
+      const ka = a < b ? a : b;
+      const kb = a < b ? b : a;
+      const edgeKey = `${ka}|${kb}`;
+
+      // Skip if we already emitted this edge or if a neighbor edge covers it
+      if (seen.has(edgeKey)) continue;
+      if (neighborEdgeKeys?.has(edgeKey)) continue;
+      seen.add(edgeKey);
+
+      const nodeA = liveNodes[ka] ?? liveNodes[`!${ka}`];
+      const nodeB = liveNodes[kb] ?? liveNodes[`!${kb}`];
+      if (!nodeA?.map_position || !nodeB?.map_position) continue;
+
+      linkFeatures.push({
+        type: "Feature",
+        properties: { kind: "traceroute" },
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            [nodeA.map_position[0], nodeA.map_position[1]],
+            [nodeB.map_position[0], nodeB.map_position[1]],
           ],
         },
       });
