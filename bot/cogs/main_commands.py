@@ -195,11 +195,12 @@ class MainCommands(commands.Cog):
         embed.add_field(name="Timezone", value=self.config['server']['timezone'], inline=True)
         if self.config['mesh'].get('url'):
             embed.add_field(name="Website", value=self.config['mesh']['url'], inline=False)
-        embed.add_field(name="Total Nodes", value=str(total_nodes), inline=True)
-        embed.add_field(name="Online Nodes", value=str(active_nodes), inline=True)
+        embed.add_field(name="Total Nodes", value=f"[{total_nodes}]({base_url}/nodes)", inline=True)
+        embed.add_field(name="Online Nodes", value=f"[{active_nodes}]({base_url}/nodes?status=online)", inline=True)
         uptime = datetime.datetime.now().astimezone(ZoneInfo(self.config['server']['timezone'])) - self.config['server']['start_time']
         embed.add_field(name="Server Uptime", value=f"{uptime.days}d {uptime.seconds // 3600}h {(uptime.seconds % 3600) // 60}m {uptime.seconds % 60}s", inline=False)
-        embed.set_footer(text=f"MeshInfo | {base_url}")
+        links = [f"[Dashboard]({base_url})", f"[Nodes]({base_url}/nodes)", f"[Chat]({base_url}/chat)", f"[Logs]({base_url}/logs)"]
+        embed.add_field(name="Quick Links", value=" | ".join(links), inline=False)
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="ping", description="Ping the bot")
