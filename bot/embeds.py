@@ -24,6 +24,13 @@ EMBED_FIELD_VALUE_LIMIT = 1024
 MAP_API_URL = "https://api.smerty.org/staticmap"
 
 
+def _node_url(base_url: str, node_id: str) -> str | None:
+    """Build a deep link URL to a node's detail page."""
+    if not base_url:
+        return None
+    return f"{base_url.rstrip('/')}/nodes?node={node_id}"
+
+
 def _node_display_name(node: Optional[dict], node_id: str) -> str:
     """Return a human-readable name for a node, falling back to hex ID."""
     if node:
@@ -43,7 +50,16 @@ def _node_short_name(node: Optional[dict], node_id: str) -> str:
     return node_id[:4]
 
 
-def _format_gateway_info(msg: dict, nodes: dict) -> str:
+def _node_linked_name(node: Optional[dict], node_id: str, base_url: str) -> str:
+    """Return a markdown-linked node name, e.g. [NodeName](https://...)."""
+    name = _node_display_name(node, node_id)
+    url = _node_url(base_url, node_id)
+    if url:
+        return f"[{name}]({url})"
+    return name
+
+
+def _format_gateway_info(msg: dict, nodes: dict, base_url: str) -> str:
     """Format gateway/reception info from the message metadata."""
     parts = []
 
@@ -70,12 +86,11 @@ def _format_gateway_info(msg: dict, nodes: dict) -> str:
     # Gateway node
     topic = msg.get("topic", "")
     if topic:
-        # Extract gateway ID from topic: msh/region/2/e/LongFast/!gateway_id
         topic_parts = topic.split("/")
         if topic_parts and topic_parts[-1].startswith("!"):
             gw_id = topic_parts[-1].replace("!", "")
             gw_node = nodes.get(gw_id)
-            gw_name = _node_display_name(gw_node, gw_id)
+            gw_name = _node_linked_name(gw_node, gw_id, base_url)
             parts.append(f"Gateway: {gw_name}")
 
     return "\n".join(parts) if parts else ""
@@ -99,14 +114,6 @@ def build_text_embed(
 ) -> discord.Embed:
     """
     Build a rich embed for a text message from the mesh.
-
-    Args:
-        msg: The raw MQTT message dict.
-        chat: The processed chat dict with 'text', 'from', 'channel', etc.
-        nodes: The current nodes dict from MemoryDataStore.
-        base_url: The MeshInfo base URL for linking.
-        owner_id: Discord user ID linked to the sender node, or None.
-        gateway_entries: List of gateway info dicts for aggregated display.
     """
     from_id = chat.get("from", msg.get("from", "unknown"))
     node = nodes.get(from_id)
@@ -114,17 +121,17 @@ def build_text_embed(
     short_name = _node_short_name(node, from_id)
     text = chat.get("text", "")
 
-    # Build embed
+    # Build embed — title links to the sender's node page
+    node_link = _node_url(base_url, from_id)
     embed = discord.Embed(
         description=text[:EMBED_DESC_LIMIT],
         color=discord.Color.green(),
         timestamp=discord.utils.utcnow(),
     )
 
-    # Author = sender node
-    node_url = f"{base_url.rstrip('/')}/node_{from_id}.html" if base_url else None
+    # Author = sender node (linked to node page)
     avatar_url = f"https://api.dicebear.com/9.x/bottts-neutral/png?seed={from_id}"
-    embed.set_author(name=f"{display_name} [{short_name}]", url=node_url, icon_url=avatar_url)
+    embed.set_author(name=f"{display_name} [{short_name}]", url=node_link, icon_url=avatar_url)
 
     # Packet info fields
     packet_id = msg.get("id")
@@ -135,17 +142,15 @@ def build_text_embed(
     channel_label = _resolve_channel_name(channel, config)
     embed.add_field(name="Channel", value=channel_label, inline=True)
 
-    # Gateway info
+    # Gateway info with linked names
     if gateway_entries and len(gateway_entries) > 0:
-        gw_text = _format_gateway_list(gateway_entries, nodes)
+        gw_text = _format_gateway_list(gateway_entries, nodes, base_url)
         if gw_text:
-            # Truncate if needed
             if len(gw_text) > EMBED_FIELD_VALUE_LIMIT:
                 gw_text = gw_text[: EMBED_FIELD_VALUE_LIMIT - 3] + "..."
             embed.add_field(name="Gateways", value=gw_text, inline=False)
     else:
-        # Single gateway from the original message
-        gw_info = _format_gateway_info(msg, nodes)
+        gw_info = _format_gateway_info(msg, nodes, base_url)
         if gw_info:
             if len(gw_info) > EMBED_FIELD_VALUE_LIMIT:
                 gw_info = gw_info[: EMBED_FIELD_VALUE_LIMIT - 3] + "..."
@@ -155,7 +160,7 @@ def build_text_embed(
     if owner_id:
         embed.add_field(name="Owner", value=f"<@{owner_id}>", inline=True)
 
-    # Footer
+    # Footer with link-friendly node ID
     embed.set_footer(text=f"Node: !{from_id}")
 
     return embed
@@ -179,15 +184,16 @@ def build_position_embed(
     payload = msg.get("payload", {})
 
     label = "Balloon" if track_type == "balloon" else "Tracker"
+    node_link = _node_url(base_url, node_id)
     embed = discord.Embed(
         title=f"{label} Position Update",
+        url=node_link,
         color=discord.Color.orange() if track_type == "balloon" else discord.Color.blue(),
         timestamp=discord.utils.utcnow(),
     )
 
-    node_url = f"{base_url.rstrip('/')}/node_{node_id}.html" if base_url else None
     avatar_url = f"https://api.dicebear.com/9.x/bottts-neutral/png?seed={node_id}"
-    embed.set_author(name=f"{display_name} [{short_name}]", url=node_url, icon_url=avatar_url)
+    embed.set_author(name=f"{display_name} [{short_name}]", url=node_link, icon_url=avatar_url)
 
     # Position fields
     lat_i = payload.get("latitude_i")
@@ -206,15 +212,15 @@ def build_position_embed(
         map_url = f"{MAP_API_URL}?center={lat},{lon}&zoom=12&size=300x200&markers={lat},{lon}"
         embed.set_thumbnail(url=map_url)
 
-    # Gateway info
+    # Gateway info with linked names
     if gateway_entries and len(gateway_entries) > 0:
-        gw_text = _format_gateway_list(gateway_entries, nodes)
+        gw_text = _format_gateway_list(gateway_entries, nodes, base_url)
         if gw_text:
             if len(gw_text) > EMBED_FIELD_VALUE_LIMIT:
                 gw_text = gw_text[: EMBED_FIELD_VALUE_LIMIT - 3] + "..."
             embed.add_field(name="Gateways", value=gw_text, inline=False)
     else:
-        gw_info = _format_gateway_info(msg, nodes)
+        gw_info = _format_gateway_info(msg, nodes, base_url)
         if gw_info:
             if len(gw_info) > EMBED_FIELD_VALUE_LIMIT:
                 gw_info = gw_info[: EMBED_FIELD_VALUE_LIMIT - 3] + "..."
@@ -228,11 +234,10 @@ def build_position_embed(
     return embed
 
 
-def _format_gateway_list(gateway_entries: list, nodes: dict) -> str:
+def _format_gateway_list(gateway_entries: list, nodes: dict, base_url: str) -> str:
     """
     Format a list of gateway reception reports grouped by hop count.
-
-    Each entry is a dict with keys: gateway_id, rssi, snr, hops_away, topic.
+    Gateway names are markdown-linked to their MeshInfo node pages.
     """
     if not gateway_entries:
         return ""
@@ -256,7 +261,7 @@ def _format_gateway_list(gateway_entries: list, nodes: dict) -> str:
         for gw in by_hops[hops]:
             gw_id = gw.get("gateway_id", "unknown")
             gw_node = nodes.get(gw_id)
-            gw_name = _node_display_name(gw_node, gw_id)
+            gw_name = _node_linked_name(gw_node, gw_id, base_url)
             parts = [f"  {gw_name}"]
             rssi = gw.get("rssi")
             snr = gw.get("snr")

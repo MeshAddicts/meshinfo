@@ -113,7 +113,7 @@ class MainCommands(commands.Cog):
         base_url = self.config['server']['base_url'].strip('/')
         embed = discord.Embed(
             title=f"{shortname}: {longname}",
-            url=f"{base_url}/node_{id_hex}.html",
+            url=f"{base_url}/nodes?node={id_hex}",
             color=discord.Color.green() if active else discord.Color.greyple())
         embed.set_thumbnail(url=f"https://api.dicebear.com/9.x/bottts-neutral/png?seed={id_hex}")
         embed.add_field(name="ID (hex)", value=f"!{id_hex}", inline=True)
@@ -150,6 +150,20 @@ class MainCommands(commands.Cog):
                 telem_parts.append(f"Temp: {telemetry['temperature']:.1f}\u00b0C")
             if telem_parts:
                 embed.add_field(name="Telemetry", value=" | ".join(telem_parts), inline=False)
+
+        # Elsewhere links from config
+        elsewhere = self.config.get('mesh', {}).get('elsewhere_links', [])
+        if elsewhere:
+            link_parts = []
+            for link in elsewhere:
+                name = link.get('name', '')
+                url = link.get('url', '')
+                if name and url:
+                    url = url.replace('{node_id_hex}', id_hex)
+                    url = url.replace('{node_id_int}', str(id_int))
+                    link_parts.append(f"[{name}]({url})")
+            if link_parts:
+                embed.add_field(name="View Elsewhere", value=" | ".join(link_parts), inline=False)
 
         embed.set_footer(text=f"Node: !{id_hex}")
         await ctx.send(embed=embed)
