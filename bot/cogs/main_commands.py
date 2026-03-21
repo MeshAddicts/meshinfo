@@ -89,7 +89,11 @@ class MainCommands(commands.Cog):
             # DB stores as string or int; normalize to int for enum lookup
             try:
                 hw_int = int(hardware_raw)
-                hardware = mesh_pb2.HardwareModel.Name(hw_int).replace("_", " ").title()
+                hw_name = mesh_pb2.HardwareModel.Name(hw_int)
+                if hw_name == "PRIVATE_HW":
+                    hardware = "Private"
+                else:
+                    hardware = hw_name.replace("_", " ").title()
             except (ValueError, TypeError):
                 hardware = str(hardware_raw)
         active = node.get('active', False)

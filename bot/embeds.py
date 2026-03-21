@@ -133,10 +133,12 @@ def build_text_embed(
     avatar_url = f"https://api.dicebear.com/9.x/bottts-neutral/png?seed={from_id}"
     embed.set_author(name=f"{display_name} [{short_name}]", url=node_link, icon_url=avatar_url)
 
-    # Packet info fields
+    # Packet info fields — linked to logs search
     packet_id = msg.get("id")
     if packet_id:
-        embed.add_field(name="Packet ID", value=str(packet_id), inline=True)
+        logs_url = f"{base_url.rstrip('/')}/logs?q={packet_id}" if base_url else None
+        pid_display = f"[{packet_id}]({logs_url})" if logs_url else str(packet_id)
+        embed.add_field(name="Packet ID", value=pid_display, inline=True)
 
     channel = str(chat.get("channel", "0"))
     channel_label = _resolve_channel_name(channel, config)
