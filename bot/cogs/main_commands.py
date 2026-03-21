@@ -46,7 +46,7 @@ class MainCommands(commands.Cog):
             title=f"Node {node['shortname']}: {node['longname']}",
             url=f"{self.config['server']['base_url'].strip('/')}/node_{node['id']}.html",
             color=discord.Color.blue())
-        embed.set_thumbnail(url=f"https://api.dicebear.com/9.x/bottts-neutral/svg?seed={node['id']}")
+        embed.set_thumbnail(url=f"https://api.dicebear.com/9.x/bottts-neutral/png?seed={node['id']}")
         embed.add_field(name="ID (hex)", value=id_hex, inline=True)
         embed.add_field(name="ID (int)", value=id_int, inline=True)
         embed.add_field(name="Shortname", value=node['shortname'], inline=False)

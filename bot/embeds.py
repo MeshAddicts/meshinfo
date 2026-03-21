@@ -81,11 +81,19 @@ def _format_gateway_info(msg: dict, nodes: dict) -> str:
     return "\n".join(parts) if parts else ""
 
 
+def _resolve_channel_name(channel_hash: str, config: dict) -> str:
+    """Resolve a channel hash to its label from config, or return the hash."""
+    meta = config.get("broker", {}).get("channels", {}).get("meta", {})
+    channel_meta = meta.get(channel_hash, {})
+    return channel_meta.get("label", f"Channel {channel_hash}")
+
+
 def build_text_embed(
     msg: dict,
     chat: dict,
     nodes: dict,
     base_url: str,
+    config: dict,
     owner_id: Optional[str] = None,
     gateway_entries: Optional[list] = None,
 ) -> discord.Embed:
@@ -115,7 +123,7 @@ def build_text_embed(
 
     # Author = sender node
     node_url = f"{base_url.rstrip('/')}/node_{from_id}.html" if base_url else None
-    avatar_url = f"https://api.dicebear.com/9.x/bottts-neutral/svg?seed={from_id}"
+    avatar_url = f"https://api.dicebear.com/9.x/bottts-neutral/png?seed={from_id}"
     embed.set_author(name=f"{display_name} [{short_name}]", url=node_url, icon_url=avatar_url)
 
     # Packet info fields
@@ -123,8 +131,9 @@ def build_text_embed(
     if packet_id:
         embed.add_field(name="Packet ID", value=str(packet_id), inline=True)
 
-    channel = chat.get("channel", "0")
-    embed.add_field(name="Channel", value=str(channel), inline=True)
+    channel = str(chat.get("channel", "0"))
+    channel_label = _resolve_channel_name(channel, config)
+    embed.add_field(name="Channel", value=channel_label, inline=True)
 
     # Gateway info
     if gateway_entries and len(gateway_entries) > 0:
@@ -177,7 +186,7 @@ def build_position_embed(
     )
 
     node_url = f"{base_url.rstrip('/')}/node_{node_id}.html" if base_url else None
-    avatar_url = f"https://api.dicebear.com/9.x/bottts-neutral/svg?seed={node_id}"
+    avatar_url = f"https://api.dicebear.com/9.x/bottts-neutral/png?seed={node_id}"
     embed.set_author(name=f"{display_name} [{short_name}]", url=node_url, icon_url=avatar_url)
 
     # Position fields
@@ -228,20 +237,18 @@ def _format_gateway_list(gateway_entries: list, nodes: dict) -> str:
     if not gateway_entries:
         return ""
 
-    # Group by hops
+    # Group by hops — treat None/missing as 0 (direct)
     by_hops: dict[int, list] = {}
     for gw in gateway_entries:
-        hops = gw.get("hops_away", -1)
+        hops = gw.get("hops_away")
         if hops is None:
-            hops = -1
+            hops = 0
         by_hops.setdefault(hops, []).append(gw)
 
     lines = []
     for hops in sorted(by_hops.keys()):
         if hops == 0:
             header = "**Direct**"
-        elif hops == -1:
-            header = "**Unknown hops**"
         else:
             header = f"**{hops} hop(s)**"
         lines.append(header)

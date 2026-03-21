@@ -216,6 +216,7 @@ class MeshBridge(commands.Cog):
             chat=chat,
             nodes=self.data.nodes,
             base_url=base_url,
+            config=self.config,
             owner_id=owner_id,
             gateway_entries=pending.gateways,
         )
