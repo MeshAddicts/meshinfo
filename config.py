@@ -94,6 +94,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "enabled": False,
             "token": "",
             "guild": "",
+            "bridge": {
+                "enabled": False,
+                "aggregate_seconds": 5,
+                "channels": {},
+                "position_channels": {},
+            },
         },
         "geocoding": {
             "enabled": False,
@@ -350,6 +356,14 @@ def validate(config: dict) -> list[str]:
         guild = discord_cfg.get("guild") or ""
         if not guild or "REPLACE_WITH" in str(guild):
             warn("Discord is enabled but guild ID is missing or still a placeholder.")
+
+        bridge_cfg = discord_cfg.get("bridge", {})
+        if bridge_cfg.get("enabled"):
+            check(_validate_type(config, "integrations.discord.bridge.aggregate_seconds", (int, float)))
+            check(_validate_type(config, "integrations.discord.bridge.channels", dict))
+            check(_validate_type(config, "integrations.discord.bridge.position_channels", dict))
+            if not bridge_cfg.get("channels"):
+                warn("Discord bridge is enabled but no channel mappings are configured. No messages will be forwarded.")
 
     check(_validate_type(config, "integrations.geocoding", dict))
     geocoding_cfg = _get_nested(config, "integrations", "geocoding") or {}

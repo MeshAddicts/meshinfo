@@ -264,3 +264,35 @@ ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS local_stats JSONB;
 ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS health_metrics JSONB;
 ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS host_metrics JSONB;
 ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS traffic_management_stats JSONB;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Discord bridge tables
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Links between mesh nodes and Discord users
+CREATE TABLE IF NOT EXISTS discord_node_links (
+    id SERIAL PRIMARY KEY,
+    node_id VARCHAR(8) NOT NULL,
+    discord_user_id VARCHAR(20) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT discord_node_links_unique UNIQUE (node_id, discord_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_discord_node_links_node_id ON discord_node_links(node_id);
+CREATE INDEX IF NOT EXISTS idx_discord_node_links_discord_user_id ON discord_node_links(discord_user_id);
+
+-- Banned nodes (messages suppressed from Discord bridge)
+CREATE TABLE IF NOT EXISTS discord_banned_nodes (
+    node_id VARCHAR(8) PRIMARY KEY,
+    banned_by VARCHAR(20),  -- Discord user ID who banned
+    reason TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Tracked nodes (position updates forwarded to Discord)
+CREATE TABLE IF NOT EXISTS discord_tracked_nodes (
+    node_id VARCHAR(8) PRIMARY KEY,
+    track_type VARCHAR(20) NOT NULL DEFAULT 'tracker',  -- 'tracker' or 'balloon'
+    added_by VARCHAR(20),  -- Discord user ID who added
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);

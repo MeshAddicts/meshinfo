@@ -34,6 +34,9 @@ class MemoryDataStore:
     self.traceroutes: list = []
     self.traceroutes_by_node: dict = {}
 
+    # Event queue for Discord bridge (MQTT -> Discord)
+    self.discord_event_queue: asyncio.Queue = asyncio.Queue()
+
     # Initialize Postgres storage
     self.pg_storage = PostgresStorage(config)
 
