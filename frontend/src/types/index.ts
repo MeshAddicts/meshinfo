@@ -129,6 +129,7 @@ export interface INode {
   last_seen: string;
   hardware: number | null;
   role?: NodeRole;
+  gateway?: string | null;
   position?: INodePosition;
   telemetry?: { [key: string]: number } | null;
   neighborinfo?: {
@@ -148,10 +149,12 @@ export enum NodeRole {
   REPEATER = 4,
   TRACKER = 5,
   SENSOR = 6,
-  ATAK = 7,
+  TAK = 7,
   CLIENT_HIDDEN = 8,
   LOST_AND_FOUND = 9,
-  ATAK_TRACKER = 10,
+  TAK_TRACKER = 10,
+  ROUTER_LATE = 11,
+  CLIENT_BASE = 12,
 }
 
 export const roleTitles: {
@@ -164,10 +167,12 @@ export const roleTitles: {
   [NodeRole.REPEATER]: { title: "Repeater", abbreviation: "RE" },
   [NodeRole.TRACKER]: { title: "Tracker", abbreviation: "T" },
   [NodeRole.SENSOR]: { title: "Sensor", abbreviation: "S" },
-  [NodeRole.ATAK]: { title: "ATAK", abbreviation: "A" },
+  [NodeRole.TAK]: { title: "TAK", abbreviation: "TAK" },
   [NodeRole.CLIENT_HIDDEN]: { title: "Client Hidden", abbreviation: "CH" },
   [NodeRole.LOST_AND_FOUND]: { title: "Lost and Found", abbreviation: "LF" },
-  [NodeRole.ATAK_TRACKER]: { title: "ATAK Tracker", abbreviation: "AT" },
+  [NodeRole.TAK_TRACKER]: { title: "TAK Tracker", abbreviation: "TT" },
+  [NodeRole.ROUTER_LATE]: { title: "Router Late", abbreviation: "RL" },
+  [NodeRole.CLIENT_BASE]: { title: "Client Base", abbreviation: "CB" },
 };
 
 export interface INeighbor {
