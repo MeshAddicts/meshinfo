@@ -84,13 +84,14 @@ class MainCommands(commands.Cog):
         shortname = node.get('shortname', 'UNK')
         longname = node.get('longname', 'Unknown')
         hardware_raw = node.get('hardware', None)
-        if hardware_raw is not None and isinstance(hardware_raw, int):
+        hardware = "Unknown"
+        if hardware_raw is not None:
+            # DB stores as string or int; normalize to int for enum lookup
             try:
-                hardware = mesh_pb2.HardwareModel.Name(hardware_raw).replace("_", " ").title()
-            except ValueError:
+                hw_int = int(hardware_raw)
+                hardware = mesh_pb2.HardwareModel.Name(hw_int).replace("_", " ").title()
+            except (ValueError, TypeError):
                 hardware = str(hardware_raw)
-        else:
-            hardware = str(hardware_raw) if hardware_raw else "Unknown"
         active = node.get('active', False)
         last_seen_raw = node.get('last_seen', None)
         if isinstance(last_seen_raw, str):

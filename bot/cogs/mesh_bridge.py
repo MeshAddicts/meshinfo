@@ -3,8 +3,8 @@ MeshBridge cog — live mesh-to-Discord message bridge.
 
 Consumes events from MemoryDataStore.discord_event_queue, aggregates gateway
 reports for the same packet over a configurable window (default 5s), then
-posts or edits a Discord embed. This gives the "growing gateway list" UX
-from RATM 2.0 without needing Redis.
+posts or edits a Discord embed via webhook. Each mesh node appears as a
+unique "sender" with its own name and avatar in Discord.
 """
 
 import asyncio
@@ -19,6 +19,8 @@ from bot.embeds import build_text_embed, build_position_embed
 from memory_data_store import MemoryDataStore
 
 logger = logging.getLogger(__name__)
+
+WEBHOOK_NAME = "MeshInfo Bridge"
 
 
 class _PendingPacket:
@@ -90,6 +92,13 @@ class MeshBridge(commands.Cog):
         self._reply_cache: dict[int, discord.Message] = {}
         self._reply_cache_max = 500
 
+        # Webhook cache: discord_channel_id -> discord.Webhook
+        self._webhooks: dict[int, discord.Webhook] = {}
+
+        # Node info cache from DB: node_id -> node dict (avoids repeated queries)
+        self._node_cache: dict[str, Optional[dict]] = {}
+        self._node_cache_max = 1000
+
     @commands.Cog.listener()
     async def on_ready(self):
         if self.bridge_enabled:
@@ -104,6 +113,74 @@ class MeshBridge(commands.Cog):
             self._consume_task.cancel()
         if self._flush_loop.is_running():
             self._flush_loop.cancel()
+
+    # ─── Node name resolution ────────────────────────────────────────
+
+    async def _resolve_node(self, node_id: str) -> Optional[dict]:
+        """Look up a node by ID, checking in-memory first then PostgreSQL."""
+        # In-memory (live data from this session)
+        node = self.data.nodes.get(node_id)
+        if node and node.get("longname", "Unknown") != "Unknown":
+            return node
+
+        # Local cache (avoids repeated DB hits for the same node)
+        if node_id in self._node_cache:
+            return self._node_cache[node_id]
+
+        # PostgreSQL
+        if self.data.pg_storage:
+            try:
+                db_node = await self.data.pg_storage.query_node_by_id(node_id)
+                if db_node:
+                    self._node_cache[node_id] = db_node
+                    # Evict old cache entries
+                    if len(self._node_cache) > self._node_cache_max:
+                        oldest = next(iter(self._node_cache))
+                        self._node_cache.pop(oldest, None)
+                    return db_node
+            except Exception:
+                logger.debug("MeshBridge: DB lookup failed for node %s", node_id)
+
+        # Return whatever we have from memory (might be a skeleton)
+        self._node_cache[node_id] = node
+        return node
+
+    async def _build_enriched_nodes(self, node_ids: list[str]) -> dict:
+        """Build a nodes dict enriched with DB data for all referenced node IDs."""
+        enriched = {}
+        for nid in node_ids:
+            node = await self._resolve_node(nid)
+            if node:
+                enriched[nid] = node
+        return enriched
+
+    # ─── Webhook management ──────────────────────────────────────────
+
+    async def _get_webhook(self, channel: discord.TextChannel) -> Optional[discord.Webhook]:
+        """Get or create a webhook for the given channel."""
+        if channel.id in self._webhooks:
+            return self._webhooks[channel.id]
+
+        try:
+            # Look for an existing MeshInfo webhook
+            webhooks = await channel.webhooks()
+            for wh in webhooks:
+                if wh.name == WEBHOOK_NAME:
+                    self._webhooks[channel.id] = wh
+                    return wh
+
+            # Create one
+            wh = await channel.create_webhook(name=WEBHOOK_NAME)
+            self._webhooks[channel.id] = wh
+            return wh
+        except discord.Forbidden:
+            logger.warning("MeshBridge: No permission to manage webhooks in #%s — falling back to bot messages", channel.name)
+            return None
+        except Exception:
+            logger.exception("MeshBridge: Failed to get/create webhook for #%s", channel.name)
+            return None
+
+    # ─── Event consumption ───────────────────────────────────────────
 
     async def _consume_events(self):
         """Read events from the queue and aggregate into pending packets."""
@@ -207,6 +284,19 @@ class MeshBridge(commands.Cog):
         if text.startswith("seq ") and text[4:].isdigit():
             return
 
+        # Resolve all referenced node IDs from DB
+        all_node_ids = [from_id]
+        for gw in pending.gateways:
+            gw_id = gw.get("gateway_id", "")
+            if gw_id:
+                all_node_ids.append(gw_id)
+        enriched_nodes = await self._build_enriched_nodes(all_node_ids)
+
+        # Get sender info for webhook
+        sender_node = enriched_nodes.get(from_id)
+        sender_name = self._get_display_name(sender_node, from_id)
+        avatar_url = f"https://api.dicebear.com/9.x/bottts-neutral/png?seed={from_id}"
+
         # Get node owner
         owner_id = await self.data.pg_storage.get_node_owner(from_id)
 
@@ -214,44 +304,66 @@ class MeshBridge(commands.Cog):
         embed = build_text_embed(
             msg=msg,
             chat=chat,
-            nodes=self.data.nodes,
+            nodes=enriched_nodes,
             base_url=base_url,
             config=self.config,
             owner_id=owner_id,
             gateway_entries=pending.gateways,
         )
 
-        # Reply threading: if this mesh message has a reply_id, find the Discord message
-        reply_to = None
-        reply_id = msg.get("decoded", {}).get("reply_id") if isinstance(msg.get("decoded"), dict) else None
-        if reply_id and reply_id in self._reply_cache:
-            reply_to = self._reply_cache[reply_id]
+        # Try webhook first (makes each node look like a unique sender)
+        webhook = await self._get_webhook(channel)
 
-        if pending.discord_message:
-            # Edit existing message with updated gateway info
+        if pending.discord_message and webhook:
+            # Edit existing webhook message
             try:
-                await pending.discord_message.edit(embed=embed)
+                await webhook.edit_message(
+                    pending.discord_message.id,
+                    embed=embed,
+                )
+                return
             except Exception:
-                logger.warning("MeshBridge: Failed to edit message, posting new")
+                logger.debug("MeshBridge: Failed to edit webhook message, posting new")
                 pending.discord_message = None
 
-        if not pending.discord_message:
-            kwargs = {"embed": embed}
-            if reply_to:
-                kwargs["reference"] = reply_to
+        if not pending.discord_message and webhook:
             try:
-                sent = await channel.send(**kwargs)
+                sent = await webhook.send(
+                    embed=embed,
+                    username=sender_name,
+                    avatar_url=avatar_url,
+                    wait=True,
+                )
                 pending.discord_message = sent
-                # Cache for reply threading
                 packet_id = msg.get("id")
                 if packet_id:
                     self._reply_cache[packet_id] = sent
-                    # Evict old entries
                     if len(self._reply_cache) > self._reply_cache_max:
                         oldest_key = next(iter(self._reply_cache))
                         self._reply_cache.pop(oldest_key, None)
+                return
             except Exception:
-                logger.exception("MeshBridge: Failed to send text message to channel %s", discord_channel_id)
+                logger.exception("MeshBridge: Webhook send failed, falling back to bot message")
+
+        # Fallback: send as bot
+        if pending.discord_message:
+            try:
+                await pending.discord_message.edit(embed=embed)
+                return
+            except Exception:
+                pending.discord_message = None
+
+        try:
+            sent = await channel.send(embed=embed)
+            pending.discord_message = sent
+            packet_id = msg.get("id")
+            if packet_id:
+                self._reply_cache[packet_id] = sent
+                if len(self._reply_cache) > self._reply_cache_max:
+                    oldest_key = next(iter(self._reply_cache))
+                    self._reply_cache.pop(oldest_key, None)
+        except Exception:
+            logger.exception("MeshBridge: Failed to send text message to channel %s", discord_channel_id)
 
     async def _post_position(self, pending: _PendingPacket):
         """Post or update a position embed for a tracked node."""
@@ -265,7 +377,6 @@ class MeshBridge(commands.Cog):
         channel_hash = str(msg.get("channel", "0"))
         discord_channel_id = self.position_channel_map.get(channel_hash)
         if not discord_channel_id:
-            # Fall back to text channel map
             discord_channel_id = self.channel_map.get(channel_hash)
         if not discord_channel_id:
             return
@@ -278,9 +389,20 @@ class MeshBridge(commands.Cog):
                 logger.warning("MeshBridge: Cannot find Discord channel %s", discord_channel_id)
                 return
 
-        # Check ban
         if await self.data.pg_storage.is_node_banned(node_id):
             return
+
+        # Resolve node IDs from DB
+        all_node_ids = [node_id]
+        for gw in pending.gateways:
+            gw_id = gw.get("gateway_id", "")
+            if gw_id:
+                all_node_ids.append(gw_id)
+        enriched_nodes = await self._build_enriched_nodes(all_node_ids)
+
+        sender_node = enriched_nodes.get(node_id)
+        sender_name = self._get_display_name(sender_node, node_id)
+        avatar_url = f"https://api.dicebear.com/9.x/bottts-neutral/png?seed={node_id}"
 
         track_type = await self.data.pg_storage.get_tracker_type(node_id) or "tracker"
         owner_id = await self.data.pg_storage.get_node_owner(node_id)
@@ -289,22 +411,61 @@ class MeshBridge(commands.Cog):
         embed = build_position_embed(
             msg=msg,
             node_id=node_id,
-            nodes=self.data.nodes,
+            nodes=enriched_nodes,
             base_url=base_url,
             track_type=track_type,
             owner_id=owner_id,
             gateway_entries=pending.gateways,
         )
 
-        if pending.discord_message:
+        webhook = await self._get_webhook(channel)
+
+        if pending.discord_message and webhook:
             try:
-                await pending.discord_message.edit(embed=embed)
+                await webhook.edit_message(pending.discord_message.id, embed=embed)
+                return
             except Exception:
                 pending.discord_message = None
 
-        if not pending.discord_message:
+        if not pending.discord_message and webhook:
             try:
-                sent = await channel.send(embed=embed)
+                sent = await webhook.send(
+                    embed=embed,
+                    username=sender_name,
+                    avatar_url=avatar_url,
+                    wait=True,
+                )
                 pending.discord_message = sent
+                return
             except Exception:
-                logger.exception("MeshBridge: Failed to send position to channel %s", discord_channel_id)
+                logger.exception("MeshBridge: Webhook send failed for position, falling back")
+
+        # Fallback
+        if pending.discord_message:
+            try:
+                await pending.discord_message.edit(embed=embed)
+                return
+            except Exception:
+                pending.discord_message = None
+
+        try:
+            sent = await channel.send(embed=embed)
+            pending.discord_message = sent
+        except Exception:
+            logger.exception("MeshBridge: Failed to send position to channel %s", discord_channel_id)
+
+    # ─── Helpers ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _get_display_name(node: Optional[dict], node_id: str) -> str:
+        """Get a display name for a node, suitable for webhook username."""
+        if node:
+            longname = node.get("longname", "")
+            shortname = node.get("shortname", "")
+            if longname and longname != "Unknown":
+                if shortname and shortname != "UNK":
+                    return f"{longname} [{shortname}]"
+                return longname
+            if shortname and shortname != "UNK":
+                return shortname
+        return f"!{node_id}"
