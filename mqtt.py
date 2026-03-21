@@ -367,13 +367,13 @@ class MQTT:
         if id in self.data.nodes:
             node = self.data.nodes[id]
             node['neighborinfo'] = msg['payload']
-            self.data.update_node(id, node)
-            logger.debug("Node %s updated with neighborinfo", id)
         else:
             node = Node.default_node(id)
             node['neighborinfo'] = msg['payload']
-            self.data.update_node(id, node)
-            logger.debug("Node %s skeleton added with neighborinfo", id)
+        if msg.get('sender'):
+            node['gateway'] = msg['sender']
+        self.data.update_node(id, node)
+        logger.debug("Node %s updated with neighborinfo", id)
         await self.data.save()
 
     async def handle_nodeinfo(self, msg):
@@ -411,6 +411,9 @@ class MQTT:
         else:
             node['role'] = 0
 
+        if msg.get('sender'):
+            node['gateway'] = msg['sender']
+
         self.data.update_node(id, node)
 
         self.sort_nodes_by_shortname()
@@ -427,13 +430,13 @@ class MQTT:
         if id in self.data.nodes:
             node = self.data.nodes[id]
             node['position'] = msg['payload'] if 'payload' in msg else None
-            self.data.update_node(id, node)
-            logger.debug("Node %s updated with position", id)
         else:
             node = Node.default_node(id)
             node['position'] = msg['payload'] if 'payload' in msg else None
-            self.data.update_node(id, node)
-            logger.debug("Node %s skeleton added with position", id)
+        if msg.get('sender'):
+            node['gateway'] = msg['sender']
+        self.data.update_node(id, node)
+        logger.debug("Node %s updated with position", id)
         await self.data.save()
 
     async def handle_telemetry(self, msg):
@@ -462,6 +465,9 @@ class MQTT:
             # Merge: new fields overwrite, but fields not in this payload survive
             existing.update(payload)
             node['telemetry'] = existing
+
+        if msg.get('sender'):
+            node['gateway'] = msg['sender']
 
         self.data.update_node(id, node)
         logger.debug("Node %s updated with telemetry (variant=%s)", id, telemetry_type)

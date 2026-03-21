@@ -138,6 +138,12 @@ class PostgresStorage:
                 with open("postgres/sql/schema.sql", "r") as f:
                     schema_sql = f.read()
                 await conn.execute(schema_sql)
+
+                # Migrations — idempotent column additions for existing databases
+                await conn.execute("""
+                    ALTER TABLE nodes ADD COLUMN IF NOT EXISTS gateway VARCHAR(8);
+                """)
+
                 logger.info("PostgreSQL schema verified/created")
         except Exception as e:
             logger.error(f"Failed to ensure schema: {e}")
@@ -353,8 +359,8 @@ class PostgresStorage:
 
                     await conn.execute(
                         """
-                        INSERT INTO nodes (id, longname, shortname, hardware, role, active, tc2_bbs, last_seen, since_seconds)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                        INSERT INTO nodes (id, longname, shortname, hardware, role, active, tc2_bbs, gateway, last_seen, since_seconds)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                         ON CONFLICT (id) DO UPDATE SET
                             longname = EXCLUDED.longname,
                             shortname = EXCLUDED.shortname,
@@ -362,6 +368,7 @@ class PostgresStorage:
                             role = EXCLUDED.role,
                             active = EXCLUDED.active,
                             tc2_bbs = EXCLUDED.tc2_bbs,
+                            gateway = COALESCE(EXCLUDED.gateway, nodes.gateway),
                             last_seen = EXCLUDED.last_seen,
                             since_seconds = EXCLUDED.since_seconds,
                             updated_at = NOW()
@@ -373,6 +380,7 @@ class PostgresStorage:
                         role,
                         node_data.get("active", False),
                         node_data.get("tc2_bbs", False),
+                        self._normalize_node_id(node_data.get("gateway")),
                         last_seen_ts,
                         since_seconds,
                     )
@@ -943,6 +951,7 @@ class PostgresStorage:
                         "role": row["role"],
                         "active": row["active"],
                         "tc2_bbs": row["tc2_bbs"],
+                        "gateway": row["gateway"] if "gateway" in row.keys() else None,
                         "last_seen": row["last_seen"].isoformat() if row["last_seen"] else None,
                         "since": datetime.timedelta(seconds=row["since_seconds"]) if row["since_seconds"] else None,
                         "position": None,
@@ -1256,6 +1265,7 @@ class PostgresStorage:
                         "role": row["role"],
                         "active": row["active"],
                         "tc2_bbs": row["tc2_bbs"] if "tc2_bbs" in row else False,
+                        "gateway": row["gateway"] if "gateway" in row.keys() else None,
                         "last_seen": row["last_seen"].isoformat() if row["last_seen"] else None,
                         "since": datetime.timedelta(seconds=row["since_seconds"]) if row["since_seconds"] else None,
                         "position": None,

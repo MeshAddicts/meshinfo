@@ -926,6 +926,7 @@ export const Nodes = () => {
                     nodes={nodes as any}
                     serverNode={serverNode as any}
                     onClearSelection={clearSelection}
+                    onSelectNode={onSelect}
                   />
                 ) : (
                   <NodesOverviewPanel
@@ -1152,6 +1153,7 @@ export const Nodes = () => {
               clearSelection();
               setMobileSheet(null);
             }}
+            onSelectNode={onSelect}
           />
         ) : (
           <NodesOverviewPanel

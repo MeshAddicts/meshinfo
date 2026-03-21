@@ -195,13 +195,17 @@ export const Node = () => {
                             case 6:
                               return "Sensor";
                             case 7:
-                              return "ATAK";
+                              return "TAK";
                             case 8:
                               return "Client Hidden";
                             case 9:
                               return "Lost and Found";
                             case 10:
-                              return "ATAK Tracker";
+                              return "TAK Tracker";
+                            case 11:
+                              return "Router Late";
+                            case 12:
+                              return "Client Base";
                             default:
                               return "Unknown";
                           }

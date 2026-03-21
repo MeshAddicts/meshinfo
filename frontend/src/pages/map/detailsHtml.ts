@@ -65,6 +65,13 @@ export function buildNodeDetailsHtml(opts: {
     `<b>Last Seen</b> &nbsp;${escapeHtml(node.last_seen ?? "")}` +
     `</div>`;
 
+  // Gateway
+  if (node.gateway) {
+    const gwNode = liveNodes[node.gateway];
+    const gwLabel = gwNode?.shortname || gwNode?.longname || node.gateway;
+    panel += `<b>Gateway</b> &nbsp;${nodeLink(node.gateway, gwLabel)}<br/>`;
+  }
+
   // --- Neighbors Heard ---
   panel += "<b>Neighbors Heard</b>";
   if ((node.neighbors?.length ?? 0) === 0) {

@@ -58,13 +58,15 @@ export type GraphEdge = {
 export const ROLE_COLORS: Record<string, string> = {
   "0": "#3b82f6", "1": "#64748b", "2": "#22c55e", "3": "#14b8a6",
   "4": "#f59e0b", "5": "#a855f7", "6": "#ec4899", "7": "#f97316",
-  "8": "#6b7280", "9": "#ef4444", "10": "#ea580c",
+  "8": "#6b7280", "9": "#ef4444", "10": "#ea580c", "11": "#10b981",
+  "12": "#0ea5e9",
 };
 
 export const ROLE_LABELS: Record<string, string> = {
   "0": "Client", "1": "Client Mute", "2": "Router", "3": "Router Client",
-  "4": "Repeater", "5": "Tracker", "6": "Sensor", "7": "ATAK",
-  "8": "Client Hidden", "9": "Lost & Found", "10": "ATAK Tracker",
+  "4": "Repeater", "5": "Tracker", "6": "Sensor", "7": "TAK",
+  "8": "Client Hidden", "9": "Lost & Found", "10": "TAK Tracker",
+  "11": "Router Late", "12": "Client Base",
 };
 
 export function roleColor(role: string | null | undefined): string {
