@@ -380,7 +380,7 @@ class PostgresStorage:
                         role,
                         node_data.get("active", False),
                         node_data.get("tc2_bbs", False),
-                        node_data.get("gateway"),
+                        self._normalize_node_id(node_data.get("gateway")),
                         last_seen_ts,
                         since_seconds,
                     )

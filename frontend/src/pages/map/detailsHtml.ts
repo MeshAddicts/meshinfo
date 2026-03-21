@@ -69,11 +69,7 @@ export function buildNodeDetailsHtml(opts: {
   if (node.gateway) {
     const gwNode = liveNodes[node.gateway];
     const gwLabel = gwNode?.shortname || gwNode?.longname || node.gateway;
-    if (gwNode?.map_position) {
-      panel += `<b>Gateway</b> &nbsp;<a style="${linkStyle}" data-select-node="${escapeHtml(node.gateway)}">${escapeHtml(gwLabel)}</a><br/>`;
-    } else {
-      panel += `<b>Gateway</b> &nbsp;${escapeHtml(gwLabel)}<br/>`;
-    }
+    panel += `<b>Gateway</b> &nbsp;${nodeLink(node.gateway, gwLabel)}<br/>`;
   }
 
   // --- Neighbors Heard ---
