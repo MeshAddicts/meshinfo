@@ -1241,9 +1241,10 @@ class PostgresStorage:
 
                 where_clause = " AND ".join(where_parts) if where_parts else "TRUE"
 
-                # Query nodes
+                # Query nodes — most recently seen first so name collisions
+                # return the active node rather than a stale duplicate
                 nodes = {}
-                query = f"SELECT * FROM nodes WHERE {where_clause}"
+                query = f"SELECT * FROM nodes WHERE {where_clause} ORDER BY last_seen DESC NULLS LAST"
                 rows = await conn.fetch(query, *params)
 
                 for row in rows:
