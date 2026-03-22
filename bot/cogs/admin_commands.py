@@ -99,8 +99,28 @@ class AdminCommands(commands.Cog):
         Returns (hex_id, display_name) or (None, None) if not found.
         """
         raw = raw.strip()
+        search = raw.replace("!", "").strip()
 
-        # Try as hex ID
+        # Try as integer ID first (digits-only input like "1234" should be decimal, not hex)
+        if search.isdigit():
+            try:
+                id_int = int(search, 10)
+                nid = utils.convert_node_id_from_int_to_hex(id_int)
+                # Look up name
+                node = self.data.nodes.get(nid)
+                if node:
+                    name = node.get("longname", node.get("shortname", ""))
+                    return nid, name if name not in ("Unknown", "UNK", "") else None
+                if self.data.pg_storage:
+                    db_node = await self.data.pg_storage.query_node_by_id(nid)
+                    if db_node:
+                        name = db_node.get("longname", db_node.get("shortname", ""))
+                        return nid, name if name not in ("Unknown", "UNK", "") else None
+                return nid, None
+            except (ValueError, TypeError):
+                pass
+
+        # Try as hex ID (contains a-f, or has ! prefix)
         nid = _normalize_node_id(raw)
         if nid:
             # Verify it exists (optional — allow linking to unknown nodes)
@@ -116,15 +136,6 @@ class AdminCommands(commands.Cog):
                     return nid, name if name not in ("Unknown", "UNK", "") else None
             # Valid hex but not in DB — still allow it
             return nid, None
-
-        # Try as integer ID
-        search = raw.replace("!", "").strip()
-        try:
-            id_int = int(search, 10)
-            nid = utils.convert_node_id_from_int_to_hex(id_int)
-            return nid, None
-        except (ValueError, TypeError):
-            pass
 
         # Try as shortname/longname in memory
         search_lower = raw.lower()

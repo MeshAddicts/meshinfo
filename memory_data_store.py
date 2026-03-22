@@ -35,7 +35,8 @@ class MemoryDataStore:
     self.traceroutes_by_node: dict = {}
 
     # Event queue for Discord bridge (MQTT -> Discord)
-    self.discord_event_queue: asyncio.Queue = asyncio.Queue()
+    # Bounded to prevent unbounded memory growth if the consumer is slow/stopped.
+    self.discord_event_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
 
     # Initialize Postgres storage
     self.pg_storage = PostgresStorage(config)

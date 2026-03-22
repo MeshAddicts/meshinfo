@@ -275,7 +275,7 @@ CREATE TABLE IF NOT EXISTS discord_node_links (
     node_id VARCHAR(8) NOT NULL,
     discord_user_id VARCHAR(20) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    CONSTRAINT discord_node_links_unique UNIQUE (node_id, discord_user_id)
+    CONSTRAINT discord_node_links_unique UNIQUE (node_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_discord_node_links_node_id ON discord_node_links(node_id);

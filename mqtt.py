@@ -442,8 +442,8 @@ class MQTT:
                 'msg': msg,
                 'node_id': id,
             })
-        except Exception:
-            pass
+        except asyncio.QueueFull:
+            pass  # Drop event if consumer is behind
 
         await self.data.save()
 
@@ -558,8 +558,8 @@ class MQTT:
                 'msg': msg,
                 'chat': chat,
             })
-        except Exception:
-            pass
+        except asyncio.QueueFull:
+            pass  # Drop event if consumer is behind
 
         await self.data.save()
 

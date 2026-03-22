@@ -1736,7 +1736,7 @@ class PostgresStorage:
                 await conn.execute(
                     """INSERT INTO discord_node_links (node_id, discord_user_id)
                        VALUES ($1, $2)
-                       ON CONFLICT (node_id, discord_user_id) DO NOTHING""",
+                       ON CONFLICT (node_id) DO UPDATE SET discord_user_id = $2""",
                     node_id, discord_user_id,
                 )
             return True

@@ -156,10 +156,15 @@ class MeshBridge(commands.Cog):
 
     # ─── Webhook management ──────────────────────────────────────────
 
+    _WEBHOOK_UNAVAILABLE = object()  # sentinel for channels where webhooks are forbidden
+
     async def _get_webhook(self, channel: discord.TextChannel) -> Optional[discord.Webhook]:
         """Get or create a webhook for the given channel."""
-        if channel.id in self._webhooks:
-            return self._webhooks[channel.id]
+        cached = self._webhooks.get(channel.id)
+        if cached is self._WEBHOOK_UNAVAILABLE:
+            return None  # already know webhooks are forbidden here
+        if cached is not None:
+            return cached
 
         try:
             # Look for an existing MeshInfo webhook
@@ -175,6 +180,7 @@ class MeshBridge(commands.Cog):
             return wh
         except discord.Forbidden:
             logger.warning("MeshBridge: No permission to manage webhooks in #%s — falling back to bot messages", channel.name)
+            self._webhooks[channel.id] = self._WEBHOOK_UNAVAILABLE
             return None
         except Exception:
             logger.exception("MeshBridge: Failed to get/create webhook for #%s", channel.name)
@@ -227,7 +233,7 @@ class MeshBridge(commands.Cog):
         now = time.monotonic()
         keys_to_remove = []
 
-        for key, pending in self._pending.items():
+        for key, pending in list(self._pending.items()):
             age = now - pending.first_seen
             if age >= self.aggregate_seconds and pending.dirty:
                 try:

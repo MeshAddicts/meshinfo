@@ -27,6 +27,10 @@ class MainCommands(commands.Cog):
     async def lookup_node(self, ctx, *, flags: LookupFlags):
         logger.info("Discord: /lookup: Looking up %s", flags.node)
         search = flags.node.strip().lower().replace("!", "")
+        if not search:
+            await ctx.send("Please provide a node ID or name to look up.")
+            return
+
         node = None
         id_hex = None
 
