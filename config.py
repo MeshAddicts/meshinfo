@@ -99,6 +99,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "aggregate_seconds": 5,
                 "channels": {},
                 "position_channels": {},
+                "maps": {
+                    "provider": "none",
+                    "mapbox": {
+                        "access_token": "",
+                        "style": "mapbox/dark-v11",
+                    },
+                },
             },
         },
         "geocoding": {
@@ -365,6 +372,18 @@ def validate(config: dict) -> list[str]:
             if not bridge_cfg.get("channels"):
                 warn("Discord bridge is enabled but no channel mappings are configured. No messages will be forwarded.")
 
+            maps_cfg = bridge_cfg.get("maps", {})
+            maps_provider = maps_cfg.get("provider", "none")
+            check(_validate_one_of(config, "integrations.discord.bridge.maps.provider", ["none", "osm", "mapbox"]))
+            if maps_provider == "mapbox":
+                mapbox_token = maps_cfg.get("mapbox", {}).get("access_token", "")
+                if not mapbox_token or "REPLACE_WITH" in str(mapbox_token):
+                    warn(
+                        "Discord bridge maps provider is 'mapbox' but no access token is configured. "
+                        "Position embeds will not include map thumbnails. "
+                        "Set access_token under [integrations.discord.bridge.maps.mapbox] in your config.toml."
+                    )
+
     check(_validate_type(config, "integrations.geocoding", dict))
     geocoding_cfg = _get_nested(config, "integrations", "geocoding") or {}
     if geocoding_cfg.get("enabled"):
@@ -558,6 +577,7 @@ class Config:
             ("broker", "password"),
             ("broker", "username"),
             ("integrations", "discord", "token"),
+            ("integrations", "discord", "bridge", "maps", "mapbox", "access_token"),
             ("integrations", "geocoding", "geocode.maps.co", "api_key"),
             ("storage", "postgres", "password"),
             ("storage", "postgres", "username"),

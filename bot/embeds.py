@@ -20,8 +20,41 @@ EMBED_TOTAL_LIMIT = 6000
 EMBED_DESC_LIMIT = 4096
 EMBED_FIELD_VALUE_LIMIT = 1024
 
-# Static map API for position embeds
-MAP_API_URL = "https://api.smerty.org/staticmap"
+# OpenStreetMap static map (free, no token)
+OSM_STATIC_MAP_URL = "https://staticmap.openstreetmap.de/staticmap.php"
+
+
+def _map_thumbnail_url(lat: float, lon: float, maps_cfg: dict) -> str | None:
+    """Build a static map thumbnail URL based on the configured provider."""
+    provider = maps_cfg.get("provider", "none")
+
+    if provider == "osm":
+        return (
+            f"{OSM_STATIC_MAP_URL}"
+            f"?center={lat},{lon}&zoom=12&size=300x200"
+            f"&markers={lat},{lon},red-pushpin"
+        )
+
+    if provider == "mapbox":
+        mb = maps_cfg.get("mapbox", {})
+        token = mb.get("access_token", "")
+        if not token:
+            return None
+        style = mb.get("style", "mapbox/dark-v11")
+        return (
+            f"https://api.mapbox.com/styles/v1/{style}/static"
+            f"/pin-s+ff0000({lon},{lat})/{lon},{lat},12,0/300x200@2x"
+            f"?access_token={token}"
+        )
+
+    return None  # "none" — no thumbnail
+
+
+def _map_link_url(base_url: str, node_id: str) -> str | None:
+    """Build a clickable link to the node on the MeshInfo map page."""
+    if not base_url:
+        return None
+    return f"{base_url.rstrip('/')}/map?node={node_id}"
 
 
 def _node_url(base_url: str, node_id: str) -> str | None:
@@ -173,6 +206,7 @@ def build_position_embed(
     node_id: str,
     nodes: dict,
     base_url: str,
+    config: dict,
     track_type: str = "tracker",
     owner_id: Optional[str] = None,
     gateway_entries: Optional[list] = None,
@@ -186,10 +220,11 @@ def build_position_embed(
     payload = msg.get("payload", {})
 
     label = "Balloon" if track_type == "balloon" else "Tracker"
+    map_link = _map_link_url(base_url, node_id)
     node_link = _node_url(base_url, node_id)
     embed = discord.Embed(
         title=f"{label} Position Update",
-        url=node_link,
+        url=map_link or node_link,
         color=discord.Color.orange() if track_type == "balloon" else discord.Color.blue(),
         timestamp=discord.utils.utcnow(),
     )
@@ -202,17 +237,22 @@ def build_position_embed(
     lon_i = payload.get("longitude_i")
     alt = payload.get("altitude")
 
+    maps_cfg = config.get("integrations", {}).get("discord", {}).get("bridge", {}).get("maps", {})
+
     if lat_i is not None and lon_i is not None:
         lat = lat_i / 1e7
         lon = lon_i / 1e7
-        embed.add_field(name="Latitude", value=f"{lat:.6f}", inline=True)
-        embed.add_field(name="Longitude", value=f"{lon:.6f}", inline=True)
+
+        # Clickable coordinates linking to MeshInfo map
+        coord_text = f"[{lat:.6f}, {lon:.6f}]({map_link})" if map_link else f"{lat:.6f}, {lon:.6f}"
+        embed.add_field(name="Position", value=coord_text, inline=True)
         if alt is not None:
             embed.add_field(name="Altitude", value=f"{alt}m", inline=True)
 
-        # Static map thumbnail
-        map_url = f"{MAP_API_URL}?center={lat},{lon}&zoom=12&size=300x200&markers={lat},{lon}"
-        embed.set_thumbnail(url=map_url)
+        # Static map thumbnail (configurable provider)
+        thumbnail_url = _map_thumbnail_url(lat, lon, maps_cfg)
+        if thumbnail_url:
+            embed.set_thumbnail(url=thumbnail_url)
 
     # Gateway info with linked names
     if gateway_entries and len(gateway_entries) > 0:

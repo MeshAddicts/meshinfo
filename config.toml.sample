@@ -278,6 +278,24 @@ aggregate_seconds = 5  # seconds to wait for additional gateways before posting
 [integrations.discord.bridge.position_channels]
 # "8" = "1234567890123456791"    # LongFast positions -> #position-tracking
 
+# Static map thumbnails for position tracking embeds.
+# Generates a map image when a tracked node sends a position update.
+# The clickable link always points to your MeshInfo map page.
+[integrations.discord.bridge.maps]
+provider = "none"  # "none", "osm", "mapbox"
+                   # none    = no thumbnail, just a clickable link to your map
+                   # osm     = free OpenStreetMap tiles (no token needed)
+                   # mapbox  = Mapbox Static Images API (requires access token)
+
+# Mapbox configuration (only used when provider = "mapbox")
+[integrations.discord.bridge.maps.mapbox]
+access_token = ""
+style = "mapbox/dark-v11"
+# style = "mapbox/streets-v12"
+# style = "mapbox/satellite-streets-v12"
+# style = "mapbox/outdoors-v12"
+# style = "mapbox/light-v11"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # UI Customization — Optional
 # External tools and node detail links shown in the web UI.

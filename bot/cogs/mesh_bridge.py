@@ -419,6 +419,7 @@ class MeshBridge(commands.Cog):
             node_id=node_id,
             nodes=enriched_nodes,
             base_url=base_url,
+            config=self.config,
             track_type=track_type,
             owner_id=owner_id,
             gateway_entries=pending.gateways,
