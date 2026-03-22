@@ -5,7 +5,7 @@ export function MapDetailsPanel({ onClose }: { onClose: () => void }) {
       className="hidden fixed top-2 right-2 z-1050
            w-[92vw] sm:w-80 max-w-[calc(100vw-1rem)]
            bg-white dark:bg-gray-900 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700
-           max-h-[60vh] sm:max-h-[calc(100vh-2rem)]
+           max-h-[60vh] sm:max-h-[calc(100vh-20rem)]
            overflow-hidden flex flex-col"
     >
       <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
