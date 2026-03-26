@@ -207,7 +207,6 @@ def build_text_embed(
     if owner_id:
         embed.add_field(name="Owner", value=f"<@{owner_id}>", inline=True)
 
-    # Footer with link-friendly node ID
     embed.set_footer(text=f"Node: !{from_id}")
 
     return embed
