@@ -99,12 +99,18 @@ class MeshBridge(commands.Cog):
         self._node_cache: dict[str, Optional[dict]] = {}
         self._node_cache_max = 1000
 
+        # Status alert channel (first text channel mapped, or configurable)
+        self._alert_channel_id = bridge_cfg.get("alert_channel")
+        # Track last known status per linked node: node_id -> bool (active)
+        self._node_status: dict[str, bool] = {}
+
     @commands.Cog.listener()
     async def on_ready(self):
         if self.bridge_enabled:
             logger.info("Discord: MeshBridge enabled — starting event consumer and flush loop")
             self._consume_task = asyncio.create_task(self._consume_events())
             self._flush_loop.start()
+            self._status_check_loop.start()
         else:
             logger.info("Discord: MeshBridge disabled in config")
 
@@ -113,6 +119,8 @@ class MeshBridge(commands.Cog):
             self._consume_task.cancel()
         if self._flush_loop.is_running():
             self._flush_loop.cancel()
+        if self._status_check_loop.is_running():
+            self._status_check_loop.cancel()
 
     # ─── Node name resolution ────────────────────────────────────────
 
@@ -460,6 +468,89 @@ class MeshBridge(commands.Cog):
             pending.discord_message = sent
         except Exception:
             logger.exception("MeshBridge: Failed to send position to channel %s", discord_channel_id)
+
+    # ─── Node status alerts ────────────────────────────────────────
+
+    @tasks.loop(minutes=5)
+    async def _status_check_loop(self):
+        """Check linked nodes for online/offline status changes."""
+        if not self.data.pg_storage:
+            return
+
+        # Determine alert channel
+        alert_channel_id = self._alert_channel_id
+        if not alert_channel_id:
+            # Fall back to first mapped text channel
+            if self.channel_map:
+                alert_channel_id = next(iter(self.channel_map.values()))
+        if not alert_channel_id:
+            return
+
+        channel = self.bot.get_channel(int(alert_channel_id))
+        if not channel:
+            try:
+                channel = await self.bot.fetch_channel(int(alert_channel_id))
+            except Exception:
+                return
+
+        try:
+            links = await self.data.pg_storage.get_all_linked_nodes()
+        except Exception:
+            return
+
+        if not links:
+            return
+
+        base_url = self.config.get("server", {}).get("base_url", "").rstrip("/")
+
+        for link in links:
+            node_id = link["node_id"]
+            discord_user_id = link["discord_user_id"]
+
+            # Get current status from DB
+            node = await self._resolve_node(node_id)
+            if not node:
+                continue
+
+            current_active = bool(node.get("active", False))
+            prev_active = self._node_status.get(node_id)
+
+            # Store current status
+            self._node_status[node_id] = current_active
+
+            # Skip on first run (no previous state to compare)
+            if prev_active is None:
+                continue
+
+            # Status changed
+            if current_active != prev_active:
+                display_name = self._get_display_name(node, node_id)
+                node_url = f"{base_url}/nodes?node={node_id}" if base_url else ""
+
+                if current_active:
+                    embed = discord.Embed(
+                        description=f"**{display_name}** is now **online**",
+                        color=discord.Color.from_rgb(87, 187, 138),
+                    )
+                else:
+                    embed = discord.Embed(
+                        description=f"**{display_name}** has gone **offline**",
+                        color=discord.Color.from_rgb(194, 108, 108),
+                    )
+
+                if node_url:
+                    embed.description = f"[{display_name}]({node_url}) {'is now **online**' if current_active else 'has gone **offline**'}"
+
+                embed.set_footer(text=f"Node: !{node_id} | Owner: <@{discord_user_id}>")
+
+                try:
+                    await channel.send(embed=embed)
+                except Exception:
+                    logger.debug("MeshBridge: Failed to send status alert for %s", node_id)
+
+    @_status_check_loop.before_loop
+    async def _before_status_check(self):
+        await self.bot.wait_until_ready()
 
     # ─── Helpers ─────────────────────────────────────────────────────
 

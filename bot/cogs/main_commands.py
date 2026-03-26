@@ -216,3 +216,224 @@ class MainCommands(commands.Cog):
         now = datetime.datetime.now().astimezone(ZoneInfo(self.config['server']['timezone']))
         uptime = now - self.config['server']['start_time']
         await ctx.send(f'MeshInfo uptime: {uptime.days}d {uptime.seconds // 3600}h {(uptime.seconds % 3600) // 60}m {uptime.seconds % 60}s')
+
+    @commands.hybrid_command(name="topnodes", description="Mesh leaderboard and achievements")
+    async def topnodes(self, ctx, timeframe: str = "24h"):
+        if timeframe in ("7d", "7", "week"):
+            hours = 168
+            label = "7 Days"
+        else:
+            hours = 24
+            label = "24 Hours"
+
+        if not self.data.pg_storage:
+            await ctx.send("Database not available.")
+            return
+
+        stats = await self.data.pg_storage.query_top_nodes(hours=hours, limit=5)
+        if not stats:
+            await ctx.send("No leaderboard data available yet.")
+            return
+
+        base_url = self.config.get('server', {}).get('base_url', '').rstrip('/')
+
+        async def resolve_name(node_id: str) -> str:
+            node = self.data.nodes.get(node_id)
+            if not node and self.data.pg_storage:
+                node = await self.data.pg_storage.query_node_by_id(node_id)
+            if node:
+                name = node.get("longname") or node.get("shortname")
+                if name and name not in ("Unknown", "UNK"):
+                    if base_url:
+                        return f"[{name}]({base_url}/nodes?node={node_id})"
+                    return name
+            return f"!{node_id}"
+
+        embed = discord.Embed(
+            title=f"Mesh Leaderboard \u2014 {label}",
+            color=discord.Color.gold(),
+            timestamp=discord.utils.utcnow(),
+        )
+
+        medals = ["\U0001f947", "\U0001f948", "\U0001f949", "4.", "5."]
+
+        chatterbox = stats.get("chatterbox", [])
+        if chatterbox:
+            lines = []
+            for i, row in enumerate(chatterbox):
+                name = await resolve_name(row["node_id"])
+                lines.append(f"{medals[i]} {name} \u2014 **{row['count']}** msgs")
+            embed.add_field(name="\U0001f4ac Chatterbox", value="\n".join(lines), inline=False)
+
+        iron_man = stats.get("iron_man", [])
+        if iron_man:
+            lines = []
+            for i, row in enumerate(iron_man):
+                name = await resolve_name(row["node_id"])
+                secs = float(row["uptime_seconds"])
+                days = int(secs // 86400)
+                lines.append(f"{medals[i]} {name} \u2014 **{days}** days")
+            embed.add_field(name="\U0001f9be Iron Man", value="\n".join(lines), inline=False)
+
+        here_i_am = stats.get("here_i_am", [])
+        if here_i_am:
+            lines = []
+            for i, row in enumerate(here_i_am):
+                name = await resolve_name(row["node_id"])
+                lines.append(f"{medals[i]} {name} \u2014 **{row['count']}** updates")
+            embed.add_field(name="\U0001f4cd Here I Am", value="\n".join(lines), inline=False)
+
+        loudest = stats.get("loudest_signal", [])
+        if loudest:
+            lines = []
+            for i, row in enumerate(loudest):
+                name = await resolve_name(row["node_id"])
+                lines.append(f"{medals[i]} {name} \u2014 **{row['avg_snr']}** dB avg SNR")
+            embed.add_field(name="\U0001f4e1 Loudest Signal", value="\n".join(lines), inline=False)
+
+        gateway_mvp = stats.get("gateway_mvp", [])
+        if gateway_mvp:
+            lines = []
+            for i, row in enumerate(gateway_mvp):
+                name = await resolve_name(row["node_id"])
+                lines.append(f"{medals[i]} {name} \u2014 **{row['count']}** relayed")
+            embed.add_field(name="\U0001f310 Gateway MVP", value="\n".join(lines), inline=False)
+
+        if not any(stats.values()):
+            embed.description = "Not enough data yet \u2014 check back later!"
+
+        embed.set_footer(text=f"Timeframe: {label} | Use /topnodes 7d for weekly")
+        await ctx.send(embed=embed)
+
+    @commands.hybrid_command(name="meshinfo", description="Show all available bot commands")
+    async def meshinfo_help(self, ctx):
+        base_url = self.config.get('server', {}).get('base_url', '').rstrip('/')
+        embed = discord.Embed(
+            title="MeshInfo Bot Commands",
+            url=base_url or None,
+            color=discord.Color.blue(),
+        )
+        embed.add_field(
+            name="General",
+            value=(
+                "`/lookup` — Look up a node by name, hex ID, or integer ID\n"
+                "`/mesh` — View mesh network info and node counts\n"
+                "`/whereis` — Show a node's last known position on a map\n"
+                "`/topnodes` — Mesh leaderboard and achievements\n"
+                "`/ping` — Check bot latency\n"
+                "`/uptime` — MeshInfo server uptime\n"
+                "`/meshinfo` — This help message"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Node Linking",
+            value=(
+                "`/linknode` — Link a mesh node to your Discord account\n"
+                "`/unlinknode` — Remove a node link\n"
+                "`/mylinkednodes` — See all your linked nodes"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Moderator",
+            value=(
+                "`/addtracker` / `/removetracker` — Manage position tracking\n"
+                "`/addballoon` / `/removeballoon` — Manage balloon tracking\n"
+                "`/bannode` / `/unbannode` — Manage bridge bans\n"
+                "`/listtrackers` — View all tracked nodes\n"
+                "`/listbans` — View all banned nodes"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="All node commands support autocomplete — start typing a name!")
+        await ctx.send(embed=embed, ephemeral=True)
+
+    @commands.hybrid_command(name="whereis", description="Show a node's last known position")
+    async def whereis(self, ctx, *, flags: LookupFlags):
+        search = flags.node.strip().lower().replace("!", "")
+        if not search:
+            await ctx.send("Please provide a node ID or name.")
+            return
+
+        node = None
+        id_hex = None
+
+        # Try parsing as integer node ID
+        try:
+            id_int = int(search, 10)
+            id_hex = utils.convert_node_id_from_int_to_hex(id_int)
+        except ValueError:
+            pass
+
+        # Try parsing as hex node ID
+        if id_hex is None and all(c in '0123456789abcdef' for c in search) and len(search) <= 8:
+            id_hex = search.zfill(8)
+
+        # Check in-memory
+        if id_hex and id_hex in self.data.nodes:
+            node = self.data.nodes[id_hex]
+        else:
+            for node_id, n in self.data.nodes.items():
+                if (str(n.get('shortname', '')).lower() == search or
+                        str(n.get('longname', '')).lower() == search):
+                    node = n
+                    id_hex = node_id
+                    break
+
+        # Fall back to PostgreSQL
+        if node is None and self.data.pg_storage:
+            if id_hex:
+                node = await self.data.pg_storage.query_node_by_id(id_hex)
+            if node is None:
+                results = await self.data.pg_storage.query_nodes_filtered(
+                    days_limit=None, shortname_filter=search,
+                )
+                if not results:
+                    results = await self.data.pg_storage.query_nodes_filtered(
+                        days_limit=None, longname_filter=search,
+                    )
+                if results:
+                    id_hex, node = next(iter(results.items()))
+
+        if node is None:
+            await ctx.send(f"Node `{flags.node}` not found.")
+            return
+
+        id_hex = node.get('id', id_hex) or id_hex
+        position = node.get('position', {})
+        if not position or not position.get('latitude_i') or not position.get('longitude_i'):
+            shortname = node.get('shortname', id_hex)
+            await ctx.send(f"No position data available for **{shortname}**.")
+            return
+
+        lat = position['latitude_i'] / 1e7
+        lon = position['longitude_i'] / 1e7
+        alt = position.get('altitude')
+        shortname = node.get('shortname', 'UNK')
+        longname = node.get('longname', 'Unknown')
+        base_url = self.config.get('server', {}).get('base_url', '').rstrip('/')
+        map_link = f"{base_url}/map?node={id_hex}" if base_url else None
+
+        embed = discord.Embed(
+            title=f"{longname} [{shortname}]",
+            url=map_link,
+            color=discord.Color.blue(),
+        )
+        avatar_url = f"https://api.dicebear.com/9.x/bottts-neutral/png?seed={id_hex}"
+        embed.set_author(name="Last Known Position", icon_url=avatar_url)
+
+        coord_text = f"[{lat:.6f}, {lon:.6f}]({map_link})" if map_link else f"{lat:.6f}, {lon:.6f}"
+        embed.add_field(name="Position", value=coord_text, inline=True)
+        if alt is not None:
+            embed.add_field(name="Altitude", value=f"{alt}m", inline=True)
+
+        # Map thumbnail
+        maps_cfg = self.config.get("integrations", {}).get("discord", {}).get("bridge", {}).get("maps", {})
+        provider = maps_cfg.get("provider", "none")
+        if provider != "none" and base_url:
+            thumbnail_url = f"{base_url}/v1/static-map?lat={lat:.6f}&lon={lon:.6f}&zoom=12"
+            embed.set_image(url=thumbnail_url)
+
+        embed.set_footer(text=f"Node: !{id_hex}")
+        await ctx.send(embed=embed)

@@ -1784,6 +1784,20 @@ class PostgresStorage:
             logger.error("Failed to get linked nodes for Discord user %s: %s", discord_user_id, e)
             return []
 
+    async def get_all_linked_nodes(self) -> list[dict]:
+        """Return all node links: [{node_id, discord_user_id}, ...]."""
+        if not self._ready("get_all_linked_nodes"):
+            return []
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT node_id, discord_user_id FROM discord_node_links",
+                )
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error("Failed to get all linked nodes: %s", e)
+            return []
+
     async def get_node_owner(self, node_id: str) -> Optional[str]:
         """Return the Discord user ID linked to a node, or None."""
         if not self._ready("get_node_owner"):
@@ -1929,3 +1943,74 @@ class PostgresStorage:
         except Exception as e:
             logger.error("Failed to list bans: %s", e)
             return []
+
+    async def query_top_nodes(self, hours: int = 24, limit: int = 5) -> dict:
+        """Query leaderboard stats for the mesh. Returns dict of categories."""
+        if not self._ready("query_top_nodes"):
+            return {}
+
+        interval = f"{hours} hours"
+        results = {}
+
+        try:
+            async with self.pool.acquire() as conn:
+                # Chatterbox — most messages sent
+                rows = await conn.fetch(
+                    """SELECT from_node_id AS node_id, COUNT(*) AS count
+                       FROM chat_messages
+                       WHERE created_at >= NOW() - $1::interval
+                       GROUP BY from_node_id ORDER BY count DESC LIMIT $2""",
+                    interval, limit,
+                )
+                results["chatterbox"] = [dict(r) for r in rows]
+
+                # Iron Man — longest uptime (active nodes with oldest created_at)
+                rows = await conn.fetch(
+                    """SELECT id AS node_id,
+                              EXTRACT(EPOCH FROM (NOW() - created_at)) AS uptime_seconds
+                       FROM nodes
+                       WHERE active = TRUE AND created_at IS NOT NULL
+                       ORDER BY created_at ASC LIMIT $1""",
+                    limit,
+                )
+                results["iron_man"] = [dict(r) for r in rows]
+
+                # Here I Am — most position updates (nodes with most recent position changes)
+                rows = await conn.fetch(
+                    """SELECT np.node_id, COUNT(t.*) AS count
+                       FROM node_positions np
+                       JOIN telemetry t ON t.from_node_id = np.node_id
+                       WHERE t.created_at >= NOW() - $1::interval
+                       GROUP BY np.node_id ORDER BY count DESC LIMIT $2""",
+                    interval, limit,
+                )
+                results["here_i_am"] = [dict(r) for r in rows]
+
+                # Loudest Signal — best average SNR
+                rows = await conn.fetch(
+                    """SELECT from_node_id AS node_id, ROUND(AVG(snr)::numeric, 1) AS avg_snr
+                       FROM chat_messages
+                       WHERE created_at >= NOW() - $1::interval AND snr IS NOT NULL
+                       GROUP BY from_node_id
+                       HAVING COUNT(*) >= 3
+                       ORDER BY avg_snr DESC LIMIT $2""",
+                    interval, limit,
+                )
+                results["loudest_signal"] = [dict(r) for r in rows]
+
+                # Gateway MVP — most messages relayed (nodes appearing as sender_node_id)
+                rows = await conn.fetch(
+                    """SELECT sender_node_id AS node_id, COUNT(*) AS count
+                       FROM chat_messages
+                       WHERE created_at >= NOW() - $1::interval
+                         AND sender_node_id IS NOT NULL
+                         AND sender_node_id != from_node_id
+                       GROUP BY sender_node_id ORDER BY count DESC LIMIT $2""",
+                    interval, limit,
+                )
+                results["gateway_mvp"] = [dict(r) for r in rows]
+
+        except Exception as e:
+            logger.error("Failed to query top nodes: %s", e)
+
+        return results

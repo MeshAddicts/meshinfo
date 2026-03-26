@@ -151,6 +151,60 @@ class AdminCommands(commands.Cog):
         self.config = config
         self.data = data
 
+    async def _node_autocomplete(
+        self, interaction: discord.Interaction, current: str,
+    ) -> list[app_commands.Choice[str]]:
+        """Shared autocomplete for node ID fields across all commands."""
+        current = current.strip().lower().replace("!", "")
+        if not current:
+            return []
+
+        choices: list[app_commands.Choice[str]] = []
+        seen: set[str] = set()
+
+        # Search in-memory nodes first (fast)
+        for nid, node in self.data.nodes.items():
+            if len(choices) >= 25:
+                break
+            short = str(node.get("shortname", "")).lower()
+            long = str(node.get("longname", "")).lower()
+            if current in nid or current in short or current in long:
+                display_name = node.get("longname") or node.get("shortname") or nid
+                if display_name in ("Unknown", "UNK"):
+                    display_name = nid
+                label = f"{display_name} (!{nid})"[:100]
+                if nid not in seen:
+                    choices.append(app_commands.Choice(name=label, value=nid))
+                    seen.add(nid)
+
+        # Supplement from DB if we have room
+        if len(choices) < 25 and self.data.pg_storage:
+            try:
+                results = await self.data.pg_storage.query_nodes_filtered(
+                    days_limit=None, shortname_filter=current,
+                )
+                if len(results) < 10:
+                    long_results = await self.data.pg_storage.query_nodes_filtered(
+                        days_limit=None, longname_filter=current,
+                    )
+                    results.update(long_results)
+
+                for nid, node in results.items():
+                    if len(choices) >= 25:
+                        break
+                    if nid in seen:
+                        continue
+                    display_name = node.get("longname") or node.get("shortname") or nid
+                    if display_name in ("Unknown", "UNK"):
+                        display_name = nid
+                    label = f"{display_name} (!{nid})"[:100]
+                    choices.append(app_commands.Choice(name=label, value=nid))
+                    seen.add(nid)
+            except Exception:
+                pass
+
+        return choices
+
     async def _resolve_node_id(self, raw: str) -> tuple[Optional[str], Optional[str]]:
         """
         Resolve user input to a node hex ID.
@@ -238,6 +292,7 @@ class AdminCommands(commands.Cog):
 
     @app_commands.command(name="linknode", description="Link a mesh node to your Discord account")
     @app_commands.describe(node_id="Node ID (hex), integer ID, short name, or long name")
+    @app_commands.autocomplete(node_id=_node_autocomplete)
     async def link_node(self, interaction: discord.Interaction, node_id: str):
         nid, name = await self._resolve_node_id(node_id)
         if not nid:
@@ -256,6 +311,7 @@ class AdminCommands(commands.Cog):
 
     @app_commands.command(name="unlinknode", description="Unlink a mesh node from your Discord account")
     @app_commands.describe(node_id="Node ID (hex), integer ID, short name, or long name")
+    @app_commands.autocomplete(node_id=_node_autocomplete)
     async def unlink_node(self, interaction: discord.Interaction, node_id: str):
         nid, name = await self._resolve_node_id(node_id)
         if not nid:
@@ -303,6 +359,7 @@ class AdminCommands(commands.Cog):
 
     @app_commands.command(name="addtracker", description="Enable position forwarding for a node")
     @app_commands.describe(node_id="Node ID (hex), integer ID, short name, or long name")
+    @app_commands.autocomplete(node_id=_node_autocomplete)
     async def add_tracker(self, interaction: discord.Interaction, node_id: str):
         if not _is_mod(interaction):
             await interaction.response.send_message("You need Manage Messages permission.", ephemeral=True)
@@ -322,6 +379,7 @@ class AdminCommands(commands.Cog):
 
     @app_commands.command(name="removetracker", description="Disable position forwarding for a node")
     @app_commands.describe(node_id="Node ID (hex), integer ID, short name, or long name")
+    @app_commands.autocomplete(node_id=_node_autocomplete)
     async def remove_tracker(self, interaction: discord.Interaction, node_id: str):
         if not _is_mod(interaction):
             await interaction.response.send_message("You need Manage Messages permission.", ephemeral=True)
@@ -341,6 +399,7 @@ class AdminCommands(commands.Cog):
 
     @app_commands.command(name="addballoon", description="Mark a node as a balloon for position tracking")
     @app_commands.describe(node_id="Node ID (hex), integer ID, short name, or long name")
+    @app_commands.autocomplete(node_id=_node_autocomplete)
     async def add_balloon(self, interaction: discord.Interaction, node_id: str):
         if not _is_mod(interaction):
             await interaction.response.send_message("You need Manage Messages permission.", ephemeral=True)
@@ -360,6 +419,7 @@ class AdminCommands(commands.Cog):
 
     @app_commands.command(name="removeballoon", description="Remove balloon marking from a node")
     @app_commands.describe(node_id="Node ID (hex), integer ID, short name, or long name")
+    @app_commands.autocomplete(node_id=_node_autocomplete)
     async def remove_balloon(self, interaction: discord.Interaction, node_id: str):
         if not _is_mod(interaction):
             await interaction.response.send_message("You need Manage Messages permission.", ephemeral=True)
@@ -379,6 +439,7 @@ class AdminCommands(commands.Cog):
 
     @app_commands.command(name="bannode", description="Ban a node from the Discord bridge")
     @app_commands.describe(node_id="Node ID (hex), integer ID, short name, or long name", reason="Reason for ban (optional)")
+    @app_commands.autocomplete(node_id=_node_autocomplete)
     async def ban_node(self, interaction: discord.Interaction, node_id: str, reason: str = ""):
         if not _is_mod(interaction):
             await interaction.response.send_message("You need Manage Messages permission.", ephemeral=True)
@@ -401,6 +462,7 @@ class AdminCommands(commands.Cog):
 
     @app_commands.command(name="unbannode", description="Unban a node from the Discord bridge")
     @app_commands.describe(node_id="Node ID (hex), integer ID, short name, or long name")
+    @app_commands.autocomplete(node_id=_node_autocomplete)
     async def unban_node(self, interaction: discord.Interaction, node_id: str):
         if not _is_mod(interaction):
             await interaction.response.send_message("You need Manage Messages permission.", ephemeral=True)

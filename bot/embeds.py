@@ -112,6 +112,35 @@ def _format_gateway_info(msg: dict, nodes: dict, base_url: str) -> str:
     return "\n".join(parts) if parts else ""
 
 
+def _snr_color(gateway_entries: Optional[list], msg: dict) -> discord.Color:
+    """Return a soft embed color based on best gateway SNR."""
+    best_snr = None
+
+    if gateway_entries:
+        for gw in gateway_entries:
+            snr = gw.get("snr")
+            if snr is not None:
+                if best_snr is None or snr > best_snr:
+                    best_snr = snr
+    else:
+        snr = msg.get("snr")
+        if snr is not None:
+            best_snr = snr
+
+    if best_snr is None:
+        return discord.Color.from_rgb(134, 148, 159)  # soft grey — no data
+
+    if best_snr > 10:
+        return discord.Color.from_rgb(87, 187, 138)    # soft green — excellent
+    if best_snr > 5:
+        return discord.Color.from_rgb(69, 179, 186)    # teal — good
+    if best_snr > 0:
+        return discord.Color.from_rgb(219, 196, 104)   # soft yellow — fair
+    if best_snr > -5:
+        return discord.Color.from_rgb(217, 158, 87)    # soft orange — weak
+    return discord.Color.from_rgb(194, 108, 108)       # muted red — poor
+
+
 def _resolve_channel_name(channel_hash: str, config: dict) -> str:
     """Resolve a channel hash to its label from config, or return the hash."""
     meta = config.get("broker", {}).get("channels", {}).get("meta", {})
@@ -137,11 +166,11 @@ def build_text_embed(
     short_name = _node_short_name(node, from_id)
     text = chat.get("text", "")
 
-    # Build embed — title links to the sender's node page
+    # Build embed — color based on best gateway SNR
     node_link = _node_url(base_url, from_id)
     embed = discord.Embed(
         description=text[:EMBED_DESC_LIMIT],
-        color=discord.Color.green(),
+        color=_snr_color(gateway_entries, msg),
         timestamp=discord.utils.utcnow(),
     )
 

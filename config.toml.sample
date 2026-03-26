@@ -265,6 +265,7 @@ guild = "REPLACE_WITH_GUILD_ID"
 [integrations.discord.bridge]
 enabled = false
 aggregate_seconds = 5  # seconds to wait for additional gateways before posting
+# alert_channel = "1234567890123456789"  # Channel for node online/offline alerts (linked nodes only)
 
 # Map Meshtastic channel hashes to Discord channel IDs for text messages.
 # Key = Meshtastic channel hash (from broker.channels.display), value = Discord channel ID.
