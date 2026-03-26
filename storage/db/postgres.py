@@ -2073,13 +2073,13 @@ class PostgresStorage:
                 )
                 results["iron_man"] = [dict(r) for r in rows]
 
-                # Here I Am — most position updates (nodes with most recent position changes)
+                # Here I Am — nodes with known positions (most telemetry activity)
                 rows = await conn.fetch(
-                    """SELECT np.node_id, COUNT(t.*) AS count
-                       FROM node_positions np
-                       JOIN telemetry t ON t.from_node_id = np.node_id
+                    """SELECT t.from_node_id AS node_id, COUNT(*) AS count
+                       FROM telemetry t
                        WHERE t.created_at >= NOW() - $1::interval
-                       GROUP BY np.node_id ORDER BY count DESC LIMIT $2""",
+                         AND t.from_node_id IN (SELECT node_id FROM node_positions)
+                       GROUP BY t.from_node_id ORDER BY count DESC LIMIT $2""",
                     interval, limit,
                 )
                 results["here_i_am"] = [dict(r) for r in rows]

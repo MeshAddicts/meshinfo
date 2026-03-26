@@ -15,6 +15,7 @@ Results are cached to disk to avoid re-rendering for repeated requests.
 import hashlib
 import logging
 import os
+import tempfile
 import time
 from io import BytesIO
 from pathlib import Path
@@ -24,7 +25,7 @@ from staticmap import StaticMap, CircleMarker
 logger = logging.getLogger(__name__)
 
 # Cache settings
-CACHE_DIR = Path("/tmp/meshinfo-map-cache")
+CACHE_DIR = Path(tempfile.gettempdir()) / "meshinfo-map-cache"
 CACHE_MAX_AGE = 3600  # seconds (1 hour)
 
 # OSM tile URL

@@ -65,7 +65,7 @@ class MemoryDataStore:
 
       # Skip common non-copyable runtime objects
       try:
-        if isinstance(v, (asyncio.Lock, asyncio.Event, asyncio.Task, logging.Logger)):
+        if isinstance(v, (asyncio.Lock, asyncio.Event, asyncio.Task, asyncio.Queue, logging.Logger)):
           setattr(result, k, v)
           continue
       except Exception as exc:

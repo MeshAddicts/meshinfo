@@ -315,13 +315,13 @@ class API:
             try:
                 lat = float(request.query_params.get("lat", 0))
                 lon = float(request.query_params.get("lon", 0))
+                zoom = int(request.query_params.get("zoom", 12))
             except (ValueError, TypeError):
-                return JSONResponse({"error": "Invalid lat/lon"}, status_code=400)
+                return JSONResponse({"error": "Invalid lat/lon/zoom"}, status_code=400)
 
             if lat == 0 and lon == 0:
                 return JSONResponse({"error": "lat and lon are required"}, status_code=400)
 
-            zoom = int(request.query_params.get("zoom", 12))
             zoom = max(1, min(zoom, 18))
 
             try:

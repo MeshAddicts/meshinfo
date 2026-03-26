@@ -503,10 +503,14 @@ class MeshBridge(commands.Cog):
 
         base_url = self.config.get("server", {}).get("base_url", "").rstrip("/")
 
+        # Group watchers by node to avoid duplicate alerts
+        node_watchers: dict[str, list[str]] = {}
         for link in links:
-            node_id = link["node_id"]
-            discord_user_id = link["discord_user_id"]
+            nid = link["node_id"]
+            uid = link["discord_user_id"]
+            node_watchers.setdefault(nid, []).append(uid)
 
+        for node_id, watcher_ids in node_watchers.items():
             # Get current status from DB
             node = await self._resolve_node(node_id)
             if not node:
@@ -527,6 +531,8 @@ class MeshBridge(commands.Cog):
                 display_name = self._get_display_name(node, node_id)
                 node_url = f"{base_url}/nodes?node={node_id}" if base_url else ""
 
+                mentions = " ".join(f"<@{uid}>" for uid in watcher_ids)
+
                 if current_active:
                     embed = discord.Embed(
                         description=f"**{display_name}** is now **online**",
@@ -541,10 +547,10 @@ class MeshBridge(commands.Cog):
                 if node_url:
                     embed.description = f"[{display_name}]({node_url}) {'is now **online**' if current_active else 'has gone **offline**'}"
 
-                embed.set_footer(text=f"Node: !{node_id} | Owner: <@{discord_user_id}>")
+                embed.set_footer(text=f"Node: !{node_id}")
 
                 try:
-                    await channel.send(embed=embed)
+                    await channel.send(content=mentions, embed=embed)
                 except Exception:
                     logger.debug("MeshBridge: Failed to send status alert for %s", node_id)
 
