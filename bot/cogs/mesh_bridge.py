@@ -494,7 +494,7 @@ class MeshBridge(commands.Cog):
                 return
 
         try:
-            links = await self.data.pg_storage.get_all_linked_nodes()
+            links = await self.data.pg_storage.get_all_watched_nodes()
         except Exception:
             return
 

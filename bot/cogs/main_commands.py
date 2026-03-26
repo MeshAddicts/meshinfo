@@ -396,11 +396,14 @@ class MainCommands(commands.Cog):
             inline=False,
         )
         embed.add_field(
-            name="Node Linking",
+            name="Node Linking & Watching",
             value=(
                 "`/linknode` \u2014 Link a mesh node to your Discord account\n"
                 "`/unlinknode` \u2014 Remove a node link\n"
-                "`/mylinkednodes` \u2014 See all your linked nodes"
+                "`/mylinkednodes` \u2014 See all your linked nodes\n"
+                "`/watchnode` \u2014 Get alerts when a node goes online/offline\n"
+                "`/unwatchnode` \u2014 Stop watching a node\n"
+                "`/mywatchednodes` \u2014 See all your watched nodes"
             ),
             inline=False,
         )

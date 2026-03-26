@@ -1737,22 +1737,35 @@ class PostgresStorage:
     # Discord bridge helpers
     # ───────────────────────────────────────────────────────────────────
 
-    async def link_node(self, node_id: str, discord_user_id: str) -> bool:
-        """Link a mesh node to a Discord user. Returns True on success."""
+    async def link_node(self, node_id: str, discord_user_id: str) -> str:
+        """Link a mesh node to a Discord user.
+
+        Returns:
+            "ok" on success,
+            "already_yours" if already linked to this user,
+            "taken" if linked to another user,
+            "error" on failure.
+        """
         if not self._ready("link_node"):
-            return False
+            return "error"
         try:
             async with self.pool.acquire() as conn:
+                existing = await conn.fetchval(
+                    "SELECT discord_user_id FROM discord_node_links WHERE node_id = $1",
+                    node_id,
+                )
+                if existing == discord_user_id:
+                    return "already_yours"
+                if existing is not None:
+                    return "taken"
                 await conn.execute(
-                    """INSERT INTO discord_node_links (node_id, discord_user_id)
-                       VALUES ($1, $2)
-                       ON CONFLICT (node_id) DO UPDATE SET discord_user_id = $2""",
+                    "INSERT INTO discord_node_links (node_id, discord_user_id) VALUES ($1, $2)",
                     node_id, discord_user_id,
                 )
-            return True
+            return "ok"
         except Exception as e:
             logger.error("Failed to link node %s to Discord user %s: %s", node_id, discord_user_id, e)
-            return False
+            return "error"
 
     async def unlink_node(self, node_id: str, discord_user_id: str) -> bool:
         """Unlink a mesh node from a Discord user. Returns True if a row was deleted."""
@@ -1782,6 +1795,71 @@ class PostgresStorage:
             return [r["node_id"] for r in rows]
         except Exception as e:
             logger.error("Failed to get linked nodes for Discord user %s: %s", discord_user_id, e)
+            return []
+
+    async def watch_node(self, node_id: str, discord_user_id: str) -> str:
+        """Watch a node for online/offline alerts. Returns 'ok', 'already', or 'error'."""
+        if not self._ready("watch_node"):
+            return "error"
+        try:
+            async with self.pool.acquire() as conn:
+                existing = await conn.fetchval(
+                    "SELECT 1 FROM discord_watched_nodes WHERE node_id = $1 AND discord_user_id = $2",
+                    node_id, discord_user_id,
+                )
+                if existing:
+                    return "already"
+                await conn.execute(
+                    "INSERT INTO discord_watched_nodes (node_id, discord_user_id) VALUES ($1, $2)",
+                    node_id, discord_user_id,
+                )
+            return "ok"
+        except Exception as e:
+            logger.error("Failed to watch node %s for user %s: %s", node_id, discord_user_id, e)
+            return "error"
+
+    async def unwatch_node(self, node_id: str, discord_user_id: str) -> bool:
+        """Stop watching a node. Returns True if a row was deleted."""
+        if not self._ready("unwatch_node"):
+            return False
+        try:
+            async with self.pool.acquire() as conn:
+                result = await conn.execute(
+                    "DELETE FROM discord_watched_nodes WHERE node_id = $1 AND discord_user_id = $2",
+                    node_id, discord_user_id,
+                )
+            return result == "DELETE 1"
+        except Exception as e:
+            logger.error("Failed to unwatch node %s for user %s: %s", node_id, discord_user_id, e)
+            return False
+
+    async def get_watched_nodes(self, discord_user_id: str) -> list[str]:
+        """Return all node IDs watched by a Discord user."""
+        if not self._ready("get_watched_nodes"):
+            return []
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT node_id FROM discord_watched_nodes WHERE discord_user_id = $1",
+                    discord_user_id,
+                )
+            return [r["node_id"] for r in rows]
+        except Exception as e:
+            logger.error("Failed to get watched nodes for user %s: %s", discord_user_id, e)
+            return []
+
+    async def get_all_watched_nodes(self) -> list[dict]:
+        """Return all watch entries: [{node_id, discord_user_id}, ...]."""
+        if not self._ready("get_all_watched_nodes"):
+            return []
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT node_id, discord_user_id FROM discord_watched_nodes",
+                )
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error("Failed to get all watched nodes: %s", e)
             return []
 
     async def get_all_linked_nodes(self) -> list[dict]:

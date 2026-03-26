@@ -83,6 +83,38 @@ class _UnlinkView(discord.ui.View):
             self.add_item(_UnlinkButton(pg_storage, nid, short_label))
 
 
+class _UnwatchButton(discord.ui.Button):
+    """A button that unwatches a specific node."""
+
+    def __init__(self, pg_storage, node_id: str, label: str, discord_user_id: str):
+        super().__init__(
+            style=discord.ButtonStyle.danger,
+            label=f"Unwatch {label}",
+            custom_id=f"unwatch:{node_id}",
+        )
+        self.pg_storage = pg_storage
+        self.node_id = node_id
+        self.discord_user_id = discord_user_id
+
+    async def callback(self, interaction: discord.Interaction):
+        ok = await self.pg_storage.unwatch_node(self.node_id, str(interaction.user.id))
+        if ok:
+            await interaction.response.send_message(
+                f"Stopped watching node `!{self.node_id}`.", ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(
+                f"Node `!{self.node_id}` was not being watched.", ephemeral=True,
+            )
+
+
+class _UnwatchView(discord.ui.View):
+    def __init__(self, pg_storage, node_ids: list[str], discord_user_id: str):
+        super().__init__(timeout=120)
+        for nid in node_ids[:25]:
+            self.add_item(_UnwatchButton(pg_storage, nid, nid[:8], discord_user_id))
+
+
 class _RemoveTrackerButton(discord.ui.Button):
     """A button that removes tracking for a specific node."""
 
@@ -309,10 +341,14 @@ class AdminCommands(commands.Cog):
             )
             return
 
-        ok = await self.data.pg_storage.link_node(nid, str(interaction.user.id))
+        result = await self.data.pg_storage.link_node(nid, str(interaction.user.id))
         display = self._format_node_display(nid, name)
-        if ok:
+        if result == "ok":
             await interaction.response.send_message(f"Linked node {display} to your account.", ephemeral=True)
+        elif result == "already_yours":
+            await interaction.response.send_message(f"Node {display} is already linked to your account.", ephemeral=True)
+        elif result == "taken":
+            await interaction.response.send_message(f"Node {display} is already linked to another user.", ephemeral=True)
         else:
             await interaction.response.send_message("Failed to link node. Database may be unavailable.", ephemeral=True)
 
@@ -358,6 +394,71 @@ class AdminCommands(commands.Cog):
 
         await interaction.response.send_message(
             "**Your linked nodes:**\n" + "\n".join(lines),
+            view=view,
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="watchnode", description="Watch a node for online/offline alerts")
+    @app_commands.describe(node_id="Node ID (hex), integer ID, short name, or long name")
+    @app_commands.autocomplete(node_id=_node_autocomplete)
+    async def watch_node(self, interaction: discord.Interaction, node_id: str):
+        nid, name = await self._resolve_node_id(node_id)
+        if not nid:
+            await interaction.response.send_message(
+                f"Could not find node `{node_id}`.", ephemeral=True,
+            )
+            return
+
+        result = await self.data.pg_storage.watch_node(nid, str(interaction.user.id))
+        display = self._format_node_display(nid, name)
+        if result == "ok":
+            await interaction.response.send_message(f"Now watching {display} for online/offline alerts.", ephemeral=True)
+        elif result == "already":
+            await interaction.response.send_message(f"You are already watching {display}.", ephemeral=True)
+        else:
+            await interaction.response.send_message("Failed to watch node. Database may be unavailable.", ephemeral=True)
+
+    @app_commands.command(name="unwatchnode", description="Stop watching a node for alerts")
+    @app_commands.describe(node_id="Node ID (hex), integer ID, short name, or long name")
+    @app_commands.autocomplete(node_id=_node_autocomplete)
+    async def unwatch_node(self, interaction: discord.Interaction, node_id: str):
+        nid, name = await self._resolve_node_id(node_id)
+        if not nid:
+            await interaction.response.send_message(
+                f"Could not find node `{node_id}`.", ephemeral=True,
+            )
+            return
+
+        ok = await self.data.pg_storage.unwatch_node(nid, str(interaction.user.id))
+        display = self._format_node_display(nid, name)
+        if ok:
+            await interaction.response.send_message(f"Stopped watching {display}.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"You were not watching {display}.", ephemeral=True)
+
+    @app_commands.command(name="mywatchednodes", description="List all nodes you are watching for alerts")
+    async def my_watched_nodes(self, interaction: discord.Interaction):
+        nodes = await self.data.pg_storage.get_watched_nodes(str(interaction.user.id))
+        if not nodes:
+            await interaction.response.send_message("You are not watching any nodes.", ephemeral=True)
+            return
+
+        lines = []
+        for nid in nodes:
+            node = self.data.nodes.get(nid)
+            if not node and self.data.pg_storage:
+                node = await self.data.pg_storage.query_node_by_id(nid)
+            name = None
+            if node:
+                n = node.get("longname", node.get("shortname", ""))
+                if n and n not in ("Unknown", "UNK"):
+                    name = n
+            lines.append(f"- {self._format_node_display(nid, name)}")
+
+        view = _UnwatchView(self.data.pg_storage, nodes, str(interaction.user.id))
+
+        await interaction.response.send_message(
+            "**Your watched nodes:**\n" + "\n".join(lines),
             view=view,
             ephemeral=True,
         )

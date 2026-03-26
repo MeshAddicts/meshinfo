@@ -290,6 +290,18 @@ CREATE TABLE IF NOT EXISTS discord_banned_nodes (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Watched nodes (online/offline alerts sent to Discord)
+CREATE TABLE IF NOT EXISTS discord_watched_nodes (
+    id SERIAL PRIMARY KEY,
+    node_id VARCHAR(8) NOT NULL,
+    discord_user_id VARCHAR(20) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT discord_watched_nodes_unique UNIQUE (node_id, discord_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_discord_watched_nodes_node_id ON discord_watched_nodes(node_id);
+CREATE INDEX IF NOT EXISTS idx_discord_watched_nodes_discord_user_id ON discord_watched_nodes(discord_user_id);
+
 -- Tracked nodes (position updates forwarded to Discord)
 CREATE TABLE IF NOT EXISTS discord_tracked_nodes (
     node_id VARCHAR(8) PRIMARY KEY,
