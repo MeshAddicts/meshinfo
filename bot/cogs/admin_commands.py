@@ -83,6 +83,66 @@ class _UnlinkView(discord.ui.View):
             self.add_item(_UnlinkButton(pg_storage, nid, short_label))
 
 
+class _RemoveTrackerButton(discord.ui.Button):
+    """A button that removes tracking for a specific node."""
+
+    def __init__(self, pg_storage, node_id: str, label: str):
+        super().__init__(
+            style=discord.ButtonStyle.danger,
+            label=f"Remove {label}",
+            custom_id=f"rmtracker:{node_id}",
+        )
+        self.pg_storage = pg_storage
+        self.node_id = node_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if not _is_mod(interaction):
+            await interaction.response.send_message("You need Manage Messages permission.", ephemeral=True)
+            return
+        ok = await self.pg_storage.remove_tracker(self.node_id)
+        if ok:
+            await interaction.response.send_message(f"Removed tracking for `!{self.node_id}`.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"Node `!{self.node_id}` was not being tracked.", ephemeral=True)
+
+
+class _RemoveTrackerView(discord.ui.View):
+    def __init__(self, pg_storage, node_ids: list[str]):
+        super().__init__(timeout=120)
+        for nid in node_ids[:25]:
+            self.add_item(_RemoveTrackerButton(pg_storage, nid, nid[:8]))
+
+
+class _UnbanButton(discord.ui.Button):
+    """A button that unbans a specific node."""
+
+    def __init__(self, pg_storage, node_id: str, label: str):
+        super().__init__(
+            style=discord.ButtonStyle.success,
+            label=f"Unban {label}",
+            custom_id=f"unban:{node_id}",
+        )
+        self.pg_storage = pg_storage
+        self.node_id = node_id
+
+    async def callback(self, interaction: discord.Interaction):
+        if not _is_mod(interaction):
+            await interaction.response.send_message("You need Manage Messages permission.", ephemeral=True)
+            return
+        ok = await self.pg_storage.unban_node(self.node_id)
+        if ok:
+            await interaction.response.send_message(f"Unbanned node `!{self.node_id}`.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"Node `!{self.node_id}` was not banned.", ephemeral=True)
+
+
+class _UnbanView(discord.ui.View):
+    def __init__(self, pg_storage, node_ids: list[str]):
+        super().__init__(timeout=120)
+        for nid in node_ids[:25]:
+            self.add_item(_UnbanButton(pg_storage, nid, nid[:8]))
+
+
 class AdminCommands(commands.Cog):
     """Slash commands for Discord bridge administration."""
 
@@ -357,3 +417,85 @@ class AdminCommands(commands.Cog):
             await interaction.response.send_message(f"Node {display} has been unbanned.")
         else:
             await interaction.response.send_message(f"Node {display} was not banned.", ephemeral=True)
+
+    @app_commands.command(name="listtrackers", description="List all nodes being tracked for position updates")
+    async def list_trackers(self, interaction: discord.Interaction):
+        if not _is_mod(interaction):
+            await interaction.response.send_message("You need Manage Messages permission.", ephemeral=True)
+            return
+
+        trackers = await self.data.pg_storage.list_trackers()
+        if not trackers:
+            await interaction.response.send_message("No nodes are currently being tracked.", ephemeral=True)
+            return
+
+        lines = []
+        node_ids = []
+        for t in trackers:
+            nid = t["node_id"]
+            node_ids.append(nid)
+            track_type = t.get("track_type", "tracker")
+            label = "Balloon" if track_type == "balloon" else "Tracker"
+            # Resolve name
+            node = self.data.nodes.get(nid)
+            if not node and self.data.pg_storage:
+                node = await self.data.pg_storage.query_node_by_id(nid)
+            name = None
+            if node:
+                n = node.get("longname", node.get("shortname", ""))
+                if n and n not in ("Unknown", "UNK"):
+                    name = n
+            display = self._format_node_display(nid, name)
+            added_by = t.get("added_by", "")
+            added_str = f" (by <@{added_by}>)" if added_by else ""
+            lines.append(f"- [{label}] {display}{added_str}")
+
+        view = _RemoveTrackerView(self.data.pg_storage, node_ids)
+        await interaction.response.send_message(
+            f"**Tracked nodes ({len(trackers)}):**\n" + "\n".join(lines),
+            view=view,
+            ephemeral=True,
+        )
+
+    @app_commands.command(name="listbans", description="List all nodes banned from the Discord bridge")
+    async def list_bans(self, interaction: discord.Interaction):
+        if not _is_mod(interaction):
+            await interaction.response.send_message("You need Manage Messages permission.", ephemeral=True)
+            return
+
+        bans = await self.data.pg_storage.list_bans()
+        if not bans:
+            await interaction.response.send_message("No nodes are currently banned.", ephemeral=True)
+            return
+
+        lines = []
+        node_ids = []
+        for b in bans:
+            nid = b["node_id"]
+            node_ids.append(nid)
+            # Resolve name
+            node = self.data.nodes.get(nid)
+            if not node and self.data.pg_storage:
+                node = await self.data.pg_storage.query_node_by_id(nid)
+            name = None
+            if node:
+                n = node.get("longname", node.get("shortname", ""))
+                if n and n not in ("Unknown", "UNK"):
+                    name = n
+            display = self._format_node_display(nid, name)
+            reason = b.get("reason", "")
+            banned_by = b.get("banned_by", "")
+            extra = []
+            if banned_by:
+                extra.append(f"by <@{banned_by}>")
+            if reason:
+                extra.append(f"reason: {reason}")
+            extra_str = f" ({', '.join(extra)})" if extra else ""
+            lines.append(f"- {display}{extra_str}")
+
+        view = _UnbanView(self.data.pg_storage, node_ids)
+        await interaction.response.send_message(
+            f"**Banned nodes ({len(bans)}):**\n" + "\n".join(lines),
+            view=view,
+            ephemeral=True,
+        )

@@ -1901,3 +1901,31 @@ class PostgresStorage:
         except Exception as e:
             logger.error("Failed to get tracker type for node %s: %s", node_id, e)
             return None
+
+    async def list_trackers(self) -> list[dict]:
+        """List all tracked nodes with their type and who added them."""
+        if not self._ready("list_trackers"):
+            return []
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT node_id, track_type, added_by, created_at FROM discord_tracked_nodes ORDER BY created_at",
+                )
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error("Failed to list trackers: %s", e)
+            return []
+
+    async def list_bans(self) -> list[dict]:
+        """List all banned nodes with reason and who banned them."""
+        if not self._ready("list_bans"):
+            return []
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT node_id, banned_by, reason, created_at FROM discord_banned_nodes ORDER BY created_at",
+                )
+                return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error("Failed to list bans: %s", e)
+            return []
