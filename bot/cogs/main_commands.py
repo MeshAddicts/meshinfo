@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import discord
 from discord import app_commands
 from discord.ext import commands
-from meshtastic import mesh_pb2
+from meshtastic import mesh_pb2, config_pb2
 
 import utils
 from memory_data_store import MemoryDataStore
@@ -202,12 +202,11 @@ class MainCommands(commands.Cog):
         embed.add_field(name="Status", value=("Online" if active else "Offline"), inline=True)
         embed.add_field(name="Hardware", value=hardware, inline=True)
         if role:
-            role_labels = {
-                0: "Client", 1: "Client Mute", 2: "Router", 3: "Router Client",
-                4: "Repeater", 5: "Tracker", 6: "Sensor", 7: "ATAK",
-                8: "Client Hidden", 9: "Lost and Found", 10: "ATAK Tracker",
-            }
-            embed.add_field(name="Role", value=role_labels.get(role, f"Role {role}"), inline=True)
+            try:
+                role_name = config_pb2.Config.DeviceConfig.Role.Name(role).replace("_", " ").title()
+            except ValueError:
+                role_name = f"Role {role}"
+            embed.add_field(name="Role", value=role_name, inline=True)
         embed.add_field(name="Last Seen", value=str(last_seen), inline=False)
 
         position = node_data.get('position', {})
