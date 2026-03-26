@@ -1782,6 +1782,26 @@ class PostgresStorage:
             logger.error("Failed to unlink node %s from Discord user %s: %s", node_id, discord_user_id, e)
             return False
 
+    async def force_unlink_node(self, node_id: str) -> Optional[str]:
+        """Force unlink a node regardless of owner. Returns the previous owner's Discord ID, or None."""
+        if not self._ready("force_unlink_node"):
+            return None
+        try:
+            async with self.pool.acquire() as conn:
+                owner = await conn.fetchval(
+                    "SELECT discord_user_id FROM discord_node_links WHERE node_id = $1",
+                    node_id,
+                )
+                if owner:
+                    await conn.execute(
+                        "DELETE FROM discord_node_links WHERE node_id = $1",
+                        node_id,
+                    )
+                return owner
+        except Exception as e:
+            logger.error("Failed to force unlink node %s: %s", node_id, e)
+            return None
+
     async def get_linked_nodes(self, discord_user_id: str) -> List[str]:
         """Return all node IDs linked to a Discord user."""
         if not self._ready("get_linked_nodes"):

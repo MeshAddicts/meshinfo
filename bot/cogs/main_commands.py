@@ -410,6 +410,7 @@ class MainCommands(commands.Cog):
         embed.add_field(
             name="Moderator",
             value=(
+                "`/forceunlink` \u2014 Force unlink a node from any user\n"
                 "`/addtracker` / `/removetracker` \u2014 Manage position tracking\n"
                 "`/addballoon` / `/removeballoon` \u2014 Manage balloon tracking\n"
                 "`/bannode` / `/unbannode` \u2014 Manage bridge bans\n"

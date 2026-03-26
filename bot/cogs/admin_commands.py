@@ -465,6 +465,28 @@ class AdminCommands(commands.Cog):
 
     # ─── Moderator Commands ──────────────────────────────────────────
 
+    @app_commands.command(name="forceunlink", description="Force unlink a node from any user (mod only)")
+    @app_commands.describe(node_id="Node ID (hex), integer ID, short name, or long name")
+    @app_commands.autocomplete(node_id=_node_autocomplete)
+    async def force_unlink(self, interaction: discord.Interaction, node_id: str):
+        if not _is_mod(interaction):
+            await interaction.response.send_message("You need Manage Messages permission.", ephemeral=True)
+            return
+
+        nid, name = await self._resolve_node_id(node_id)
+        if not nid:
+            await interaction.response.send_message(f"Could not find node `{node_id}`.", ephemeral=True)
+            return
+
+        prev_owner = await self.data.pg_storage.force_unlink_node(nid)
+        display = self._format_node_display(nid, name)
+        if prev_owner:
+            await interaction.response.send_message(
+                f"Force unlinked {display} from <@{prev_owner}>.", ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(f"Node {display} was not linked to anyone.", ephemeral=True)
+
     @app_commands.command(name="addtracker", description="Enable position forwarding for a node")
     @app_commands.describe(node_id="Node ID (hex), integer ID, short name, or long name")
     @app_commands.autocomplete(node_id=_node_autocomplete)
