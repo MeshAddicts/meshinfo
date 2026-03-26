@@ -274,35 +274,26 @@ class AdminCommands(commands.Cog):
             try:
                 id_int = int(search, 10)
                 nid = utils.convert_node_id_from_int_to_hex(id_int)
-                # Look up name
+                # Look up best display name (memory then DB)
                 node = self.data.nodes.get(nid)
-                if node:
-                    return nid, self._make_display_name(node)
-                if self.data.pg_storage:
+                name = self._make_display_name(node)
+                if not name and self.data.pg_storage:
                     db_node = await self.data.pg_storage.query_node_by_id(nid)
-                    if db_node:
-                        name = db_node.get("longname", db_node.get("shortname", ""))
-                        return nid, name if name not in ("Unknown", "UNK", "") else None
-                return nid, None
+                    name = self._make_display_name(db_node)
+                return nid, name
             except (ValueError, TypeError):
                 pass
 
         # Try as hex ID (contains a-f, or has ! prefix)
         nid = _normalize_node_id(raw)
         if nid:
-            # Verify it exists (optional — allow linking to unknown nodes)
+            # Try in-memory, then DB — pick the best display name
             node = self.data.nodes.get(nid)
-            if node:
-                name = node.get("longname", node.get("shortname", ""))
-                return nid, name if name not in ("Unknown", "UNK", "") else None
-            # Check DB
-            if self.data.pg_storage:
+            name = self._make_display_name(node)
+            if not name and self.data.pg_storage:
                 db_node = await self.data.pg_storage.query_node_by_id(nid)
-                if db_node:
-                    name = db_node.get("longname", db_node.get("shortname", ""))
-                    return nid, name if name not in ("Unknown", "UNK", "") else None
-            # Valid hex but not in DB — still allow it
-            return nid, None
+                name = self._make_display_name(db_node)
+            return nid, name
 
         # Try as shortname/longname in memory
         search_lower = raw.lower()
