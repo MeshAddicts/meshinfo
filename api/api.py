@@ -1,13 +1,13 @@
+import asyncio
 import datetime
 import logging
 import os
 from fastapi.encoders import jsonable_encoder
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from fastapi.responses import Response
 from config import Config
 from api.static_map import generate_static_map
 import utils
@@ -325,7 +325,7 @@ class API:
             zoom = max(1, min(zoom, 18))
 
             try:
-                png_bytes = generate_static_map(lat, lon, self.config, zoom=zoom)
+                png_bytes = await asyncio.to_thread(generate_static_map, lat, lon, self.config, zoom=zoom)
                 return Response(
                     content=png_bytes,
                     media_type="image/png",
