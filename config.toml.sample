@@ -279,13 +279,15 @@ aggregate_seconds = 5  # seconds to wait for additional gateways before posting
 # "8" = "1234567890123456791"    # LongFast positions -> #position-tracking
 
 # Static map thumbnails for position tracking embeds.
-# Generates a map image when a tracked node sends a position update.
+# Renders map images server-side by fetching tiles and compositing them locally.
+# No external "static map API" — just tile fetching from OSM or Mapbox.
 # The clickable link always points to your MeshInfo map page.
+# If mapbox is configured with a valid token, it is preferred; otherwise falls back to OSM.
 [integrations.discord.bridge.maps]
 provider = "none"  # "none", "osm", "mapbox"
                    # none    = no thumbnail, just a clickable link to your map
-                   # osm     = free OpenStreetMap tiles (no token needed)
-                   # mapbox  = Mapbox Static Images API (requires access token)
+                   # osm     = OpenStreetMap tiles rendered server-side (no token needed)
+                   # mapbox  = Mapbox tiles rendered server-side (requires access token)
 
 # Mapbox configuration (only used when provider = "mapbox")
 [integrations.discord.bridge.maps.mapbox]

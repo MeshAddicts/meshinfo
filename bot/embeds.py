@@ -20,34 +20,17 @@ EMBED_TOTAL_LIMIT = 6000
 EMBED_DESC_LIMIT = 4096
 EMBED_FIELD_VALUE_LIMIT = 1024
 
-# OpenStreetMap static map (free, no token)
-OSM_STATIC_MAP_URL = "https://staticmap.openstreetmap.de/staticmap.php"
+def _map_thumbnail_url(lat: float, lon: float, base_url: str, maps_cfg: dict) -> str | None:
+    """Build a self-hosted static map thumbnail URL.
 
-
-def _map_thumbnail_url(lat: float, lon: float, maps_cfg: dict) -> str | None:
-    """Build a static map thumbnail URL based on the configured provider."""
+    Points to the MeshInfo /v1/static-map endpoint, which renders tiles
+    from OSM or Mapbox server-side. Returns None if provider is "none".
+    """
     provider = maps_cfg.get("provider", "none")
+    if provider == "none" or not base_url:
+        return None
 
-    if provider == "osm":
-        return (
-            f"{OSM_STATIC_MAP_URL}"
-            f"?center={lat},{lon}&zoom=12&size=300x200"
-            f"&markers={lat},{lon},red-pushpin"
-        )
-
-    if provider == "mapbox":
-        mb = maps_cfg.get("mapbox", {})
-        token = mb.get("access_token", "")
-        if not token:
-            return None
-        style = mb.get("style", "mapbox/dark-v11")
-        return (
-            f"https://api.mapbox.com/styles/v1/{style}/static"
-            f"/pin-s+ff0000({lon},{lat})/{lon},{lat},12,0/300x200@2x"
-            f"?access_token={token}"
-        )
-
-    return None  # "none" — no thumbnail
+    return f"{base_url.rstrip('/')}/v1/static-map?lat={lat:.6f}&lon={lon:.6f}&zoom=12"
 
 
 def _map_link_url(base_url: str, node_id: str) -> str | None:
@@ -249,8 +232,8 @@ def build_position_embed(
         if alt is not None:
             embed.add_field(name="Altitude", value=f"{alt}m", inline=True)
 
-        # Static map thumbnail (configurable provider)
-        thumbnail_url = _map_thumbnail_url(lat, lon, maps_cfg)
+        # Static map thumbnail (self-hosted, provider from config)
+        thumbnail_url = _map_thumbnail_url(lat, lon, base_url, maps_cfg)
         if thumbnail_url:
             embed.set_thumbnail(url=thumbnail_url)
 

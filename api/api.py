@@ -7,7 +7,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+from fastapi.responses import Response
 from config import Config
+from api.static_map import generate_static_map
 import utils
 
 logger = logging.getLogger(__name__)
@@ -306,6 +308,32 @@ class API:
                         stats['active_nodes'] += 1
 
                 return jsonable_encoder({"stats": stats})
+
+        @app.get("/v1/static-map")
+        async def static_map(request: Request) -> Response:
+            """Generate a static map PNG image for given coordinates."""
+            try:
+                lat = float(request.query_params.get("lat", 0))
+                lon = float(request.query_params.get("lon", 0))
+            except (ValueError, TypeError):
+                return JSONResponse({"error": "Invalid lat/lon"}, status_code=400)
+
+            if lat == 0 and lon == 0:
+                return JSONResponse({"error": "lat and lon are required"}, status_code=400)
+
+            zoom = int(request.query_params.get("zoom", 12))
+            zoom = max(1, min(zoom, 18))
+
+            try:
+                png_bytes = generate_static_map(lat, lon, self.config, zoom=zoom)
+                return Response(
+                    content=png_bytes,
+                    media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=3600"},
+                )
+            except Exception:
+                logger.exception("Failed to generate static map")
+                return JSONResponse({"error": "Map generation failed"}, status_code=500)
 
         @app.get("/v1/server/config")
         async def server_config(request: Request) -> JSONResponse:
