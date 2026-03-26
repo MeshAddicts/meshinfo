@@ -398,12 +398,14 @@ class MainCommands(commands.Cog):
         embed.add_field(
             name="Node Linking & Watching",
             value=(
-                "`/linknode` \u2014 Link a mesh node to your Discord account\n"
-                "`/unlinknode` \u2014 Remove a node link\n"
-                "`/mylinkednodes` \u2014 See all your linked nodes\n"
+                "*Only link nodes you own. Each node can have one owner.*\n"
+                "`/linknode` \u2014 Claim a node as yours\n"
+                "`/unlinknode` \u2014 Remove your claim\n"
+                "`/mylinkednodes` \u2014 See your linked nodes\n"
+                "*Watch any node for alerts \u2014 no ownership required.*\n"
                 "`/watchnode` \u2014 Get alerts when a node goes online/offline\n"
                 "`/unwatchnode` \u2014 Stop watching a node\n"
-                "`/mywatchednodes` \u2014 See all your watched nodes"
+                "`/mywatchednodes` \u2014 See your watched nodes"
             ),
             inline=False,
         )
@@ -416,6 +418,17 @@ class MainCommands(commands.Cog):
                 "`/bannode` / `/unbannode` \u2014 Manage bridge bans\n"
                 "`/listtrackers` \u2014 View all tracked nodes\n"
                 "`/listbans` \u2014 View all banned nodes"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Signal Quality Colors",
+            value=(
+                "\U0001f7e2 **> 10 dB** Excellent\n"
+                "\U0001f535 **5\u201310 dB** Good\n"
+                "\U0001f7e1 **0\u20135 dB** Fair\n"
+                "\U0001f7e0 **-5\u20130 dB** Weak\n"
+                "\U0001f534 **< -5 dB** Poor"
             ),
             inline=False,
         )
