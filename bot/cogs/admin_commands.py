@@ -244,6 +244,21 @@ class AdminCommands(commands.Cog):
 
         return choices
 
+    @staticmethod
+    def _make_display_name(node: Optional[dict]) -> Optional[str]:
+        """Build a display name like 'Modesto G2 Roof [NUTS]' from a node dict."""
+        if not node:
+            return None
+        longname = node.get("longname", "")
+        shortname = node.get("shortname", "")
+        if longname and longname != "Unknown" and shortname and shortname != "UNK":
+            return f"{longname} [{shortname}]"
+        if longname and longname != "Unknown":
+            return longname
+        if shortname and shortname != "UNK":
+            return shortname
+        return None
+
     async def _resolve_node_id(self, raw: str) -> tuple[Optional[str], Optional[str]]:
         """
         Resolve user input to a node hex ID.
@@ -262,8 +277,7 @@ class AdminCommands(commands.Cog):
                 # Look up name
                 node = self.data.nodes.get(nid)
                 if node:
-                    name = node.get("longname", node.get("shortname", ""))
-                    return nid, name if name not in ("Unknown", "UNK", "") else None
+                    return nid, self._make_display_name(node)
                 if self.data.pg_storage:
                     db_node = await self.data.pg_storage.query_node_by_id(nid)
                     if db_node:
@@ -295,8 +309,7 @@ class AdminCommands(commands.Cog):
         for node_id, node in self.data.nodes.items():
             if (str(node.get("shortname", "")).lower() == search_lower or
                     str(node.get("longname", "")).lower() == search_lower):
-                name = node.get("longname", node.get("shortname", ""))
-                return node_id, name if name not in ("Unknown", "UNK", "") else None
+                return node_id, self._make_display_name(node)
 
         # Try as shortname/longname in PostgreSQL
         if self.data.pg_storage:
@@ -382,11 +395,7 @@ class AdminCommands(commands.Cog):
             node = self.data.nodes.get(nid)
             if not node and self.data.pg_storage:
                 node = await self.data.pg_storage.query_node_by_id(nid)
-            name = None
-            if node:
-                n = node.get("longname", node.get("shortname", ""))
-                if n and n not in ("Unknown", "UNK"):
-                    name = n
+            name = self._make_display_name(node)
             lines.append(f"- {self._format_node_display(nid, name)}")
 
         # Build view with unlink buttons
@@ -448,11 +457,7 @@ class AdminCommands(commands.Cog):
             node = self.data.nodes.get(nid)
             if not node and self.data.pg_storage:
                 node = await self.data.pg_storage.query_node_by_id(nid)
-            name = None
-            if node:
-                n = node.get("longname", node.get("shortname", ""))
-                if n and n not in ("Unknown", "UNK"):
-                    name = n
+            name = self._make_display_name(node)
             lines.append(f"- {self._format_node_display(nid, name)}")
 
         view = _UnwatchView(self.data.pg_storage, nodes, str(interaction.user.id))
@@ -632,11 +637,7 @@ class AdminCommands(commands.Cog):
             node = self.data.nodes.get(nid)
             if not node and self.data.pg_storage:
                 node = await self.data.pg_storage.query_node_by_id(nid)
-            name = None
-            if node:
-                n = node.get("longname", node.get("shortname", ""))
-                if n and n not in ("Unknown", "UNK"):
-                    name = n
+            name = self._make_display_name(node)
             display = self._format_node_display(nid, name)
             added_by = t.get("added_by", "")
             added_str = f" (by <@{added_by}>)" if added_by else ""
@@ -669,11 +670,7 @@ class AdminCommands(commands.Cog):
             node = self.data.nodes.get(nid)
             if not node and self.data.pg_storage:
                 node = await self.data.pg_storage.query_node_by_id(nid)
-            name = None
-            if node:
-                n = node.get("longname", node.get("shortname", ""))
-                if n and n not in ("Unknown", "UNK"):
-                    name = n
+            name = self._make_display_name(node)
             display = self._format_node_display(nid, name)
             reason = b.get("reason", "")
             banned_by = b.get("banned_by", "")
