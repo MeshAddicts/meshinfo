@@ -1,35 +1,92 @@
 import datetime
 import logging
+from typing import Optional
 from zoneinfo import ZoneInfo
-from discord.ext import commands
+
 import discord
+from discord import app_commands
+from discord.ext import commands
 from meshtastic import mesh_pb2
 
 import utils
+from memory_data_store import MemoryDataStore
 
 logger = logging.getLogger(__name__)
 
-
-class LookupFlags(commands.FlagConverter):
-    node: str = commands.flag(description='Node')
 
 class MainCommands(commands.Cog):
     def __init__(self, bot, config, data):
         self.bot = bot
         self.config = config
-        self.data = data
+        self.data: MemoryDataStore = data
 
     @commands.Cog.listener()
     async def on_ready(self):
         logger.info('Discord: Logged in')
 
-    @commands.hybrid_command(name="lookup", description="Look up a node by ID (int or hex), short name, or long name")
-    async def lookup_node(self, ctx, *, flags: LookupFlags):
-        logger.info("Discord: /lookup: Looking up %s", flags.node)
-        search = flags.node.strip().lower().replace("!", "")
+    # ─── Shared autocomplete ─────────────────────────────────────────
+
+    async def _node_autocomplete(
+        self, interaction: discord.Interaction, current: str,
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for node fields — searches hex ID, shortname, longname."""
+        current = current.strip().lower().replace("!", "")
+        if not current:
+            return []
+
+        choices: list[app_commands.Choice[str]] = []
+        seen: set[str] = set()
+
+        # Search in-memory nodes first
+        for nid, node in self.data.nodes.items():
+            if len(choices) >= 25:
+                break
+            short = str(node.get("shortname", "")).lower()
+            long = str(node.get("longname", "")).lower()
+            if current in nid or current in short or current in long:
+                display_name = node.get("longname") or node.get("shortname") or nid
+                if display_name in ("Unknown", "UNK"):
+                    display_name = nid
+                label = f"{display_name} (!{nid})"[:100]
+                if nid not in seen:
+                    choices.append(app_commands.Choice(name=label, value=nid))
+                    seen.add(nid)
+
+        # Supplement from DB
+        if len(choices) < 25 and self.data.pg_storage:
+            try:
+                results = await self.data.pg_storage.query_nodes_filtered(
+                    days_limit=None, shortname_filter=current,
+                )
+                if len(results) < 10:
+                    long_results = await self.data.pg_storage.query_nodes_filtered(
+                        days_limit=None, longname_filter=current,
+                    )
+                    results.update(long_results)
+
+                for nid, node in results.items():
+                    if len(choices) >= 25:
+                        break
+                    if nid in seen:
+                        continue
+                    display_name = node.get("longname") or node.get("shortname") or nid
+                    if display_name in ("Unknown", "UNK"):
+                        display_name = nid
+                    label = f"{display_name} (!{nid})"[:100]
+                    choices.append(app_commands.Choice(name=label, value=nid))
+                    seen.add(nid)
+            except Exception:
+                pass
+
+        return choices
+
+    # ─── Node resolution helper ──────────────────────────────────────
+
+    async def _resolve_node(self, search: str) -> tuple[Optional[str], Optional[dict]]:
+        """Resolve user input to (hex_id, node_dict). Returns (None, None) if not found."""
+        search = search.strip().lower().replace("!", "")
         if not search:
-            await ctx.send("Please provide a node ID or name to look up.")
-            return
+            return None, None
 
         node = None
         id_hex = None
@@ -45,11 +102,10 @@ class MainCommands(commands.Cog):
         if id_hex is None and all(c in '0123456789abcdef' for c in search) and len(search) <= 8:
             id_hex = search.zfill(8)
 
-        # 1) Check in-memory first (fastest)
+        # Check in-memory
         if id_hex and id_hex in self.data.nodes:
             node = self.data.nodes[id_hex]
         else:
-            # Search in-memory by shortname or longname
             for node_id, n in self.data.nodes.items():
                 if (str(n.get('shortname', '')).lower() == search or
                         str(n.get('longname', '')).lower() == search):
@@ -57,40 +113,43 @@ class MainCommands(commands.Cog):
                     id_hex = node_id
                     break
 
-        # 2) Fall back to PostgreSQL
+        # Fall back to PostgreSQL
         if node is None and self.data.pg_storage:
-            # Try by ID first
             if id_hex:
                 node = await self.data.pg_storage.query_node_by_id(id_hex)
-
-            # Try by shortname
             if node is None:
                 results = await self.data.pg_storage.query_nodes_filtered(
                     days_limit=None, shortname_filter=search,
                 )
+                if not results:
+                    results = await self.data.pg_storage.query_nodes_filtered(
+                        days_limit=None, longname_filter=search,
+                    )
                 if results:
                     id_hex, node = next(iter(results.items()))
 
-            # Try by longname
-            if node is None:
-                results = await self.data.pg_storage.query_nodes_filtered(
-                    days_limit=None, longname_filter=search,
-                )
-                if results:
-                    id_hex, node = next(iter(results.items()))
+        return id_hex, node
 
-        if node is None:
-            await ctx.send(f"Node `{flags.node}` not found.")
+    # ─── Commands ────────────────────────────────────────────────────
+
+    @app_commands.command(name="lookup", description="Look up a node by name, hex ID, or integer ID")
+    @app_commands.describe(node="Node name, hex ID, or integer ID")
+    @app_commands.autocomplete(node=_node_autocomplete)
+    async def lookup_node(self, interaction: discord.Interaction, node: str):
+        logger.info("Discord: /lookup: Looking up %s", node)
+        id_hex, node_data = await self._resolve_node(node)
+
+        if node_data is None:
+            await interaction.response.send_message(f"Node `{node}` not found.", ephemeral=True)
             return
 
-        id_hex = node.get('id', id_hex) or id_hex
+        id_hex = node_data.get('id', id_hex) or id_hex
         id_int = utils.convert_node_id_from_hex_to_int(id_hex)
-        shortname = node.get('shortname', 'UNK')
-        longname = node.get('longname', 'Unknown')
-        hardware_raw = node.get('hardware', None)
+        shortname = node_data.get('shortname', 'UNK')
+        longname = node_data.get('longname', 'Unknown')
+        hardware_raw = node_data.get('hardware', None)
         hardware = "Unknown"
         if hardware_raw is not None:
-            # DB stores as string or int; normalize to int for enum lookup
             try:
                 hw_int = int(hardware_raw)
                 hw_name = mesh_pb2.HardwareModel.Name(hw_int)
@@ -100,8 +159,8 @@ class MainCommands(commands.Cog):
                     hardware = hw_name.replace("_", " ").title()
             except (ValueError, TypeError):
                 hardware = str(hardware_raw)
-        active = node.get('active', False)
-        last_seen_raw = node.get('last_seen', None)
+        active = node_data.get('active', False)
+        last_seen_raw = node_data.get('last_seen', None)
         if isinstance(last_seen_raw, str):
             try:
                 dt = datetime.datetime.fromisoformat(last_seen_raw)
@@ -114,7 +173,7 @@ class MainCommands(commands.Cog):
             last_seen = last_seen_raw.astimezone(tz).strftime("%b %d, %Y %I:%M %p %Z")
         else:
             last_seen = "Unknown"
-        role = node.get('role', 0)
+        role = node_data.get('role', 0)
 
         logger.info("Discord: /lookup: Found %s (%s)", id_hex, longname)
 
@@ -137,8 +196,7 @@ class MainCommands(commands.Cog):
             embed.add_field(name="Role", value=role_labels.get(role, f"Role {role}"), inline=True)
         embed.add_field(name="Last Seen", value=str(last_seen), inline=False)
 
-        # Position info if available
-        position = node.get('position', {})
+        position = node_data.get('position', {})
         if position and position.get('latitude_i') and position.get('longitude_i'):
             lat = position['latitude_i'] / 1e7
             lon = position['longitude_i'] / 1e7
@@ -146,8 +204,7 @@ class MainCommands(commands.Cog):
             if position.get('altitude'):
                 embed.add_field(name="Altitude", value=f"{position['altitude']}m", inline=True)
 
-        # Telemetry if available
-        telemetry = node.get('telemetry', {})
+        telemetry = node_data.get('telemetry', {})
         if telemetry:
             telem_parts = []
             if 'battery_level' in telemetry and telemetry['battery_level'] is not None:
@@ -159,7 +216,6 @@ class MainCommands(commands.Cog):
             if telem_parts:
                 embed.add_field(name="Telemetry", value=" | ".join(telem_parts), inline=False)
 
-        # Elsewhere links from config
         elsewhere = self.config.get('mesh', {}).get('elsewhere_links', [])
         if elsewhere:
             link_parts = []
@@ -174,13 +230,12 @@ class MainCommands(commands.Cog):
                 embed.add_field(name="View Elsewhere", value=" | ".join(link_parts), inline=False)
 
         embed.set_footer(text=f"Node: !{id_hex}")
-        await ctx.send(embed=embed)
+        await interaction.response.send_message(embed=embed)
 
-    @commands.hybrid_command(name="mesh", description="Information about the mesh")
-    async def mesh_info(self, ctx):
-        logger.info("Discord: /mesh: Mesh info requested by %s", ctx.author)
+    @app_commands.command(name="mesh", description="Information about the mesh")
+    async def mesh_info(self, interaction: discord.Interaction):
+        logger.info("Discord: /mesh: Mesh info requested by %s", interaction.user)
 
-        # Get node counts from PostgreSQL for accuracy
         stats = {}
         if self.data.pg_storage:
             stats = await self.data.pg_storage.query_stats()
@@ -205,20 +260,21 @@ class MainCommands(commands.Cog):
         embed.add_field(name="Server Uptime", value=f"{uptime.days}d {uptime.seconds // 3600}h {(uptime.seconds % 3600) // 60}m {uptime.seconds % 60}s", inline=False)
         links = [f"[Dashboard]({base_url})", f"[Nodes]({base_url}/nodes)", f"[Chat]({base_url}/chat)", f"[Logs]({base_url}/logs)"]
         embed.add_field(name="Quick Links", value=" | ".join(links), inline=False)
-        await ctx.send(embed=embed)
+        await interaction.response.send_message(embed=embed)
 
-    @commands.hybrid_command(name="ping", description="Ping the bot")
-    async def ping(self, ctx):
-        await ctx.send(f'Pong! {round(self.bot.latency * 1000)}ms')
+    @app_commands.command(name="ping", description="Ping the bot")
+    async def ping(self, interaction: discord.Interaction):
+        await interaction.response.send_message(f'Pong! {round(self.bot.latency * 1000)}ms')
 
-    @commands.hybrid_command(name="uptime", description="Uptime of MeshInfo instance")
-    async def uptime(self, ctx):
+    @app_commands.command(name="uptime", description="Uptime of MeshInfo instance")
+    async def uptime(self, interaction: discord.Interaction):
         now = datetime.datetime.now().astimezone(ZoneInfo(self.config['server']['timezone']))
         uptime = now - self.config['server']['start_time']
-        await ctx.send(f'MeshInfo uptime: {uptime.days}d {uptime.seconds // 3600}h {(uptime.seconds % 3600) // 60}m {uptime.seconds % 60}s')
+        await interaction.response.send_message(f'MeshInfo uptime: {uptime.days}d {uptime.seconds // 3600}h {(uptime.seconds % 3600) // 60}m {uptime.seconds % 60}s')
 
-    @commands.hybrid_command(name="topnodes", description="Mesh leaderboard and achievements")
-    async def topnodes(self, ctx, timeframe: str = "24h"):
+    @app_commands.command(name="topnodes", description="Mesh leaderboard and achievements")
+    @app_commands.describe(timeframe="Time period: 24h (default) or 7d")
+    async def topnodes(self, interaction: discord.Interaction, timeframe: str = "24h"):
         if timeframe in ("7d", "7", "week"):
             hours = 168
             label = "7 Days"
@@ -227,22 +283,22 @@ class MainCommands(commands.Cog):
             label = "24 Hours"
 
         if not self.data.pg_storage:
-            await ctx.send("Database not available.")
+            await interaction.response.send_message("Database not available.", ephemeral=True)
             return
 
         stats = await self.data.pg_storage.query_top_nodes(hours=hours, limit=5)
         if not stats:
-            await ctx.send("No leaderboard data available yet.")
+            await interaction.response.send_message("No leaderboard data available yet.", ephemeral=True)
             return
 
         base_url = self.config.get('server', {}).get('base_url', '').rstrip('/')
 
         async def resolve_name(node_id: str) -> str:
-            node = self.data.nodes.get(node_id)
-            if not node and self.data.pg_storage:
-                node = await self.data.pg_storage.query_node_by_id(node_id)
-            if node:
-                name = node.get("longname") or node.get("shortname")
+            n = self.data.nodes.get(node_id)
+            if not n and self.data.pg_storage:
+                n = await self.data.pg_storage.query_node_by_id(node_id)
+            if n:
+                name = n.get("longname") or n.get("shortname")
                 if name and name not in ("Unknown", "UNK"):
                     if base_url:
                         return f"[{name}]({base_url}/nodes?node={node_id})"
@@ -303,10 +359,10 @@ class MainCommands(commands.Cog):
             embed.description = "Not enough data yet \u2014 check back later!"
 
         embed.set_footer(text=f"Timeframe: {label} | Use /topnodes 7d for weekly")
-        await ctx.send(embed=embed)
+        await interaction.response.send_message(embed=embed)
 
-    @commands.hybrid_command(name="meshinfo", description="Show all available bot commands")
-    async def meshinfo_help(self, ctx):
+    @app_commands.command(name="meshinfo", description="Show all available bot commands")
+    async def meshinfo_help(self, interaction: discord.Interaction):
         base_url = self.config.get('server', {}).get('base_url', '').rstrip('/')
         embed = discord.Embed(
             title="MeshInfo Bot Commands",
@@ -316,102 +372,61 @@ class MainCommands(commands.Cog):
         embed.add_field(
             name="General",
             value=(
-                "`/lookup` — Look up a node by name, hex ID, or integer ID\n"
-                "`/mesh` — View mesh network info and node counts\n"
-                "`/whereis` — Show a node's last known position on a map\n"
-                "`/topnodes` — Mesh leaderboard and achievements\n"
-                "`/ping` — Check bot latency\n"
-                "`/uptime` — MeshInfo server uptime\n"
-                "`/meshinfo` — This help message"
+                "`/lookup` \u2014 Look up a node by name, hex ID, or integer ID\n"
+                "`/mesh` \u2014 View mesh network info and node counts\n"
+                "`/whereis` \u2014 Show a node's last known position on a map\n"
+                "`/topnodes` \u2014 Mesh leaderboard and achievements\n"
+                "`/ping` \u2014 Check bot latency\n"
+                "`/uptime` \u2014 MeshInfo server uptime\n"
+                "`/meshinfo` \u2014 This help message"
             ),
             inline=False,
         )
         embed.add_field(
             name="Node Linking",
             value=(
-                "`/linknode` — Link a mesh node to your Discord account\n"
-                "`/unlinknode` — Remove a node link\n"
-                "`/mylinkednodes` — See all your linked nodes"
+                "`/linknode` \u2014 Link a mesh node to your Discord account\n"
+                "`/unlinknode` \u2014 Remove a node link\n"
+                "`/mylinkednodes` \u2014 See all your linked nodes"
             ),
             inline=False,
         )
         embed.add_field(
             name="Moderator",
             value=(
-                "`/addtracker` / `/removetracker` — Manage position tracking\n"
-                "`/addballoon` / `/removeballoon` — Manage balloon tracking\n"
-                "`/bannode` / `/unbannode` — Manage bridge bans\n"
-                "`/listtrackers` — View all tracked nodes\n"
-                "`/listbans` — View all banned nodes"
+                "`/addtracker` / `/removetracker` \u2014 Manage position tracking\n"
+                "`/addballoon` / `/removeballoon` \u2014 Manage balloon tracking\n"
+                "`/bannode` / `/unbannode` \u2014 Manage bridge bans\n"
+                "`/listtrackers` \u2014 View all tracked nodes\n"
+                "`/listbans` \u2014 View all banned nodes"
             ),
             inline=False,
         )
-        embed.set_footer(text="All node commands support autocomplete — start typing a name!")
-        await ctx.send(embed=embed, ephemeral=True)
+        embed.set_footer(text="All node commands support autocomplete \u2014 start typing a name!")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @commands.hybrid_command(name="whereis", description="Show a node's last known position")
-    async def whereis(self, ctx, *, flags: LookupFlags):
-        search = flags.node.strip().lower().replace("!", "")
-        if not search:
-            await ctx.send("Please provide a node ID or name.")
+    @app_commands.command(name="whereis", description="Show a node's last known position")
+    @app_commands.describe(node="Node name, hex ID, or integer ID")
+    @app_commands.autocomplete(node=_node_autocomplete)
+    async def whereis(self, interaction: discord.Interaction, node: str):
+        id_hex, node_data = await self._resolve_node(node)
+
+        if node_data is None:
+            await interaction.response.send_message(f"Node `{node}` not found.", ephemeral=True)
             return
 
-        node = None
-        id_hex = None
-
-        # Try parsing as integer node ID
-        try:
-            id_int = int(search, 10)
-            id_hex = utils.convert_node_id_from_int_to_hex(id_int)
-        except ValueError:
-            pass
-
-        # Try parsing as hex node ID
-        if id_hex is None and all(c in '0123456789abcdef' for c in search) and len(search) <= 8:
-            id_hex = search.zfill(8)
-
-        # Check in-memory
-        if id_hex and id_hex in self.data.nodes:
-            node = self.data.nodes[id_hex]
-        else:
-            for node_id, n in self.data.nodes.items():
-                if (str(n.get('shortname', '')).lower() == search or
-                        str(n.get('longname', '')).lower() == search):
-                    node = n
-                    id_hex = node_id
-                    break
-
-        # Fall back to PostgreSQL
-        if node is None and self.data.pg_storage:
-            if id_hex:
-                node = await self.data.pg_storage.query_node_by_id(id_hex)
-            if node is None:
-                results = await self.data.pg_storage.query_nodes_filtered(
-                    days_limit=None, shortname_filter=search,
-                )
-                if not results:
-                    results = await self.data.pg_storage.query_nodes_filtered(
-                        days_limit=None, longname_filter=search,
-                    )
-                if results:
-                    id_hex, node = next(iter(results.items()))
-
-        if node is None:
-            await ctx.send(f"Node `{flags.node}` not found.")
-            return
-
-        id_hex = node.get('id', id_hex) or id_hex
-        position = node.get('position', {})
+        id_hex = node_data.get('id', id_hex) or id_hex
+        position = node_data.get('position', {})
         if not position or not position.get('latitude_i') or not position.get('longitude_i'):
-            shortname = node.get('shortname', id_hex)
-            await ctx.send(f"No position data available for **{shortname}**.")
+            shortname = node_data.get('shortname', id_hex)
+            await interaction.response.send_message(f"No position data available for **{shortname}**.", ephemeral=True)
             return
 
         lat = position['latitude_i'] / 1e7
         lon = position['longitude_i'] / 1e7
         alt = position.get('altitude')
-        shortname = node.get('shortname', 'UNK')
-        longname = node.get('longname', 'Unknown')
+        shortname = node_data.get('shortname', 'UNK')
+        longname = node_data.get('longname', 'Unknown')
         base_url = self.config.get('server', {}).get('base_url', '').rstrip('/')
         map_link = f"{base_url}/map?node={id_hex}" if base_url else None
 
@@ -428,7 +443,6 @@ class MainCommands(commands.Cog):
         if alt is not None:
             embed.add_field(name="Altitude", value=f"{alt}m", inline=True)
 
-        # Map thumbnail
         maps_cfg = self.config.get("integrations", {}).get("discord", {}).get("bridge", {}).get("maps", {})
         provider = maps_cfg.get("provider", "none")
         if provider != "none" and base_url:
@@ -436,4 +450,4 @@ class MainCommands(commands.Cog):
             embed.set_image(url=thumbnail_url)
 
         embed.set_footer(text=f"Node: !{id_hex}")
-        await ctx.send(embed=embed)
+        await interaction.response.send_message(embed=embed)
