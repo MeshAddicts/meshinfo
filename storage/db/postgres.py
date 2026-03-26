@@ -2073,16 +2073,12 @@ class PostgresStorage:
                 )
                 results["iron_man"] = [dict(r) for r in rows]
 
-                # Here I Am — nodes with known positions (most telemetry activity)
-                rows = await conn.fetch(
-                    """SELECT t.from_node_id AS node_id, COUNT(*) AS count
-                       FROM telemetry t
-                       WHERE t.created_at >= NOW() - $1::interval
-                         AND t.from_node_id IN (SELECT node_id FROM node_positions)
-                       GROUP BY t.from_node_id ORDER BY count DESC LIMIT $2""",
-                    interval, limit,
-                )
-                results["here_i_am"] = [dict(r) for r in rows]
+                # Here I Am — disabled: requires position history table (not yet implemented)
+                # When a position_history table is added, uncomment and query:
+                #   SELECT from_node_id AS node_id, COUNT(*) AS count
+                #   FROM position_history
+                #   WHERE created_at >= NOW() - interval
+                #   GROUP BY from_node_id ORDER BY count DESC
 
                 # Loudest Signal — best average SNR
                 rows = await conn.fetch(

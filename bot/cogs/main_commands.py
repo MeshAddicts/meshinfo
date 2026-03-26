@@ -344,13 +344,14 @@ class MainCommands(commands.Cog):
                 lines.append(f"{medals[i]} {name} \u2014 **{days}** days")
             embed.add_field(name="\U0001f9be Iron Man", value="\n".join(lines), inline=False)
 
-        here_i_am = stats.get("here_i_am", [])
-        if here_i_am:
-            lines = []
-            for i, row in enumerate(here_i_am):
-                name = await resolve_name(row["node_id"])
-                lines.append(f"{medals[i]} {name} \u2014 **{row['count']}** updates")
-            embed.add_field(name="\U0001f4cd Here I Am", value="\n".join(lines), inline=False)
+        # Here I Am — disabled until position history table is added
+        # here_i_am = stats.get("here_i_am", [])
+        # if here_i_am:
+        #     lines = []
+        #     for i, row in enumerate(here_i_am):
+        #         name = await resolve_name(row["node_id"])
+        #         lines.append(f"{medals[i]} {name} \u2014 **{row['count']}** updates")
+        #     embed.add_field(name="\U0001f4cd Here I Am", value="\n".join(lines), inline=False)
 
         loudest = stats.get("loudest_signal", [])
         if loudest:
