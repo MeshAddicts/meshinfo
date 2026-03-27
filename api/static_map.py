@@ -33,7 +33,7 @@ OSM_TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 
 # Mapbox raster tile URL template (style and token injected at runtime)
 MAPBOX_TILE_URL = (
-    "https://api.mapbox.com/styles/v1/{style}/tiles/256/{{z}}/{{x}}/{{y}}@2x"
+    "https://api.mapbox.com/styles/v1/{style}/tiles/256/{{z}}/{{x}}/{{y}}"
     "?access_token={token}"
 )
 
@@ -87,6 +87,26 @@ def _set_cached(cache_key: str, data: bytes) -> None:
     path.write_bytes(data)
 
 
+def _render_map(tile_url: str, lat: float, lon: float, zoom: int, width: int, height: int) -> bytes | None:
+    """Render a static map PNG. Returns bytes or None on failure."""
+    try:
+        m = StaticMap(
+            width,
+            height,
+            url_template=tile_url,
+            headers={"User-Agent": "MeshInfo/1.0"},
+        )
+        marker = CircleMarker((lon, lat), color="red", width=8)
+        m.add_marker(marker)
+        image = m.render(zoom=zoom)
+        buf = BytesIO()
+        image.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception:
+        logger.debug("Tile rendering failed with URL: %s", tile_url, exc_info=True)
+        return None
+
+
 def generate_static_map(
     lat: float,
     lon: float,
@@ -108,24 +128,13 @@ def generate_static_map(
     if cached:
         return cached
 
-    # Generate map
-    m = StaticMap(
-        width,
-        height,
-        url_template=tile_url,
-        headers={"User-Agent": "MeshInfo/1.0"},
-    )
-
-    # Add a marker at the position
-    marker = CircleMarker((lon, lat), color="red", width=8)
-    m.add_marker(marker)
-
-    image = m.render(zoom=zoom)
-
-    # Convert to PNG bytes
-    buf = BytesIO()
-    image.save(buf, format="PNG")
-    png_bytes = buf.getvalue()
+    # Generate map — try configured provider, fall back to OSM on failure
+    png_bytes = _render_map(tile_url, lat, lon, zoom, width, height)
+    if png_bytes is None and tile_url != OSM_TILE_URL:
+        logger.warning("Tile fetch failed with configured provider, falling back to OSM")
+        png_bytes = _render_map(OSM_TILE_URL, lat, lon, zoom, width, height)
+    if png_bytes is None:
+        raise RuntimeError("Failed to generate map with all providers")
 
     # Cache it
     _set_cached(key, png_bytes)
