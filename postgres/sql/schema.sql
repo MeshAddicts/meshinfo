@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS nodes (
 
 CREATE INDEX IF NOT EXISTS idx_nodes_active ON nodes(active);
 CREATE INDEX IF NOT EXISTS idx_nodes_last_seen ON nodes(last_seen);
+CREATE INDEX IF NOT EXISTS idx_nodes_shortname_lower ON nodes(LOWER(shortname));
+CREATE INDEX IF NOT EXISTS idx_nodes_longname_lower ON nodes(LOWER(longname));
 
 -- Node positions table - stores ONLY the most recent position per node (latest-only)
 CREATE TABLE IF NOT EXISTS node_positions (
