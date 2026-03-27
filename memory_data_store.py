@@ -203,7 +203,7 @@ class MemoryDataStore:
   async def enrich_nodes(self, node_to_enrich):
     async with aiohttp.ClientSession() as session:
         node_ids = list(node_to_enrich.keys())
-        logger.info("Enriching nodes: %s", ','.join(node_ids))
+        logger.debug("Enriching nodes: %s", ','.join(node_ids))
         if self.config['server']['enrich']['provider'] == 'bayme':
           for node_id in node_ids:
             logger.debug("Enriching %s", node_id)
@@ -239,9 +239,9 @@ class MemoryDataStore:
                     node['longname'] = node_info['longName']
                     self.nodes[node_id] = node
               else:
-                  logger.warning("Failed to get info for %s", node_ids)
+                  logger.warning("Failed to get info for %d nodes: HTTP %d", len(node_ids), response.status)
           except Exception as e:
-            logger.warning("Failed to get info for %s: %s", node_ids, e)
+            logger.warning("Failed to get info for %d nodes: %s", len(node_ids), e)
 
   def find_node_by_int_id(self, id: int):
     return self.nodes.get(utils.convert_node_id_from_int_to_hex(id), None)

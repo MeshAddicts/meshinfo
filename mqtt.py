@@ -142,9 +142,9 @@ class MQTT:
                         logger.debug("Decoded protobuf message: mapreport: %s", outs)
                         # self.handle_mapreport(outs)
                     except UnicodeDecodeError as e:
-                        logger.warning("Unicode decoding error: text: %s", e)
+                        logger.debug("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
-                        logger.warning("Protobuf decode error: text: %s", e)
+                        logger.debug("Protobuf decode error: text: %s", e)
 
                 elif mp.decoded.portnum == portnums_pb2.NEIGHBORINFO_APP:
                     try:
@@ -155,9 +155,9 @@ class MQTT:
                         logger.debug("Decoded protobuf message: neighborinfo: %s", outs)
                         await self.handle_neighborinfo(outs)
                     except UnicodeDecodeError as e:
-                        logger.warning("Unicode decoding error: text: %s", e)
+                        logger.debug("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
-                        logger.warning("Protobuf decode error: text: %s", e)
+                        logger.debug("Protobuf decode error: text: %s", e)
 
                 elif mp.decoded.portnum == portnums_pb2.NODEINFO_APP:
                     try:
@@ -171,9 +171,9 @@ class MQTT:
                         logger.debug("Decoded protobuf message: nodeinfo: %s", outs)
                         await self.handle_nodeinfo(outs)
                     except UnicodeDecodeError as e:
-                        logger.warning("Unicode decoding error: text: %s", e)
+                        logger.debug("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
-                        logger.warning("Protobuf decode error: text: %s", e)
+                        logger.debug("Protobuf decode error: text: %s", e)
 
                 elif mp.decoded.portnum == portnums_pb2.ROUTING_APP:
                     try:
@@ -184,9 +184,9 @@ class MQTT:
                         logger.debug("Decoded protobuf message: routing: %s", outs)
                         # self.handle_routing(outs)
                     except UnicodeDecodeError as e:
-                        logger.warning("Unicode decoding error: text: %s", e)
+                        logger.debug("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
-                        logger.warning("Protobuf decode error: text: %s", e)
+                        logger.debug("Protobuf decode error: text: %s", e)
 
                 elif mp.decoded.portnum == portnums_pb2.TRACEROUTE_APP:
                     try:
@@ -203,9 +203,9 @@ class MQTT:
                         logger.debug("Decoded protobuf message: traceroute: %s", outs)
                         await self.handle_traceroute(outs)
                     except UnicodeDecodeError as e:
-                        logger.warning("Unicode decoding error: text: %s", e)
+                        logger.debug("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
-                        logger.warning("Protobuf decode error: text: %s", e)
+                        logger.debug("Protobuf decode error: text: %s", e)
 
                 elif mp.decoded.portnum == portnums_pb2.POSITION_APP:
                     try:
@@ -216,9 +216,9 @@ class MQTT:
                         logger.debug("Decoded protobuf message: position: %s", outs)
                         await self.handle_position(outs)
                     except UnicodeDecodeError as e:
-                        logger.warning("Unicode decoding error: text: %s", e)
+                        logger.debug("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
-                        logger.warning("Protobuf decode error: text: %s", e)
+                        logger.debug("Protobuf decode error: text: %s", e)
 
                 elif mp.decoded.portnum == portnums_pb2.TELEMETRY_APP:
                     try:
@@ -252,9 +252,9 @@ class MQTT:
                         logger.debug("Decoded protobuf message: telemetry (variant=%s): %s", variant, outs)
                         await self.handle_telemetry(outs)
                     except UnicodeDecodeError as e:
-                        logger.warning("Unicode decoding error: text: %s", e)
+                        logger.debug("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
-                        logger.warning("Protobuf decode error: text: %s", e)
+                        logger.debug("Protobuf decode error: text: %s", e)
                     except Exception as e:
                         logger.error("Telemetry processing error: %s", e)
 
@@ -265,10 +265,10 @@ class MQTT:
                         try:
                             outs["payload"] = mp.decoded.payload.decode("utf-8")
                         except UnicodeDecodeError as e:
-                            logger.warning("Unicode decoding error: text: %s", e)
+                            logger.debug("Unicode decoding error: text: %s", e)
                             outs["payload"] = {}
                         except DecodeError as e:
-                            logger.warning("Protobuf decode error: text: %s", e)
+                            logger.debug("Protobuf decode error: text: %s", e)
                             outs["payload"] = {}
                     else:
                         outs["payload"] = {}
