@@ -433,10 +433,19 @@ class MQTT:
         else:
             node = Node.default_node(id)
             node['position'] = msg['payload'] if 'payload' in msg else None
-        if msg.get('sender'):
-            node['gateway'] = msg['sender']
-        self.data.update_node(id, node)
-        logger.debug("Node %s updated with position", id)
+            self.data.update_node(id, node)
+            logger.debug("Node %s skeleton added with position", id)
+
+        # Emit event for Discord bridge
+        try:
+            self.data.discord_event_queue.put_nowait({
+                'type': 'position',
+                'msg': msg,
+                'node_id': id,
+            })
+        except asyncio.QueueFull:
+            pass  # Drop event if consumer is behind
+
         await self.data.save()
 
     async def handle_telemetry(self, msg):
@@ -545,6 +554,16 @@ class MQTT:
             if 'TC' in chat['text'] and 'BBS' in chat['text'] and 'Commands' in chat['text']:
                 node['tc2_bbs'] = True
             self.data.update_node(node['id'], node)
+
+        # Emit event for Discord bridge
+        try:
+            self.data.discord_event_queue.put_nowait({
+                'type': 'text',
+                'msg': msg,
+                'chat': chat,
+            })
+        except asyncio.QueueFull:
+            pass  # Drop event if consumer is behind
 
         await self.data.save()
 

@@ -34,6 +34,10 @@ class MemoryDataStore:
     self.traceroutes: list = []
     self.traceroutes_by_node: dict = {}
 
+    # Event queue for Discord bridge (MQTT -> Discord)
+    # Bounded to prevent unbounded memory growth if the consumer is slow/stopped.
+    self.discord_event_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
+
     # Initialize Postgres storage
     self.pg_storage = PostgresStorage(config)
 
@@ -61,7 +65,7 @@ class MemoryDataStore:
 
       # Skip common non-copyable runtime objects
       try:
-        if isinstance(v, (asyncio.Lock, asyncio.Event, asyncio.Task, logging.Logger)):
+        if isinstance(v, (asyncio.Lock, asyncio.Event, asyncio.Task, asyncio.Queue, logging.Logger)):
           setattr(result, k, v)
           continue
       except Exception as exc:

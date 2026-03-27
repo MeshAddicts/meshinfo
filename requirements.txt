@@ -10,3 +10,5 @@ cryptography
 protobuf
 uvicorn
 asyncpg
+staticmap
+Pillow

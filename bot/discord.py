@@ -5,6 +5,8 @@ from discord.ext import commands
 import discord
 from dotenv import load_dotenv
 from bot.cogs.main_commands import MainCommands
+from bot.cogs.admin_commands import AdminCommands
+from bot.cogs.mesh_bridge import MeshBridge
 from memory_data_store import MemoryDataStore
 
 logger = logging.getLogger(__name__)
@@ -42,6 +44,8 @@ class DiscordBot(commands.Bot):
     async def start_server(self):
         logger.info("Starting Discord Bot")
         await self.add_cog(MainCommands(self, self.config, self.data))
+        await self.add_cog(AdminCommands(self, self.config, self.data))
+        await self.add_cog(MeshBridge(self, self.config, self.data))
         await self.start(self.config['integrations']['discord']['token'])
         logger.info("Discord Bot Done!")
 

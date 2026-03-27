@@ -254,11 +254,50 @@ provider = "geocode.maps.co"
 [integrations.geocoding."geocode.maps.co"]
 api_key = "REPLACE_WITH_API_KEY"
 
-# Discord bot for mesh notifications
+# Discord bot for mesh notifications and live mesh bridge
 [integrations.discord]
 enabled = false
 token = "REPLACE_WITH_TOKEN"
 guild = "REPLACE_WITH_GUILD_ID"
+
+# Live mesh-to-Discord bridge
+# Forwards mesh text messages and position updates into Discord channels.
+[integrations.discord.bridge]
+enabled = false
+aggregate_seconds = 5  # seconds to wait for additional gateways before posting
+# alert_channel = "1234567890123456789"  # Channel for node online/offline alerts (linked nodes only)
+
+# Map Meshtastic channel hashes to Discord channel IDs for text messages.
+# Key = Meshtastic channel hash (from broker.channels.display), value = Discord channel ID.
+# Messages on unmapped channels are ignored.
+[integrations.discord.bridge.channels]
+# "8" = "1234567890123456789"    # LongFast -> #longfast
+# "31" = "1234567890123456790"   # MediumFast -> #mediumfast
+
+# Map Meshtastic channel hashes to Discord channel IDs for position updates.
+# Only nodes flagged as "trackers" via /addtracker will have positions forwarded.
+[integrations.discord.bridge.position_channels]
+# "8" = "1234567890123456791"    # LongFast positions -> #position-tracking
+
+# Static map thumbnails for position tracking embeds.
+# Renders map images server-side by fetching tiles and compositing them locally.
+# No external "static map API" — just tile fetching from OSM or Mapbox.
+# The clickable link always points to your MeshInfo map page.
+# If mapbox is configured with a valid token, it is preferred; otherwise falls back to OSM.
+[integrations.discord.bridge.maps]
+provider = "none"  # "none", "osm", "mapbox"
+                   # none    = no thumbnail, just a clickable link to your map
+                   # osm     = OpenStreetMap tiles rendered server-side (no token needed)
+                   # mapbox  = Mapbox tiles rendered server-side (requires access token)
+
+# Mapbox configuration (only used when provider = "mapbox")
+[integrations.discord.bridge.maps.mapbox]
+access_token = ""
+style = "mapbox/dark-v11"
+# style = "mapbox/streets-v12"
+# style = "mapbox/satellite-streets-v12"
+# style = "mapbox/outdoors-v12"
+# style = "mapbox/light-v11"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # UI Customization — Optional

@@ -1,93 +1,484 @@
 import datetime
+import logging
+from typing import Optional
 from zoneinfo import ZoneInfo
-from discord.ext import commands
+
 import discord
+from discord import app_commands
+from discord.ext import commands
+from meshtastic import mesh_pb2, config_pb2
 
 import utils
+from memory_data_store import MemoryDataStore
 
-class LookupFlags(commands.FlagConverter):
-    node: str = commands.flag(description='Node')
+logger = logging.getLogger(__name__)
+
 
 class MainCommands(commands.Cog):
     def __init__(self, bot, config, data):
         self.bot = bot
         self.config = config
-        self.data = data
+        self.data: MemoryDataStore = data
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print('Discord: Logged in')
+        logger.info('Discord: Logged in')
 
-    @commands.hybrid_command(name="lookup", description="Look up a node by ID (int or hex) or short name")
-    async def lookup_node(self, ctx, *, flags: LookupFlags):
-        print(f"Discord: /lookup: Looking up {flags.node}")
+    # ─── Shared autocomplete ─────────────────────────────────────────
+
+    async def _node_autocomplete(
+        self, interaction: discord.Interaction, current: str,
+    ) -> list[app_commands.Choice[str]]:
+        """Autocomplete for node fields — searches hex ID, shortname, longname."""
+        current = current.strip().lower().replace("!", "")
+        if not current:
+            return []
+
+        choices: list[app_commands.Choice[str]] = []
+        seen: set[str] = set()
+
+        # Search in-memory nodes first
+        for nid, node in self.data.nodes.items():
+            if len(choices) >= 25:
+                break
+            short = str(node.get("shortname", "")).lower()
+            long = str(node.get("longname", "")).lower()
+            if current in nid or current in short or current in long:
+                longname = node.get("longname", "")
+                shortname = node.get("shortname", "")
+                if longname and longname != "Unknown" and shortname and shortname != "UNK":
+                    label = f"{longname} [{shortname}] (!{nid})"
+                elif longname and longname != "Unknown":
+                    label = f"{longname} (!{nid})"
+                elif shortname and shortname != "UNK":
+                    label = f"{shortname} (!{nid})"
+                else:
+                    label = f"!{nid}"
+                label = label[:100]
+                if nid not in seen:
+                    choices.append(app_commands.Choice(name=label, value=nid))
+                    seen.add(nid)
+
+        # Supplement from DB
+        if len(choices) < 25 and self.data.pg_storage:
+            try:
+                results = await self.data.pg_storage.query_nodes_filtered(
+                    days_limit=None, shortname_filter=current,
+                )
+                if len(results) < 10:
+                    long_results = await self.data.pg_storage.query_nodes_filtered(
+                        days_limit=None, longname_filter=current,
+                    )
+                    results.update(long_results)
+
+                for nid, node in results.items():
+                    if len(choices) >= 25:
+                        break
+                    if nid in seen:
+                        continue
+                    longname = node.get("longname", "")
+                    shortname = node.get("shortname", "")
+                    if longname and longname != "Unknown" and shortname and shortname != "UNK":
+                        label = f"{longname} [{shortname}] (!{nid})"
+                    elif longname and longname != "Unknown":
+                        label = f"{longname} (!{nid})"
+                    elif shortname and shortname != "UNK":
+                        label = f"{shortname} (!{nid})"
+                    else:
+                        label = f"!{nid}"
+                    label = label[:100]
+                    choices.append(app_commands.Choice(name=label, value=nid))
+                    seen.add(nid)
+            except Exception:
+                pass
+
+        return choices
+
+    # ─── Node resolution helper ──────────────────────────────────────
+
+    async def _resolve_node(self, search: str) -> tuple[Optional[str], Optional[dict]]:
+        """Resolve user input to (hex_id, node_dict). Returns (None, None) if not found."""
+        search = search.strip().lower().replace("!", "")
+        if not search:
+            return None, None
+
+        node = None
+        id_hex = None
+
+        # Try parsing as integer node ID
         try:
-            id_int = int(flags.node, 10)
+            id_int = int(search, 10)
             id_hex = utils.convert_node_id_from_int_to_hex(id_int)
         except ValueError:
-            id_hex = flags.node
+            pass
 
-        if id_hex not in self.data.nodes:
-            for node_id, node in self.data.nodes.items():
-                if str(node['shortname']).lower() == flags.node.lower():
+        # Try parsing as hex node ID
+        if id_hex is None and all(c in '0123456789abcdef' for c in search) and len(search) <= 8:
+            id_hex = search.zfill(8)
+
+        # Check in-memory
+        if id_hex and id_hex in self.data.nodes:
+            node = self.data.nodes[id_hex]
+        else:
+            for node_id, n in self.data.nodes.items():
+                if (str(n.get('shortname', '')).lower() == search or
+                        str(n.get('longname', '')).lower() == search):
+                    node = n
                     id_hex = node_id
                     break
 
-        if id_hex not in self.data.nodes:
-            print(f"Discord: /lookup: Node {id_hex} not found.")
-            await ctx.send(f"Node {id_hex} not found.")
+        # Fall back to PostgreSQL
+        if node is None and self.data.pg_storage:
+            if id_hex:
+                node = await self.data.pg_storage.query_node_by_id(id_hex)
+            if node is None:
+                results = await self.data.pg_storage.query_nodes_filtered(
+                    days_limit=None, shortname_filter=search,
+                )
+                if not results:
+                    results = await self.data.pg_storage.query_nodes_filtered(
+                        days_limit=None, longname_filter=search,
+                    )
+                if results:
+                    id_hex, node = next(iter(results.items()))
+
+        return id_hex, node
+
+    # ─── Commands ────────────────────────────────────────────────────
+
+    @app_commands.command(name="lookup", description="Look up a node by name, hex ID, or integer ID")
+    @app_commands.describe(node="Node name, hex ID, or integer ID")
+    @app_commands.autocomplete(node=_node_autocomplete)
+    async def lookup_node(self, interaction: discord.Interaction, node: str):
+        logger.info("Discord: /lookup: Looking up %s", node)
+        id_hex, node_data = await self._resolve_node(node)
+
+        if node_data is None:
+            await interaction.response.send_message(f"Node `{node}` not found.", ephemeral=True)
             return
 
+        id_hex = node_data.get('id', id_hex) or id_hex
         id_int = utils.convert_node_id_from_hex_to_int(id_hex)
-        node = self.data.nodes[id_hex]
-        print(f"Discord: /lookup: Found {node['id']}")
+        shortname = node_data.get('shortname', 'UNK')
+        longname = node_data.get('longname', 'Unknown')
+        hardware_raw = node_data.get('hardware', None)
+        hardware = "Unknown"
+        if hardware_raw is not None:
+            try:
+                hw_int = int(hardware_raw)
+                hw_name = mesh_pb2.HardwareModel.Name(hw_int)
+                if hw_name == "PRIVATE_HW":
+                    hardware = "Private"
+                else:
+                    hardware = hw_name.replace("_", " ").title()
+            except (ValueError, TypeError):
+                hardware = str(hardware_raw)
+        active = node_data.get('active', False)
+        last_seen_raw = node_data.get('last_seen', None)
+        if isinstance(last_seen_raw, str):
+            try:
+                dt = datetime.datetime.fromisoformat(last_seen_raw)
+                tz = ZoneInfo(self.config['server']['timezone'])
+                last_seen = dt.astimezone(tz).strftime("%b %d, %Y %I:%M %p %Z")
+            except (ValueError, TypeError):
+                last_seen = last_seen_raw
+        elif isinstance(last_seen_raw, datetime.datetime):
+            tz = ZoneInfo(self.config['server']['timezone'])
+            last_seen = last_seen_raw.astimezone(tz).strftime("%b %d, %Y %I:%M %p %Z")
+        else:
+            last_seen = "Unknown"
+        role = node_data.get('role', 0)
 
-        embed = discord.Embed(
-            title=f"Node {node['shortname']}: {node['longname']}",
-            url=f"{self.config['server']['base_url'].strip('/')}/node_{node['id']}.html",
-            color=discord.Color.blue())
-        embed.set_thumbnail(url=f"https://api.dicebear.com/9.x/bottts-neutral/svg?seed={node['id']}")
-        embed.add_field(name="ID (hex)", value=id_hex, inline=True)
-        embed.add_field(name="ID (int)", value=id_int, inline=True)
-        embed.add_field(name="Shortname", value=node['shortname'], inline=False)
-        embed.add_field(name="Hardware", value=node['hardware'], inline=False)
-        embed.add_field(name="Last Seen", value=node['last_seen'], inline=False)
-        embed.add_field(name="Status", value=("Online" if node['active'] else "Offline"), inline=False)
-        await ctx.send(embed=embed)
+        logger.info("Discord: /lookup: Found %s (%s)", id_hex, longname)
 
-    @commands.hybrid_command(name="mesh", description="Information about the mesh")
-    async def mesh_info(self, ctx):
-        print(f"Discord: /mesh: Mesh info requested by {ctx.author}")
+        base_url = self.config['server']['base_url'].strip('/')
         embed = discord.Embed(
-            title=f"Information about {self.config['mesh']['name']}",
-            url=self.config['server']['base_url'].strip('/'),
+            title=f"{shortname}: {longname}",
+            url=f"{base_url}/nodes?node={id_hex}",
+            color=discord.Color.green() if active else discord.Color.greyple())
+        embed.set_thumbnail(url=f"https://api.dicebear.com/9.x/bottts-neutral/png?seed={id_hex}")
+        embed.add_field(name="ID (hex)", value=f"!{id_hex}", inline=True)
+        embed.add_field(name="ID (int)", value=str(id_int), inline=True)
+        embed.add_field(name="Status", value=("Online" if active else "Offline"), inline=True)
+        embed.add_field(name="Hardware", value=hardware, inline=True)
+        if role:
+            try:
+                role_name = config_pb2.Config.DeviceConfig.Role.Name(role).replace("_", " ").title()
+            except ValueError:
+                role_name = f"Role {role}"
+            embed.add_field(name="Role", value=role_name, inline=True)
+        embed.add_field(name="Last Seen", value=str(last_seen), inline=False)
+
+        position = node_data.get('position', {})
+        if position and position.get('latitude_i') and position.get('longitude_i'):
+            lat = position['latitude_i'] / 1e7
+            lon = position['longitude_i'] / 1e7
+            embed.add_field(name="Position", value=f"{lat:.5f}, {lon:.5f}", inline=True)
+            if position.get('altitude'):
+                embed.add_field(name="Altitude", value=f"{position['altitude']}m", inline=True)
+
+        telemetry = node_data.get('telemetry', {})
+        if telemetry:
+            telem_parts = []
+            if 'battery_level' in telemetry and telemetry['battery_level'] is not None:
+                telem_parts.append(f"Battery: {telemetry['battery_level']}%")
+            if 'voltage' in telemetry and telemetry['voltage'] is not None:
+                telem_parts.append(f"Voltage: {telemetry['voltage']:.2f}V")
+            if 'temperature' in telemetry and telemetry['temperature'] is not None:
+                telem_parts.append(f"Temp: {telemetry['temperature']:.1f}\u00b0C")
+            if telem_parts:
+                embed.add_field(name="Telemetry", value=" | ".join(telem_parts), inline=False)
+
+        elsewhere = self.config.get('mesh', {}).get('elsewhere_links', [])
+        if elsewhere:
+            link_parts = []
+            for link in elsewhere:
+                name = link.get('name', '')
+                url = link.get('url', '')
+                if name and url:
+                    url = url.replace('{node_id_hex}', id_hex)
+                    url = url.replace('{node_id_int}', str(id_int))
+                    link_parts.append(f"[{name}]({url})")
+            if link_parts:
+                embed.add_field(name="View Elsewhere", value=" | ".join(link_parts), inline=False)
+
+        embed.set_footer(text=f"Node: !{id_hex}")
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="mesh", description="Information about the mesh")
+    async def mesh_info(self, interaction: discord.Interaction):
+        logger.info("Discord: /mesh: Mesh info requested by %s", interaction.user)
+
+        stats = {}
+        if self.data.pg_storage:
+            stats = await self.data.pg_storage.query_stats()
+
+        total_nodes = stats.get("total_nodes", len(self.data.nodes))
+        active_nodes = stats.get("active_nodes", len([n for n in self.data.nodes.values() if n.get('active')]))
+
+        base_url = self.config['server']['base_url'].strip('/')
+        embed = discord.Embed(
+            title=f"{self.config['mesh']['name']}",
+            url=base_url,
             color=discord.Color.blue())
-        embed.add_field(name="Name", value=self.config['mesh']['name'], inline=False)
-        embed.add_field(name="Shortname", value=self.config['mesh']['shortname'], inline=False)
-        embed.add_field(name="Description", value=self.config['mesh']['description'], inline=False)
-        embed.add_field(name="Official Website", value=self.config['mesh']['url'], inline=False)
+        embed.add_field(name="Description", value=self.config['mesh']['description'] or "N/A", inline=False)
         location = f"{self.config['mesh']['metro']}, {self.config['mesh']['region']}, {self.config['mesh']['country']}"
-        embed.add_field(name="Location", value=location, inline=False)
-        embed.add_field(name="Timezone", value=self.config['server']['timezone'], inline=False)
-        embed.add_field(name="Known Nodes", value=len(self.data.nodes), inline=True)
-        embed.add_field(name="Online Nodes", value=len([n for n in self.data.nodes.values() if n['active']]), inline=True)
+        embed.add_field(name="Location", value=location, inline=True)
+        embed.add_field(name="Timezone", value=self.config['server']['timezone'], inline=True)
+        if self.config['mesh'].get('url'):
+            embed.add_field(name="Website", value=self.config['mesh']['url'], inline=False)
+        embed.add_field(name="Total Nodes", value=f"[{total_nodes}]({base_url}/nodes)", inline=True)
+        embed.add_field(name="Online Nodes", value=f"[{active_nodes}]({base_url}/nodes?status=online)", inline=True)
         uptime = datetime.datetime.now().astimezone(ZoneInfo(self.config['server']['timezone'])) - self.config['server']['start_time']
-        embed.add_field(name="Server Uptime", value=f"{uptime.days}d {uptime.seconds // 3600}h {uptime.seconds // 60}m {uptime.seconds % 60}s", inline=False)
-        embed.add_field(name="Messages Since Server Startup", value=len(self.data.messages), inline=True)
-        await ctx.send(embed=embed)
+        embed.add_field(name="Server Uptime", value=f"{uptime.days}d {uptime.seconds // 3600}h {(uptime.seconds % 3600) // 60}m {uptime.seconds % 60}s", inline=False)
+        links = [f"[Dashboard]({base_url})", f"[Nodes]({base_url}/nodes)", f"[Chat]({base_url}/chat)", f"[Logs]({base_url}/logs)"]
+        embed.add_field(name="Quick Links", value=" | ".join(links), inline=False)
+        await interaction.response.send_message(embed=embed)
 
-    @commands.hybrid_command(name="ping", description="Ping the bot")
-    async def ping(self, ctx):
-        print(f"Discord: /ping: Pinged by {ctx.author}")
-        await ctx.send(f'Pong! {round(self.bot.latency * 1000)}ms')
+    @app_commands.command(name="ping", description="Ping the bot")
+    async def ping(self, interaction: discord.Interaction):
+        await interaction.response.send_message(f'Pong! {round(self.bot.latency * 1000)}ms')
 
-    @commands.hybrid_command(name="uptime", description="Uptime of MeshInfo instance")
-    async def uptime(self, ctx):
-        print(f"Discord: /uptime: Uptime requested by {ctx.author}")
+    @app_commands.command(name="uptime", description="Uptime of MeshInfo instance")
+    async def uptime(self, interaction: discord.Interaction):
         now = datetime.datetime.now().astimezone(ZoneInfo(self.config['server']['timezone']))
-        print(now)
-        print(self.config['server']['start_time'])
         uptime = now - self.config['server']['start_time']
-        print(uptime)
-        print(f"{uptime.days}d {uptime.seconds // 3600}h {uptime.seconds // 60}m {uptime.seconds % 60}s")
-        await ctx.send(f'MeshInfo uptime: {uptime.days}d {uptime.seconds // 3600}h {uptime.seconds // 60}m {uptime.seconds % 60}s')
+        await interaction.response.send_message(f'MeshInfo uptime: {uptime.days}d {uptime.seconds // 3600}h {(uptime.seconds % 3600) // 60}m {uptime.seconds % 60}s')
+
+    @app_commands.command(name="topnodes", description="Mesh leaderboard and achievements")
+    @app_commands.describe(timeframe="Time period: 24h (default) or 7d")
+    async def topnodes(self, interaction: discord.Interaction, timeframe: str = "24h"):
+        if timeframe in ("7d", "7", "week"):
+            hours = 168
+            label = "7 Days"
+        else:
+            hours = 24
+            label = "24 Hours"
+
+        if not self.data.pg_storage:
+            await interaction.response.send_message("Database not available.", ephemeral=True)
+            return
+
+        stats = await self.data.pg_storage.query_top_nodes(hours=hours, limit=5)
+        if not stats:
+            await interaction.response.send_message("No leaderboard data available yet.", ephemeral=True)
+            return
+
+        base_url = self.config.get('server', {}).get('base_url', '').rstrip('/')
+
+        async def resolve_name(node_id: str) -> str:
+            n = self.data.nodes.get(node_id)
+            if not n and self.data.pg_storage:
+                n = await self.data.pg_storage.query_node_by_id(node_id)
+            if n:
+                name = n.get("longname") or n.get("shortname")
+                if name and name not in ("Unknown", "UNK"):
+                    if base_url:
+                        return f"[{name}]({base_url}/nodes?node={node_id})"
+                    return name
+            return f"!{node_id}"
+
+        embed = discord.Embed(
+            title=f"Mesh Leaderboard \u2014 {label}",
+            color=discord.Color.gold(),
+            timestamp=discord.utils.utcnow(),
+        )
+
+        medals = ["\U0001f947", "\U0001f948", "\U0001f949", "4.", "5."]
+
+        chatterbox = stats.get("chatterbox", [])
+        if chatterbox:
+            lines = []
+            for i, row in enumerate(chatterbox):
+                name = await resolve_name(row["node_id"])
+                lines.append(f"{medals[i]} {name} \u2014 **{row['count']}** msgs")
+            embed.add_field(name="\U0001f4ac Chatterbox", value="\n".join(lines), inline=False)
+
+        iron_man = stats.get("iron_man", [])
+        if iron_man:
+            lines = []
+            for i, row in enumerate(iron_man):
+                name = await resolve_name(row["node_id"])
+                secs = float(row["uptime_seconds"])
+                days = int(secs // 86400)
+                lines.append(f"{medals[i]} {name} \u2014 **{days}** days")
+            embed.add_field(name="\U0001f9be Iron Man", value="\n".join(lines), inline=False)
+
+        # Here I Am — disabled until position history table is added
+        # here_i_am = stats.get("here_i_am", [])
+        # if here_i_am:
+        #     lines = []
+        #     for i, row in enumerate(here_i_am):
+        #         name = await resolve_name(row["node_id"])
+        #         lines.append(f"{medals[i]} {name} \u2014 **{row['count']}** updates")
+        #     embed.add_field(name="\U0001f4cd Here I Am", value="\n".join(lines), inline=False)
+
+        loudest = stats.get("loudest_signal", [])
+        if loudest:
+            lines = []
+            for i, row in enumerate(loudest):
+                name = await resolve_name(row["node_id"])
+                lines.append(f"{medals[i]} {name} \u2014 **{row['avg_snr']}** dB avg SNR")
+            embed.add_field(name="\U0001f4e1 Loudest Signal", value="\n".join(lines), inline=False)
+
+        gateway_mvp = stats.get("gateway_mvp", [])
+        if gateway_mvp:
+            lines = []
+            for i, row in enumerate(gateway_mvp):
+                name = await resolve_name(row["node_id"])
+                lines.append(f"{medals[i]} {name} \u2014 **{row['count']}** relayed")
+            embed.add_field(name="\U0001f310 Gateway MVP", value="\n".join(lines), inline=False)
+
+        if not any(stats.values()):
+            embed.description = "Not enough data yet \u2014 check back later!"
+
+        embed.set_footer(text=f"Timeframe: {label} | Use /topnodes 7d for weekly")
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="meshinfo", description="Show all available bot commands")
+    async def meshinfo_help(self, interaction: discord.Interaction):
+        base_url = self.config.get('server', {}).get('base_url', '').rstrip('/')
+        embed = discord.Embed(
+            title="MeshInfo Bot Commands",
+            url=base_url or None,
+            color=discord.Color.blue(),
+        )
+        embed.add_field(
+            name="General",
+            value=(
+                "`/lookup` \u2014 Look up a node by name, hex ID, or integer ID\n"
+                "`/mesh` \u2014 View mesh network info and node counts\n"
+                "`/whereis` \u2014 Show a node's last known position on a map\n"
+                "`/topnodes` \u2014 Mesh leaderboard and achievements\n"
+                "`/ping` \u2014 Check bot latency\n"
+                "`/uptime` \u2014 MeshInfo server uptime\n"
+                "`/meshinfo` \u2014 This help message"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Node Linking & Watching",
+            value=(
+                "*Only link nodes you own. Each node can have one owner.*\n"
+                "`/linknode` \u2014 Claim a node as yours\n"
+                "`/unlinknode` \u2014 Remove your claim\n"
+                "`/mylinkednodes` \u2014 See your linked nodes\n"
+                "*Watch any node for alerts \u2014 no ownership required.*\n"
+                "`/watchnode` \u2014 Get alerts when a node goes online/offline\n"
+                "`/unwatchnode` \u2014 Stop watching a node\n"
+                "`/mywatchednodes` \u2014 See your watched nodes"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Moderator",
+            value=(
+                "`/forceunlink` \u2014 Force unlink a node from any user\n"
+                "`/addtracker` / `/removetracker` \u2014 Manage position tracking\n"
+                "`/addballoon` / `/removeballoon` \u2014 Manage balloon tracking\n"
+                "`/bannode` / `/unbannode` \u2014 Manage bridge bans\n"
+                "`/listtrackers` \u2014 View all tracked nodes\n"
+                "`/listbans` \u2014 View all banned nodes"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="Signal Quality Colors",
+            value=(
+                "\U0001f7e2 **> 10 dB** Excellent\n"
+                "\U0001f535 **5\u201310 dB** Good\n"
+                "\U0001f7e1 **0\u20135 dB** Fair\n"
+                "\U0001f7e0 **-5\u20130 dB** Weak\n"
+                "\U0001f534 **< -5 dB** Poor"
+            ),
+            inline=False,
+        )
+        embed.set_footer(text="All node commands support autocomplete \u2014 start typing a name!")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="whereis", description="Show a node's last known position")
+    @app_commands.describe(node="Node name, hex ID, or integer ID")
+    @app_commands.autocomplete(node=_node_autocomplete)
+    async def whereis(self, interaction: discord.Interaction, node: str):
+        id_hex, node_data = await self._resolve_node(node)
+
+        if node_data is None:
+            await interaction.response.send_message(f"Node `{node}` not found.", ephemeral=True)
+            return
+
+        id_hex = node_data.get('id', id_hex) or id_hex
+        position = node_data.get('position', {})
+        if not position or not position.get('latitude_i') or not position.get('longitude_i'):
+            shortname = node_data.get('shortname', id_hex)
+            await interaction.response.send_message(f"No position data available for **{shortname}**.", ephemeral=True)
+            return
+
+        lat = position['latitude_i'] / 1e7
+        lon = position['longitude_i'] / 1e7
+        alt = position.get('altitude')
+        shortname = node_data.get('shortname', 'UNK')
+        longname = node_data.get('longname', 'Unknown')
+        base_url = self.config.get('server', {}).get('base_url', '').rstrip('/')
+        map_link = f"{base_url}/map?node={id_hex}" if base_url else None
+
+        embed = discord.Embed(
+            title=f"{longname} [{shortname}]",
+            url=map_link,
+            color=discord.Color.blue(),
+        )
+        avatar_url = f"https://api.dicebear.com/9.x/bottts-neutral/png?seed={id_hex}"
+        embed.set_author(name="Last Known Position", icon_url=avatar_url)
+
+        coord_text = f"[{lat:.6f}, {lon:.6f}]({map_link})" if map_link else f"{lat:.6f}, {lon:.6f}"
+        embed.add_field(name="Position", value=coord_text, inline=True)
+        if alt is not None:
+            embed.add_field(name="Altitude", value=f"{alt}m", inline=True)
+
+        maps_cfg = self.config.get("integrations", {}).get("discord", {}).get("bridge", {}).get("maps", {})
+        provider = maps_cfg.get("provider", "none")
+        if provider != "none" and base_url:
+            thumbnail_url = f"{base_url}/v1/static-map?lat={lat:.6f}&lon={lon:.6f}&zoom=12"
+            embed.set_image(url=thumbnail_url)
+
+        embed.set_footer(text=f"Node: !{id_hex}")
+        await interaction.response.send_message(embed=embed)
