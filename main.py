@@ -24,6 +24,26 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class _DowngradeSuccessfulGetRequests(logging.Filter):
+    """Downgrade successful (2xx) GET request records from INFO to DEBUG.
+
+    Uvicorn access log records have args=(client, method, path, http_version, status_code).
+    Non-GET requests and error responses remain at INFO so they stay visible.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if (
+            isinstance(record.args, tuple)
+            and len(record.args) >= 5
+            and record.args[1] == "GET"
+            and isinstance(record.args[4], int)
+            and 200 <= record.args[4] < 300
+        ):
+            record.levelno = logging.DEBUG
+            record.levelname = "DEBUG"
+        return True
+
+
 def init_runtime() -> Tuple[Config, MemoryDataStore]:
     """Initialize env/config/datastore without making any network connections."""
     load_dotenv()
@@ -115,6 +135,7 @@ async def main() -> None:
         )
         effective_log_level = logging.INFO
     logging.getLogger().setLevel(effective_log_level)
+    logging.getLogger("uvicorn.access").addFilter(_DowngradeSuccessfulGetRequests())
     logger.info("Log level set to: %s", logging.getLevelName(effective_log_level))
 
     # Timezone
