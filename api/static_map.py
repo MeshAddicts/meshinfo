@@ -33,7 +33,7 @@ OSM_TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 
 # Mapbox raster tile URL template (style and token injected at runtime)
 MAPBOX_TILE_URL = (
-    "https://api.mapbox.com/styles/v1/{style}/tiles/256/{{z}}/{{x}}/{{y}}@2x"
+    "https://api.mapbox.com/styles/v1/{style}/tiles/256/{{z}}/{{x}}/{{y}}"
     "?access_token={token}"
 )
 
