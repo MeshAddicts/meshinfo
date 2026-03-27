@@ -302,28 +302,35 @@ class AdminCommands(commands.Cog):
 
         # Try as shortname/longname in memory
         search_lower = raw.lower()
+        found_nid = None
         for node_id, node in self.data.nodes.items():
             if (str(node.get("shortname", "")).lower() == search_lower or
                     str(node.get("longname", "")).lower() == search_lower):
-                return node_id, self._make_display_name(node)
+                found_nid = node_id
+                break
 
         # Try as shortname/longname in PostgreSQL
-        if self.data.pg_storage:
+        if found_nid is None and self.data.pg_storage:
             results = await self.data.pg_storage.query_nodes_filtered(
                 days_limit=None, shortname_filter=search_lower,
             )
+            if not results:
+                results = await self.data.pg_storage.query_nodes_filtered(
+                    days_limit=None, longname_filter=search_lower,
+                )
             if results:
-                nid, node = next(iter(results.items()))
-                name = node.get("longname", node.get("shortname", ""))
-                return nid, name if name not in ("Unknown", "UNK", "") else None
+                found_nid = next(iter(results.keys()))
 
-            results = await self.data.pg_storage.query_nodes_filtered(
-                days_limit=None, longname_filter=search_lower,
-            )
-            if results:
-                nid, node = next(iter(results.items()))
-                name = node.get("longname", node.get("shortname", ""))
-                return nid, name if name not in ("Unknown", "UNK", "") else None
+        if found_nid:
+            # Get best display name (memory then DB)
+            node = self.data.nodes.get(found_nid)
+            name = self._make_display_name(node)
+            if self.data.pg_storage and (not name or "[" not in (name or "")):
+                db_node = await self.data.pg_storage.query_node_by_id(found_nid)
+                db_name = self._make_display_name(db_node)
+                if db_name and (not name or len(db_name) > len(name)):
+                    name = db_name
+            return found_nid, name
 
         return None, None
 
