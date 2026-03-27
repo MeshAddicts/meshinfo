@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import logging
 from typing import Optional
@@ -59,15 +60,21 @@ class MainCommands(commands.Cog):
                     choices.append(app_commands.Choice(name=label, value=nid))
                     seen.add(nid)
 
-        # Supplement from DB
+        # Supplement from DB (with timeout to stay within Discord's 3s limit)
         if len(choices) < 25 and self.data.pg_storage:
             try:
-                results = await self.data.pg_storage.query_nodes_filtered(
-                    days_limit=None, shortname_filter=current,
+                results = await asyncio.wait_for(
+                    self.data.pg_storage.query_nodes_filtered(
+                        days_limit=None, shortname_filter=current,
+                    ),
+                    timeout=1.5,
                 )
                 if len(results) < 10:
-                    long_results = await self.data.pg_storage.query_nodes_filtered(
-                        days_limit=None, longname_filter=current,
+                    long_results = await asyncio.wait_for(
+                        self.data.pg_storage.query_nodes_filtered(
+                            days_limit=None, longname_filter=current,
+                        ),
+                        timeout=1.0,
                     )
                     results.update(long_results)
 
