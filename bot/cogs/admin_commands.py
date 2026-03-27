@@ -277,9 +277,11 @@ class AdminCommands(commands.Cog):
                 # Look up best display name (memory then DB)
                 node = self.data.nodes.get(nid)
                 name = self._make_display_name(node)
-                if not name and self.data.pg_storage:
+                if self.data.pg_storage and (not name or "[" not in (name or "")):
                     db_node = await self.data.pg_storage.query_node_by_id(nid)
-                    name = self._make_display_name(db_node)
+                    db_name = self._make_display_name(db_node)
+                    if db_name and (not name or len(db_name) > len(name)):
+                        name = db_name
                 return nid, name
             except (ValueError, TypeError):
                 pass
@@ -287,12 +289,15 @@ class AdminCommands(commands.Cog):
         # Try as hex ID (contains a-f, or has ! prefix)
         nid = _normalize_node_id(raw)
         if nid:
-            # Try in-memory, then DB — pick the best display name
+            # Try in-memory, then DB — pick the most complete display name
             node = self.data.nodes.get(nid)
             name = self._make_display_name(node)
-            if not name and self.data.pg_storage:
+            # If name is incomplete (missing shortname), try DB for a better version
+            if self.data.pg_storage and (not name or "[" not in (name or "")):
                 db_node = await self.data.pg_storage.query_node_by_id(nid)
-                name = self._make_display_name(db_node)
+                db_name = self._make_display_name(db_node)
+                if db_name and (not name or len(db_name) > len(name)):
+                    name = db_name
             return nid, name
 
         # Try as shortname/longname in memory
