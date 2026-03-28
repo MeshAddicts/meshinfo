@@ -71,6 +71,10 @@ def _node_linked_name(node: Optional[dict], node_id: str, base_url: str) -> str:
     name = _node_display_name(node, node_id)
     url = _node_url(base_url, node_id)
     if url:
+        # If longname is a URL, use shortname as link text instead
+        if name.startswith("http"):
+            short = _node_short_name(node, node_id)
+            return f"[{short}]({url})"
         return f"[{name}]({url})"
     return name
 

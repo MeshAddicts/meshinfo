@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS nodes (
 
 CREATE INDEX IF NOT EXISTS idx_nodes_active ON nodes(active);
 CREATE INDEX IF NOT EXISTS idx_nodes_last_seen ON nodes(last_seen);
+CREATE INDEX IF NOT EXISTS idx_nodes_shortname_lower ON nodes(LOWER(shortname));
+CREATE INDEX IF NOT EXISTS idx_nodes_longname_lower ON nodes(LOWER(longname));
 
 -- Node positions table - stores ONLY the most recent position per node (latest-only)
 CREATE TABLE IF NOT EXISTS node_positions (
@@ -192,6 +194,7 @@ CREATE TABLE IF NOT EXISTS mqtt_messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_mqtt_messages_created_at ON mqtt_messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mqtt_messages_timestamp ON mqtt_messages(timestamp DESC);
 
 -- Neighbor snapshot history table (currently unused, for time-lapse update later on)
 CREATE TABLE IF NOT EXISTS node_neighborinfo_history (

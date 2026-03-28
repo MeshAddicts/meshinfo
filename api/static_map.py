@@ -96,7 +96,7 @@ def _render_map(tile_url: str, lat: float, lon: float, zoom: int, width: int, he
             url_template=tile_url,
             headers={"User-Agent": "MeshInfo/1.0"},
         )
-        marker = CircleMarker((lon, lat), color="red", width=8)
+        marker = CircleMarker((lon, lat), color="#45B3BA", width=8)
         m.add_marker(marker)
         image = m.render(zoom=zoom)
         buf = BytesIO()
