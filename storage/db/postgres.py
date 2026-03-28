@@ -921,6 +921,55 @@ class PostgresStorage:
             if self.raise_on_write_error:
                 raise
 
+    async def query_mqtt_messages(self, limit: int = 1000, search: str | None = None) -> list:
+        """Query mqtt_messages from PostgreSQL, returning parsed message dicts.
+
+        Args:
+            limit: Max messages to return.
+            search: Optional search term to filter by topic or payload content.
+        """
+        if not self._ready("query_mqtt_messages"):
+            return []
+        try:
+            async with self.pool.acquire() as conn:
+                if search:
+                    rows = await conn.fetch(
+                        """SELECT topic, payload, qos, retain, timestamp, created_at
+                           FROM mqtt_messages
+                           WHERE topic ILIKE '%' || $1 || '%'
+                              OR payload ILIKE '%' || $1 || '%'
+                           ORDER BY created_at DESC LIMIT $2""",
+                        search, limit,
+                    )
+                else:
+                    rows = await conn.fetch(
+                        """SELECT topic, payload, qos, retain, timestamp, created_at
+                           FROM mqtt_messages
+                           ORDER BY created_at DESC LIMIT $1""",
+                        limit,
+                    )
+
+            results = []
+            for row in rows:
+                payload_text = row["payload"]
+                if payload_text:
+                    try:
+                        msg = json.loads(payload_text)
+                    except (json.JSONDecodeError, TypeError):
+                        msg = {"raw": payload_text}
+                else:
+                    msg = {}
+                # Ensure top-level fields are present
+                if "topic" not in msg:
+                    msg["topic"] = row["topic"]
+                if "timestamp" not in msg:
+                    msg["timestamp"] = row["timestamp"]
+                results.append(msg)
+            return results
+        except Exception as e:
+            logger.error("Failed to query mqtt_messages: %s", e)
+            return []
+
     # ============================================================================
     # READ OPERATIONS - Load data from PostgreSQL matching JSON structure
     # ============================================================================

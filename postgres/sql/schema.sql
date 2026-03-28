@@ -194,6 +194,7 @@ CREATE TABLE IF NOT EXISTS mqtt_messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_mqtt_messages_created_at ON mqtt_messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mqtt_messages_timestamp ON mqtt_messages(timestamp DESC);
 
 -- Neighbor snapshot history table (currently unused, for time-lapse update later on)
 CREATE TABLE IF NOT EXISTS node_neighborinfo_history (

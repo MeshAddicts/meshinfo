@@ -277,12 +277,23 @@ class API:
 
         @app.get("/v1/messages")
         async def messages(request: Request) -> JSONResponse:
-            # Messages and MQTT messages are not stored in Postgres, always use memory
+            search = request.query_params.get("q")
+            if self.read_from_postgres:
+                limit = int(request.query_params.get("limit", 1000))
+                limit = max(1, min(limit, 5000))
+                results = await self.data.pg_storage.query_mqtt_messages(
+                    limit=limit, search=search,
+                )
+                return jsonable_encoder(results)
             return jsonable_encoder(self.data.messages[:1000])
 
         @app.get("/v1/mqtt_messages")
         async def mqtt_messages(request: Request) -> JSONResponse:
-            # Messages and MQTT messages are not stored in Postgres, always use memory
+            if self.read_from_postgres:
+                limit = int(request.query_params.get("limit", 1000))
+                limit = max(1, min(limit, 5000))
+                results = await self.data.pg_storage.query_mqtt_messages(limit=limit)
+                return jsonable_encoder(results)
             return jsonable_encoder(self.data.mqtt_messages[:1000])
 
         @app.get("/v1/stats")
