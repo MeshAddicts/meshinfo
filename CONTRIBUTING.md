@@ -1,3 +1,141 @@
-# Contributing Guidelines
+# Contributing to MeshInfo
 
-TODO: Someone needs to make this.
+Thanks for your interest in contributing! MeshInfo is open source under the [GPL-3.0 license](LICENSE).
+
+## Getting Started
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
+- Python 3.12.4+ (for backend development without Docker)
+- Node.js 20.19+ and Yarn 4 (for frontend development)
+- A running PostgreSQL 16 instance (Docker Compose provides one)
+
+### Development Setup
+
+1. **Clone the repository**
+
+   ```sh
+   git clone https://github.com/MeshAddicts/meshinfo.git
+   cd meshinfo
+   ```
+
+2. **Copy configuration files**
+
+   ```sh
+   cp config.toml.sample config.toml
+   cp frontend/.env.sample frontend/.env
+   cp Caddyfile.sample Caddyfile
+   ```
+
+3. **Start the full stack in development mode**
+
+   ```sh
+   docker compose -f docker-compose-dev.yml up --build
+   ```
+
+   This starts PostgreSQL, the backend, and the frontend with hot-reload enabled.
+
+### Running Backend and Frontend Separately
+
+If you prefer to run components outside Docker:
+
+**Backend:**
+
+```sh
+pip install -r requirements.txt
+# Set storage.postgres.host = "localhost" in config.toml
+python main.py
+```
+
+**Frontend:**
+
+```sh
+cd frontend
+yarn install
+yarn dev
+```
+
+The frontend dev server proxies API requests to `http://localhost:9000` by default (configurable in `frontend/.env`).
+
+## Project Structure
+
+```
+meshinfo/
+├── api/                   # FastAPI REST endpoints
+│   ├── api.py             # Main API application
+│   └── static_map.py      # Static map image generation
+├── bot/                   # Discord bot integration
+├── frontend/              # React / TypeScript SPA
+│   ├── src/
+│   │   ├── pages/         # Page components (Chat, Map, Nodes, Graph, etc.)
+│   │   ├── components/    # Reusable UI components
+│   │   ├── slices/        # Redux state management
+│   │   ├── maps/          # Map layers and geocoding
+│   │   ├── hooks/         # Custom React hooks
+│   │   ├── utils/         # Helper utilities
+│   │   └── types/         # TypeScript type definitions
+│   ├── package.json
+│   └── vite.config.ts
+├── models/                # Data models
+├── postgres/              # Database schema definitions
+├── scripts/               # Build and migration scripts
+├── config.py              # Configuration loading and validation
+├── main.py                # Application entry point
+├── mqtt.py                # MQTT broker connection and message handling
+├── memory_data_store.py   # In-memory data store with PostgreSQL writes
+├── Dockerfile             # Backend container image
+├── Dockerfile.spa         # Frontend container image
+├── Dockerfile.caddy       # Caddy reverse proxy image
+├── docker-compose.yml     # Production stack
+└── docker-compose-dev.yml # Development stack
+```
+
+## Making Changes
+
+### Branching
+
+- Create feature branches from `develop`
+- Use descriptive branch names: `feature/multi-broker`, `fix/chat-scroll`, `docs/update-readme`
+
+### Backend
+
+- The backend is a Python application using **FastAPI** with **uvicorn**
+- MQTT message processing is in [mqtt.py](mqtt.py)
+- API endpoints are in [api/api.py](api/api.py)
+- Configuration is loaded and validated in [config.py](config.py)
+- PostgreSQL is the only supported storage backend (see [POSTGRES.md](POSTGRES.md))
+
+### Frontend
+
+- Built with **React 19**, **TypeScript**, **Vite**, and **Tailwind CSS**
+- State management uses **Redux Toolkit**
+- Maps support both **OpenLayers** (OSM) and **Mapbox GL**
+- Run `yarn dev` for hot-reload development
+- Run `yarn build` to create a production build
+- Run `yarn test` to run the test suite
+
+### Code Style
+
+- **Python**: Follow existing conventions in the codebase. Use type hints where practical.
+- **TypeScript/React**: ESLint and Prettier are configured in the frontend. Run `yarn lint` to check.
+
+## Pull Requests
+
+1. Make sure your changes work locally with `docker compose -f docker-compose-dev.yml up --build`
+2. Keep PRs focused -- one feature or fix per PR
+3. Write a clear description of what the PR does and why
+4. Reference any related GitHub issues
+
+## Reporting Issues
+
+Open an issue on [GitHub](https://github.com/MeshAddicts/meshinfo/issues) with:
+
+- What you expected to happen
+- What actually happened
+- Steps to reproduce
+- Your deployment method (Docker Compose, bare metal, etc.)
+
+## Community
+
+Join us on [#meshinfo on the SacValleyMesh Discord](https://discord.gg/tj6dADagDJ) for questions and discussion.
