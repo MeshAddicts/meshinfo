@@ -20,6 +20,21 @@ EMBED_TOTAL_LIMIT = 6000
 EMBED_DESC_LIMIT = 4096
 EMBED_FIELD_VALUE_LIMIT = 1024
 
+
+def _safe_truncate(text: str, limit: int = EMBED_FIELD_VALUE_LIMIT) -> str:
+    """Truncate text at the last complete line within the limit.
+
+    Avoids cutting markdown links in half which leaves broken URLs visible.
+    """
+    if len(text) <= limit:
+        return text
+    # Find the last newline within the limit
+    truncated = text[: limit - 3]
+    last_newline = truncated.rfind("\n")
+    if last_newline > 0:
+        return truncated[:last_newline] + "\n..."
+    return truncated + "..."
+
 def _map_thumbnail_url(lat: float, lon: float, base_url: str, maps_cfg: dict) -> str | None:
     """Build a self-hosted static map thumbnail URL.
 
@@ -198,14 +213,12 @@ def build_text_embed(
     if gateway_entries and len(gateway_entries) > 0:
         gw_text = _format_gateway_list(gateway_entries, nodes, base_url)
         if gw_text:
-            if len(gw_text) > EMBED_FIELD_VALUE_LIMIT:
-                gw_text = gw_text[: EMBED_FIELD_VALUE_LIMIT - 3] + "..."
+            gw_text = _safe_truncate(gw_text)
             embed.add_field(name="Gateways", value=gw_text, inline=False)
     else:
         gw_info = _format_gateway_info(msg, nodes, base_url)
         if gw_info:
-            if len(gw_info) > EMBED_FIELD_VALUE_LIMIT:
-                gw_info = gw_info[: EMBED_FIELD_VALUE_LIMIT - 3] + "..."
+            gw_info = _safe_truncate(gw_info)
             embed.add_field(name="Reception", value=gw_info, inline=False)
 
     # Owner mention
@@ -274,14 +287,12 @@ def build_position_embed(
     if gateway_entries and len(gateway_entries) > 0:
         gw_text = _format_gateway_list(gateway_entries, nodes, base_url)
         if gw_text:
-            if len(gw_text) > EMBED_FIELD_VALUE_LIMIT:
-                gw_text = gw_text[: EMBED_FIELD_VALUE_LIMIT - 3] + "..."
+            gw_text = _safe_truncate(gw_text)
             embed.add_field(name="Gateways", value=gw_text, inline=False)
     else:
         gw_info = _format_gateway_info(msg, nodes, base_url)
         if gw_info:
-            if len(gw_info) > EMBED_FIELD_VALUE_LIMIT:
-                gw_info = gw_info[: EMBED_FIELD_VALUE_LIMIT - 3] + "..."
+            gw_info = _safe_truncate(gw_info)
             embed.add_field(name="Reception", value=gw_info, inline=False)
 
     if owner_id:
