@@ -1,200 +1,182 @@
 # MeshInfo
 
-Realtime web UI to run against a Meshtastic regional or private mesh network.
+A real-time web application for visualizing and monitoring Meshtastic mesh networks.
 
-[![Docker Image](https://github.com/MeshAddicts/meshinfo/actions/workflows/docker.yml/badge.svg)](https://github.com/MeshAddicts/meshinfo/actions/workflows/docker.yml) ![GitHub Release](https://img.shields.io/github/v/release/meshaddicts/meshinfo) ![GitHub commit activity](https://img.shields.io/github/commit-activity/t/meshaddicts/meshinfo)
+[![Docker Image](https://github.com/MeshAddicts/meshinfo/actions/workflows/docker.yml/badge.svg)](https://github.com/MeshAddicts/meshinfo/actions/workflows/docker.yml) ![GitHub Release](https://img.shields.io/github/v/release/meshaddicts/meshinfo) ![GitHub commit activity](https://img.shields.io/github/commit-activity/t/meshaddicts/meshinfo) [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 ## Overview
 
-MeshInfo is written in Python and connects to an MQTT server that is receiving Meshtastic messages for the purpose of visualizing and inspecting traffic. It uses PostgreSQL to persist content such as node info and telemetry.
+MeshInfo connects to one or more MQTT brokers receiving Meshtastic traffic and provides a modern web UI for exploring your mesh. It decodes protobuf and JSON messages in real time, stores everything in PostgreSQL, and serves it through a FastAPI backend and React frontend.
 
-To make deployment to run an instance for your mesh easy, Docker support is included. We recommend using Docker Compose with a personalized version of the `docker-compose.yml` file to most easily deploy it, but any seasoned Docker user can also use the Docker image alone.
-
-If you use MeshInfo and have a publicly accessible instance, we'd like to know! Drop a note to kevin@airframes.io with details and we'll link it below.
-
-See an example instance running on the [Central Valley Mesh](https://meshinfo.cvme.sh).
-
-If you are running a high elevation node, preferrably a `Router` or `Repeater` node, you might be interested in getting on the notification list for a [cavity filter](https://shop.airframes.io/products/lora-915mhz-filter) that Kevin and Trevor are having made.
-
-If you're interested in aeronautical (ADS-B/ACARS/VDL/HFDL/SATCOM) or ship tracking (AIS), please take a look at sister project [Airframes](https://airframes.io) / [Airframes Github](https://github.com/airframesio).
-
-## Screenshots
-
-[<img src="meshinfo1.png" alt="MeshInfo Screenshot 1" width="200" />](meshinfo1.png)
-[<img src="meshinfo2.png" alt="MeshInfo Screenshot 2" width="200" />](meshinfo2.png)
-[<img src="meshinfo3.png" alt="MeshInfo Screenshot 3" width="200" />](meshinfo3.png)
-[<img src="meshinfo4.png" alt="MeshInfo Screenshot 4" width="200" />](meshinfo4.png)
-[<img src="meshinfo5.png" alt="MeshInfo Screenshot 5" width="260" />](meshinfo5.png)
-
-## Supported Meshtastic Message Types
-
-- neighborinfo
-- nodeinfo
-- position
-- telemetry
-- text
-- traceroute
+See a live instance at [Central Valley Mesh](https://meshinfo.cvme.sh).
 
 ## Features
 
-### Current
+- **Interactive Map** -- Node positions on OpenStreetMap or Mapbox with hardware icons
+- **Chat** -- View and search mesh text messages across channels, with CSV/JSON export
+- **Node Explorer** -- Browse all nodes with filtering by status, hardware, role, and more
+- **Network Graph** -- Visualize mesh topology with adjacency heatmaps and arc diagrams
+- **Neighbor View** -- Inspect neighbor relationships and signal quality (SNR)
+- **Telemetry** -- Device metrics, environment sensors, and power data per node
+- **Traceroutes** -- Hop-by-hop path visualization between nodes
+- **MQTT Log** -- Live stream of raw mesh traffic for debugging
+- **Discord Integration** -- Bridge mesh messages and position updates to Discord channels
+- **Node Enrichment** -- Augment node data from the MeshInfo network discovery service
+- **Reverse Geocoding** -- Resolve node coordinates to human-readable locations
+- **Multi-topic MQTT** -- Subscribe to multiple MQTT topics with tag-based filtering in the UI
+- **Channel-aware Chat** -- Firmware 2.5+ channel hash support with configurable channel views
 
-- Chat
-- Map
-- Nodes
-- Node Neighbors
-- Mesh Messages
-- MQTT Messages
-- Telemetry
-- Traceroutes
+## Architecture
 
-### Upcoming
+```
+MQTT Broker(s)  -->  MeshInfo Backend (Python / FastAPI / uvicorn)
+                          |
+                     PostgreSQL 16
+                          |
+                     MeshInfo Frontend (React 19 / TypeScript / Vite)
+                          |
+                     Caddy (reverse proxy, automatic HTTPS)
+```
 
-- Statistics
-- Overview of Routes
+All components run as Docker containers orchestrated by Docker Compose.
 
-## Chat
+## Supported Message Types
 
-If you're using this and have questions, or perhaps you want to join in on the dev effort and want to interact collaboratively, come chat with us on [#meshinfo on the SacValleyMesh Discord](https://discord.gg/tj6dADagDJ).
+- `neighborinfo` -- neighbor lists and SNR data
+- `nodeinfo` -- hardware, firmware, and role information
+- `position` -- GPS coordinates and altitude
+- `telemetry` -- device, environment, and power metrics
+- `text` -- chat messages
+- `traceroute` -- hop-by-hop route data
 
-## Running
+## Quick Start
 
-### Docker Compose (preferred for 24/7 servers)
+### Prerequisites
 
-#### Setup
+- [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
+- An MQTT broker receiving Meshtastic traffic (or use a public one like `mqtt.meshtastic.org`)
 
-##### Clone the repo
+### 1. Clone and configure
 
 ```sh
 git clone https://github.com/MeshAddicts/meshinfo.git
 cd meshinfo
+
+# Backend config
+cp config.toml.sample config.toml
+# Edit config.toml -- set your MQTT broker, topics, mesh name, and node ID
+
+# Frontend config
+cp frontend/.env.sample frontend/.env
+# Edit frontend/.env if you want to use Mapbox instead of OpenStreetMap
+
+# Reverse proxy
+cp Caddyfile.sample Caddyfile
+# Edit Caddyfile -- set your domain (FQDN) and email for automatic TLS
 ```
 
-##### Edit Configuration
-
-1. Copy and then edit the `config.toml.sample` to `config.toml`.
-2. Copy `Caddyfile.sample` to `Caddyfile` then edit the `Caddyfile` and be sure it is setup for your hostname (FQDN if requiring Let's Encrypt cert to be generated) and your email address for the TLS line.
-
- - Caddy will request a cert of the FQDN, be sure to specify any subdomain. For example: `https://meshinfo.domain.com`.  
-
- - If you only wish to use a self-signed certificate and are OK with the browser warnings about this, change the TLS line from your email address to `tls internal`.
-   
- - If you are using a reverse proxy other than Caddy, change the `FQDN` to `:80` then set your reverse proxy's upstream config to listen to port 80.
-      
-3. Edit the `docker-compose.yml` (or `docker-compose-dev.yml` if you are going to use that one) and adjust any port mappings for caddy if you wish to have it run on anything other than 80/443. Keep in mind that if you are not using a FQDN and ports 80/443, Caddy will fail to provision a Let's Encrypt certificate. This is because Let's Encrypt requires 80/443 to be accessible and this is not a limitation of Caddy nor MeshInfo.
-4. Copy and then edit the `frontend/.env.sample` to `frontend/.env`. Note OSM is the default map provider, MapBox support requires opt-in with MapBox token. 
-
-#### To Run
-
-Change to the directory.
+### 2. Start
 
 ```sh
-cd meshinfo
+docker compose up -d
 ```
+
+MeshInfo will be available at `https://your-domain` (or `http://localhost` if using a local setup).
+
+### 3. Update
 
 ```sh
-docker compose pull && docker compose down && docker compose up -d && docker compose ps && docker compose logs -f meshinfo
+git pull && docker compose pull && docker compose down && docker compose up -d
 ```
 
-#### To Update
+### Configuration
 
-```sh
-git fetch && git pull && docker compose pull && docker compose down && docker compose up -d && docker compose ps && docker compose logs -f meshinfo
-```
+The main configuration file is `config.toml`. Key sections:
 
-### Directly (without Docker)
+| Section | Purpose |
+|---------|---------|
+| `[broker]` | MQTT connection, topics, channel hashes, decoders |
+| `[server]` | Node ID, base URL, timezone, enrichment, graph settings |
+| `[storage.postgres]` | PostgreSQL connection and pool settings |
+| `[mesh]` | Network name, region, coordinates, external tool links |
+| `[integrations.*]` | Discord bridge, reverse geocoding |
 
-Be sure you have `Python 3.12.4` or higher installed.
+See [config.toml.sample](config.toml.sample) for all options with inline documentation.
+
+For PostgreSQL-specific details, see [POSTGRES.md](POSTGRES.md).
+
+### Caddy / Reverse Proxy
+
+The included `Caddyfile.sample` routes `/api/*` and `/v1/*` to the backend and everything else to the frontend. Caddy automatically provisions Let's Encrypt certificates when you use a public FQDN on ports 80/443.
+
+If you use a different reverse proxy, point `/api/*` and `/v1/*` at the backend container (port 9000) and `/` at the frontend container (port 80).
+
+### Map Providers
+
+MeshInfo supports two map providers, configured in `frontend/.env`:
+
+- **OpenStreetMap** (default) -- no account needed
+- **Mapbox** -- requires a [Mapbox access token](https://account.mapbox.com/)
+
+## Running Without Docker
+
+### Backend
+
+Requires Python 3.12.4+ and a running PostgreSQL instance.
 
 ```sh
 pip install -r requirements.txt
+# Edit config.toml with storage.postgres.host = "localhost"
 python main.py
+```
+
+### Frontend
+
+Requires Node.js 20.19+ and Yarn.
+
+```sh
+cd frontend
+cp .env.sample .env
+yarn install
+yarn dev
 ```
 
 ## Development
 
-### Building a local Docker image
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, project structure, and contribution guidelines.
 
-Clone the repository.
-
-```sh
-git clone https://github.com/MeshAddicts/meshinfo.git
-```
-
-If already existing, be sure to pull updates.
+### Building Local Docker Images
 
 ```sh
-git fetch && git pull
-```
-
-Build. Be sure to specify a related version number and suffix (this example `dev5` but could be your name or initials and a number) as this will help prevent collisions in your local image cache when testing.
-
-```sh
-scripts/docker-build.sh 0.0.1dev5
-```
-
-### Running via Docker Compose while developing
-
-```sh
+# Build everything with docker-compose in dev mode
 docker compose -f docker-compose-dev.yml up --build --force-recreate
+
+# Or build images individually
+scripts/docker-build.sh 0.0.1-dev
 ```
 
-You will need to CTRL-C and run again if you make any changes to the python code, but not if you only make changes to
-the templates.
+### Releasing
 
-### Release
-
-Tag the release using git and push up the tag. The image will be build by GitHub automatically (see: https://github.com/MeshAddicts/meshinfo/actions/workflows/docker.yml).
+Tag the release and push. GitHub Actions builds and publishes images to `ghcr.io/meshaddicts/meshinfo` and `ghcr.io/meshaddicts/meshinfo-spa` for both amd64 and arm64.
 
 ```sh
 git tag v0.0.0 && git push && git push --tags
 ```
 
-## Contributing
+## API
 
-We happily accept Pull Requests!
+MeshInfo exposes a REST API used by the frontend. See [API.md](API.md) for endpoint documentation.
 
-TODO: Need to rewrite this section.
+## Community
 
-## Meshtastic node settings
+Questions, feedback, or want to contribute? Join us on [#meshinfo on the SacValleyMesh Discord](https://discord.gg/tj6dADagDJ).
 
-These are the settings that must be set, and how they must be set on your node if you would like it to show up on the map. Anything that is not preceded by "Recommended" must be set as stated for your node to show.
+If you run a public MeshInfo instance, we'd love to hear about it -- drop a note to kevin@airframes.io.
 
-```
-Channels > Click on LongFast
-	Uplink Enabled: True
-	Downlink Enabled: Recommended False
-	Position Enabled: True
-	Precise Location: False
-	Bottom slider: 1194ft is the *most* accurate setting that will still show up on any map. This is a meshtastic limitation.
-	
-	Be sure to click send to save after each page/section
+## Related Projects
 
-Position: 
-	
-	Set your lat/long/alt and set "Used fixed position" to True if your node doesn't have GPS or is stationary
-	
-	Otherwise set your GPS settings.
-	
-Lora: 
-	OK to MQTT: True
-	
-MQTT:
-	Address: mqtt.meshtastic.org
-	Username: meshdev
-	Password: large4cats
-	
-	Encryption enabled: True
-	JSON output enabled: False
+- [Airframes](https://airframes.io) / [GitHub](https://github.com/airframesio) -- ADS-B, ACARS, VDL, HFDL, SATCOM, and AIS tracking
 
-	Root topic: msh/US/FL/anything
- (Typical options to replace 'anything' above are: orl, jax, etc...As long as your root topic starts with msh/US/FL then you're good.)
+## License
 
-	Proxy to client enabled: True if your board isn't directly hooked to Wi-Fi or Ethernet.
-	Map reporting: True
-	Precise location: False
-	
-	Slider at the bottom: 1194 feet is the *most* accurate you can set things to and still have your node show up on maps.
-	
-	Map reporting interval: 900
-```
+[GNU General Public License v3.0](LICENSE)

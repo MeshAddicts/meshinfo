@@ -29,6 +29,7 @@ class _DowngradeSuccessfulGetRequests(logging.Filter):
 
     Uvicorn access log records have args=(client, method, path, http_version, status_code).
     Non-GET requests and error responses remain at INFO so they stay visible.
+    Only visible when log level is set to DEBUG.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -136,6 +137,7 @@ async def main() -> None:
         effective_log_level = logging.INFO
     logging.getLogger().setLevel(effective_log_level)
     logging.getLogger("uvicorn.access").addFilter(_DowngradeSuccessfulGetRequests())
+    logging.getLogger("uvicorn.access").setLevel(effective_log_level)
     logger.info("Log level set to: %s", logging.getLevelName(effective_log_level))
 
     # Timezone

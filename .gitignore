@@ -15,6 +15,7 @@ caddy
 Caddyfile
 output/*
 mosquitto/data/*
+mosquitto/config/mosquitto.conf
 postgres/data/*
 config.json
 config.toml
@@ -30,3 +31,4 @@ config.toml
 !.yarn/versions
 
 config.toml
+mosquitto/config/mosquitto.conf

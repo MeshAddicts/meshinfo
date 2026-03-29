@@ -71,8 +71,9 @@ def _node_linked_name(node: Optional[dict], node_id: str, base_url: str) -> str:
     name = _node_display_name(node, node_id)
     url = _node_url(base_url, node_id)
     if url:
-        # If longname is a URL, use shortname as link text instead
-        if name.startswith("http"):
+        # If longname contains a URL, use shortname as link text instead
+        # URLs inside markdown link text break Discord rendering
+        if "http://" in name or "https://" in name:
             short = _node_short_name(node, node_id)
             return f"[{short}]({url})"
         return f"[{name}]({url})"
@@ -291,10 +292,21 @@ def build_position_embed(
     return embed
 
 
+def _node_short_linked_name(node: Optional[dict], node_id: str, base_url: str) -> str:
+    """Return a markdown-linked short name for compact gateway display."""
+    short = _node_short_name(node, node_id)
+    url = _node_url(base_url, node_id)
+    if url:
+        return f"[{short}]({url})"
+    return short
+
+
 def _format_gateway_list(gateway_entries: list, nodes: dict, base_url: str) -> str:
     """
     Format a list of gateway reception reports grouped by hop count.
-    Gateway names are markdown-linked to their MeshInfo node pages.
+
+    Single gateway per hop group: full name with RSSI/SNR details.
+    Multiple gateways per hop group: compact shortnames separated by |.
     """
     if not gateway_entries:
         return ""
@@ -315,11 +327,14 @@ def _format_gateway_list(gateway_entries: list, nodes: dict, base_url: str) -> s
             header = f"**{hops} hop(s)**"
         lines.append(header)
 
-        for gw in by_hops[hops]:
+        gateways = by_hops[hops]
+        if len(gateways) == 1:
+            # Single gateway — show full details
+            gw = gateways[0]
             gw_id = gw.get("gateway_id", "unknown")
             gw_node = nodes.get(gw_id)
             gw_name = _node_linked_name(gw_node, gw_id, base_url)
-            parts = [f"  {gw_name}"]
+            parts = [gw_name]
             rssi = gw.get("rssi")
             snr = gw.get("snr")
             if rssi is not None:
@@ -327,5 +342,16 @@ def _format_gateway_list(gateway_entries: list, nodes: dict, base_url: str) -> s
             if snr is not None:
                 parts.append(f"SNR: {snr}")
             lines.append(" | ".join(parts))
+        else:
+            # Multiple gateways — compact shortnames
+            names = []
+            for gw in gateways:
+                gw_id = gw.get("gateway_id", "unknown")
+                gw_node = nodes.get(gw_id)
+                names.append(_node_short_linked_name(gw_node, gw_id, base_url))
+            # Split into rows of ~10 to avoid line length issues
+            for i in range(0, len(names), 10):
+                chunk = names[i:i + 10]
+                lines.append(" | ".join(chunk))
 
     return "\n".join(lines)
