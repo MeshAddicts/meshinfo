@@ -15,6 +15,7 @@ caddy
 Caddyfile
 output/*
 mosquitto/data/*
+mosquitto/config/mosquitto.conf
 postgres/data/*
 config.json
 config.toml
