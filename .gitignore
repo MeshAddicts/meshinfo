@@ -29,6 +29,3 @@ config.toml
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
-
-config.toml
-mosquitto/config/mosquitto.conf
