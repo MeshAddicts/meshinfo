@@ -70,6 +70,10 @@ cp config.toml.sample config.toml
 cp frontend/.env.sample frontend/.env
 # Edit frontend/.env if you want to use Mapbox instead of OpenStreetMap
 
+# MQTT broker config
+cp mosquitto/config/mosquitto.conf.sample mosquitto/config/mosquitto.conf
+# Edit mosquitto.conf -- add bridge connections to MQTT brokers for your region
+
 # Reverse proxy
 cp Caddyfile.sample Caddyfile
 # Edit Caddyfile -- set your domain (FQDN) and email for automatic TLS
@@ -169,9 +173,9 @@ MeshInfo exposes a REST API used by the frontend. See [API.md](API.md) for endpo
 
 ## Community
 
-Questions, feedback, or want to contribute? Join us on [#meshinfo on the SacValleyMesh Discord](https://discord.gg/tj6dADagDJ).
+Questions, feedback, or want to contribute? Join us on the [Central Valley Mesh Discord](https://discord.gg/2P63uauAws).
 
-If you run a public MeshInfo instance, we'd love to hear about it -- drop a note to kevin@airframes.io.
+If you run a public MeshInfo instance, we'd love to hear about it -- drop a note in Discord.
 
 ## Related Projects
 
