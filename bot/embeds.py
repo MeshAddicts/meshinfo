@@ -186,27 +186,11 @@ def build_text_embed(
     short_name = _node_short_name(node, from_id)
     text = chat.get("text", "")
 
-    # Build embed — message text + gateway info in description (4096 char limit)
+    # Build embed — message text in description, gateway info added after fields
     node_link = _node_url(base_url, from_id)
 
-    # Build description: message text followed by gateway grouping
-    desc_parts = [text]
-
-    if gateway_entries and len(gateway_entries) > 0:
-        gw_text = _format_gateway_list(gateway_entries, nodes, base_url)
-        if gw_text:
-            desc_parts.append(gw_text)
-    else:
-        gw_info = _format_gateway_info(msg, nodes, base_url)
-        if gw_info:
-            desc_parts.append(gw_info)
-
-    description = "\n\n".join(desc_parts)
-    if len(description) > EMBED_DESC_LIMIT:
-        description = _safe_truncate(description, EMBED_DESC_LIMIT)
-
     embed = discord.Embed(
-        description=description,
+        description=text[:EMBED_DESC_LIMIT],
         color=_snr_color(gateway_entries, msg),
         timestamp=discord.utils.utcnow(),
     )
@@ -232,6 +216,24 @@ def build_text_embed(
         if hop_limit is not None:
             embed.add_field(name="Hop Limit", value=str(hop_limit), inline=True)
         embed.add_field(name="Gateway Count", value=str(len(gateway_entries)), inline=True)
+
+    # Gateway info — uses a field with 1024 limit, or description append for large lists
+    if gateway_entries and len(gateway_entries) > 0:
+        gw_text = _format_gateway_list(gateway_entries, nodes, base_url)
+        if gw_text:
+            if len(gw_text) <= EMBED_FIELD_VALUE_LIMIT:
+                embed.add_field(name="Gateways", value=gw_text, inline=False)
+            else:
+                # Large gateway list — append to description to use 4096 char limit
+                combined = embed.description + "\n\n" + gw_text
+                if len(combined) > EMBED_DESC_LIMIT:
+                    combined = _safe_truncate(combined, EMBED_DESC_LIMIT)
+                embed.description = combined
+    else:
+        gw_info = _format_gateway_info(msg, nodes, base_url)
+        if gw_info:
+            gw_info = _safe_truncate(gw_info)
+            embed.add_field(name="Gateways", value=gw_info, inline=False)
 
     # Owner mention
     if owner_id:
