@@ -114,6 +114,15 @@ class MQTT:
                 outs["qos"] = getattr(msg, "qos", None)
                 outs["retain"] = getattr(msg, "retain", None)
 
+                # Calculate hops_away from hop_start and hop_limit
+                hop_start = outs.get("hop_start")
+                hop_limit = outs.get("hop_limit")
+                if hop_start is not None and hop_limit is not None:
+                    try:
+                        outs["hops_away"] = int(hop_start) - int(hop_limit)
+                    except (ValueError, TypeError):
+                        pass
+
                 if mp.decoded.portnum == portnums_pb2.TEXT_MESSAGE_APP:
                     payload_bytes = bytes(mp.decoded.payload)
                     try:
