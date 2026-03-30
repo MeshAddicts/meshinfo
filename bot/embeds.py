@@ -114,7 +114,7 @@ def _format_gateway_info(msg: dict, nodes: dict, base_url: str) -> str:
     hops_away = msg.get("hops_away")
     hop_limit = msg.get("hop_limit")
     if hops_away is not None:
-        hop_str = "Direct" if hops_away == 0 else f"{hops_away} hop(s)"
+        hop_str = "Direct" if hops_away == 0 else f"{hops_away} hops"
         if hop_limit is not None:
             hop_str += f" (limit: {hop_limit})"
         parts.append(hop_str)
@@ -186,10 +186,27 @@ def build_text_embed(
     short_name = _node_short_name(node, from_id)
     text = chat.get("text", "")
 
-    # Build embed — color based on best gateway SNR
+    # Build embed — message text + gateway info in description (4096 char limit)
     node_link = _node_url(base_url, from_id)
+
+    # Build description: message text followed by gateway grouping
+    desc_parts = [text]
+
+    if gateway_entries and len(gateway_entries) > 0:
+        gw_text = _format_gateway_list(gateway_entries, nodes, base_url)
+        if gw_text:
+            desc_parts.append(gw_text)
+    else:
+        gw_info = _format_gateway_info(msg, nodes, base_url)
+        if gw_info:
+            desc_parts.append(gw_info)
+
+    description = "\n\n".join(desc_parts)
+    if len(description) > EMBED_DESC_LIMIT:
+        description = _safe_truncate(description, EMBED_DESC_LIMIT)
+
     embed = discord.Embed(
-        description=text[:EMBED_DESC_LIMIT],
+        description=description,
         color=_snr_color(gateway_entries, msg),
         timestamp=discord.utils.utcnow(),
     )
@@ -209,17 +226,12 @@ def build_text_embed(
     channel_label = _resolve_channel_name(channel, config)
     embed.add_field(name="Channel", value=channel_label, inline=True)
 
-    # Gateway info with linked names
+    # Hop limit and gateway count
     if gateway_entries and len(gateway_entries) > 0:
-        gw_text = _format_gateway_list(gateway_entries, nodes, base_url)
-        if gw_text:
-            gw_text = _safe_truncate(gw_text)
-            embed.add_field(name="Gateways", value=gw_text, inline=False)
-    else:
-        gw_info = _format_gateway_info(msg, nodes, base_url)
-        if gw_info:
-            gw_info = _safe_truncate(gw_info)
-            embed.add_field(name="Reception", value=gw_info, inline=False)
+        hop_limit = msg.get("hop_start") or msg.get("hop_limit")
+        if hop_limit is not None:
+            embed.add_field(name="Hop Limit", value=str(hop_limit), inline=True)
+        embed.add_field(name="Gateway Count", value=str(len(gateway_entries)), inline=True)
 
     # Owner mention
     if owner_id:
@@ -318,6 +330,7 @@ def _format_gateway_list(gateway_entries: list, nodes: dict, base_url: str) -> s
 
     Single gateway per hop group: full name with RSSI/SNR details.
     Multiple gateways per hop group: compact shortnames separated by |.
+    Hop groups are separated by blank lines for readability.
     """
     if not gateway_entries:
         return ""
@@ -330,17 +343,18 @@ def _format_gateway_list(gateway_entries: list, nodes: dict, base_url: str) -> s
             hops = 0
         by_hops.setdefault(hops, []).append(gw)
 
-    lines = []
+    sections = []
     for hops in sorted(by_hops.keys()):
+        lines = []
         if hops == 0:
             header = "**Direct**"
         else:
-            header = f"**{hops} hop(s)**"
+            header = f"**{hops} hops**"
         lines.append(header)
 
         gateways = by_hops[hops]
         if len(gateways) == 1:
-            # Single gateway — show full details
+            # Single gateway — show full details with SNR/RSSI
             gw = gateways[0]
             gw_id = gw.get("gateway_id", "unknown")
             gw_node = nodes.get(gw_id)
@@ -360,9 +374,10 @@ def _format_gateway_list(gateway_entries: list, nodes: dict, base_url: str) -> s
                 gw_id = gw.get("gateway_id", "unknown")
                 gw_node = nodes.get(gw_id)
                 names.append(_node_short_linked_name(gw_node, gw_id, base_url))
-            # Split into rows of ~10 to avoid line length issues
             for i in range(0, len(names), 10):
                 chunk = names[i:i + 10]
                 lines.append(" | ".join(chunk))
 
-    return "\n".join(lines)
+        sections.append("\n".join(lines))
+
+    return "\n\n".join(sections)
