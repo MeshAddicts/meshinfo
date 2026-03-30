@@ -32,3 +32,4 @@ config.toml
 
 config.toml
 mosquitto/config/mosquitto.conf
+mosquitto/config/mosquitto.conf
