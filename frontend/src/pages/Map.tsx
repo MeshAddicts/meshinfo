@@ -614,7 +614,7 @@ export function Map() {
             map.setFeatureState({ source: src, id: prev }, { selected: false });
           }
         } catch (error) {
-          if (process.env.NODE_ENV !== "production") {
+          if (import.meta.env.DEV) {
             console.error(`Failed to clear feature state for ${src}`, error);
           }
         }
@@ -635,7 +635,7 @@ export function Map() {
             map.setFeatureState({ source: src, id }, { selected: true });
           }
         } catch (error) {
-          if (process.env.NODE_ENV !== "production") {
+          if (import.meta.env.DEV) {
             console.error(`Failed to set feature state for ${src}`, error);
           }
         }
