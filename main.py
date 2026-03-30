@@ -42,6 +42,8 @@ class _DowngradeSuccessfulGetRequests(logging.Filter):
         ):
             record.levelno = logging.DEBUG
             record.levelname = "DEBUG"
+            # Suppress unless the logger is accepting DEBUG-level records
+            return record.levelno >= logging.getLogger("uvicorn.access").getEffectiveLevel()
         return True
 
 

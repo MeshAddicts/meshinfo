@@ -240,10 +240,17 @@ class AdminCommands(commands.Cog):
                         break
                     if nid in seen:
                         continue
-                    display_name = node.get("longname") or node.get("shortname") or nid
-                    if display_name in ("Unknown", "UNK"):
-                        display_name = nid
-                    label = f"{display_name} (!{nid})"[:100]
+                    longname = node.get("longname", "")
+                    shortname = node.get("shortname", "")
+                    if longname and longname != "Unknown" and shortname and shortname != "UNK":
+                        label = f"{longname} [{shortname}] (!{nid})"
+                    elif longname and longname != "Unknown":
+                        label = f"{longname} (!{nid})"
+                    elif shortname and shortname != "UNK":
+                        label = f"{shortname} (!{nid})"
+                    else:
+                        label = f"!{nid}"
+                    label = label[:100]
                     choices.append(app_commands.Choice(name=label, value=nid))
                     seen.add(nid)
             except Exception:
