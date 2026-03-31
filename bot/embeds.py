@@ -186,11 +186,63 @@ def build_text_embed(
     short_name = _node_short_name(node, from_id)
     text = chat.get("text", "")
 
-    # Build embed — message text in description, gateway info added after fields
+    # Build embed — everything in description for consistent top-to-bottom layout
     node_link = _node_url(base_url, from_id)
 
+    desc_parts = []
+
+    # Message text
+    if text:
+        desc_parts.append(text)
+
+    # Packet info header — two lines for clean layout
+    packet_id = msg.get("id")
+    label_line = []
+    value_line = []
+
+    if packet_id:
+        logs_url = f"{base_url.rstrip('/')}/logs?q={packet_id}" if base_url else None
+        pid_display = f"[{packet_id}]({logs_url})" if logs_url else str(packet_id)
+        label_line.append("**Packet**")
+        value_line.append(pid_display)
+
+    if gateway_entries and len(gateway_entries) > 0:
+        hop_limit = msg.get("hop_start") or msg.get("hop_limit")
+        if hop_limit is not None:
+            label_line.append("**Hop Limit**")
+            value_line.append(str(hop_limit))
+        label_line.append("**Gateways**")
+        value_line.append(str(len(gateway_entries)))
+
+    if label_line:
+        spacer = " \u2003\u2003 "  # em spaces for column spacing
+        # Pad values to roughly match their label width
+        padded_values = []
+        for label, value in zip(label_line, value_line):
+            # Strip markdown bold markers for length comparison
+            clean_label = label.replace("**", "")
+            pad_needed = max(0, len(clean_label) - len(value))
+            # Use thin spaces to approximate centering under label
+            left_pad = "\u2002" * (pad_needed // 2)
+            padded_values.append(f"{left_pad}{value}")
+        desc_parts.append(spacer.join(label_line) + "\n" + spacer.join(padded_values))
+
+    # Gateway info
+    if gateway_entries and len(gateway_entries) > 0:
+        gw_text = _format_gateway_list(gateway_entries, nodes, base_url)
+        if gw_text:
+            desc_parts.append(gw_text)
+    else:
+        gw_info = _format_gateway_info(msg, nodes, base_url)
+        if gw_info:
+            desc_parts.append(gw_info)
+
+    description = "\n\n".join(desc_parts)
+    if len(description) > EMBED_DESC_LIMIT:
+        description = _safe_truncate(description, EMBED_DESC_LIMIT)
+
     embed = discord.Embed(
-        description=text[:EMBED_DESC_LIMIT],
+        description=description,
         color=_snr_color(gateway_entries, msg),
         timestamp=discord.utils.utcnow(),
     )
@@ -199,42 +251,6 @@ def build_text_embed(
     avatar_url = f"https://api.dicebear.com/9.x/bottts-neutral/png?seed={from_id}"
     embed.set_author(name=f"{display_name} [{short_name}]", url=node_link, icon_url=avatar_url)
 
-    # Packet info fields — linked to logs search
-    packet_id = msg.get("id")
-    if packet_id:
-        logs_url = f"{base_url.rstrip('/')}/logs?q={packet_id}" if base_url else None
-        pid_display = f"[{packet_id}]({logs_url})" if logs_url else str(packet_id)
-        embed.add_field(name="Packet ID", value=pid_display, inline=True)
-
-    channel = str(chat.get("channel", "0"))
-    channel_label = _resolve_channel_name(channel, config)
-    embed.add_field(name="Channel", value=channel_label, inline=True)
-
-    # Hop limit and gateway count
-    if gateway_entries and len(gateway_entries) > 0:
-        hop_limit = msg.get("hop_start") or msg.get("hop_limit")
-        if hop_limit is not None:
-            embed.add_field(name="Hop Limit", value=str(hop_limit), inline=True)
-        embed.add_field(name="Gateway Count", value=str(len(gateway_entries)), inline=True)
-
-    # Gateway info — uses a field with 1024 limit, or description append for large lists
-    if gateway_entries and len(gateway_entries) > 0:
-        gw_text = _format_gateway_list(gateway_entries, nodes, base_url)
-        if gw_text:
-            if len(gw_text) <= EMBED_FIELD_VALUE_LIMIT:
-                embed.add_field(name="Gateways", value=gw_text, inline=False)
-            else:
-                # Large gateway list — append to description to use 4096 char limit
-                combined = embed.description + "\n\n" + gw_text
-                if len(combined) > EMBED_DESC_LIMIT:
-                    combined = _safe_truncate(combined, EMBED_DESC_LIMIT)
-                embed.description = combined
-    else:
-        gw_info = _format_gateway_info(msg, nodes, base_url)
-        if gw_info:
-            gw_info = _safe_truncate(gw_info)
-            embed.add_field(name="Gateways", value=gw_info, inline=False)
-
     # Owner mention
     if owner_id:
         embed.add_field(name="Owner", value=f"<@{owner_id}>", inline=True)
@@ -242,6 +258,57 @@ def build_text_embed(
     embed.set_footer(text=f"Node: !{from_id}")
 
     return embed
+
+
+def build_gateway_detail_embed(
+    msg: dict,
+    nodes: dict,
+    base_url: str,
+    gateway_entries: list,
+) -> list[discord.Embed]:
+    """
+    Build one or more embeds showing the full gateway breakdown for a packet.
+
+    Used when a user clicks the "View Gateways" button. Returns a list of
+    embeds to handle very large gateway lists that exceed a single embed.
+    """
+    from_id = msg.get("from", "unknown")
+    packet_id = msg.get("id", "?")
+    hop_limit = msg.get("hop_start") or msg.get("hop_limit")
+
+    gw_text = _format_gateway_list(gateway_entries, nodes, base_url)
+    if not gw_text:
+        return []
+
+    header = f"**Packet** {packet_id} \u2014 **{len(gateway_entries)}** gateways"
+    if hop_limit is not None:
+        header += f" \u2014 hop limit {hop_limit}"
+
+    # Split into chunks that fit in embed descriptions (4096 limit)
+    sections = gw_text.split("\n\n")
+    embeds = []
+    current = header
+    for section in sections:
+        test = current + "\n\n" + section
+        if len(test) <= EMBED_DESC_LIMIT:
+            current = test
+        else:
+            embeds.append(discord.Embed(
+                description=current,
+                color=discord.Color.from_rgb(69, 179, 186),
+            ))
+            current = section
+    if current:
+        embeds.append(discord.Embed(
+            description=current,
+            color=discord.Color.from_rgb(69, 179, 186),
+        ))
+
+    # Footer on last embed
+    if embeds:
+        embeds[-1].set_footer(text=f"Node: !{from_id}")
+
+    return embeds
 
 
 def build_position_embed(
