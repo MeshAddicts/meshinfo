@@ -357,7 +357,7 @@ class MeshBridge(commands.Cog):
         owner_id = await self.data.pg_storage.get_node_owner(from_id)
 
         base_url = self.config.get("server", {}).get("base_url", "")
-        embed = build_text_embed(
+        embed, was_truncated = build_text_embed(
             msg=msg,
             chat=chat,
             nodes=enriched_nodes,
@@ -367,10 +367,10 @@ class MeshBridge(commands.Cog):
             gateway_entries=pending.gateways,
         )
 
-        # Build "View All Gateways" button for packets with multiple gateways
+        # Only show "View All Gateways" button if gateway data was truncated
         view = None
         packet_id = msg.get("id")
-        if packet_id and len(pending.gateways) > 1:
+        if packet_id and was_truncated:
             cache_key = str(packet_id)
             _gateway_cache[cache_key] = {
                 "msg": msg,

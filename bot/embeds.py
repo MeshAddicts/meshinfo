@@ -176,9 +176,12 @@ def build_text_embed(
     config: dict,
     owner_id: Optional[str] = None,
     gateway_entries: Optional[list] = None,
-) -> discord.Embed:
+) -> tuple[discord.Embed, bool]:
     """
     Build a rich embed for a text message from the mesh.
+
+    Returns (embed, was_truncated) — was_truncated indicates if gateway
+    data was cut short and a "View All Gateways" button should be shown.
     """
     from_id = chat.get("from", msg.get("from", "unknown"))
     node = nodes.get(from_id)
@@ -238,7 +241,8 @@ def build_text_embed(
             desc_parts.append(gw_info)
 
     description = "\n\n".join(desc_parts)
-    if len(description) > EMBED_DESC_LIMIT:
+    was_truncated = len(description) > EMBED_DESC_LIMIT
+    if was_truncated:
         description = _safe_truncate(description, EMBED_DESC_LIMIT)
 
     embed = discord.Embed(
@@ -257,7 +261,7 @@ def build_text_embed(
 
     embed.set_footer(text=f"Node: !{from_id}")
 
-    return embed
+    return embed, was_truncated
 
 
 def build_gateway_detail_embed(
@@ -280,7 +284,9 @@ def build_gateway_detail_embed(
     if not gw_text:
         return []
 
-    header = f"**Packet** {packet_id} \u2014 **{len(gateway_entries)}** gateways"
+    logs_url = f"{base_url.rstrip('/')}/logs?q={packet_id}" if base_url else None
+    pid_display = f"[{packet_id}]({logs_url})" if logs_url else str(packet_id)
+    header = f"**Packet** {pid_display} \u2014 **{len(gateway_entries)}** gateways"
     if hop_limit is not None:
         header += f" \u2014 hop limit {hop_limit}"
 
