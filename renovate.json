@@ -2,6 +2,7 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
   "schedule": ["every weekend"],
+  "platformAutomerge": false,
   "packageRules": [
     {
       "matchManagers": ["github-actions"],
@@ -20,6 +21,11 @@
     {
       "matchManagers": ["dockerfile", "docker-compose"],
       "groupName": "docker-images"
+    },
+    {
+      "matchManagers": ["dockerfile", "nvm", "asdf"],
+      "matchPackageNames": ["node"],
+      "groupName": "node-version"
     },
     {
       "matchUpdateTypes": ["minor", "patch"],
