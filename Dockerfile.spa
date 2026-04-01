@@ -1,4 +1,4 @@
-FROM node:25.8.1-alpine AS build
+FROM node:25.8.2-alpine AS build
 
 LABEL org.opencontainers.image.source="https://github.com/MeshAddicts/meshinfo"
 LABEL org.opencontainers.image.description="Realtime web UI to run against a Meshtastic regional or private mesh network."
