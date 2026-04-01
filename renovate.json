@@ -2,6 +2,8 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
   "schedule": ["every weekend"],
+  "platformAutomerge": false,
+  "automergeSchedule": ["at any time"],
   "packageRules": [
     {
       "matchManagers": ["github-actions"],
@@ -14,11 +16,21 @@
     {
       "matchManagers": ["npm"],
       "matchUpdateTypes": ["minor", "patch"],
-      "groupName": "frontend-deps"
+      "groupName": "frontend-deps",
+      "automerge": true
     },
     {
       "matchManagers": ["dockerfile", "docker-compose"],
       "groupName": "docker-images"
+    },
+    {
+      "matchManagers": ["dockerfile", "nvm", "asdf"],
+      "matchPackageNames": ["node"],
+      "groupName": "node-version"
+    },
+    {
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true
     }
   ]
 }
