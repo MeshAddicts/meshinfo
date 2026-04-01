@@ -327,16 +327,20 @@ class API:
                 lat = float(request.query_params.get("lat", 0))
                 lon = float(request.query_params.get("lon", 0))
                 zoom = int(request.query_params.get("zoom", 12))
+                width = int(request.query_params.get("width", 300))
+                height = int(request.query_params.get("height", 200))
             except (ValueError, TypeError):
-                return JSONResponse({"error": "Invalid lat/lon/zoom"}, status_code=400)
+                return JSONResponse({"error": "Invalid parameters"}, status_code=400)
 
             if lat == 0 and lon == 0:
                 return JSONResponse({"error": "lat and lon are required"}, status_code=400)
 
             zoom = max(1, min(zoom, 18))
+            width = max(100, min(width, 800))
+            height = max(100, min(height, 600))
 
             try:
-                png_bytes = await asyncio.to_thread(generate_static_map, lat, lon, self.config, zoom=zoom)
+                png_bytes = await asyncio.to_thread(generate_static_map, lat, lon, self.config, zoom=zoom, width=width, height=height)
                 return Response(
                     content=png_bytes,
                     media_type="image/png",

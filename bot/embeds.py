@@ -45,7 +45,7 @@ def _map_thumbnail_url(lat: float, lon: float, base_url: str, maps_cfg: dict) ->
     if provider == "none" or not base_url:
         return None
 
-    return f"{base_url.rstrip('/')}/v1/static-map?lat={lat:.6f}&lon={lon:.6f}&zoom=12"
+    return f"{base_url.rstrip('/')}/v1/static-map?lat={lat:.6f}&lon={lon:.6f}&zoom=12&width=400&height=300"
 
 
 def _map_link_url(base_url: str, node_id: str) -> str | None:
@@ -368,7 +368,7 @@ def build_position_embed(
         # Static map thumbnail (self-hosted, provider from config)
         thumbnail_url = _map_thumbnail_url(lat, lon, base_url, maps_cfg)
         if thumbnail_url:
-            embed.set_thumbnail(url=thumbnail_url)
+            embed.set_image(url=thumbnail_url)
 
     # Gateway info with linked names
     if gateway_entries and len(gateway_entries) > 0:
