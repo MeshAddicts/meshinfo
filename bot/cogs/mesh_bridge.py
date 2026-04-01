@@ -388,11 +388,14 @@ class MeshBridge(commands.Cog):
         webhook = await self._get_webhook(channel)
 
         if pending.discord_message and webhook:
-            # Edit existing webhook message
+            # Edit existing webhook message — include view if truncation now requires it
             try:
+                edit_kwargs = {"embed": embed}
+                if view is not None:
+                    edit_kwargs["view"] = view
                 await webhook.edit_message(
                     pending.discord_message.id,
-                    embed=embed,
+                    **edit_kwargs,
                 )
                 return
             except Exception:
@@ -423,7 +426,10 @@ class MeshBridge(commands.Cog):
         # Fallback: send as bot
         if pending.discord_message:
             try:
-                await pending.discord_message.edit(embed=embed)
+                edit_kwargs = {"embed": embed}
+                if view is not None:
+                    edit_kwargs["view"] = view
+                await pending.discord_message.edit(**edit_kwargs)
                 return
             except Exception:
                 pending.discord_message = None
