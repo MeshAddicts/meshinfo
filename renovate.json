@@ -3,6 +3,7 @@
   "extends": ["config:recommended"],
   "schedule": ["every weekend"],
   "platformAutomerge": false,
+  "automergeSchedule": ["at any time"],
   "packageRules": [
     {
       "matchManagers": ["github-actions"],
