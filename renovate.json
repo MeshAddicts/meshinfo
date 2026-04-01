@@ -26,7 +26,9 @@
     {
       "matchManagers": ["dockerfile", "nvm", "asdf"],
       "matchPackageNames": ["node"],
-      "groupName": "node-version"
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "node-version",
+      "automerge": true
     },
     {
       "matchUpdateTypes": ["minor", "patch"],
