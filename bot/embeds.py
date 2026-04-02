@@ -218,17 +218,19 @@ def build_text_embed(
         value_line.append(str(len(gateway_entries)))
 
     if label_line:
-        spacer = " \u2003\u2003 "  # em spaces for column spacing
-        # Pad values to roughly match their label width
-        padded_values = []
+        # Two-line header with tab-like spacing
+        sep = "\u2003\u2003\u2003"  # 3 em spaces between columns
+        top = sep.join(label_line)
+        # Right-pad values with figure spaces to align columns
+        pad_char = "\u2007"  # figure space — same width as a digit
+        padded = []
         for label, value in zip(label_line, value_line):
-            # Strip markdown bold markers for length comparison
-            clean_label = label.replace("**", "")
-            pad_needed = max(0, len(clean_label) - len(value))
-            # Use thin spaces to approximate centering under label
-            left_pad = "\u2002" * (pad_needed // 2)
-            padded_values.append(f"{left_pad}{value}")
-        desc_parts.append(spacer.join(label_line) + "\n" + spacer.join(padded_values))
+            clean = label.replace("**", "")
+            # Pad to match label width, shifted left
+            padded_value = value + pad_char * max(0, len(clean) - len(value) - 2)
+            padded.append(padded_value)
+        bottom = sep.join(padded)
+        desc_parts.append(f"{top}\n{bottom}")
 
     # Gateway info
     if gateway_entries and len(gateway_entries) > 0:
