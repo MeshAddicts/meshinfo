@@ -13,7 +13,7 @@ export const HardwareImg = ({
 
   const modelName = useMemo(
     () =>
-      Object.keys(HardwareModel)[Object.values(HardwareModel).indexOf(model)],
+      HardwareModel[model as HardwareModel] as string | undefined,
     [model]
   );
 
