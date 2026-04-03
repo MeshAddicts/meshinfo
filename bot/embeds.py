@@ -45,7 +45,7 @@ def _map_thumbnail_url(lat: float, lon: float, base_url: str, maps_cfg: dict) ->
     if provider == "none" or not base_url:
         return None
 
-    return f"{base_url.rstrip('/')}/v1/static-map?lat={lat:.6f}&lon={lon:.6f}&zoom=12"
+    return f"{base_url.rstrip('/')}/v1/static-map?lat={lat:.6f}&lon={lon:.6f}&zoom=12&width=400&height=300"
 
 
 def _map_link_url(base_url: str, node_id: str) -> str | None:
@@ -176,9 +176,12 @@ def build_text_embed(
     config: dict,
     owner_id: Optional[str] = None,
     gateway_entries: Optional[list] = None,
-) -> discord.Embed:
+) -> tuple[discord.Embed, bool]:
     """
     Build a rich embed for a text message from the mesh.
+
+    Returns (embed, was_truncated) — was_truncated indicates if gateway
+    data was cut short and a "View All Gateways" button should be shown.
     """
     from_id = chat.get("from", msg.get("from", "unknown"))
     node = nodes.get(from_id)
@@ -186,11 +189,66 @@ def build_text_embed(
     short_name = _node_short_name(node, from_id)
     text = chat.get("text", "")
 
-    # Build embed — message text in description, gateway info added after fields
+    # Build embed — everything in description for consistent top-to-bottom layout
     node_link = _node_url(base_url, from_id)
 
+    desc_parts = []
+
+    # Message text
+    if text:
+        desc_parts.append(text)
+
+    # Packet info header — two lines for clean layout
+    packet_id = msg.get("id")
+    label_line = []
+    value_line = []
+
+    if packet_id:
+        logs_url = f"{base_url.rstrip('/')}/logs?q={packet_id}" if base_url else None
+        pid_display = f"[{packet_id}]({logs_url})" if logs_url else str(packet_id)
+        label_line.append("**Packet**")
+        value_line.append(pid_display)
+
+    if gateway_entries and len(gateway_entries) > 0:
+        hop_limit = msg.get("hop_start") or msg.get("hop_limit")
+        if hop_limit is not None:
+            label_line.append("**Hop Limit**")
+            value_line.append(str(hop_limit))
+        label_line.append("**Gateways**")
+        value_line.append(str(len(gateway_entries)))
+
+    if label_line:
+        # Two-line header with tab-like spacing
+        sep = "\u2003\u2003\u2003"  # 3 em spaces between columns
+        top = sep.join(label_line)
+        # Right-pad values with figure spaces to align columns
+        pad_char = "\u2007"  # figure space — same width as a digit
+        padded = []
+        for label, value in zip(label_line, value_line):
+            clean = label.replace("**", "")
+            # Pad to match label width, shifted left
+            padded_value = value + pad_char * max(0, len(clean) - len(value) - 2)
+            padded.append(padded_value)
+        bottom = sep.join(padded)
+        desc_parts.append(f"{top}\n{bottom}")
+
+    # Gateway info
+    if gateway_entries and len(gateway_entries) > 0:
+        gw_text = _format_gateway_list(gateway_entries, nodes, base_url)
+        if gw_text:
+            desc_parts.append(gw_text)
+    else:
+        gw_info = _format_gateway_info(msg, nodes, base_url)
+        if gw_info:
+            desc_parts.append(gw_info)
+
+    description = "\n\n".join(desc_parts)
+    was_truncated = len(description) > EMBED_DESC_LIMIT
+    if was_truncated:
+        description = _safe_truncate(description, EMBED_DESC_LIMIT)
+
     embed = discord.Embed(
-        description=text[:EMBED_DESC_LIMIT],
+        description=description,
         color=_snr_color(gateway_entries, msg),
         timestamp=discord.utils.utcnow(),
     )
@@ -199,49 +257,66 @@ def build_text_embed(
     avatar_url = f"https://api.dicebear.com/9.x/bottts-neutral/png?seed={from_id}"
     embed.set_author(name=f"{display_name} [{short_name}]", url=node_link, icon_url=avatar_url)
 
-    # Packet info fields — linked to logs search
-    packet_id = msg.get("id")
-    if packet_id:
-        logs_url = f"{base_url.rstrip('/')}/logs?q={packet_id}" if base_url else None
-        pid_display = f"[{packet_id}]({logs_url})" if logs_url else str(packet_id)
-        embed.add_field(name="Packet ID", value=pid_display, inline=True)
-
-    channel = str(chat.get("channel", "0"))
-    channel_label = _resolve_channel_name(channel, config)
-    embed.add_field(name="Channel", value=channel_label, inline=True)
-
-    # Hop limit and gateway count
-    if gateway_entries and len(gateway_entries) > 0:
-        hop_limit = msg.get("hop_start") or msg.get("hop_limit")
-        if hop_limit is not None:
-            embed.add_field(name="Hop Limit", value=str(hop_limit), inline=True)
-        embed.add_field(name="Gateway Count", value=str(len(gateway_entries)), inline=True)
-
-    # Gateway info — uses a field with 1024 limit, or description append for large lists
-    if gateway_entries and len(gateway_entries) > 0:
-        gw_text = _format_gateway_list(gateway_entries, nodes, base_url)
-        if gw_text:
-            if len(gw_text) <= EMBED_FIELD_VALUE_LIMIT:
-                embed.add_field(name="Gateways", value=gw_text, inline=False)
-            else:
-                # Large gateway list — append to description to use 4096 char limit
-                combined = embed.description + "\n\n" + gw_text
-                if len(combined) > EMBED_DESC_LIMIT:
-                    combined = _safe_truncate(combined, EMBED_DESC_LIMIT)
-                embed.description = combined
-    else:
-        gw_info = _format_gateway_info(msg, nodes, base_url)
-        if gw_info:
-            gw_info = _safe_truncate(gw_info)
-            embed.add_field(name="Gateways", value=gw_info, inline=False)
-
     # Owner mention
     if owner_id:
         embed.add_field(name="Owner", value=f"<@{owner_id}>", inline=True)
 
     embed.set_footer(text=f"Node: !{from_id}")
 
-    return embed
+    return embed, was_truncated
+
+
+def build_gateway_detail_embed(
+    msg: dict,
+    nodes: dict,
+    base_url: str,
+    gateway_entries: list,
+) -> list[discord.Embed]:
+    """
+    Build one or more embeds showing the full gateway breakdown for a packet.
+
+    Used when a user clicks the "View Gateways" button. Returns a list of
+    embeds to handle very large gateway lists that exceed a single embed.
+    """
+    from_id = msg.get("from", "unknown")
+    packet_id = msg.get("id", "?")
+    hop_limit = msg.get("hop_start") or msg.get("hop_limit")
+
+    gw_text = _format_gateway_list(gateway_entries, nodes, base_url)
+    if not gw_text:
+        return []
+
+    logs_url = f"{base_url.rstrip('/')}/logs?q={packet_id}" if base_url else None
+    pid_display = f"[{packet_id}]({logs_url})" if logs_url else str(packet_id)
+    header = f"**Packet** {pid_display} \u2014 **{len(gateway_entries)}** gateways"
+    if hop_limit is not None:
+        header += f" \u2014 hop limit {hop_limit}"
+
+    # Split into chunks that fit in embed descriptions (4096 limit)
+    sections = gw_text.split("\n\n")
+    embeds = []
+    current = header
+    for section in sections:
+        test = current + "\n\n" + section
+        if len(test) <= EMBED_DESC_LIMIT:
+            current = test
+        else:
+            embeds.append(discord.Embed(
+                description=current,
+                color=discord.Color.from_rgb(69, 179, 186),
+            ))
+            current = section
+    if current:
+        embeds.append(discord.Embed(
+            description=current,
+            color=discord.Color.from_rgb(69, 179, 186),
+        ))
+
+    # Footer on last embed
+    if embeds:
+        embeds[-1].set_footer(text=f"Node: !{from_id}")
+
+    return embeds
 
 
 def build_position_embed(
@@ -295,7 +370,7 @@ def build_position_embed(
         # Static map thumbnail (self-hosted, provider from config)
         thumbnail_url = _map_thumbnail_url(lat, lon, base_url, maps_cfg)
         if thumbnail_url:
-            embed.set_thumbnail(url=thumbnail_url)
+            embed.set_image(url=thumbnail_url)
 
     # Gateway info with linked names
     if gateway_entries and len(gateway_entries) > 0:

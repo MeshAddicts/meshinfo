@@ -15,12 +15,54 @@ from typing import Optional
 import discord
 from discord.ext import commands, tasks
 
-from bot.embeds import build_text_embed, build_position_embed
+from bot.embeds import build_text_embed, build_position_embed, build_gateway_detail_embed
 from memory_data_store import MemoryDataStore
 
 logger = logging.getLogger(__name__)
 
 WEBHOOK_NAME = "MeshInfo Bridge"
+
+# Module-level cache for gateway data (packet_id -> {msg, gateways, nodes})
+# Used by the ViewGateways button to retrieve data after the embed is posted
+_gateway_cache: dict[str, dict] = {}
+_GATEWAY_CACHE_MAX = 200
+
+
+class _ViewGatewaysButton(discord.ui.Button):
+    """Button that shows full gateway breakdown when clicked."""
+
+    def __init__(self, packet_id: str):
+        super().__init__(
+            style=discord.ButtonStyle.secondary,
+            label="View All Gateways",
+            custom_id=f"viewgw:{packet_id}",
+        )
+        self.packet_id = packet_id
+
+    async def callback(self, interaction: discord.Interaction):
+        data = _gateway_cache.get(self.packet_id)
+        if not data:
+            await interaction.response.send_message(
+                "Gateway data is no longer available (expired).", ephemeral=True,
+            )
+            return
+
+        embeds = build_gateway_detail_embed(
+            msg=data["msg"],
+            nodes=data["nodes"],
+            base_url=data["base_url"],
+            gateway_entries=data["gateways"],
+        )
+        if embeds:
+            await interaction.response.send_message(embeds=embeds, ephemeral=True)
+        else:
+            await interaction.response.send_message("No gateway data available.", ephemeral=True)
+
+
+class _ViewGatewaysView(discord.ui.View):
+    def __init__(self, packet_id: str):
+        super().__init__(timeout=None)
+        self.add_item(_ViewGatewaysButton(packet_id))
 
 
 class _PendingPacket:
@@ -315,7 +357,7 @@ class MeshBridge(commands.Cog):
         owner_id = await self.data.pg_storage.get_node_owner(from_id)
 
         base_url = self.config.get("server", {}).get("base_url", "")
-        embed = build_text_embed(
+        embed, was_truncated = build_text_embed(
             msg=msg,
             chat=chat,
             nodes=enriched_nodes,
@@ -325,15 +367,35 @@ class MeshBridge(commands.Cog):
             gateway_entries=pending.gateways,
         )
 
+        # Only show "View All Gateways" button if gateway data was truncated
+        view = None
+        packet_id = msg.get("id")
+        if packet_id and was_truncated:
+            cache_key = str(packet_id)
+            _gateway_cache[cache_key] = {
+                "msg": msg,
+                "gateways": list(pending.gateways),
+                "nodes": dict(enriched_nodes),
+                "base_url": base_url,
+            }
+            # Evict old entries
+            while len(_gateway_cache) > _GATEWAY_CACHE_MAX:
+                oldest = next(iter(_gateway_cache))
+                _gateway_cache.pop(oldest, None)
+            view = _ViewGatewaysView(cache_key)
+
         # Try webhook first (makes each node look like a unique sender)
         webhook = await self._get_webhook(channel)
 
         if pending.discord_message and webhook:
-            # Edit existing webhook message
+            # Edit existing webhook message — include view if truncation now requires it
             try:
+                edit_kwargs = {"embed": embed}
+                if view is not None:
+                    edit_kwargs["view"] = view
                 await webhook.edit_message(
                     pending.discord_message.id,
-                    embed=embed,
+                    **edit_kwargs,
                 )
                 return
             except Exception:
@@ -342,14 +404,16 @@ class MeshBridge(commands.Cog):
 
         if not pending.discord_message and webhook:
             try:
-                sent = await webhook.send(
-                    embed=embed,
-                    username=sender_name,
-                    avatar_url=avatar_url,
-                    wait=True,
-                )
+                send_kwargs = {
+                    "embed": embed,
+                    "username": sender_name,
+                    "avatar_url": avatar_url,
+                    "wait": True,
+                }
+                if view is not None:
+                    send_kwargs["view"] = view
+                sent = await webhook.send(**send_kwargs)
                 pending.discord_message = sent
-                packet_id = msg.get("id")
                 if packet_id:
                     self._reply_cache[packet_id] = sent
                     if len(self._reply_cache) > self._reply_cache_max:
@@ -362,15 +426,20 @@ class MeshBridge(commands.Cog):
         # Fallback: send as bot
         if pending.discord_message:
             try:
-                await pending.discord_message.edit(embed=embed)
+                edit_kwargs = {"embed": embed}
+                if view is not None:
+                    edit_kwargs["view"] = view
+                await pending.discord_message.edit(**edit_kwargs)
                 return
             except Exception:
                 pending.discord_message = None
 
         try:
-            sent = await channel.send(embed=embed)
+            send_kwargs = {"embed": embed}
+            if view is not None:
+                send_kwargs["view"] = view
+            sent = await channel.send(**send_kwargs)
             pending.discord_message = sent
-            packet_id = msg.get("id")
             if packet_id:
                 self._reply_cache[packet_id] = sent
                 if len(self._reply_cache) > self._reply_cache_max:
