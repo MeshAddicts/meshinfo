@@ -281,7 +281,7 @@ class MainCommands(commands.Cog):
         if self.config['mesh'].get('url'):
             embed.add_field(name="Website", value=self.config['mesh']['url'], inline=False)
         embed.add_field(name="Total Nodes", value=f"[{total_nodes}]({base_url}/nodes)", inline=True)
-        embed.add_field(name="Online Nodes", value=f"[{active_nodes}]({base_url}/nodes?status=online)", inline=True)
+        embed.add_field(name="Online Nodes", value=f"[{active_nodes}]({base_url}/nodes?st=online)", inline=True)
         uptime = datetime.datetime.now().astimezone(ZoneInfo(self.config['server']['timezone'])) - self.config['server']['start_time']
         embed.add_field(name="Server Uptime", value=f"{uptime.days}d {uptime.seconds // 3600}h {(uptime.seconds % 3600) // 60}m {uptime.seconds % 60}s", inline=False)
         links = [f"[Dashboard]({base_url})", f"[Nodes]({base_url}/nodes)", f"[Chat]({base_url}/chat)", f"[Logs]({base_url}/logs)"]

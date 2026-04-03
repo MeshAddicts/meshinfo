@@ -1,4 +1,4 @@
-import { INode } from "../../types";
+import { HardwareModel, INode } from "../../types";
 
 export type RangeKey = "1h" | "24h" | "7d" | "all";
 export type StatusKey = "all" | "online" | "offline";
@@ -123,6 +123,14 @@ export function roleLabel(role: unknown) {
     default:
       return "Unknown";
   }
+}
+
+export function hardwareLabel(hw: unknown): string {
+  const n = Number(hw);
+  if (!Number.isFinite(n)) return "";
+  const name = HardwareModel[n as HardwareModel];
+  if (!name) return String(n);
+  return name.replace(/_/g, " ").replace(/\bV(\d)/g, "v$1");
 }
 
 export function getTelemetrySnapshot(node: INode): {

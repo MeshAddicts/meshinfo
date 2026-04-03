@@ -230,7 +230,7 @@ export function NodeDetailsPanel({
               />
               <KV
                 k="Hardware"
-                v={n?.hardware != null ? <HardwareImg model={n.hardware} /> : "Unknown"}
+                v={n?.hardware != null ? <HardwareImg model={n.hardware} showLabel /> : "Unknown"}
               />
               <KV k="Role" v={n?.role != null ? <Role role={n.role} /> : "Unknown"} />
               <KV
