@@ -2096,7 +2096,8 @@ class PostgresStorage:
         if not self._ready("query_top_nodes"):
             return {}
 
-        interval = f"{hours} hours"
+        # Compute cutoff timestamp in Python to avoid asyncpg interval issues
+        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=hours)
         results = {}
 
         try:
@@ -2105,9 +2106,9 @@ class PostgresStorage:
                 rows = await conn.fetch(
                     """SELECT from_node_id AS node_id, COUNT(*) AS count
                        FROM chat_messages
-                       WHERE created_at >= NOW() - $1::interval
+                       WHERE created_at >= $1
                        GROUP BY from_node_id ORDER BY count DESC LIMIT $2""",
-                    interval, limit,
+                    cutoff, limit,
                 )
                 results["chatterbox"] = [dict(r) for r in rows]
 
@@ -2123,21 +2124,16 @@ class PostgresStorage:
                 results["iron_man"] = [dict(r) for r in rows]
 
                 # Here I Am — disabled: requires position history table (not yet implemented)
-                # When a position_history table is added, uncomment and query:
-                #   SELECT from_node_id AS node_id, COUNT(*) AS count
-                #   FROM position_history
-                #   WHERE created_at >= NOW() - interval
-                #   GROUP BY from_node_id ORDER BY count DESC
 
                 # Loudest Signal — best average SNR
                 rows = await conn.fetch(
                     """SELECT from_node_id AS node_id, ROUND(AVG(snr)::numeric, 1) AS avg_snr
                        FROM chat_messages
-                       WHERE created_at >= NOW() - $1::interval AND snr IS NOT NULL
+                       WHERE created_at >= $1 AND snr IS NOT NULL
                        GROUP BY from_node_id
                        HAVING COUNT(*) >= 3
                        ORDER BY avg_snr DESC LIMIT $2""",
-                    interval, limit,
+                    cutoff, limit,
                 )
                 results["loudest_signal"] = [dict(r) for r in rows]
 
@@ -2145,11 +2141,11 @@ class PostgresStorage:
                 rows = await conn.fetch(
                     """SELECT sender_node_id AS node_id, COUNT(*) AS count
                        FROM chat_messages
-                       WHERE created_at >= NOW() - $1::interval
+                       WHERE created_at >= $1
                          AND sender_node_id IS NOT NULL
                          AND sender_node_id != from_node_id
                        GROUP BY sender_node_id ORDER BY count DESC LIMIT $2""",
-                    interval, limit,
+                    cutoff, limit,
                 )
                 results["gateway_mvp"] = [dict(r) for r in rows]
 

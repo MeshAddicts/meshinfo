@@ -306,9 +306,11 @@ class MainCommands(commands.Cog):
             await interaction.response.send_message("Database not available.", ephemeral=True)
             return
 
+        await interaction.response.defer()
+
         stats = await self.data.pg_storage.query_top_nodes(hours=hours, limit=5)
         if not stats:
-            await interaction.response.send_message("No leaderboard data available yet.", ephemeral=True)
+            await interaction.followup.send("No leaderboard data available yet.", ephemeral=True)
             return
 
         base_url = self.config.get('server', {}).get('base_url', '').rstrip('/')
@@ -380,7 +382,7 @@ class MainCommands(commands.Cog):
             embed.description = "Not enough data yet \u2014 check back later!"
 
         embed.set_footer(text=f"Timeframe: {label} | Use /topnodes 7d for weekly")
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="meshinfo", description="Show all available bot commands")
     async def meshinfo_help(self, interaction: discord.Interaction):
