@@ -249,6 +249,12 @@ class MainCommands(commands.Cog):
             if link_parts:
                 embed.add_field(name="View Elsewhere", value=" | ".join(link_parts), inline=False)
 
+        # Owner tag if node is linked
+        if self.data.pg_storage:
+            owner_id = await self.data.pg_storage.get_node_owner(id_hex)
+            if owner_id:
+                embed.add_field(name="Owner", value=f"<@{owner_id}>", inline=True)
+
         embed.set_footer(text=f"Node: !{id_hex}")
         await interaction.response.send_message(embed=embed)
 
