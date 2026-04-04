@@ -39,6 +39,7 @@ export function NodesList({
   selectedId,
   flashId,
   scrollToId,
+  liveEnabled = true,
   onSelect,
   onAtTopChange,
   totalSeen,
@@ -48,6 +49,7 @@ export function NodesList({
   flashId?: string;
   /** When set, the list scrolls to this node id and clears via onScrollComplete */
   scrollToId?: string;
+  liveEnabled?: boolean;
   onSelect: (id: string) => void;
   onAtTopChange?: (atTop: boolean) => void;
   totalSeen: number;
@@ -79,16 +81,51 @@ export function NodesList({
     [],
   );
 
-  // Scroll-to-node: retry until Virtuoso is ready
-  // Scroll-to-node when scrollToId is set.
+  // Freeze the item list when scrolled away from top to prevent
+  // re-sorting from jumping the user's scroll position.
+  const frozenRef = useRef<NodeListItem[] | null>(null);
+  const displayItems = (() => {
+    if (liveEnabled && !atTop) {
+      // Paused: capture snapshot on first frame, keep it stable
+      if (!frozenRef.current) frozenRef.current = items;
+      return frozenRef.current;
+    }
+    // Live at top, or live disabled: show latest, clear snapshot
+    frozenRef.current = null;
+    return items;
+  })();
+
+  // Track new items arriving while paused
+  const [newCount, setNewCount] = useState(0);
+
+  useEffect(() => {
+    if (!liveEnabled || atTop) {
+      setNewCount(0);
+      return;
+    }
+    // While paused, diff live items against frozen snapshot
+    if (frozenRef.current) {
+      const frozenIds = new Set(frozenRef.current.map((x) => x.id));
+      const added = items.filter((x) => !frozenIds.has(x.id)).length;
+      setNewCount(added);
+    }
+  }, [items, atTop, liveEnabled]);
+
+  // Scroll-to-node: retry until Virtuoso is ready.
   // Re-runs when items change (e.g. data finishes loading after mount).
   const scrollDoneRef = useRef<string>("");
+  // Reset scroll tracking when the target changes
+  useEffect(() => {
+    if (scrollToId !== scrollDoneRef.current) {
+      scrollDoneRef.current = "";
+    }
+  }, [scrollToId]);
+
   useEffect(() => {
     if (!scrollToId) return;
-    // Already scrolled for this id — skip
     if (scrollDoneRef.current === scrollToId) return;
 
-    const idx = items.findIndex((x) => x.id === scrollToId);
+    const idx = displayItems.findIndex((x) => x.id === scrollToId);
     if (idx < 0) return; // node not in list yet — will re-run when items updates
 
     const doScroll = () => {
@@ -106,7 +143,7 @@ export function NodesList({
     doScroll();
     const timers = [50, 200, 500, 1000].map((d) => setTimeout(doScroll, d));
     return () => timers.forEach(clearTimeout);
-  }, [scrollToId, items]);
+  }, [scrollToId, displayItems]);
 
   // Jump to top (used by "Back to live" externally via ref isn't needed —
   // we expose it through a simpler pattern: parent sets scrollToId="" or
@@ -116,7 +153,7 @@ export function NodesList({
     <div className="relative rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-xs flex flex-col min-h-0 flex-1">
       <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex items-center justify-between">
         <div className="text-sm text-gray-800 dark:text-gray-200">
-          <span className="font-semibold">{items.length}</span> shown{" "}
+          <span className="font-semibold">{displayItems.length}</span> shown{" "}
           <span className="text-gray-500 dark:text-gray-400">
             (out of {totalSeen} seen)
           </span>
@@ -144,7 +181,7 @@ export function NodesList({
                 });
               }}
             >
-              Back to top <span className="ml-1 opacity-80">&uarr;</span>
+              Back to top{newCount > 0 && ` (${newCount} new)`} <span className="ml-1 opacity-80">&uarr;</span>
             </button>
           </div>
         )}
@@ -152,7 +189,7 @@ export function NodesList({
         <Virtuoso
           ref={virtuosoRef}
           style={{ flex: 1, minHeight: 0, height: "100%" }}
-          data={items}
+          data={displayItems}
           computeItemKey={(_index, item) => item.id}
           overscan={600}
           rangeChanged={handleRangeChanged}

@@ -628,6 +628,28 @@ export const Nodes = () => {
     setParam("node", undefined, "push");
   }, [setParam]);
 
+  // Click-outside: clear selection when clicking in the page background
+  const listContainerRef = useRef<HTMLDivElement>(null);
+  const detailsPanelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!selectedId) return;
+
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (listContainerRef.current?.contains(t)) return;
+      if (detailsPanelRef.current?.contains(t)) return;
+      // Don't clear if clicking on header/toolbar controls
+      const el = e.target as HTMLElement;
+      if (el.closest?.("[data-no-clear-selection]")) return;
+      clearSelection();
+    };
+
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [selectedId, clearSelection]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -669,7 +691,7 @@ export const Nodes = () => {
   return (
     <div className="w-full h-dvh overflow-hidden flex flex-col">
       {/* Sticky header */}
-      <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
+      <div data-no-clear-selection className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
         <div className="mx-auto max-w-[1600px] pl-3 pr-14 sm:px-5 py-2 sm:py-3">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
@@ -1002,13 +1024,14 @@ export const Nodes = () => {
         <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
             {/* Left: list */}
-            <div className="lg:col-span-2 min-h-0 flex flex-col h-full">
+            <div ref={listContainerRef} className="lg:col-span-2 min-h-0 flex flex-col h-full">
               <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                 <NodesList
                   items={filteredItems}
                   selectedId={selectedId}
                   flashId={flashNodeId}
                   scrollToId={scrollToId}
+                  liveEnabled={liveEnabled}
                   onSelect={onSelect}
                   onAtTopChange={onAtTopChange}
                   totalSeen={Object.keys(nodes as any).length}
@@ -1017,7 +1040,7 @@ export const Nodes = () => {
             </div>
 
             {/* Right: overview or details (desktop only) */}
-            <div className="hidden lg:flex lg:col-span-1 flex-col min-h-0 h-full overflow-y-auto">
+            <div ref={detailsPanelRef} className="hidden lg:flex lg:col-span-1 flex-col min-h-0 h-full overflow-y-auto">
               <div className="min-h-0">
                 {selectedNode ? (
                   <NodeDetailsPanel
