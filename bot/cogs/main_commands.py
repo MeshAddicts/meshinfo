@@ -282,15 +282,12 @@ class MainCommands(commands.Cog):
         embed.set_thumbnail(url=user.display_avatar.url)
 
         for nid in nodes[:25]:  # Discord embed field limit
-            node = self.data.nodes.get(nid)
-            if not node and self.data.pg_storage:
-                result = await self.data.pg_storage.query_nodes_filtered(
-                    days_limit=None, node_ids=[nid],
-                )
-                node = result.get(nid) if result else None
+            node = await self.data.pg_storage.query_node_by_id(nid)
+            if not node:
+                node = self.data.nodes.get(nid)
 
-            shortname = node.get('shortname', 'UNK') if node else 'UNK'
-            longname = node.get('longname', 'Unknown') if node else 'Unknown'
+            shortname = (node.get('shortname') or 'UNK') if node else 'UNK'
+            longname = (node.get('longname') or 'Unknown') if node else 'Unknown'
             active = node.get('active', False) if node else False
             status = "Online" if active else "Offline"
 
