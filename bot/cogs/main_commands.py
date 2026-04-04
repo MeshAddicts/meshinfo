@@ -258,6 +258,48 @@ class MainCommands(commands.Cog):
         embed.set_footer(text=f"Node: !{id_hex}")
         await interaction.response.send_message(embed=embed)
 
+    @app_commands.command(name="lookupuser", description="See all mesh nodes linked to a Discord user")
+    @app_commands.describe(user="Discord user to look up")
+    async def lookup_user(self, interaction: discord.Interaction, user: discord.User):
+        logger.info("Discord: /lookupuser: Looking up nodes for %s", user)
+
+        if not self.data.pg_storage:
+            await interaction.response.send_message("Database not available.", ephemeral=True)
+            return
+
+        nodes = await self.data.pg_storage.get_linked_nodes(str(user.id))
+        if not nodes:
+            await interaction.response.send_message(
+                f"{user.mention} has no linked nodes.", ephemeral=True,
+            )
+            return
+
+        base_url = self.config['server']['base_url'].strip('/')
+        embed = discord.Embed(
+            title=f"Nodes linked to {user.display_name}",
+            color=discord.Color.blue(),
+        )
+        embed.set_thumbnail(url=user.display_avatar.url)
+
+        for nid in nodes[:25]:  # Discord embed field limit
+            node = await self.data.pg_storage.query_node_by_id(nid)
+            if not node:
+                node = self.data.nodes.get(nid)
+
+            shortname = (node.get('shortname') or 'UNK') if node else 'UNK'
+            longname = (node.get('longname') or 'Unknown') if node else 'Unknown'
+            active = node.get('active', False) if node else False
+            status = "Online" if active else "Offline"
+
+            embed.add_field(
+                name=f"{shortname}: {longname}",
+                value=f"[!{nid}]({base_url}/nodes?node={nid}) — {status}",
+                inline=False,
+            )
+
+        embed.set_footer(text=f"{len(nodes)} node{'s' if len(nodes) != 1 else ''} linked")
+        await interaction.response.send_message(embed=embed)
+
     @app_commands.command(name="mesh", description="Information about the mesh")
     async def mesh_info(self, interaction: discord.Interaction):
         logger.info("Discord: /mesh: Mesh info requested by %s", interaction.user)
