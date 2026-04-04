@@ -23,6 +23,7 @@ export function buildNodeDetailsHtml(opts: {
   displayName: string | null | undefined;
   elsewhereLinks?: ElsewhereLink[];
   traceroutes?: ITraceroutesResponse[];
+  channelLabel?: string | null;
 }): { html: string; heardBy: string[] } {
   const { node, liveNodes } = opts;
   const displayName = opts.displayName || "Unknown";
@@ -63,6 +64,7 @@ export function buildNodeDetailsHtml(opts: {
     `<b>Location</b> &nbsp;<span title="${escapeHtml(displayName)}" style="cursor:help;border-bottom:1px dotted currentColor">${escapeHtml(shortenLocation(displayName))}</span><br/>` +
     `<b>Status</b> &nbsp;${node.online ? "Online" : "Offline"}<br/>` +
     `<b>Last Seen</b> &nbsp;${escapeHtml(node.last_seen ?? "")}` +
+    (opts.channelLabel ? `<br/><b>Channel</b> &nbsp;${escapeHtml(opts.channelLabel)}` : "") +
     `</div>`;
 
   // Gateway

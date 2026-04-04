@@ -16,7 +16,7 @@ import { fromLonLat, transform } from "ol/proj";
 import { Vector } from "ol/source";
 import VectorSource from "ol/source/Vector";
 import { Circle, Fill, Stroke, Style } from "ol/style";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
 import { env } from "../env";
@@ -107,6 +107,15 @@ export function Map() {
   const { data: rawNodes = {} } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
   const { data: rawTraceroutes = [] } = useGetTraceroutesQuery();
+
+  const resolveChannelLabel = useCallback(
+    (channelId: string | null | undefined): string | null => {
+      if (!channelId) return null;
+      const meta = (config as any)?.broker?.channels?.meta?.[channelId];
+      return meta?.label ? String(meta.label) : null;
+    },
+    [config],
+  );
 
   // ----- env capabilities
   const mapboxToken = env.MAPBOX_TOKEN;
@@ -882,6 +891,7 @@ export function Map() {
           displayName,
           elsewhereLinks: config?.mesh?.elsewhere_links,
           traceroutes: traceroutesRef.current,
+          channelLabel: resolveChannelLabel((node as any).last_channel),
         });
 
         setDetailsPanelContent({
@@ -1358,12 +1368,14 @@ export function Map() {
         gateway: node.gateway,
       };
 
+      const fullNode = nodes[node.id];
       const { html } = buildNodeDetailsHtml({
         node: nodeLike,
         liveNodes: nodes,
         displayName,
         elsewhereLinks: config?.mesh?.elsewhere_links,
         traceroutes: traceroutesRef.current,
+        channelLabel: resolveChannelLabel((fullNode as any)?.last_channel),
       });
 
       setDetailsPanelContent({
