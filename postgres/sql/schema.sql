@@ -268,6 +268,7 @@ ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS local_stats JSONB;
 ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS health_metrics JSONB;
 ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS host_metrics JSONB;
 ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS traffic_management_stats JSONB;
+ALTER TABLE nodes ADD COLUMN IF NOT EXISTS last_channel VARCHAR(10);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Discord bridge tables

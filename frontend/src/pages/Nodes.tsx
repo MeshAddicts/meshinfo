@@ -179,6 +179,7 @@ export const Nodes = () => {
     urlStatus,
     urlBy,
     urlDir,
+    urlCh,
     urlNode,
     setParam,
     setParams,
@@ -217,6 +218,31 @@ export const Nodes = () => {
     const bang = nodes?.[`!${serverNodeId}`];
     return bang ?? null;
   }, [nodes, serverNodeId]);
+
+  // Channel views from config
+  const channelViews = useMemo(() => {
+    const vraw = (config as any)?.broker?.channels?.views;
+    if (!Array.isArray(vraw) || vraw.length === 0) return [];
+    const out: { key: string; label: string; channelId: string }[] = [];
+    for (const v of vraw) {
+      const chans = Array.isArray(v?.channels) ? v.channels.map(String) : [];
+      if (chans.length !== 1) continue;
+      const channelId = chans[0];
+      const meta = (config as any)?.broker?.channels?.meta?.[channelId] ?? {};
+      const label = String(v?.label ?? meta?.label ?? `Channel ${channelId}`);
+      out.push({ key: channelId, label, channelId });
+    }
+    return out;
+  }, [config]);
+
+  // Resolve urlCh to a channel ID
+  const selectedChannelId = useMemo(() => {
+    if (!urlCh) return null;
+    for (const v of channelViews) {
+      if (urlCh === v.channelId || urlCh.toLowerCase() === v.label.toLowerCase()) return v.channelId;
+    }
+    return null;
+  }, [urlCh, channelViews]);
 
   // Range threshold clock: update infrequently (range cutoffs don't need 1s precision)
   const [rangeNowMs, setRangeNowMs] = useState(() => Date.now());
@@ -310,6 +336,10 @@ export const Nodes = () => {
     if (urlStatus === "online") items = items.filter((x) => x.online);
     if (urlStatus === "offline") items = items.filter((x) => !x.online);
 
+    if (selectedChannelId) {
+      items = items.filter((x) => (x.node as any)?.last_channel === selectedChannelId);
+    }
+
     const q = (urlQ ?? "").trim().toLowerCase();
     if (q) {
       items = items.filter((x) => {
@@ -355,7 +385,7 @@ export const Nodes = () => {
     });
 
     return items;
-  }, [allItems, rangeThresholdMs, urlStatus, urlQ, urlBy, urlDir]);
+  }, [allItems, rangeThresholdMs, urlStatus, selectedChannelId, urlQ, urlBy, urlDir]);
 
   // Selection (urlNode)
   const selectedId = useMemo(() => cleanNodeId(urlNode ?? ""), [urlNode]);
@@ -509,6 +539,7 @@ export const Nodes = () => {
         online: x.online ? "true" : "false",
         role: roleLabel(n?.role),
         hardware: hardwareLabel(n?.hardware),
+        last_channel: String(n?.last_channel ?? ""),
         last_seen: n?.last_seen ? new Date(n.last_seen).toISOString() : "",
         altitude_m: n?.position?.altitude ?? "",
         latitude: ll ? ll[1] : "",
@@ -562,11 +593,12 @@ export const Nodes = () => {
     let n = 0;
     if (urlRange !== "all") n += 1;
     if (urlStatus !== "all") n += 1;
+    if (selectedChannelId) n += 1;
     if ((urlQ ?? "").trim()) n += 1;
     if (urlBy !== "seen") n += 1;
     if (urlDir !== "desc") n += 1;
     return n;
-  }, [urlRange, urlStatus, urlQ, urlBy, urlDir]);
+  }, [urlRange, urlStatus, selectedChannelId, urlQ, urlBy, urlDir]);
 
   const hasFilters = activeFilterCount > 0;
 
@@ -576,6 +608,7 @@ export const Nodes = () => {
       [
         { key: "r", value: "all" },
         { key: "st", value: "all" },
+        { key: "ch", value: undefined },
         { key: "q", value: undefined },
         { key: "by", value: "seen" },
         { key: "dir", value: "desc" },
@@ -763,6 +796,63 @@ export const Nodes = () => {
             </div>
           </div>
 
+          {/* Channel preset pills */}
+          {channelViews.length > 1 && (
+            <div className="mt-3 flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
+              <button
+                type="button"
+                className={[
+                  "whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-medium border transition",
+                  !selectedChannelId
+                    ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                    : "bg-transparent text-gray-700 dark:text-gray-200 border-gray-300/60 dark:border-gray-600/60 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
+                ].join(" ")}
+                onClick={() => setParam("ch", undefined, "push")}
+              >
+                All
+                <span
+                  className={[
+                    "ml-2 rounded-full px-2 py-0.5 text-xs",
+                    !selectedChannelId
+                      ? "bg-white/20 text-white"
+                      : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-700 dark:text-gray-200",
+                  ].join(" ")}
+                >
+                  {allItems.length}
+                </span>
+              </button>
+              {channelViews.map((v) => {
+                const active = selectedChannelId === v.channelId;
+                const count = allItems.filter((x) => (x.node as any)?.last_channel === v.channelId).length;
+                return (
+                  <button
+                    key={`ch-${v.key}`}
+                    type="button"
+                    className={[
+                      "whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-medium border transition",
+                      active
+                        ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
+                        : "bg-transparent text-gray-700 dark:text-gray-200 border-gray-300/60 dark:border-gray-600/60 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
+                    ].join(" ")}
+                    onClick={() => setParam("ch", v.channelId, "push")}
+                  >
+                    {v.label}
+                    <span
+                      className={[
+                        "ml-2 rounded-full px-2 py-0.5 text-xs",
+                        active
+                          ? "bg-white/20 text-white"
+                          : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-700 dark:text-gray-200",
+                      ].join(" ")}
+                    >
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {/* Toolbar */}
           <div className="mt-3 flex flex-col lg:flex-row gap-2 lg:items-center lg:justify-between">
             <div className="flex-1 min-w-0 lg:min-w-[260px]">
@@ -869,6 +959,14 @@ export const Nodes = () => {
               title="Click to reset status to All"
               onClick={() => setParam("st", "all", "push")} // deletes
             />
+            {channelViews.length > 1 && (
+              <StatusChip
+                label={selectedChannelId ? `Channel: ${channelViews.find((v) => v.channelId === selectedChannelId)?.label ?? selectedChannelId}` : "Channel: all"}
+                active={!!selectedChannelId}
+                title="Click to show all channels"
+                onClick={() => setParam("ch", undefined, "push")}
+              />
+            )}
             <StatusChip
               label={`Sort: ${urlBy}/${urlDir}`}
               active={urlBy !== "seen" || urlDir !== "desc"}
