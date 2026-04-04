@@ -32,6 +32,7 @@ function isDefaultParam(key: string, value: string) {
   if (key === "st") return (v as StatusKey) === DEFAULTS.st;
   if (key === "by") return (v as SortByKey) === DEFAULTS.by;
   if (key === "dir") return (v as SortDir) === DEFAULTS.dir;
+  if (key === "ch") return v === "";
 
   return false;
 }
@@ -55,6 +56,7 @@ export function useNodesSearchParams() {
   const urlDir = parseSortDir(rawDir) as SortDir;
 
   const urlNode = cleanNodeId(searchParams.get("node") ?? "");
+  const urlCh = (searchParams.get("ch") ?? "").trim();
 
   // Optional: canonicalize away defaults if someone links ?r=all&st=all&by=seen&dir=desc
   useEffect(() => {
@@ -78,6 +80,11 @@ export function useNodesSearchParams() {
       changed = true;
     }
 
+    if (next.has("ch") && !urlCh) {
+      next.delete("ch");
+      changed = true;
+    }
+
     // q/node canonicalization: delete if empty
     if (next.has("q") && !urlQ.trim()) {
       next.delete("q");
@@ -90,7 +97,7 @@ export function useNodesSearchParams() {
 
     if (changed) setSearchParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [urlRange, urlStatus, urlBy, urlDir, urlQ, urlNode]);
+  }, [urlRange, urlStatus, urlBy, urlDir, urlQ, urlNode, urlCh]);
 
   const setParam = (key: string, value?: string, mode: SetMode = "push") => {
     const next = new URLSearchParams(searchParams);
@@ -125,11 +132,12 @@ export function useNodesSearchParams() {
       urlStatus,
       urlBy,
       urlDir,
+      urlCh,
       urlNode,
       setParam,
       setParams,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- setParam/setParams are stable
-    [searchParams, urlQ, urlRange, urlStatus, urlBy, urlDir, urlNode]
+    [searchParams, urlQ, urlRange, urlStatus, urlBy, urlDir, urlCh, urlNode]
   );
 }

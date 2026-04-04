@@ -14,6 +14,7 @@ class Node():
         'position': None,
         'telemetry': None,
         'gateway': None,
+        'last_channel': None,
         'active': False,
         'since': datetime.datetime.now(datetime.timezone.utc).astimezone() - datetime.datetime.now(datetime.timezone.utc).astimezone(),
         'last_seen': datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()
@@ -28,6 +29,7 @@ class Node():
       'position': None,
       'telemetry': None,
       'gateway': None,
+      'last_channel': None,
       'active': True,
       'since': datetime.datetime.now(datetime.timezone.utc).astimezone() - datetime.datetime.now(datetime.timezone.utc).astimezone(),
       'last_seen': datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()

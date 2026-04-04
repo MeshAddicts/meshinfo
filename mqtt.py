@@ -423,6 +423,9 @@ class MQTT:
         if msg.get('sender'):
             node['gateway'] = msg['sender']
 
+        if 'channel' in msg:
+            node['last_channel'] = str(msg['channel'])
+
         self.data.update_node(id, node)
 
         self.sort_nodes_by_shortname()
@@ -444,6 +447,9 @@ class MQTT:
             node['position'] = msg['payload'] if 'payload' in msg else None
             self.data.update_node(id, node)
             logger.debug("Node %s skeleton added with position", id)
+
+        if 'channel' in msg:
+            node['last_channel'] = str(msg['channel'])
 
         # Emit event for Discord bridge
         try:
@@ -486,6 +492,9 @@ class MQTT:
 
         if msg.get('sender'):
             node['gateway'] = msg['sender']
+
+        if 'channel' in msg:
+            node['last_channel'] = str(msg['channel'])
 
         self.data.update_node(id, node)
         logger.debug("Node %s updated with telemetry (variant=%s)", id, telemetry_type)
@@ -562,6 +571,7 @@ class MQTT:
         if node:
             if 'TC' in chat['text'] and 'BBS' in chat['text'] and 'Commands' in chat['text']:
                 node['tc2_bbs'] = True
+            node['last_channel'] = str(msg['channel'])
             self.data.update_node(node['id'], node)
 
         # Emit event for Discord bridge

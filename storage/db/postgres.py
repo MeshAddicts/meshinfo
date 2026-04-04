@@ -357,10 +357,14 @@ class PostgresStorage:
                     if role is None and role_raw not in (None, "", 0):
                         logger.debug("Invalid role %r for node %s; storing NULL", role_raw, node_id_norm)
 
+                    last_channel = node_data.get("last_channel")
+                    if last_channel is not None:
+                        last_channel = str(last_channel)
+
                     await conn.execute(
                         """
-                        INSERT INTO nodes (id, longname, shortname, hardware, role, active, tc2_bbs, gateway, last_seen, since_seconds)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                        INSERT INTO nodes (id, longname, shortname, hardware, role, active, tc2_bbs, gateway, last_seen, since_seconds, last_channel)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                         ON CONFLICT (id) DO UPDATE SET
                             longname = EXCLUDED.longname,
                             shortname = EXCLUDED.shortname,
@@ -371,6 +375,7 @@ class PostgresStorage:
                             gateway = COALESCE(EXCLUDED.gateway, nodes.gateway),
                             last_seen = EXCLUDED.last_seen,
                             since_seconds = EXCLUDED.since_seconds,
+                            last_channel = COALESCE(EXCLUDED.last_channel, nodes.last_channel),
                             updated_at = NOW()
                         """,
                         node_id_norm,
@@ -383,6 +388,7 @@ class PostgresStorage:
                         self._normalize_node_id(node_data.get("gateway")),
                         last_seen_ts,
                         since_seconds,
+                        last_channel,
                     )
 
                     if node_data.get("position"):
@@ -1001,6 +1007,7 @@ class PostgresStorage:
                         "active": row["active"],
                         "tc2_bbs": row["tc2_bbs"],
                         "gateway": row["gateway"] if "gateway" in row.keys() else None,
+                        "last_channel": row["last_channel"] if "last_channel" in row.keys() else None,
                         "last_seen": row["last_seen"].isoformat() if row["last_seen"] else None,
                         "since": datetime.timedelta(seconds=row["since_seconds"]) if row["since_seconds"] else None,
                         "position": None,
@@ -1316,6 +1323,7 @@ class PostgresStorage:
                         "active": row["active"],
                         "tc2_bbs": row["tc2_bbs"] if "tc2_bbs" in row else False,
                         "gateway": row["gateway"] if "gateway" in row.keys() else None,
+                        "last_channel": row["last_channel"] if "last_channel" in row.keys() else None,
                         "last_seen": row["last_seen"].isoformat() if row["last_seen"] else None,
                         "since": datetime.timedelta(seconds=row["since_seconds"]) if row["since_seconds"] else None,
                         "position": None,
