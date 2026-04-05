@@ -356,7 +356,21 @@ class MainCommands(commands.Cog):
 
         await interaction.response.defer()
 
-        stats = await self.data.pg_storage.query_top_nodes(hours=hours, limit=5)
+        # Determine mesh channel from Discord channel via bridge config
+        mesh_channel = None
+        channel_label = None
+        bridge_cfg = self.config.get('discord', {}).get('bridge', {})
+        bridge_channels = bridge_cfg.get('channels', {})
+        discord_ch_id = str(interaction.channel_id)
+        for mesh_ch, disc_ch in bridge_channels.items():
+            if str(disc_ch) == discord_ch_id:
+                mesh_channel = mesh_ch
+                # Resolve a friendly label from channel meta
+                meta = self.config.get('broker', {}).get('channels', {}).get('meta', {}).get(mesh_ch, {})
+                channel_label = meta.get('label') or f"Channel {mesh_ch}"
+                break
+
+        stats = await self.data.pg_storage.query_top_nodes(hours=hours, limit=5, channel_id=mesh_channel)
         if not stats:
             await interaction.followup.send("No leaderboard data available yet.", ephemeral=True)
             return
@@ -375,8 +389,11 @@ class MainCommands(commands.Cog):
                     return name
             return f"!{node_id}"
 
+        title = f"Mesh Leaderboard \u2014 {label}"
+        if channel_label:
+            title += f" \u2014 {channel_label}"
         embed = discord.Embed(
-            title=f"Mesh Leaderboard \u2014 {label}",
+            title=title,
             color=discord.Color.gold(),
             timestamp=discord.utils.utcnow(),
         )
