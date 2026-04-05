@@ -431,18 +431,23 @@ export const Nodes = () => {
     if (selectedId && selectedId !== prev) setMobileSheet("details");
   }, [selectedId, isLgUp]);
 
-  // Scroll-to + flash: driven by selectedId changes
+  // Scroll-to + flash: only auto-scroll for deep links, not interactive clicks
   const [scrollToId, setScrollToId] = useState<string>("");
   const [flashNodeId, setFlashNodeId] = useState<string>("");
-  const prevSelectedRef = useRef<string>("");
+  const isInitialLoadRef = useRef(true);
 
-  // Trigger scroll when selection changes
+  // On mount: if there's a selectedId from the URL, mark it for scroll
   useEffect(() => {
-    const prev = prevSelectedRef.current;
-    prevSelectedRef.current = selectedId;
-    if (!selectedId || selectedId === prev) return;
-    setScrollToId(selectedId);
-    setFlashNodeId(selectedId);
+    if (isInitialLoadRef.current && selectedId) {
+      setScrollToId(selectedId);
+      setFlashNodeId(selectedId);
+    }
+    isInitialLoadRef.current = false;
+  }, [selectedId]);
+
+  // Clear scrollToId when selection is cleared (so freeze can release)
+  useEffect(() => {
+    if (!selectedId) setScrollToId("");
   }, [selectedId]);
 
   // Separate effect to clear flash — not affected by StrictMode double-invoke
@@ -507,9 +512,10 @@ export const Nodes = () => {
   // Header live pill
   const liveUiMode = useMemo(() => {
     if (!liveEnabled) return "off" as const;
+    if (selectedId) return "paused" as const;
     if (!listAtTop) return "paused" as const;
     return "live" as const;
-  }, [liveEnabled, listAtTop]);
+  }, [liveEnabled, selectedId, listAtTop]);
 
   const livePillText = useMemo(() => {
     if (liveUiMode === "live") return "Live";
@@ -1033,6 +1039,7 @@ export const Nodes = () => {
                   scrollToId={scrollToId}
                   liveEnabled={liveEnabled}
                   onSelect={onSelect}
+                  onClearSelection={clearSelection}
                   onAtTopChange={onAtTopChange}
                   totalSeen={Object.keys(nodes as any).length}
                 />

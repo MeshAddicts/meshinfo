@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
 import { Avatar } from "../../components/Avatar";
@@ -41,6 +41,7 @@ export function NodesList({
   scrollToId,
   liveEnabled = true,
   onSelect,
+  onClearSelection,
   onAtTopChange,
   totalSeen,
 }: {
@@ -51,6 +52,7 @@ export function NodesList({
   scrollToId?: string;
   liveEnabled?: boolean;
   onSelect: (id: string) => void;
+  onClearSelection?: () => void;
   onAtTopChange?: (atTop: boolean) => void;
   totalSeen: number;
 }) {
@@ -81,69 +83,83 @@ export function NodesList({
     [],
   );
 
-  // Freeze the item list when scrolled away from top to prevent
-  // re-sorting from jumping the user's scroll position.
+  // Freeze the item list when scrolled away from top OR a node is selected,
+  // to prevent re-sorting from jumping the user's scroll position.
+  // Don't freeze until we have data (avoids freezing an empty list on deep links).
+  const shouldFreeze = liveEnabled && items.length > 0 && (!atTop || !!selectedId);
   const frozenRef = useRef<NodeListItem[] | null>(null);
-  const displayItems = (() => {
-    if (liveEnabled && !atTop) {
-      // Paused: capture snapshot on first frame, keep it stable
-      if (!frozenRef.current) frozenRef.current = items;
-      return frozenRef.current;
-    }
-    // Live at top, or live disabled: show latest, clear snapshot
+
+  // Capture/release frozen snapshot
+  if (shouldFreeze) {
+    if (!frozenRef.current) frozenRef.current = items;
+  } else {
     frozenRef.current = null;
-    return items;
-  })();
+  }
+
+  const displayItems = useMemo(
+    () => frozenRef.current ?? items,
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally re-evaluate when freeze state or items change
+    [shouldFreeze, items],
+  );
 
   // Track new items arriving while paused
   const [newCount, setNewCount] = useState(0);
 
   useEffect(() => {
-    if (!liveEnabled || atTop) {
+    if (!shouldFreeze) {
       setNewCount(0);
       return;
     }
-    // While paused, diff live items against frozen snapshot
+    // While frozen, diff live items against frozen snapshot
     if (frozenRef.current) {
       const frozenIds = new Set(frozenRef.current.map((x) => x.id));
       const added = items.filter((x) => !frozenIds.has(x.id)).length;
       setNewCount(added);
     }
-  }, [items, atTop, liveEnabled]);
+  }, [items, shouldFreeze]);
 
-  // Scroll-to-node: retry until Virtuoso is ready.
-  // Re-runs when items change (e.g. data finishes loading after mount).
+  // Scroll-to-node: track pending scroll and attempt on every render + timers
   const scrollDoneRef = useRef<string>("");
-  // Reset scroll tracking when the target changes
-  useEffect(() => {
-    if (scrollToId !== scrollDoneRef.current) {
-      scrollDoneRef.current = "";
-    }
-  }, [scrollToId]);
+  const pendingScrollRef = useRef<string>("");
+
+  // Update pending scroll target
+  if (scrollToId && scrollToId !== scrollDoneRef.current) {
+    pendingScrollRef.current = scrollToId;
+  } else if (!scrollToId) {
+    pendingScrollRef.current = "";
+    scrollDoneRef.current = "";
+  }
 
   useEffect(() => {
-    if (!scrollToId) return;
-    if (scrollDoneRef.current === scrollToId) return;
+    const target = pendingScrollRef.current;
+    if (!target || scrollDoneRef.current === target) return;
 
-    const idx = displayItems.findIndex((x) => x.id === scrollToId);
-    if (idx < 0) return; // node not in list yet — will re-run when items updates
+    const idx = displayItems.findIndex((x) => x.id === target);
+    if (idx < 0) return;
 
-    const doScroll = () => {
-      if (scrollDoneRef.current === scrollToId) return;
-      if (!virtuosoRef.current) return;
-      scrollDoneRef.current = scrollToId;
-      virtuosoRef.current.scrollToIndex({
-        index: idx,
-        align: "center",
-        behavior: "smooth",
-      });
+    scrollDoneRef.current = target;
+    pendingScrollRef.current = "";
+
+    // Use Virtuoso scrollToIndex to get the item rendered, then
+    // fall back to native DOM scrollIntoView for reliability.
+    const scrollViaDOM = () => {
+      const el = document.querySelector(`[data-node-id="${target}"]`);
+      if (el) {
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        return true;
+      }
+      return false;
     };
 
-    // Try immediately, plus retries for Virtuoso readiness
-    doScroll();
-    const timers = [50, 200, 500, 1000].map((d) => setTimeout(doScroll, d));
+    // First: tell Virtuoso to render the area around the target index
+    virtuosoRef.current?.scrollToIndex({ index: idx, align: "center", behavior: "auto" });
+
+    // Then: use DOM scrollIntoView as the reliable fallback
+    const timers = [100, 300, 600, 1200, 2500].map((delay) =>
+      setTimeout(() => scrollViaDOM(), delay),
+    );
     return () => timers.forEach(clearTimeout);
-  }, [scrollToId, displayItems]);
+  }); // Run on every render — cheap because it short-circuits immediately when done
 
   // Jump to top (used by "Back to live" externally via ref isn't needed —
   // we expose it through a simpler pattern: parent sets scrollToId="" or
@@ -174,6 +190,8 @@ export function NodesList({
                 bg-gray-900 text-white border-gray-900 hover:bg-gray-800
                 dark:bg-gray-100 dark:text-gray-900 dark:border-gray-100 dark:hover:bg-gray-200"
               onClick={() => {
+                onClearSelection?.();
+                frozenRef.current = null;
                 virtuosoRef.current?.scrollToIndex({
                   index: 0,
                   align: "start",
@@ -208,6 +226,7 @@ export function NodesList({
             return (
               <button
                 type="button"
+                data-node-id={item.id}
                 onClick={() => onSelect(item.id)}
                 className={[
                   "w-full text-left px-4 py-3 border-b border-gray-200 dark:border-gray-800 transition",
