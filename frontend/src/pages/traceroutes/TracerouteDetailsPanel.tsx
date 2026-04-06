@@ -229,10 +229,7 @@ export function TracerouteDetailsPanel({
 
             {lastEvent ? (
               <div className="text-[11px] text-gray-500 mt-1 tabular-nums">
-                Latest: {formatTimestamp(lastEvent.timestamp) || "Unknown"} •{" "}
-                {safeTsMs(lastEvent.timestamp)
-                  ? new Date(safeTsMs(lastEvent.timestamp)).toISOString()
-                  : "—"}
+                Latest: {formatTimestamp(lastEvent.timestamp) || "Unknown"}
               </div>
             ) : null}
           </div>
@@ -463,16 +460,9 @@ export function TracerouteDetailsPanel({
                             {occurrences.map((e) => (
                               <div
                                 key={`occ-${e.__idx}`}
-                                className="flex items-center justify-between gap-3 text-xs"
+                                className="text-xs text-gray-700 dark:text-gray-200"
                               >
-                                <span className="text-gray-700 dark:text-gray-200">
-                                  {formatTimestamp(e.timestamp) || "Unknown"}
-                                </span>
-                                <span className="text-gray-500 tabular-nums">
-                                  {safeTsMs(e.timestamp)
-                                    ? new Date(safeTsMs(e.timestamp)).toISOString()
-                                    : "—"}
-                                </span>
+                                {formatTimestamp(e.timestamp) || "Unknown"}
                               </div>
                             ))}
                           </div>
