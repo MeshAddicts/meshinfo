@@ -2099,9 +2099,10 @@ class PostgresStorage:
             logger.error("Failed to list bans: %s", e)
             return []
 
-    async def query_top_nodes(self, hours: int = 24, limit: int = 5, channel_id: str = None) -> dict:
+    async def query_top_nodes(self, hours: int = 24, limit: int = 5, channel_id: Optional[str] = None) -> dict:
         """Query leaderboard stats for the mesh. Returns dict of categories.
-        If channel_id is provided, chat-based stats are scoped to that channel."""
+        If channel_id is provided, chat-based stats are scoped to that channel,
+        and node-based categories (such as iron_man) are scoped via nodes.last_channel."""
         if not self._ready("query_top_nodes"):
             return {}
 

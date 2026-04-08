@@ -526,10 +526,12 @@ export const Nodes = () => {
   const livePillTitle = useMemo(() => {
     if (!liveEnabled)
       return "Live mode is off. Auto-refresh is disabled (no polling / focus / reconnect). Click to enable.";
+    if (selectedId)
+      return "List paused while a node is selected. Clear selection to resume.";
     if (!listAtTop)
       return "Auto-refresh paused while scrolled. Scroll to top or click to resume.";
     return "Live mode is on. Auto-refresh polls every 5 seconds (paused when tab is unfocused). Click to disable.";
-  }, [liveEnabled, listAtTop]);
+  }, [liveEnabled, selectedId, listAtTop]);
 
   // Export rows
   const exportRows = useMemo(() => {

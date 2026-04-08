@@ -89,12 +89,14 @@ export function NodesList({
   const shouldFreeze = liveEnabled && items.length > 0 && (!atTop || !!selectedId);
   const frozenRef = useRef<NodeListItem[] | null>(null);
 
-  // Capture/release frozen snapshot
-  if (shouldFreeze) {
-    if (!frozenRef.current) frozenRef.current = items;
-  } else {
-    frozenRef.current = null;
-  }
+  // Capture/release frozen snapshot after commit (not during render)
+  useEffect(() => {
+    if (shouldFreeze) {
+      if (!frozenRef.current) frozenRef.current = items;
+    } else {
+      frozenRef.current = null;
+    }
+  }, [shouldFreeze, items]);
 
   const displayItems = useMemo(
     () => frozenRef.current ?? items,
@@ -122,13 +124,15 @@ export function NodesList({
   const scrollDoneRef = useRef<string>("");
   const pendingScrollRef = useRef<string>("");
 
-  // Update pending scroll target
-  if (scrollToId && scrollToId !== scrollDoneRef.current) {
-    pendingScrollRef.current = scrollToId;
-  } else if (!scrollToId) {
-    pendingScrollRef.current = "";
-    scrollDoneRef.current = "";
-  }
+  // Update pending scroll target after commit
+  useEffect(() => {
+    if (scrollToId && scrollToId !== scrollDoneRef.current) {
+      pendingScrollRef.current = scrollToId;
+    } else if (!scrollToId) {
+      pendingScrollRef.current = "";
+      scrollDoneRef.current = "";
+    }
+  }, [scrollToId]);
 
   useEffect(() => {
     const target = pendingScrollRef.current;
