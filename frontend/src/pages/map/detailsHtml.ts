@@ -17,6 +17,21 @@ export function computeHeardByIds(liveNodes: Record<string, IMapNode>, targetId:
   );
 }
 
+function formatLastSeen(raw: string | null | undefined): string {
+  if (!raw) return "Unknown";
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw;
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
 export function buildNodeDetailsHtml(opts: {
   node: NodeLike;
   liveNodes: Record<string, IMapNode>;
@@ -63,7 +78,7 @@ export function buildNodeDetailsHtml(opts: {
     `<b>Position</b> &nbsp;${escapeHtml(node.position[1].toFixed(6))}, ${escapeHtml(node.position[0].toFixed(6))}<br/>` +
     `<b>Location</b> &nbsp;<span title="${escapeHtml(displayName)}" style="cursor:help;border-bottom:1px dotted currentColor">${escapeHtml(shortenLocation(displayName))}</span><br/>` +
     `<b>Status</b> &nbsp;${node.online ? "Online" : "Offline"}<br/>` +
-    `<b>Last Seen</b> &nbsp;${escapeHtml(node.last_seen ?? "")}` +
+    `<b>Last Seen</b> &nbsp;${escapeHtml(formatLastSeen(node.last_seen))}` +
     (opts.channelLabel ? `<br/><b>Channel</b> &nbsp;${escapeHtml(opts.channelLabel)}` : "") +
     `</div>`;
 

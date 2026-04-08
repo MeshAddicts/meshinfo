@@ -109,7 +109,14 @@ class MQTT:
 
                 outs['rssi'] = mp.rx_rssi
                 outs['snr'] = mp.rx_snr
-                outs['timestamp'] = mp.rx_time
+                # Clamp rx_time to current time if node clock is ahead
+                rx_time = mp.rx_time
+                now_epoch = int(time.time())
+                if rx_time and rx_time > now_epoch + 300:  # 5 min tolerance
+                    node_id = utils.convert_node_id_from_int_to_hex(getattr(mp, "from", 0))
+                    logger.warning("Node %s has future clock: rx_time=%s (%.0f min ahead), clamping to now", node_id, rx_time, (rx_time - now_epoch) / 60)
+                    rx_time = now_epoch
+                outs['timestamp'] = rx_time
                 outs['topic'] = msg.topic.value
                 outs["qos"] = getattr(msg, "qos", None)
                 outs["retain"] = getattr(msg, "retain", None)

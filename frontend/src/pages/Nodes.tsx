@@ -431,18 +431,23 @@ export const Nodes = () => {
     if (selectedId && selectedId !== prev) setMobileSheet("details");
   }, [selectedId, isLgUp]);
 
-  // Scroll-to + flash: driven by selectedId changes
+  // Scroll-to + flash: only auto-scroll for deep links, not interactive clicks
   const [scrollToId, setScrollToId] = useState<string>("");
   const [flashNodeId, setFlashNodeId] = useState<string>("");
-  const prevSelectedRef = useRef<string>("");
+  const isInitialLoadRef = useRef(true);
 
-  // Trigger scroll when selection changes
+  // On mount: if there's a selectedId from the URL, mark it for scroll
   useEffect(() => {
-    const prev = prevSelectedRef.current;
-    prevSelectedRef.current = selectedId;
-    if (!selectedId || selectedId === prev) return;
-    setScrollToId(selectedId);
-    setFlashNodeId(selectedId);
+    if (isInitialLoadRef.current && selectedId) {
+      setScrollToId(selectedId);
+      setFlashNodeId(selectedId);
+    }
+    isInitialLoadRef.current = false;
+  }, [selectedId]);
+
+  // Clear scrollToId when selection is cleared (so freeze can release)
+  useEffect(() => {
+    if (!selectedId) setScrollToId("");
   }, [selectedId]);
 
   // Separate effect to clear flash — not affected by StrictMode double-invoke
@@ -507,9 +512,10 @@ export const Nodes = () => {
   // Header live pill
   const liveUiMode = useMemo(() => {
     if (!liveEnabled) return "off" as const;
+    if (selectedId) return "paused" as const;
     if (!listAtTop) return "paused" as const;
     return "live" as const;
-  }, [liveEnabled, listAtTop]);
+  }, [liveEnabled, selectedId, listAtTop]);
 
   const livePillText = useMemo(() => {
     if (liveUiMode === "live") return "Live";
@@ -520,10 +526,12 @@ export const Nodes = () => {
   const livePillTitle = useMemo(() => {
     if (!liveEnabled)
       return "Live mode is off. Auto-refresh is disabled (no polling / focus / reconnect). Click to enable.";
+    if (selectedId)
+      return "List paused while a node is selected. Clear selection to resume.";
     if (!listAtTop)
       return "Auto-refresh paused while scrolled. Scroll to top or click to resume.";
     return "Live mode is on. Auto-refresh polls every 5 seconds (paused when tab is unfocused). Click to disable.";
-  }, [liveEnabled, listAtTop]);
+  }, [liveEnabled, selectedId, listAtTop]);
 
   // Export rows
   const exportRows = useMemo(() => {
@@ -628,6 +636,28 @@ export const Nodes = () => {
     setParam("node", undefined, "push");
   }, [setParam]);
 
+  // Click-outside: clear selection when clicking in the page background
+  const listContainerRef = useRef<HTMLDivElement>(null);
+  const detailsPanelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!selectedId) return;
+
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (listContainerRef.current?.contains(t)) return;
+      if (detailsPanelRef.current?.contains(t)) return;
+      // Don't clear if clicking on header/toolbar controls
+      const el = e.target as HTMLElement;
+      if (el.closest?.("[data-no-clear-selection]")) return;
+      clearSelection();
+    };
+
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [selectedId, clearSelection]);
+
   // Keyboard shortcuts
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -669,7 +699,7 @@ export const Nodes = () => {
   return (
     <div className="w-full h-dvh overflow-hidden flex flex-col">
       {/* Sticky header */}
-      <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
+      <div data-no-clear-selection className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
         <div className="mx-auto max-w-[1600px] pl-3 pr-14 sm:px-5 py-2 sm:py-3">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
@@ -1002,14 +1032,16 @@ export const Nodes = () => {
         <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
             {/* Left: list */}
-            <div className="lg:col-span-2 min-h-0 flex flex-col h-full">
+            <div ref={listContainerRef} className="lg:col-span-2 min-h-0 flex flex-col h-full">
               <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                 <NodesList
                   items={filteredItems}
                   selectedId={selectedId}
                   flashId={flashNodeId}
                   scrollToId={scrollToId}
+                  liveEnabled={liveEnabled}
                   onSelect={onSelect}
+                  onClearSelection={clearSelection}
                   onAtTopChange={onAtTopChange}
                   totalSeen={Object.keys(nodes as any).length}
                 />
@@ -1017,7 +1049,7 @@ export const Nodes = () => {
             </div>
 
             {/* Right: overview or details (desktop only) */}
-            <div className="hidden lg:flex lg:col-span-1 flex-col min-h-0 h-full overflow-y-auto">
+            <div ref={detailsPanelRef} className="hidden lg:flex lg:col-span-1 flex-col min-h-0 h-full overflow-y-auto">
               <div className="min-h-0">
                 {selectedNode ? (
                   <NodeDetailsPanel

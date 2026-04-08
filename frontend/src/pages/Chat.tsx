@@ -238,6 +238,9 @@ export const Chat = () => {
     return "0";
   }, [config, rawCh]);
 
+  // Live / auto-follow toggle (declared before query so polling can reference it)
+  const [liveEnabled, setLiveEnabled] = useState(true);
+
   // ── 5. Chat query (fires with resolved channel + range) ──
   const chatQueryParams = useMemo(() => {
     const params: { channel?: string; range?: string } = {};
@@ -251,7 +254,12 @@ export const Chat = () => {
     fulfilledTimeStamp: dataUpdatedAt,
     isFetching,
     refetch,
-  } = useGetChatsQuery(chatQueryParams);
+  } = useGetChatsQuery(chatQueryParams, {
+    pollingInterval: liveEnabled ? 5000 : 0,
+    skipPollingIfUnfocused: true,
+    refetchOnReconnect: liveEnabled,
+    refetchOnFocus: liveEnabled,
+  });
 
   // ── 6. Stable chat ref (prevents skeleton flash on filter change) ──
   const prevChatRef = useRef(chat);
@@ -447,9 +455,6 @@ export const Chat = () => {
       setMobileSheet("details");
     }
   }, [urlMsg, isLgUp]);
-
-  // Live / auto-follow toggle
-  const [liveEnabled, setLiveEnabled] = useState(true);
 
   // Follow state reported by MessageList so header can reflect "Paused" even when liveEnabled=true
   const [followState, setFollowState] = useState<{

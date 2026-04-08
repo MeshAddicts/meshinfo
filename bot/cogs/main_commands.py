@@ -343,6 +343,8 @@ class MainCommands(commands.Cog):
     @app_commands.command(name="topnodes", description="Mesh leaderboard and achievements")
     @app_commands.describe(timeframe="Time period: 24h (default) or 7d")
     async def topnodes(self, interaction: discord.Interaction, timeframe: str = "24h"):
+        await interaction.response.defer()
+
         if timeframe in ("7d", "7", "week"):
             hours = 168
             label = "7 Days"
@@ -351,12 +353,24 @@ class MainCommands(commands.Cog):
             label = "24 Hours"
 
         if not self.data.pg_storage:
-            await interaction.response.send_message("Database not available.", ephemeral=True)
+            await interaction.followup.send("Database not available.", ephemeral=True)
             return
 
-        await interaction.response.defer()
+        # Determine mesh channel from Discord channel via bridge config
+        mesh_channel = None
+        channel_label = None
+        bridge_cfg = self.config.get('integrations', {}).get('discord', {}).get('bridge', {})
+        bridge_channels = bridge_cfg.get('channels', {})
+        discord_ch_id = str(interaction.channel_id)
+        for mesh_ch, disc_ch in bridge_channels.items():
+            if str(disc_ch) == discord_ch_id:
+                mesh_channel = mesh_ch
+                # Resolve a friendly label from channel meta
+                meta = self.config.get('broker', {}).get('channels', {}).get('meta', {}).get(mesh_ch, {})
+                channel_label = meta.get('label') or f"Channel {mesh_ch}"
+                break
 
-        stats = await self.data.pg_storage.query_top_nodes(hours=hours, limit=5)
+        stats = await self.data.pg_storage.query_top_nodes(hours=hours, limit=5, channel_id=mesh_channel)
         if not stats:
             await interaction.followup.send("No leaderboard data available yet.", ephemeral=True)
             return
@@ -375,8 +389,11 @@ class MainCommands(commands.Cog):
                     return name
             return f"!{node_id}"
 
+        title = f"Mesh Leaderboard \u2014 {label}"
+        if channel_label:
+            title += f" \u2014 {channel_label}"
         embed = discord.Embed(
-            title=f"Mesh Leaderboard \u2014 {label}",
+            title=title,
             color=discord.Color.gold(),
             timestamp=discord.utils.utcnow(),
         )
@@ -429,7 +446,11 @@ class MainCommands(commands.Cog):
         if not any(stats.values()):
             embed.description = "Not enough data yet \u2014 check back later!"
 
-        embed.set_footer(text=f"Timeframe: {label} | Use /topnodes 7d for weekly")
+        footer_parts = [f"Timeframe: {label}"]
+        if mesh_channel:
+            footer_parts.append(f"Channel: {mesh_channel}")
+        footer_parts.append("Use /topnodes 7d for weekly")
+        embed.set_footer(text=" | ".join(footer_parts))
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="meshinfo", description="Show all available bot commands")

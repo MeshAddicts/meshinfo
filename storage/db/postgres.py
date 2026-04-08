@@ -2099,8 +2099,10 @@ class PostgresStorage:
             logger.error("Failed to list bans: %s", e)
             return []
 
-    async def query_top_nodes(self, hours: int = 24, limit: int = 5) -> dict:
-        """Query leaderboard stats for the mesh. Returns dict of categories."""
+    async def query_top_nodes(self, hours: int = 24, limit: int = 5, channel_id: Optional[str] = None) -> dict:
+        """Query leaderboard stats for the mesh. Returns dict of categories.
+        If channel_id is provided, chat-based stats are scoped to that channel,
+        and node-based categories (such as iron_man) are scoped via nodes.last_channel."""
         if not self._ready("query_top_nodes"):
             return {}
 
@@ -2108,52 +2110,69 @@ class PostgresStorage:
         cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=hours)
         results = {}
 
+        # Build optional channel filter for chat_messages queries
+        ch_filter = ""
+        ch_params: list = []
+        if channel_id is not None:
+            ch_filter = " AND channel_id = $3"
+            ch_params = [channel_id]
+
         try:
             async with self.pool.acquire() as conn:
                 # Chatterbox — most messages sent
                 rows = await conn.fetch(
-                    """SELECT from_node_id AS node_id, COUNT(*) AS count
+                    f"""SELECT from_node_id AS node_id, COUNT(*) AS count
                        FROM chat_messages
-                       WHERE created_at >= $1
+                       WHERE created_at >= $1{ch_filter}
                        GROUP BY from_node_id ORDER BY count DESC LIMIT $2""",
-                    cutoff, limit,
+                    cutoff, limit, *ch_params,
                 )
                 results["chatterbox"] = [dict(r) for r in rows]
 
                 # Iron Man — longest uptime (active nodes with oldest created_at)
-                rows = await conn.fetch(
-                    """SELECT id AS node_id,
-                              EXTRACT(EPOCH FROM (NOW() - created_at)) AS uptime_seconds
-                       FROM nodes
-                       WHERE active = TRUE AND created_at IS NOT NULL
-                       ORDER BY created_at ASC LIMIT $1""",
-                    limit,
-                )
+                if channel_id is not None:
+                    rows = await conn.fetch(
+                        """SELECT id AS node_id,
+                                  EXTRACT(EPOCH FROM (NOW() - created_at)) AS uptime_seconds
+                           FROM nodes
+                           WHERE active = TRUE AND created_at IS NOT NULL AND last_channel = $2
+                           ORDER BY created_at ASC LIMIT $1""",
+                        limit, channel_id,
+                    )
+                else:
+                    rows = await conn.fetch(
+                        """SELECT id AS node_id,
+                                  EXTRACT(EPOCH FROM (NOW() - created_at)) AS uptime_seconds
+                           FROM nodes
+                           WHERE active = TRUE AND created_at IS NOT NULL
+                           ORDER BY created_at ASC LIMIT $1""",
+                        limit,
+                    )
                 results["iron_man"] = [dict(r) for r in rows]
 
                 # Here I Am — disabled: requires position history table (not yet implemented)
 
                 # Loudest Signal — best average SNR
                 rows = await conn.fetch(
-                    """SELECT from_node_id AS node_id, ROUND(AVG(snr)::numeric, 1) AS avg_snr
+                    f"""SELECT from_node_id AS node_id, ROUND(AVG(snr)::numeric, 1) AS avg_snr
                        FROM chat_messages
-                       WHERE created_at >= $1 AND snr IS NOT NULL
+                       WHERE created_at >= $1 AND snr IS NOT NULL{ch_filter}
                        GROUP BY from_node_id
                        HAVING COUNT(*) >= 3
                        ORDER BY avg_snr DESC LIMIT $2""",
-                    cutoff, limit,
+                    cutoff, limit, *ch_params,
                 )
                 results["loudest_signal"] = [dict(r) for r in rows]
 
                 # Gateway MVP — most messages relayed (nodes appearing as sender_node_id)
                 rows = await conn.fetch(
-                    """SELECT sender_node_id AS node_id, COUNT(*) AS count
+                    f"""SELECT sender_node_id AS node_id, COUNT(*) AS count
                        FROM chat_messages
                        WHERE created_at >= $1
                          AND sender_node_id IS NOT NULL
-                         AND sender_node_id != from_node_id
+                         AND sender_node_id != from_node_id{ch_filter}
                        GROUP BY sender_node_id ORDER BY count DESC LIMIT $2""",
-                    cutoff, limit,
+                    cutoff, limit, *ch_params,
                 )
                 results["gateway_mvp"] = [dict(r) for r in rows]
 

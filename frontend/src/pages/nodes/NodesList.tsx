@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
 import { Avatar } from "../../components/Avatar";
@@ -39,7 +39,9 @@ export function NodesList({
   selectedId,
   flashId,
   scrollToId,
+  liveEnabled = true,
   onSelect,
+  onClearSelection,
   onAtTopChange,
   totalSeen,
 }: {
@@ -48,7 +50,9 @@ export function NodesList({
   flashId?: string;
   /** When set, the list scrolls to this node id and clears via onScrollComplete */
   scrollToId?: string;
+  liveEnabled?: boolean;
   onSelect: (id: string) => void;
+  onClearSelection?: () => void;
   onAtTopChange?: (atTop: boolean) => void;
   totalSeen: number;
 }) {
@@ -79,34 +83,87 @@ export function NodesList({
     [],
   );
 
-  // Scroll-to-node: retry until Virtuoso is ready
-  // Scroll-to-node when scrollToId is set.
-  // Re-runs when items change (e.g. data finishes loading after mount).
-  const scrollDoneRef = useRef<string>("");
+  // Freeze the item list when scrolled away from top OR a node is selected,
+  // to prevent re-sorting from jumping the user's scroll position.
+  // Don't freeze until we have data (avoids freezing an empty list on deep links).
+  const shouldFreeze = liveEnabled && items.length > 0 && (!atTop || !!selectedId);
+  const frozenRef = useRef<NodeListItem[] | null>(null);
+
+  // Capture/release frozen snapshot after commit (not during render)
   useEffect(() => {
-    if (!scrollToId) return;
-    // Already scrolled for this id — skip
-    if (scrollDoneRef.current === scrollToId) return;
+    if (shouldFreeze) {
+      if (!frozenRef.current) frozenRef.current = items;
+    } else {
+      frozenRef.current = null;
+    }
+  }, [shouldFreeze, items]);
 
-    const idx = items.findIndex((x) => x.id === scrollToId);
-    if (idx < 0) return; // node not in list yet — will re-run when items updates
+  const displayItems = useMemo(
+    () => frozenRef.current ?? items,
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally re-evaluate when freeze state or items change
+    [shouldFreeze, items],
+  );
 
-    const doScroll = () => {
-      if (scrollDoneRef.current === scrollToId) return;
-      if (!virtuosoRef.current) return;
-      scrollDoneRef.current = scrollToId;
-      virtuosoRef.current.scrollToIndex({
-        index: idx,
-        align: "center",
-        behavior: "smooth",
-      });
+  // Track new items arriving while paused
+  const [newCount, setNewCount] = useState(0);
+
+  useEffect(() => {
+    if (!shouldFreeze) {
+      setNewCount(0);
+      return;
+    }
+    // While frozen, diff live items against frozen snapshot
+    if (frozenRef.current) {
+      const frozenIds = new Set(frozenRef.current.map((x) => x.id));
+      const added = items.filter((x) => !frozenIds.has(x.id)).length;
+      setNewCount(added);
+    }
+  }, [items, shouldFreeze]);
+
+  // Scroll-to-node: track pending scroll and attempt on every render + timers
+  const scrollDoneRef = useRef<string>("");
+  const pendingScrollRef = useRef<string>("");
+
+  // Update pending scroll target after commit
+  useEffect(() => {
+    if (scrollToId && scrollToId !== scrollDoneRef.current) {
+      pendingScrollRef.current = scrollToId;
+    } else if (!scrollToId) {
+      pendingScrollRef.current = "";
+      scrollDoneRef.current = "";
+    }
+  }, [scrollToId]);
+
+  useEffect(() => {
+    const target = pendingScrollRef.current;
+    if (!target || scrollDoneRef.current === target) return;
+
+    const idx = displayItems.findIndex((x) => x.id === target);
+    if (idx < 0) return;
+
+    scrollDoneRef.current = target;
+    pendingScrollRef.current = "";
+
+    // Use Virtuoso scrollToIndex to get the item rendered, then
+    // fall back to native DOM scrollIntoView for reliability.
+    const scrollViaDOM = () => {
+      const el = document.querySelector(`[data-node-id="${target}"]`);
+      if (el) {
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        return true;
+      }
+      return false;
     };
 
-    // Try immediately, plus retries for Virtuoso readiness
-    doScroll();
-    const timers = [50, 200, 500, 1000].map((d) => setTimeout(doScroll, d));
+    // First: tell Virtuoso to render the area around the target index
+    virtuosoRef.current?.scrollToIndex({ index: idx, align: "center", behavior: "auto" });
+
+    // Then: use DOM scrollIntoView as the reliable fallback
+    const timers = [100, 300, 600, 1200, 2500].map((delay) =>
+      setTimeout(() => scrollViaDOM(), delay),
+    );
     return () => timers.forEach(clearTimeout);
-  }, [scrollToId, items]);
+  }); // Run on every render — cheap because it short-circuits immediately when done
 
   // Jump to top (used by "Back to live" externally via ref isn't needed —
   // we expose it through a simpler pattern: parent sets scrollToId="" or
@@ -116,7 +173,7 @@ export function NodesList({
     <div className="relative rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-xs flex flex-col min-h-0 flex-1">
       <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/40 flex items-center justify-between">
         <div className="text-sm text-gray-800 dark:text-gray-200">
-          <span className="font-semibold">{items.length}</span> shown{" "}
+          <span className="font-semibold">{displayItems.length}</span> shown{" "}
           <span className="text-gray-500 dark:text-gray-400">
             (out of {totalSeen} seen)
           </span>
@@ -137,6 +194,8 @@ export function NodesList({
                 bg-gray-900 text-white border-gray-900 hover:bg-gray-800
                 dark:bg-gray-100 dark:text-gray-900 dark:border-gray-100 dark:hover:bg-gray-200"
               onClick={() => {
+                onClearSelection?.();
+                frozenRef.current = null;
                 virtuosoRef.current?.scrollToIndex({
                   index: 0,
                   align: "start",
@@ -144,7 +203,7 @@ export function NodesList({
                 });
               }}
             >
-              Back to top <span className="ml-1 opacity-80">&uarr;</span>
+              Back to top{newCount > 0 && ` (${newCount} new)`} <span className="ml-1 opacity-80">&uarr;</span>
             </button>
           </div>
         )}
@@ -152,7 +211,7 @@ export function NodesList({
         <Virtuoso
           ref={virtuosoRef}
           style={{ flex: 1, minHeight: 0, height: "100%" }}
-          data={items}
+          data={displayItems}
           computeItemKey={(_index, item) => item.id}
           overscan={600}
           rangeChanged={handleRangeChanged}
@@ -171,6 +230,7 @@ export function NodesList({
             return (
               <button
                 type="button"
+                data-node-id={item.id}
                 onClick={() => onSelect(item.id)}
                 className={[
                   "w-full text-left px-4 py-3 border-b border-gray-200 dark:border-gray-800 transition",
