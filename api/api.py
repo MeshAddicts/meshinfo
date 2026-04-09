@@ -215,6 +215,37 @@ class API:
                             texts.append(message)
                 return jsonable_encoder({ "texts": texts })
 
+        @app.get("/v1/nodes/{id}/packets")
+        async def node_packets(request: Request, id: str) -> JSONResponse:
+            try:
+                node_id = int(id)
+                node_id = utils.convert_node_id_from_int_to_hex(node_id)
+            except ValueError:
+                node_id = id
+
+            limit = int(request.query_params.get("limit", 50))
+            limit = max(1, min(limit, 200))
+
+            if self.read_from_postgres:
+                packets = await self.data.pg_storage.query_node_mqtt_messages(node_id, limit=limit)
+                return jsonable_encoder({"packets": packets})
+            else:
+                # In-memory fallback: filter mqtt_messages by from/to
+                packets = []
+                for msg in reversed(self.data.mqtt_messages):
+                    msg_from = msg.get("from")
+                    msg_to = msg.get("to")
+                    # Compare as hex string or int
+                    if isinstance(msg_from, int):
+                        msg_from = utils.convert_node_id_from_int_to_hex(msg_from)
+                    if isinstance(msg_to, int):
+                        msg_to = utils.convert_node_id_from_int_to_hex(msg_to)
+                    if msg_from == node_id or msg_to == node_id:
+                        packets.append(msg)
+                        if len(packets) >= limit:
+                            break
+                return jsonable_encoder({"packets": packets})
+
         @app.get("/v1/nodes/{id}/traceroutes")
         async def node_traceroutes(request: Request, id: str) -> JSONResponse:
             try:

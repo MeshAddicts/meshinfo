@@ -121,6 +121,15 @@ export const apiSlice = createApi({
       query: () => "mqtt_messages",
       providesTags: [{ type: "MqttMessages", id: "LIST" }],
     }),
+    getNodePackets: builder.query<
+      { packets: IMqttMessagesResponse[] },
+      { nodeId: string; limit?: number }
+    >({
+      query: ({ nodeId, limit = 50 }) => `nodes/${nodeId}/packets?limit=${limit}`,
+      providesTags: (_result, _error, { nodeId }) => [
+        { type: "MqttMessages", id: nodeId },
+      ],
+    }),
   }),
 });
 
@@ -133,4 +142,5 @@ export const {
   useGetTraceroutesQuery,
   useGetMessagesQuery,
   useGetMqttMessagesQuery,
+  useGetNodePacketsQuery,
 } = apiSlice;

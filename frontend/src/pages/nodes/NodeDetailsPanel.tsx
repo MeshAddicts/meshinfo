@@ -1,15 +1,16 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router";
 
 import { Avatar } from "../../components/Avatar";
 import { HardwareImg } from "../../components/HardwareImg";
 import { Role } from "../../components/Role";
-import { useGetConfigQuery } from "../../slices/apiSlice";
+import { useGetConfigQuery, useGetNodePacketsQuery } from "../../slices/apiSlice";
 import { INode } from "../../types";
 import {
   convertNodeIdFromHexToInt,
 } from "../../utils/convertNodeId";
 import { getElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLinks";
+import { formatTimestamp } from "../../utils/formatTimestamp";
 import { calculateDistanceBetweenNodes } from "../../utils/getDistanceBetweenTwoNodes";
 import { NodeMap } from "../NodeMap";
 import {
@@ -95,6 +96,85 @@ function CopyLinkButton({ nodeId }: { nodeId: string }) {
     >
       {copied ? "Copied!" : "Copy link"}
     </button>
+  );
+}
+
+function RecentPackets({ nodeId }: { nodeId: string }) {
+  const { data, isFetching } = useGetNodePacketsQuery({ nodeId, limit: 50 });
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  const packets = useMemo(() => data?.packets ?? [], [data]);
+
+  return (
+    <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-xs">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+          Recent Packets
+          {packets.length > 0 && (
+            <span className="ml-1.5 text-xs font-normal text-gray-500 dark:text-gray-400">
+              ({packets.length})
+            </span>
+          )}
+        </div>
+        <Link
+          to={`/log?q=${nodeId}`}
+          className="text-xs underline hover:no-underline text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
+        >
+          View in logs
+        </Link>
+      </div>
+
+      {isFetching && packets.length === 0 ? (
+        <div className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+          Loading...
+        </div>
+      ) : packets.length === 0 ? (
+        <div className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+          No packets recorded for this node.
+        </div>
+      ) : (
+        <div className="mt-2 max-h-80 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-800">
+          {packets.map((pkt: any, i: number) => {
+            const key = `${pkt.id ?? i}-${pkt.timestamp ?? i}`;
+            const pktType = pkt.type ?? pkt.decoded?.portnum ?? "unknown";
+            const from = pkt.from ?? "?";
+            const to = pkt.to ?? "?";
+            const isExpanded = expanded === key;
+
+            return (
+              <button
+                key={key}
+                type="button"
+                className="w-full text-left px-1 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800/40 transition rounded"
+                onClick={() => setExpanded(isExpanded ? null : key)}
+              >
+                <div className="flex items-center gap-2 text-[11px]">
+                  <span className="text-gray-500 dark:text-gray-400 tabular-nums shrink-0">
+                    {formatTimestamp(pkt.timestamp, {
+                      year: undefined,
+                      month: undefined,
+                      day: undefined,
+                    })}
+                  </span>
+                  <span className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 font-medium text-gray-700 dark:text-gray-300 shrink-0">
+                    {String(pktType)}
+                  </span>
+                  <span className="text-gray-400 dark:text-gray-500 truncate font-mono">
+                    {from} &rarr; {to}
+                  </span>
+                </div>
+
+                {isExpanded && (
+                  <pre className="mt-2 rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-950/50 p-2 text-[10px] font-mono text-gray-700 dark:text-gray-300 overflow-x-auto whitespace-pre-wrap break-all">
+                    {JSON.stringify(pkt, null, 2)}
+                  </pre>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -318,6 +398,9 @@ export function NodeDetailsPanel({
               />
             </div>
           </div>
+
+          {/* Recent Packets */}
+          <RecentPackets nodeId={id} />
 
           {/* Map */}
           <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-xs">
