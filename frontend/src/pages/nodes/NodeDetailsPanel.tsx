@@ -107,21 +107,13 @@ function RecentPackets({ nodeId }: { nodeId: string }) {
 
   return (
     <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-xs">
-      <div className="flex items-center justify-between">
-        <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-          Recent Packets
-          {packets.length > 0 && (
-            <span className="ml-1.5 text-xs font-normal text-gray-500 dark:text-gray-400">
-              ({packets.length})
-            </span>
-          )}
-        </div>
-        <Link
-          to={`/log?q=${nodeId}`}
-          className="text-xs underline hover:no-underline text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
-        >
-          View in logs
-        </Link>
+      <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+        Recent Packets
+        {packets.length > 0 && (
+          <span className="ml-1.5 text-xs font-normal text-gray-500 dark:text-gray-400">
+            ({packets.length})
+          </span>
+        )}
       </div>
 
       {isFetching && packets.length === 0 ? (
@@ -137,8 +129,10 @@ function RecentPackets({ nodeId }: { nodeId: string }) {
           {packets.map((pkt: any, i: number) => {
             const key = `${pkt.id ?? i}-${pkt.timestamp ?? i}`;
             const pktType = pkt.type ?? pkt.decoded?.portnum ?? "unknown";
-            const from = pkt.from ?? "?";
-            const to = pkt.to ?? "?";
+            const from = String(pkt.from ?? "?");
+            const to = String(pkt.to ?? "?");
+            const isSent = from === nodeId;
+            const other = isSent ? to : from;
             const isExpanded = expanded === key;
 
             return (
@@ -160,7 +154,7 @@ function RecentPackets({ nodeId }: { nodeId: string }) {
                     {String(pktType)}
                   </span>
                   <span className="text-gray-400 dark:text-gray-500 truncate font-mono">
-                    {from} &rarr; {to}
+                    {isSent ? "\u2192" : "\u2190"} {other}
                   </span>
                 </div>
 
@@ -399,9 +393,6 @@ export function NodeDetailsPanel({
             </div>
           </div>
 
-          {/* Recent Packets */}
-          <RecentPackets nodeId={id} />
-
           {/* Map */}
           <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-xs">
             <div className="flex items-center justify-between">
@@ -427,6 +418,9 @@ export function NodeDetailsPanel({
               )}
             </div>
           </div>
+
+          {/* Recent Packets */}
+          <RecentPackets nodeId={id} />
 
           {/* Elsewhere */}
           <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-xs">
