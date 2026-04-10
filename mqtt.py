@@ -129,6 +129,12 @@ class MQTT:
                 outs["qos"] = getattr(msg, "qos", None)
                 outs["retain"] = getattr(msg, "retain", None)
 
+                # Fallback: extract gateway from topic suffix if gateway_id was empty
+                if not outs.get('sender'):
+                    topic_parts = msg.topic.value.split('/')
+                    if topic_parts and topic_parts[-1].startswith('!'):
+                        outs['sender'] = topic_parts[-1].replace('!', '')
+
                 # Calculate hops_away from hop_start and hop_limit
                 hop_start = outs.get("hop_start")
                 hop_limit = outs.get("hop_limit")
