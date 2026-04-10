@@ -1053,33 +1053,53 @@ class PostgresStorage:
             if self.raise_on_write_error:
                 raise
 
-    async def query_mqtt_messages(self, limit: int = 1000, search: str | None = None) -> list:
+    async def query_mqtt_messages(
+        self,
+        limit: int = 1000,
+        search: str | None = None,
+        range_seconds: int | None = None,
+    ) -> list:
         """Query mqtt_messages from PostgreSQL, returning parsed message dicts.
 
         Args:
             limit: Max messages to return.
             search: Optional search term to filter by topic or payload content.
+            range_seconds: If provided, only include messages with
+                        timestamp >= (now_unix - range_seconds).
         """
         if not self._ready("query_mqtt_messages"):
             return []
         try:
+            import time
             async with self.pool.acquire() as conn:
+                conditions = []
+                params: list = []
+                idx = 1
+
+                if range_seconds is not None:
+                    threshold = int(time.time()) - range_seconds
+                    conditions.append(f"timestamp >= ${idx}")
+                    params.append(threshold)
+                    idx += 1
+
                 if search:
-                    rows = await conn.fetch(
-                        """SELECT topic, payload, qos, retain, timestamp, created_at
-                           FROM mqtt_messages
-                           WHERE topic ILIKE '%' || $1 || '%'
-                              OR payload ILIKE '%' || $1 || '%'
-                           ORDER BY created_at DESC LIMIT $2""",
-                        search, limit,
+                    conditions.append(
+                        f"(topic ILIKE '%' || ${idx} || '%'"
+                        f" OR payload ILIKE '%' || ${idx} || '%')"
                     )
-                else:
-                    rows = await conn.fetch(
-                        """SELECT topic, payload, qos, retain, timestamp, created_at
-                           FROM mqtt_messages
-                           ORDER BY created_at DESC LIMIT $1""",
-                        limit,
-                    )
+                    params.append(search)
+                    idx += 1
+
+                where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+                params.append(limit)
+
+                rows = await conn.fetch(
+                    f"""SELECT topic, payload, qos, retain, timestamp, created_at
+                        FROM mqtt_messages
+                        {where}
+                        ORDER BY created_at DESC LIMIT ${idx}""",
+                    *params,
+                )
 
             results = []
             for row in rows:

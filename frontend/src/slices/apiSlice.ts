@@ -113,12 +113,30 @@ export const apiSlice = createApi({
       query: () => "traceroutes",
       providesTags: [{ type: "Traceroutes", id: "LIST" }],
     }),
-    getMessages: builder.query<IMessagesResponse[], void>({
-      query: () => "messages",
+    getMessages: builder.query<
+      IMessagesResponse[],
+      { range?: string } | void
+    >({
+      query: (params) => {
+        const sp = new URLSearchParams();
+        if (params && params.range && params.range !== "all")
+          sp.set("range", params.range);
+        const qs = sp.toString();
+        return qs ? `messages?${qs}` : "messages";
+      },
       providesTags: [{ type: "Messages", id: "LIST" }],
     }),
-    getMqttMessages: builder.query<IMqttMessagesResponse[], void>({
-      query: () => "mqtt_messages",
+    getMqttMessages: builder.query<
+      IMqttMessagesResponse[],
+      { range?: string } | void
+    >({
+      query: (params) => {
+        const sp = new URLSearchParams();
+        if (params && params.range && params.range !== "all")
+          sp.set("range", params.range);
+        const qs = sp.toString();
+        return qs ? `mqtt_messages?${qs}` : "mqtt_messages";
+      },
       providesTags: [{ type: "MqttMessages", id: "LIST" }],
     }),
     getNodePackets: builder.query<
