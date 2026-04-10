@@ -107,13 +107,21 @@ function RecentPackets({ nodeId }: { nodeId: string }) {
 
   return (
     <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-xs">
-      <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-        Recent Packets
-        {packets.length > 0 && (
-          <span className="ml-1.5 text-xs font-normal text-gray-500 dark:text-gray-400">
-            ({packets.length})
-          </span>
-        )}
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+          Recent Packets
+          {packets.length > 0 && (
+            <span className="ml-1.5 text-xs font-normal text-gray-500 dark:text-gray-400">
+              ({packets.length})
+            </span>
+          )}
+        </div>
+        <Link
+          to={`/logs?q=${nodeId}`}
+          className="text-xs underline hover:no-underline text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
+        >
+          View in logs
+        </Link>
       </div>
 
       {isFetching && packets.length === 0 ? (
