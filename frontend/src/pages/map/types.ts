@@ -1,6 +1,7 @@
 import type { Coordinate } from "ol/coordinate";
 
-import type { INode } from "../../types";
+import type { INode, ITraceroutesResponse } from "../../types";
+import type { ElsewhereLink } from "../../types/config";
 
 export type MapProvider = "osm" | "mapbox";
 export type LinkMode = "selected" | "all" | "mynode";
@@ -45,4 +46,15 @@ export type NodeLike = {
     snr: number;
     distance: number;
   }[];
+};
+
+// Data passed to the React details panel
+export type NodeDetailsData = {
+  node: NodeLike;
+  liveNodes: Record<string, IMapNode>;
+  displayName: string;
+  elsewhereLinks?: ElsewhereLink[];
+  traceroutes?: ITraceroutesResponse[];
+  channelLabel?: string | null;
+  heardBy: string[];
 };

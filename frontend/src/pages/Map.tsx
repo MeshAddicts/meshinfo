@@ -24,12 +24,11 @@ import { createBaseTileLayer, type OsmBasemap } from "../maps/baseLayer";
 import { reverseGeocode } from "../maps/geocoder";
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
-import { clearDetailsPanel, getDetailsDom, setDetailsPanelContent } from "./map/detailsDom";
-import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildNodeDetailsHtml, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/detailsHtml";
+import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
 import { MapDetailsPanel } from "./map/MapDetailsPanel";
 import { MapSettingsPanel } from "./map/MapSettingsPanel";
 import { LS_KEYS, readJson, toMapboxStyleUrl, writeJson } from "./map/storage";
-import type { IFeatureNode, IMapNode, LinkMode, MapProvider, NodeLike } from "./map/types";
+import type { IFeatureNode, IMapNode, LinkMode, MapProvider, NodeDetailsData, NodeLike } from "./map/types";
 import {
   autoSpiderfyVisibleClusters,
   removeSpiderfyLayers,
@@ -103,6 +102,9 @@ export function Map() {
   const mbHandlersBoundRef = useRef(false);
   const mbCurrentStyleUrlRef = useRef<string | null>(null);
   const mbKeydownHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
+
+  // Shared ref for panel node-select callback (set by whichever provider is active)
+  const handleNodeSelectRef = useRef<(nodeId: string) => void>(() => {});
 
   const { data: rawNodes = {} } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
@@ -261,14 +263,21 @@ export function Map() {
   );
 
   // ----------------------------
+  // Details panel state (React-driven)
+  // ----------------------------
+  const [detailsData, setDetailsData] = useState<NodeDetailsData | null>(null);
+
+  // ----------------------------
   // Refs to avoid stale closures (Mapbox handlers)
   // ----------------------------
   const nodesRef = useRef(nodes);
   const traceroutesRef = useRef(rawTraceroutes);
+  const configRef = useRef(config);
   const recentDaysRef = useRef(recentDays);
   const clusterEnabledRef = useRef(clusterEnabled);
   const linkModeRef = useRef(linkMode);
   const myNodeIdRef = useRef(myNodeId);
+  const setDetailsDataRef = useRef(setDetailsData);
 
   useEffect(() => {
     nodesRef.current = nodes;
@@ -277,6 +286,14 @@ export function Map() {
   useEffect(() => {
     traceroutesRef.current = rawTraceroutes;
   }, [rawTraceroutes]);
+
+  useEffect(() => {
+    configRef.current = config;
+  }, [config]);
+
+  useEffect(() => {
+    setDetailsDataRef.current = setDetailsData;
+  }, [setDetailsData]);
 
   useEffect(() => {
     recentDaysRef.current = recentDays;
@@ -515,8 +532,8 @@ export function Map() {
       } catch {}
     }
 
-    // Hide + clear the panel
-    clearDetailsPanel();
+    // Hide the panel
+    setDetailsData(null);
   }
 
   // ----------------------------
@@ -871,7 +888,6 @@ export function Map() {
 
         setSelected(id);
 
-
         const displayName = await reverseGeocode(node.map_position[0], node.map_position[1]);
 
         const nodeLike: NodeLike = {
@@ -885,20 +901,16 @@ export function Map() {
           gateway: node.gateway,
         };
 
-        const { html, heardBy } = buildNodeDetailsHtml({
+        const heardBy = computeHeardByIds(liveNodes, id);
+
+        setDetailsDataRef.current({
           node: nodeLike,
           liveNodes,
-          displayName,
-          elsewhereLinks: config?.mesh?.elsewhere_links,
+          displayName: displayName || "Unknown",
+          elsewhereLinks: configRef.current?.mesh?.elsewhere_links,
           traceroutes: traceroutesRef.current,
           channelLabel: resolveChannelLabel((node as any).last_channel),
-        });
-
-        setDetailsPanelContent({
-          title: node.longname ?? "",
-          subtitle: node.shortname ?? "",
-          html,
-          onNodeSelect: (targetId) => void handleNodeClick(targetId),
+          heardBy,
         });
 
         // Draw links (neighbor + traceroute)
@@ -931,6 +943,9 @@ export function Map() {
           });
         }
       };
+
+      // Expose handleNodeClick for panel node-select navigation
+      handleNodeSelectRef.current = (id: string) => void handleNodeClick(id);
 
       // Cursor behaviors (both render modes)
       const setCursor = (value: string) => {
@@ -1126,8 +1141,7 @@ export function Map() {
 
       // Clear selection & overlays to avoid stale feature-state during style swap
       mbSelectedIdRef.current = null;
-  
-      clearDetailsPanel();
+      setDetailsData(null);
       const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
       linksSource?.setData(emptyLineFeatureCollection());
 
@@ -1171,11 +1185,10 @@ export function Map() {
         } catch {}
 
         mbSelectedIdRef.current = null;
-    
 
         const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
         linksSource?.setData(emptyLineFeatureCollection());
-        clearDetailsPanel();
+        setDetailsData(null);
       }
     }
   }, [nodes, recentDays, provider]);
@@ -1348,14 +1361,13 @@ export function Map() {
       map.addLayer(plainLayer);
     }
 
-    const { nodePanel, nodeTitle, nodeSubtitle, nodeContent } = getDetailsDom();
-    if (!nodePanel || !nodeTitle || !nodeSubtitle || !nodeContent) return;
-
     const neighborLayers: VectorLayer<VectorSource<Feature>, Feature>[] = [];
 
     const handleNodeDetails = async (node: IFeatureNode) => {
-
       const displayName = await reverseGeocode(node.position[0], node.position[1]);
+
+      const liveNodes = nodesRef.current;
+      const fullNode = liveNodes[node.id];
 
       const nodeLike: NodeLike = {
         id: node.id,
@@ -1368,34 +1380,16 @@ export function Map() {
         gateway: node.gateway,
       };
 
-      const fullNode = nodes[node.id];
-      const { html } = buildNodeDetailsHtml({
+      const heardBy = computeHeardByIds(liveNodes, node.id);
+
+      setDetailsDataRef.current({
         node: nodeLike,
-        liveNodes: nodes,
-        displayName,
-        elsewhereLinks: config?.mesh?.elsewhere_links,
+        liveNodes,
+        displayName: displayName || "Unknown",
+        elsewhereLinks: configRef.current?.mesh?.elsewhere_links,
         traceroutes: traceroutesRef.current,
         channelLabel: resolveChannelLabel((fullNode as any)?.last_channel),
-      });
-
-      setDetailsPanelContent({
-        title: node.longname ?? "",
-        subtitle: node.shortname ?? "",
-        html,
-        onNodeSelect: (targetId) => {
-          const targetNode = nodes[targetId];
-          if (!targetNode?.map_position) return;
-          void handleNodeDetails({
-            id: targetId,
-            shortname: targetNode.shortname,
-            longname: targetNode.longname,
-            last_seen: targetNode.last_seen,
-            position: [targetNode.map_position[0], targetNode.map_position[1]] as Coordinate,
-            online: Boolean(targetNode.online),
-            neighbors: targetNode.neighbors,
-            gateway: targetNode.gateway,
-          });
-        },
+        heardBy,
       });
 
       // Draw neighbor lines
@@ -1421,6 +1415,22 @@ export function Map() {
         });
         neighborLayers.push(vectorLineLayer);
         map.addLayer(vectorLineLayer);
+      });
+    };
+
+    // Expose handleNodeDetails for panel node-select navigation
+    handleNodeSelectRef.current = (id: string) => {
+      const targetNode = nodesRef.current[id];
+      if (!targetNode?.map_position) return;
+      void handleNodeDetails({
+        id,
+        shortname: targetNode.shortname,
+        longname: targetNode.longname,
+        last_seen: targetNode.last_seen,
+        position: [targetNode.map_position[0], targetNode.map_position[1]] as Coordinate,
+        online: Boolean(targetNode.online),
+        neighbors: targetNode.neighbors,
+        gateway: targetNode.gateway,
       });
     };
 
@@ -1500,16 +1510,14 @@ export function Map() {
           select.getFeatures().clear();
           void handleNodeDetails(node);
         } else if (!map.hasFeatureAtPixel(event.pixel)) {
-      
-          clearDetailsPanel();
+          setDetailsDataRef.current(null);
         }
         return;
       }
 
       // Plain mode — original behavior
       if (map.hasFeatureAtPixel(event.pixel) !== true) {
-    
-        clearDetailsPanel();
+        setDetailsDataRef.current(null);
         return;
       }
 
@@ -1538,8 +1546,7 @@ export function Map() {
     const olKeydownHandler = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         removeOlSpiderfy(map);
-    
-        clearDetailsPanel();
+        setDetailsDataRef.current(null);
       }
     };
     document.addEventListener("keydown", olKeydownHandler);
@@ -1740,7 +1747,11 @@ export function Map() {
         </div>
       )}
 
-      <MapDetailsPanel onClose={clearMapboxSelectionAndOverlays} />
+      <MapDetailsPanel
+        data={detailsData}
+        onClose={clearMapboxSelectionAndOverlays}
+        onNodeSelect={(id) => handleNodeSelectRef.current(id)}
+      />
 
       <style>
         {`
