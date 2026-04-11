@@ -1,4 +1,4 @@
-import { type Dispatch, type RefObject, type SetStateAction, useMemo, useState } from "react";
+import { type Dispatch, type RefObject, type SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 
 import type { OsmBasemap } from "../../maps/baseLayer";
 import { MapLegend } from "./MapLegend";
@@ -74,6 +74,8 @@ export function MapSettingsPanel({
   usingMapbox: boolean;
 }) {
   const [nodeSearch, setNodeSearch] = useState("");
+  const [legendOpen, setLegendOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const filteredNodes = useMemo(() => {
     if (!nodeSearch) return nodeList.slice(0, 50);
@@ -94,41 +96,33 @@ export function MapSettingsPanel({
     return node?.shortname || node?.longname || myNodeId;
   }, [myNodeId, nodeList]);
 
+  // Click-outside to dismiss legend
+  useEffect(() => {
+    if (!legendOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (containerRef.current?.contains(e.target as Node)) return;
+      setLegendOpen(false);
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [legendOpen]);
+
   const selectClasses =
-    "w-full rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-gray-200 focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50";
+    "w-full rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-gray-200 focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50 [&>option]:bg-gray-800 [&>option]:text-gray-200";
+
+  const iconBtnBase =
+    "p-2 rounded-xl shadow-2xl border backdrop-blur-xl transition-colors";
 
   return (
-    <div className="fixed bottom-4 right-4 z-1100 min-w-56">
-      {/* Toggle button - shows when closed */}
-      {!settingsPanelOpen && (
-        <button
-          ref={settingsToggleRef}
-          type="button"
-          onClick={() => setSettingsPanelOpen(true)}
-          className="mb-2 ml-auto block p-2 rounded-xl shadow-2xl border
-                      bg-gray-900/80 backdrop-blur-xl border-white/10
-                      hover:bg-gray-900/90 transition-colors"
-          aria-label="Open Map Settings"
-        >
-          <div className="w-5 h-5 flex items-center justify-center">
-            <svg
-              className="w-4 h-4 text-gray-400"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100-4m0 4v2m0-6V4"
-              />
-            </svg>
-          </div>
-        </button>
+    <div ref={containerRef} className="fixed bottom-4 right-4 z-1100 flex flex-col items-end">
+      {/* Legend popover — above buttons */}
+      {legendOpen && !settingsPanelOpen && (
+        <div className="mb-2">
+          <MapLegend linkMode={linkMode} myNodeLabel={myNodeLabel} />
+        </div>
       )}
 
-      {/* Map Settings Panel - shows when open */}
+      {/* Settings panel — above buttons */}
       {settingsPanelOpen && (
         <div
           ref={settingsPanelRef}
@@ -391,8 +385,51 @@ export function MapSettingsPanel({
         </div>
       )}
 
-      {/* Legend */}
-      <MapLegend linkMode={linkMode} myNodeLabel={myNodeLabel} />
+      {/* Icon buttons — always visible at bottom */}
+      <div className="flex items-center gap-2">
+        {/* Legend toggle */}
+        <button
+          type="button"
+          onClick={() => {
+            setLegendOpen(!legendOpen);
+            if (settingsPanelOpen) setSettingsPanelOpen(false);
+          }}
+          className={`${iconBtnBase} ${
+            legendOpen
+              ? "bg-gray-900/90 border-cyan-500/50"
+              : "bg-gray-900/80 border-white/10 hover:bg-gray-900/90"
+          }`}
+          aria-label="Toggle legend"
+        >
+          <div className="w-5 h-5 flex items-center justify-center">
+            <svg className={`w-4 h-4 ${legendOpen ? "text-cyan-400" : "text-gray-400"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+        </button>
+
+        {/* Settings toggle */}
+        <button
+          ref={settingsToggleRef}
+          type="button"
+          onClick={() => {
+            setSettingsPanelOpen(!settingsPanelOpen);
+            if (legendOpen) setLegendOpen(false);
+          }}
+          className={`${iconBtnBase} ${
+            settingsPanelOpen
+              ? "bg-gray-900/90 border-cyan-500/50"
+              : "bg-gray-900/80 border-white/10 hover:bg-gray-900/90"
+          }`}
+          aria-label="Toggle Map Settings"
+        >
+          <div className="w-5 h-5 flex items-center justify-center">
+            <svg className={`w-4 h-4 ${settingsPanelOpen ? "text-cyan-400" : "text-gray-400"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 100-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 100-4m0 4v2m0-6V4" />
+            </svg>
+          </div>
+        </button>
+      </div>
     </div>
   );
 }

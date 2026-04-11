@@ -68,10 +68,10 @@ const isFullBleed = isMap || isChat || isLog || isTraceroutes || isTelemetry || 
 
   return (
     <div className={isFullBleed ? "h-dvh overflow-hidden" : ""}>
-      <Menu isDark={isDark} onDarkChange={(dark) => setIsDark(dark)} />
+      <Menu isDark={isDark} onDarkChange={(dark) => setIsDark(dark)} overlayMode={isMap} />
 
       <div
-        className={`lg:pl-60 dark:bg-gray-950 dark:text-gray-100 lg:pt-0
+        className={`${isMap ? "" : "lg:pl-60"} dark:bg-gray-950 dark:text-gray-100 lg:pt-0
           ${isFullBleed ? "pt-0 h-full overflow-hidden" : "pt-14"}`}
       >
         <main className={isFullBleed ? "h-full" : "py-1"}>

@@ -624,8 +624,11 @@ export function Map() {
       style: styleUrl,
       center: initialCenter,
       zoom: initialZoom,
-      attributionControl: true,
+      attributionControl: false,
+      logoPosition: "bottom-left",
     });
+
+    map.addControl(new mapboxgl.AttributionControl({ compact: true }), "bottom-left");
 
     mbMapRef.current = map;
 
@@ -687,10 +690,9 @@ export function Map() {
       localStorage.setItem("savedZoom", map.getZoom().toString());
     });
 
-    const isMobile = window.innerWidth < 1024;
     map.addControl(
       new mapboxgl.NavigationControl({ showCompass: true }),
-      isMobile ? "top-right" : "top-left"
+      "top-right"
     );
 
     const ensureSourcesAndLayers = () => {

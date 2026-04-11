@@ -14,9 +14,11 @@ const defaultTools = [
 export const Menu = ({
   isDark,
   onDarkChange,
+  overlayMode = false,
 }: {
   isDark: boolean;
   onDarkChange: (dark: boolean) => void;
+  overlayMode?: boolean;
 }) => {
   const { data: config } = useGetConfigQuery();
   const [showMenu, setShowMenu] = useState(false);
@@ -39,13 +41,15 @@ export const Menu = ({
 
   return (
     <>
-      {/* Mobile Hamburger Button */}
+      {/* Hamburger Button — always visible in overlay mode, mobile-only otherwise */}
       <button
         type="button"
-        className={`lg:hidden fixed z-50 top-4 right-4 left-auto p-2 rounded-lg shadow-lg backdrop-blur-xs border transition-all duration-200 ${
-          showMenu 
-            ? "bg-gray-800 dark:bg-gray-200 border-gray-600 dark:border-gray-400" 
-            : "bg-white/90 dark:bg-gray-800/90 border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700"
+        className={`${overlayMode ? "" : "lg:hidden"} fixed z-50 top-4 ${overlayMode ? "left-4" : "right-4 left-auto"} p-2 rounded-lg shadow-lg backdrop-blur-xs border transition-all duration-200 ${
+          showMenu
+            ? "bg-gray-800 dark:bg-gray-200 border-gray-600 dark:border-gray-400"
+            : overlayMode
+              ? "bg-gray-900/80 dark:bg-gray-900/80 backdrop-blur-xl border-white/10 hover:bg-gray-900/90"
+              : "bg-white/90 dark:bg-gray-800/90 border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700"
         }`}
         onClick={() => setShowMenu(!showMenu)}
         aria-label="Toggle Menu"
@@ -74,9 +78,9 @@ export const Menu = ({
         </div>
       </button>
 
-      {/* Mobile Backdrop */}
-      <div 
-        className={`lg:hidden fixed inset-0 bg-black/20 backdrop-blur-xs z-40 transition-opacity duration-200 ${
+      {/* Backdrop — always available in overlay mode, mobile-only otherwise */}
+      <div
+        className={`${overlayMode ? "" : "lg:hidden"} fixed inset-0 bg-black/20 backdrop-blur-xs z-40 transition-opacity duration-200 ${
           showMenu ? "opacity-100" : "opacity-0 pointer-events-none"
         }`}
         onClick={() => setShowMenu(false)}
@@ -84,12 +88,12 @@ export const Menu = ({
 
       {/* Navigation Panel */}
       <div
-        className={`w-full lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-60 lg:flex-col ${
+        className={`w-full ${overlayMode ? "" : "lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-60 lg:flex-col"} ${
           showMenu ? "" : "hidden"
-        } dark:text-gray-100 z-0 lg:z-50`}
+        } dark:text-gray-100 z-0 ${overlayMode ? "" : "lg:z-50"}`}
       >
-        {/* Mobile Drawer */}
-        <div className="lg:hidden fixed inset-y-0 left-0 z-50 w-80 max-w-[80vw] bg-white dark:bg-gray-900 shadow-xl border-r border-gray-200 dark:border-gray-700">
+        {/* Drawer (mobile always, desktop when overlayMode) */}
+        <div className={`${overlayMode ? "" : "lg:hidden"} fixed inset-y-0 left-0 z-50 w-80 max-w-[80vw] bg-white dark:bg-gray-900 shadow-xl border-r border-gray-200 dark:border-gray-700`}>
           <div className="flex flex-col h-full overflow-hidden">
             {/* Mobile Header */}
             <div className="p-4 border-b border-gray-200 dark:border-gray-700">
@@ -114,9 +118,9 @@ export const Menu = ({
             </div>
 
             {/* Mobile Navigation */}
-            <div className="flex-1 overflow-y-auto px-2 py-3 space-y-1">
-              <div className="space-y-1">
-                <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 py-2">Mesh</h3>
+            <div className="flex-1 overflow-y-auto px-2 py-3 space-y-4">
+              <div className="space-y-0.5">
+                <h3 className="text-[10px] font-bold text-cyan-600 dark:text-cyan-500 uppercase tracking-widest px-3 pt-2 pb-1">Mesh</h3>
                 <Link to="/chat" onClick={() => setShowMenu(false)} className="block">
                   <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
                     <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Chat</span>
@@ -165,8 +169,8 @@ export const Menu = ({
                 </Link>
               </div>
 
-              <div className="space-y-1">
-                <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 py-2">Tools</h3>
+              <div className="space-y-0.5">
+                <h3 className="text-[10px] font-bold text-cyan-600 dark:text-cyan-500 uppercase tracking-widest px-3 pt-2 pb-1">Tools</h3>
                 {(config?.mesh?.tools ?? defaultTools).map((tool, index) => (
                   <a
                     key={`mobile-tools-${index}`}
@@ -183,8 +187,8 @@ export const Menu = ({
                 ))}
               </div>
 
-              <div className="space-y-1">
-                <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 py-2">Meshtastic Addons</h3>
+              <div className="space-y-0.5">
+                <h3 className="text-[10px] font-bold text-cyan-600 dark:text-cyan-500 uppercase tracking-widest px-3 pt-2 pb-1">Meshtastic Addons</h3>
                 <a
                   href="https://github.com/armooo/meshtastic_dopewars"
                   target="_blank"
@@ -223,8 +227,8 @@ export const Menu = ({
           </div>
         </div>
 
-        {/* Desktop Sidebar */}
-        <div className="hidden lg:flex lg:flex-col px-6 pb-4 overflow-y-auto bg-gray-300 dark:bg-gray-800 border-r-2 grow gap-y-5 border-r-cyan-600">
+        {/* Desktop Sidebar — hidden in overlay mode */}
+        <div className={`${overlayMode ? "hidden" : "hidden lg:flex lg:flex-col"} px-6 pb-4 overflow-y-auto bg-gray-300 dark:bg-gray-800 border-r-2 grow gap-y-5 border-r-cyan-600`}>
           <div className="flex items-center h-24 mt-4 shrink-0">
             <div className="text-2xl">
               {config?.mesh?.name?.split(" ").map((word, index) => (
