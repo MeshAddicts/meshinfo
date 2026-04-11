@@ -1729,18 +1729,19 @@ export function Map() {
       />
 
       {myNodeLabel && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-1060 px-4 py-2 rounded-lg shadow-lg bg-gray-900/95 text-white text-sm backdrop-blur-md border border-gray-700 flex items-center gap-3">
-          <span>My Node: <span className="font-semibold">{myNodeLabel}</span></span>
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-1060 px-3 py-1.5 rounded-xl shadow-2xl bg-gray-900/80 backdrop-blur-xl text-sm border border-white/10 flex items-center gap-2">
+          <span className="text-gray-400">My Node:</span>
+          <span className="font-medium text-gray-200">{myNodeLabel}</span>
           <button
             type="button"
             onClick={() => {
               setMyNodeId("");
               setLinkMode("selected");
             }}
-            className="text-gray-400 hover:text-white transition-colors"
+            className="text-gray-500 hover:text-gray-300 transition-colors ml-1"
             aria-label="Clear My Node"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>

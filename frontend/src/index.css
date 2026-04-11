@@ -46,3 +46,13 @@
 .dark a:hover {
   color: #6366f1;
 }
+
+/* Map details panel slide-in animation */
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}

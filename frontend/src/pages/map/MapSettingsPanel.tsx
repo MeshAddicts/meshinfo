@@ -95,7 +95,7 @@ export function MapSettingsPanel({
   }, [myNodeId, nodeList]);
 
   const selectClasses =
-    "w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 dark:focus:border-blue-400 focus:outline-hidden focus:ring-1 focus:ring-blue-500 dark:focus:ring-blue-400";
+    "w-full rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-gray-200 focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50";
 
   return (
     <div className="fixed bottom-4 right-4 z-1100 min-w-56">
@@ -105,14 +105,14 @@ export function MapSettingsPanel({
           ref={settingsToggleRef}
           type="button"
           onClick={() => setSettingsPanelOpen(true)}
-          className="mb-2 ml-auto block p-2 rounded-lg shadow-lg backdrop-blur-xs border
-                      bg-white/90 dark:bg-gray-800/90 border-gray-200 dark:border-gray-600
-                      hover:bg-gray-50 dark:hover:bg-gray-700"
+          className="mb-2 ml-auto block p-2 rounded-xl shadow-2xl border
+                      bg-gray-900/80 backdrop-blur-xl border-white/10
+                      hover:bg-gray-900/90 transition-colors"
           aria-label="Open Map Settings"
         >
           <div className="w-5 h-5 flex items-center justify-center">
             <svg
-              className="w-4 h-4 text-gray-700 dark:text-gray-200"
+              className="w-4 h-4 text-gray-400"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -132,22 +132,23 @@ export function MapSettingsPanel({
       {settingsPanelOpen && (
         <div
           ref={settingsPanelRef}
-          className="mb-2 w-64 max-w-[calc(100vw-2rem)] max-h-[calc(100vh-8rem)] overflow-y-auto rounded-xl shadow-lg border border-gray-200/70 dark:border-gray-700/70 bg-white/95 dark:bg-gray-900/95 backdrop-blur-md"
+          className="mb-2 w-64 max-w-[calc(100vw-2rem)] max-h-[calc(100vh-8rem)] overflow-y-auto
+                     rounded-xl shadow-2xl border border-white/10 bg-gray-900/80 backdrop-blur-xl"
         >
           <div className="p-4">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold text-gray-900 dark:text-gray-100">
+              <h3 className="text-sm font-semibold text-gray-200">
                 Map Settings
               </h3>
 
               <button
                 type="button"
                 onClick={() => setSettingsPanelOpen(false)}
-                className="p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                className="p-1 rounded-md hover:bg-white/10 transition-colors"
                 aria-label="Close settings"
               >
                 <svg
-                  className="w-4 h-4 text-gray-500 dark:text-gray-400"
+                  className="w-4 h-4 text-gray-500"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -162,12 +163,12 @@ export function MapSettingsPanel({
               </button>
             </div>
 
-            <div className="space-y-4 text-sm">
+            <div className="space-y-3 text-sm">
               {/* Provider */}
               <div>
                 <label
                   htmlFor="provider-select"
-                  className="text-xs font-medium uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-2 block"
+                  className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1.5 block"
                 >
                   Provider
                 </label>
@@ -191,7 +192,7 @@ export function MapSettingsPanel({
                 <div>
                   <label
                     htmlFor="mapbox-style-select"
-                    className="text-xs font-medium uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-2 block"
+                    className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1.5 block"
                   >
                     Mapbox Style
                   </label>
@@ -213,7 +214,7 @@ export function MapSettingsPanel({
                 <div>
                   <label
                     htmlFor="osm-basemap-select"
-                    className="text-xs font-medium uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-2 block"
+                    className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1.5 block"
                   >
                     OSM Basemap
                   </label>
@@ -236,7 +237,7 @@ export function MapSettingsPanel({
               <div>
                 <label
                   htmlFor="recent-days-select"
-                  className="text-xs font-medium uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-2 block"
+                  className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1.5 block"
                 >
                   Show Last Seen
                 </label>
@@ -260,7 +261,7 @@ export function MapSettingsPanel({
               <div>
                 <label
                   htmlFor="link-mode-select"
-                  className="text-xs font-medium uppercase tracking-wide text-gray-600 dark:text-gray-300 mb-2 block"
+                  className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1.5 block"
                 >
                   Neighbor Links
                 </label>
@@ -280,14 +281,14 @@ export function MapSettingsPanel({
               {/* My Node picker — shown when mode is "mynode" */}
               {linkMode === "mynode" && (
                 <div>
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center justify-between mb-1.5">
                     <label
                       htmlFor="my-node-search"
-                      className="text-xs font-medium uppercase tracking-wide text-gray-600 dark:text-gray-300"
+                      className="text-[10px] font-medium uppercase tracking-wider text-gray-500"
                     >
                       My Node
                       {myNodeLabel && (
-                        <span className="ml-1 normal-case font-normal text-gray-500 dark:text-gray-400">
+                        <span className="ml-1 normal-case font-normal text-gray-400">
                           ({myNodeLabel})
                         </span>
                       )}
@@ -315,9 +316,9 @@ export function MapSettingsPanel({
                     onChange={(e) => setNodeSearch(e.target.value)}
                   />
                   {nodeSearch && (
-                    <div className="mt-1 max-h-32 overflow-y-auto rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800">
+                    <div className="mt-1 max-h-32 overflow-y-auto rounded-lg border border-white/10 bg-gray-800/90">
                       {filteredNodes.length === 0 && (
-                        <div className="px-3 py-2 text-xs text-gray-400">
+                        <div className="px-3 py-2 text-xs text-gray-500">
                           No nodes found
                         </div>
                       )}
@@ -325,7 +326,7 @@ export function MapSettingsPanel({
                         <button
                           key={node.id}
                           type="button"
-                          className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-900 dark:text-gray-100 truncate"
+                          className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/10 text-gray-300 truncate transition-colors"
                           onClick={() => {
                             setMyNodeId(node.id);
                             setNodeSearch("");
@@ -335,7 +336,7 @@ export function MapSettingsPanel({
                             {node.shortname || node.id}
                           </span>
                           {node.longname && (
-                            <span className="ml-1 text-gray-500 dark:text-gray-400">
+                            <span className="ml-1 text-gray-500">
                               {node.longname}
                             </span>
                           )}
@@ -343,7 +344,7 @@ export function MapSettingsPanel({
                       ))}
                     </div>
                   )}
-                  <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1">
+                  <p className="text-[10px] text-gray-600 mt-1">
                     Tip: right-click (or long-press) a node on the map to set it
                     as My Node.
                   </p>
@@ -351,15 +352,15 @@ export function MapSettingsPanel({
               )}
 
               {/* Clustering Toggle */}
-              <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
+              <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5">
                 <div className="flex flex-col">
                   <label
                     htmlFor="clustering-checkbox"
-                    className="text-sm font-medium text-gray-900 dark:text-gray-100"
+                    className="text-sm font-medium text-gray-300"
                   >
                     Node Clustering
                   </label>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  <p className="text-[11px] text-gray-500 mt-0.5">
                     Group nearby nodes
                   </p>
                 </div>
@@ -369,7 +370,7 @@ export function MapSettingsPanel({
                     type="checkbox"
                     checked={clusterEnabled}
                     onChange={(e) => setClusterEnabled(e.target.checked)}
-                    className="h-4 w-4 rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                    className="h-4 w-4 rounded-sm border-gray-600 bg-gray-700 text-cyan-500 focus:ring-cyan-500 disabled:opacity-50"
                     aria-label="Toggle node clustering"
                   />
                 </div>
@@ -377,9 +378,9 @@ export function MapSettingsPanel({
 
               {/* Info Note */}
               {!canUseMapbox && (
-                <div className="text-xs text-gray-500 dark:text-gray-400 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg">
+                <div className="text-xs text-gray-500 p-2.5 rounded-lg bg-white/5">
                   Mapbox features are disabled because{" "}
-                  <code className="bg-gray-200 dark:bg-gray-700 px-1 py-0.5 rounded-sm text-xs">
+                  <code className="bg-white/10 px-1 py-0.5 rounded-sm text-[11px]">
                     VITE_MAPBOX_TOKEN
                   </code>{" "}
                   is not configured.

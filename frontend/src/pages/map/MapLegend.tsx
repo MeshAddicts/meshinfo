@@ -17,24 +17,24 @@ export function MapLegend({
   return (
     <div
       id="legend"
-      className="bg-white/95 dark:bg-gray-900/95 backdrop-blur-md rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 p-3"
+      className="bg-gray-900/80 backdrop-blur-xl rounded-xl shadow-2xl border border-white/10 p-3"
     >
-      <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">
+      <div className="text-xs font-semibold text-gray-300 mb-2">
         Legend
       </div>
-      <div className="space-y-1.5 text-xs text-gray-600 dark:text-gray-300">
+      <div className="space-y-1.5 text-[11px] text-gray-400">
         {/* Node symbols */}
         <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded-full bg-[#32f032] border-2 border-white shadow-sm shrink-0" />
+          <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-sm shrink-0" />
           <span>Online Node</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-3 h-3 rounded-full bg-black/50 border-2 border-white shadow-sm shrink-0" />
+          <div className="w-2.5 h-2.5 rounded-full bg-gray-600 border border-gray-500 shrink-0" />
           <span>Offline Node</span>
         </div>
 
         {/* Divider */}
-        <div className="border-t border-gray-200 dark:border-gray-700 my-1" />
+        <div className="border-t border-white/10 my-1" />
 
         {/* Line symbols */}
         <div className="flex items-center gap-2">
@@ -54,9 +54,9 @@ export function MapLegend({
           <span>Traceroute Link</span>
         </div>
 
-        {/* Threshold note */}
-        <div className="border-t border-gray-200 dark:border-gray-700 my-1" />
-        <div className="text-[10px] text-gray-400 dark:text-gray-500 leading-tight">
+        {/* Info */}
+        <div className="border-t border-white/10 my-1" />
+        <div className="text-[10px] text-gray-500 leading-tight">
           Online = seen in last 6 hours.
           <br />
           {linkHint}
