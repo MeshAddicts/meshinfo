@@ -262,26 +262,28 @@ function JsonBlock({ code }: { code: string }) {
 }
 
 export const Log = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const urlRange = (searchParams.get("r") as RangeKey) || DEFAULT_RANGE;
+
   const {
     data: rawMesh = [],
     fulfilledTimeStamp: meshUpdatedAt,
     isFetching: meshFetching,
     refetch: refetchMesh,
-  } = useGetMessagesQuery();
+  } = useGetMessagesQuery({ range: urlRange });
 
   const {
     data: rawMqtt = [],
     fulfilledTimeStamp: mqttUpdatedAt,
     isFetching: mqttFetching,
     refetch: refetchMqtt,
-  } = useGetMqttMessagesQuery();
+  } = useGetMqttMessagesQuery({ range: urlRange });
 
   const { data: config } = useGetConfigQuery();
 
   const dataUpdatedAt = Math.max(meshUpdatedAt ?? 0, mqttUpdatedAt ?? 0);
   const isFetching = meshFetching || mqttFetching;
-
-  const [searchParams, setSearchParams] = useSearchParams();
 
   // URL defaults to match UI defaults by omitting default params.
   const defaultViewKey = "all";
@@ -427,7 +429,6 @@ export const Log = () => {
     [views, selectedViewKey],
   );
 
-  const urlRange = (searchParams.get("r") as RangeKey) || DEFAULT_RANGE;
   const urlSort = (searchParams.get("s") as SortKey) || DEFAULT_SORT;
   const urlQ = searchParams.get("q") ?? "";
 
@@ -457,21 +458,6 @@ export const Log = () => {
     }
     window.prompt("Copy link:", url);
   }, []);
-
-  const nowSec = Math.floor(Date.now() / 1000);
-  const rangeThreshold = useMemo(() => {
-    switch (urlRange) {
-      case "1h":
-        return nowSec - 3600;
-      case "24h":
-        return nowSec - 86400;
-      case "7d":
-        return nowSec - 604800;
-      case "all":
-      default:
-        return undefined;
-    }
-  }, [nowSec, urlRange]);
 
   const preparedMesh: Prepared[] = useMemo(() => {
     return (rawMesh as any[]).map((m, idx) => {
@@ -592,10 +578,6 @@ export const Log = () => {
       items = items.filter((x) => x.preset === selectedViewKey);
     }
 
-    if (rangeThreshold) {
-      items = items.filter((x) => x.ts >= rangeThreshold);
-    }
-
     const q = urlQ.trim().toLowerCase();
     if (q) {
       items = items.filter((x) => x.searchText.includes(q));
@@ -606,7 +588,7 @@ export const Log = () => {
     });
 
     return items;
-  }, [baseRows, selectedViewKey, defaultViewKey, rangeThreshold, urlQ, urlSort]);
+  }, [baseRows, selectedViewKey, defaultViewKey, urlQ, urlSort]);
 
   // Export popover
   const [exportOpen, setExportOpen] = useState(false);

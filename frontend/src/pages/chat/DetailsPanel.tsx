@@ -190,6 +190,22 @@ export function DetailsPanel({
 
             <div>
               <div className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                Node
+              </div>
+              <div className="mt-2">
+                {String(selectedMessage.from ?? "") ? (
+                  <Link
+                    to={`/nodes/${String(selectedMessage.from)}`}
+                    className={`${baseBtn} ${defaultBtn} inline-block`}
+                  >
+                    Open from
+                  </Link>
+                ) : null}
+              </div>
+            </div>
+
+            <div>
+              <div className="text-sm font-medium text-gray-800 dark:text-gray-200">
                 Route
               </div>
 
@@ -267,7 +283,24 @@ export function DetailsPanel({
               </div>
             </div>
 
-            <div className="pt-2 flex flex-wrap gap-2">
+            <div>
+              <div className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                Packet
+              </div>
+              <div className="mt-2">
+                <Link
+                  to={`/logs?q=${String(selectedMessage.id)}`}
+                  className={`${baseBtn} ${defaultBtn} inline-block`}
+                  title="Search for this packet in logs"
+                >
+                  View in logs
+                </Link>
+              </div>
+            </div>
+
+            <hr className="border-gray-200 dark:border-gray-800" />
+
+            <div className="flex flex-wrap gap-2">
               <button
                 type="button"
                 className={[
@@ -330,14 +363,6 @@ export function DetailsPanel({
                 Focus to
               </button>
 
-              {String(selectedMessage.from ?? "") ? (
-                <Link
-                  to={`/nodes/${String(selectedMessage.from)}`}
-                  className={`${baseBtn} ${defaultBtn}`}
-                >
-                  Open from
-                </Link>
-              ) : null}
             </div>
           </div>
         )}
