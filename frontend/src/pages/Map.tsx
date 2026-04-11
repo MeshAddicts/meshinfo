@@ -629,7 +629,7 @@ export function Map() {
       logoPosition: "bottom-left",
     });
 
-    map.addControl(new mapboxgl.AttributionControl({ compact: true }), "bottom-left");
+    map.addControl(new mapboxgl.AttributionControl({ compact: true }), "top-right");
 
     mbMapRef.current = map;
 

@@ -206,15 +206,21 @@ export function MapDetailsPanel({
 
   return (
     <div
-      className="fixed top-0 right-0 z-1050
-        w-[92vw] sm:w-85
-        h-full
-        bg-gray-900/80 backdrop-blur-xl border-l border-white/10 shadow-2xl
-        flex flex-col
-        animate-[slideInRight_200ms_ease-out]"
+      className="fixed z-1050 flex flex-col
+        bg-gray-900/80 backdrop-blur-xl shadow-2xl
+        bottom-0 left-0 right-0 max-h-[70vh] rounded-t-2xl border-t border-white/10
+        animate-[slideInUp_200ms_ease-out]
+        sm:bottom-auto sm:left-auto sm:top-0 sm:right-0 sm:max-h-full sm:h-full sm:w-85
+        sm:rounded-t-none sm:border-t-0 sm:border-l sm:border-white/10
+        sm:animate-[slideInRight_200ms_ease-out]"
     >
+      {/* Drag handle (mobile only) */}
+      <div className="sm:hidden flex justify-center pt-2 pb-1">
+        <div className="w-10 h-1 rounded-full bg-white/20" />
+      </div>
+
       {/* Header */}
-      <div className="p-4 pb-3">
+      <div className="p-4 pb-3 sm:pt-4 pt-1">
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
             <h2 className="text-base font-semibold text-gray-100 truncate leading-tight">

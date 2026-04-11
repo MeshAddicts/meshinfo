@@ -43,19 +43,19 @@ export function MapQuickControls({
   };
 
   const pillClasses =
-    "px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer select-none " +
+    "shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer select-none " +
     "bg-gray-900/80 backdrop-blur-xl border-white/10 shadow-2xl " +
     "hover:bg-gray-900/90 hover:border-white/20 " +
     "text-gray-300 hover:text-gray-100";
 
   const activePillClasses =
-    "px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer select-none " +
+    "shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer select-none " +
     "bg-cyan-500/20 backdrop-blur-xl border-cyan-500/40 shadow-2xl " +
     "hover:bg-cyan-500/30 " +
     "text-cyan-300";
 
   return (
-    <div className="fixed bottom-4 left-4 z-1100 flex items-center gap-1.5">
+    <div className="fixed bottom-4 left-4 right-24 sm:right-auto z-1100 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
       {/* Last Seen */}
       <button
         type="button"
