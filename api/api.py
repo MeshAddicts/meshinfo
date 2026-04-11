@@ -24,21 +24,26 @@ class API:
 
     @staticmethod
     def _parse_range(value: str | None) -> int | None:
-        """Convert a range string like '1h', '24h', '7d' to seconds. Returns None for 'all' or missing."""
-        if not value or value == "all":
+        """Convert a range string like '1h', '24h', '7d' to seconds. Returns None for 'all' or missing, defaults invalid values to 24h."""
+        DEFAULT_RANGE = 24 * 3600
+        if not value:
             return None
         v = value.strip().lower()
+        if v == "all":
+            return None
         if v.endswith("h"):
             try:
-                return int(v[:-1]) * 3600
+                hours = int(v[:-1])
+                return hours * 3600 if hours > 0 else DEFAULT_RANGE
             except ValueError:
-                return None
+                return DEFAULT_RANGE
         if v.endswith("d"):
             try:
-                return int(v[:-1]) * 86400
+                days = int(v[:-1])
+                return days * 86400 if days > 0 else DEFAULT_RANGE
             except ValueError:
-                return None
-        return None
+                return DEFAULT_RANGE
+        return DEFAULT_RANGE
 
     async def serve(self):
         @app.get("/")
@@ -239,9 +244,12 @@ class API:
                 node_id = int(id)
                 node_id = utils.convert_node_id_from_int_to_hex(node_id)
             except ValueError:
-                node_id = id
+                node_id = id.lstrip("!")
 
-            limit = int(request.query_params.get("limit", 50))
+            try:
+                limit = int(request.query_params.get("limit", 50))
+            except (TypeError, ValueError):
+                limit = 50
             limit = max(1, min(limit, 200))
 
             if self.read_from_postgres:

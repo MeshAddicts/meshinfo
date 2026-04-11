@@ -161,19 +161,23 @@ class PostgresStorage:
                         v_from TEXT;
                         v_to TEXT;
                     BEGIN
-                        IF NEW.from_node_id IS NULL AND NEW.payload IS NOT NULL AND NEW.payload ~ '^\\s*\\{' THEN
+                        IF (NEW.from_node_id IS NULL OR NEW.to_node_id IS NULL) AND NEW.payload IS NOT NULL AND NEW.payload ~ '^\\s*\\{' THEN
                             BEGIN
                                 v_from := NEW.payload::jsonb ->> 'from';
                                 v_to   := NEW.payload::jsonb ->> 'to';
-                                IF v_from IS NOT NULL AND v_from ~ '^[0-9]+$' THEN
-                                    NEW.from_node_id := lpad(to_hex(v_from::bigint), 8, '0');
-                                ELSE
-                                    NEW.from_node_id := left(v_from, 8);
+                                IF NEW.from_node_id IS NULL AND v_from IS NOT NULL THEN
+                                    IF v_from ~ '^[0-9]+$' THEN
+                                        NEW.from_node_id := lpad(to_hex(v_from::bigint), 8, '0');
+                                    ELSE
+                                        NEW.from_node_id := left(regexp_replace(v_from, '^!', ''), 8);
+                                    END IF;
                                 END IF;
-                                IF v_to IS NOT NULL AND v_to ~ '^[0-9]+$' THEN
-                                    NEW.to_node_id := lpad(to_hex(v_to::bigint), 8, '0');
-                                ELSE
-                                    NEW.to_node_id := left(v_to, 8);
+                                IF NEW.to_node_id IS NULL AND v_to IS NOT NULL THEN
+                                    IF v_to ~ '^[0-9]+$' THEN
+                                        NEW.to_node_id := lpad(to_hex(v_to::bigint), 8, '0');
+                                    ELSE
+                                        NEW.to_node_id := left(regexp_replace(v_to, '^!', ''), 8);
+                                    END IF;
                                 END IF;
                             EXCEPTION WHEN OTHERS THEN
                                 NULL;
@@ -227,30 +231,17 @@ class PostgresStorage:
                             # Mark as processed with empty node IDs so we don't retry
                             updates.append((row["id"], "", ""))
                             continue
-                        raw_from = j.get("from")
-                        raw_to = j.get("to")
-                        fid = ""
-                        tid = ""
-                        if isinstance(raw_from, int):
-                            fid = f"{raw_from:08x}"
-                        elif isinstance(raw_from, str) and raw_from:
-                            fid = raw_from.replace("!", "")[:8]
-                        if isinstance(raw_to, int):
-                            tid = f"{raw_to:08x}"
-                        elif isinstance(raw_to, str) and raw_to:
-                            tid = raw_to.replace("!", "")[:8]
-                        updates.append((row["id"], fid or "", tid or ""))
+                        fid = self._normalize_node_id(j.get("from")) or ""
+                        tid = self._normalize_node_id(j.get("to")) or ""
+                        updates.append((row["id"], fid, tid))
                     if updates:
                         await conn.executemany("""
                             UPDATE mqtt_messages
                             SET from_node_id = $2, to_node_id = $3
                             WHERE id = $1
                         """, updates)
-                    result = f"UPDATE {len(updates)}"
-                    # result is e.g. "UPDATE 5000"
-                    count = int(result.split()[-1]) if result else 0
-                    total += count
-                    if count < BATCH:
+                    total += len(updates)
+                    if len(updates) < BATCH:
                         break
             if total > 0:
                 logger.info(f"MQTT node-ID backfill complete: {total} rows updated")
@@ -1022,16 +1013,8 @@ class PostgresStorage:
         from_node_id = None
         to_node_id = None
         if isinstance(mqtt_msg, dict):
-            raw_from = mqtt_msg.get("from")
-            raw_to = mqtt_msg.get("to")
-            if isinstance(raw_from, int):
-                from_node_id = f"{raw_from:08x}"
-            elif isinstance(raw_from, str) and raw_from:
-                from_node_id = raw_from.replace("!", "")[:8]
-            if isinstance(raw_to, int):
-                to_node_id = f"{raw_to:08x}"
-            elif isinstance(raw_to, str) and raw_to:
-                to_node_id = raw_to.replace("!", "")[:8]
+            from_node_id = self._normalize_node_id(mqtt_msg.get("from"))
+            to_node_id = self._normalize_node_id(mqtt_msg.get("to"))
 
         try:
             async with self.pool.acquire() as conn:
@@ -1126,6 +1109,7 @@ class PostgresStorage:
         """Query mqtt_messages for a specific node (as sender or recipient)."""
         if not self._ready("query_node_mqtt_messages"):
             return []
+        node_id = self._normalize_node_id(node_id) or node_id
         try:
             async with self.pool.acquire() as conn:
                 rows = await conn.fetch(

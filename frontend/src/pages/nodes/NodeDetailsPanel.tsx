@@ -8,6 +8,7 @@ import { useGetConfigQuery, useGetNodePacketsQuery } from "../../slices/apiSlice
 import { INode } from "../../types";
 import {
   convertNodeIdFromHexToInt,
+  convertNodeIdFromIntToHex,
 } from "../../utils/convertNodeId";
 import { getElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLinks";
 import { formatTimestamp } from "../../utils/formatTimestamp";
@@ -137,8 +138,12 @@ function RecentPackets({ nodeId }: { nodeId: string }) {
           {packets.map((pkt: any, i: number) => {
             const key = `${pkt.id ?? i}-${pkt.timestamp ?? i}`;
             const pktType = pkt.type ?? pkt.decoded?.portnum ?? "unknown";
-            const from = String(pkt.from ?? "?");
-            const to = String(pkt.to ?? "?");
+            const from = typeof pkt.from === "number"
+              ? convertNodeIdFromIntToHex(pkt.from)
+              : String(pkt.from ?? "?").replace(/^!/, "");
+            const to = typeof pkt.to === "number"
+              ? convertNodeIdFromIntToHex(pkt.to)
+              : String(pkt.to ?? "?").replace(/^!/, "");
             const isSent = from === nodeId;
             const other = isSent ? to : from;
             const isExpanded = expanded === key;
