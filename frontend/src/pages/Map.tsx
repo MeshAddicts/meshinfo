@@ -26,6 +26,7 @@ import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
 import { MapDetailsPanel } from "./map/MapDetailsPanel";
+import { MapQuickControls } from "./map/MapQuickControls";
 import { MapSettingsPanel } from "./map/MapSettingsPanel";
 import { LS_KEYS, readJson, toMapboxStyleUrl, writeJson } from "./map/storage";
 import type { IFeatureNode, IMapNode, LinkMode, MapProvider, NodeDetailsData, NodeLike } from "./map/types";
@@ -1728,6 +1729,15 @@ export function Map() {
         nodeList={nodeList}
         canUseMapbox={canUseMapbox}
         usingMapbox={usingMapbox}
+      />
+
+      <MapQuickControls
+        recentDays={recentDays}
+        setRecentDays={setRecentDays}
+        linkMode={linkMode}
+        setLinkMode={setLinkMode}
+        clusterEnabled={clusterEnabled}
+        setClusterEnabled={setClusterEnabled}
       />
 
       {myNodeLabel && (
