@@ -88,6 +88,7 @@ export function buildNodesGeoJSON(
         longname: node.longname ?? "",
         last_seen: node.last_seen ?? "",
         online: Boolean(node.online),
+        role: node.role ?? null,
       },
       geometry: {
         type: "Point",
@@ -112,10 +113,12 @@ export function applyMapboxClusterVisibility(map: MbMap, enabled: boolean): void
   // clustered set
   set("clusters", enabled);
   set("cluster-count", enabled);
+  set("unclustered-pulse", enabled);
   set("unclustered-nodes", enabled);
   set("unclustered-labels", enabled);
 
   // plain set
+  set("plain-pulse", !enabled);
   set("plain-nodes", !enabled);
   set("plain-labels", !enabled);
 

@@ -61,6 +61,21 @@
   transition: height 200ms ease-out, max-height 200ms ease-out;
 }
 
+/* Mapbox hover tooltip styling */
+.map-hover-tooltip .mapboxgl-popup-content {
+  background: rgba(0, 0, 0, 0.85);
+  color: white;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none;
+  box-shadow: none;
+}
+.map-hover-tooltip .mapboxgl-popup-tip {
+  border-top-color: rgba(0, 0, 0, 0.85);
+}
+
 /* OL zoom controls: move to top-right to match Mapbox layout */
 .ol-zoom {
   left: auto !important;

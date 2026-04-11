@@ -35,9 +35,14 @@ export function buildMapboxLinkFeatureCollection(opts: {
     const isHeardBy = heardBySet.has(otherId);
     const kind = isNeighbor && isHeardBy ? "both" : isNeighbor ? "neighbor" : "heard_by";
 
+    // Get best SNR: prefer this node's report, fall back to the other side's
+    const fwdSnr = (node.neighbors ?? []).find((n) => n.id === otherId)?.snr;
+    const revSnr = (other.neighbors ?? []).find((n) => n.id === node.id)?.snr;
+    const snr = fwdSnr ?? revSnr ?? null;
+
     linkFeatures.push({
       type: "Feature",
-      properties: { kind },
+      properties: { kind, snr },
       geometry: {
         type: "LineString",
         coordinates: [
@@ -81,9 +86,13 @@ export function buildAllLinksFeatureCollection(
       const reverseNeighbors = other.neighbors ?? [];
       const isMutual = reverseNeighbors.some((n) => n.id === nodeId);
 
+      // Use this node's SNR report for the link; fall back to reverse
+      const revEntry = reverseNeighbors.find((n) => n.id === nodeId);
+      const snr = neighbor.snr ?? revEntry?.snr ?? null;
+
       linkFeatures.push({
         type: "Feature",
-        properties: { kind: isMutual ? "both" : "neighbor" },
+        properties: { kind: isMutual ? "both" : "neighbor", snr },
         geometry: {
           type: "LineString",
           coordinates: [
@@ -156,7 +165,7 @@ export function buildTracerouteLinkFeatureCollection(
 
       linkFeatures.push({
         type: "Feature",
-        properties: { kind: "traceroute" },
+        properties: { kind: "traceroute", snr: null },
         geometry: {
           type: "LineString",
           coordinates: [

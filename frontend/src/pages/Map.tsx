@@ -5,7 +5,7 @@ import mapboxgl, {
   GeoJSONSource as MbGeoJSONSource,
   Map as MbMap,
 } from "mapbox-gl";
-import { Feature, Map as OlMap, View } from "ol";
+import { Feature, Map as OlMap, Overlay, View } from "ol";
 import { Coordinate } from "ol/coordinate";
 import { click } from "ol/events/condition";
 import { LineString } from "ol/geom";
@@ -19,6 +19,7 @@ import { Circle, Fill, Stroke, Style } from "ol/style";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
+import { NodeRole, roleTitles } from "../types";
 import { env } from "../env";
 import { createBaseTileLayer, type OsmBasemap } from "../maps/baseLayer";
 import { reverseGeocode } from "../maps/geocoder";
@@ -54,7 +55,28 @@ import {
   bumpOlRender,
   computeRecentNodes,
   emptyLineFeatureCollection,
+  escapeHtml,
 } from "./map/utils";
+
+// --------------------
+// SNR → color/width helpers (shared by OL link styles)
+// --------------------
+function snrToOlColor(snr: number | null | undefined, kind: string): string {
+  if (kind === "traceroute") return "#F59E0B";
+  if (snr == null) {
+    return kind === "both" ? "#FF66FF" : kind === "heard_by" ? "#6666FF" : "#66FF66";
+  }
+  if (snr >= 10) return "#44CC44";
+  if (snr >= 5) return "#88DD00";
+  if (snr >= 0) return "#FFAA00";
+  if (snr >= -5) return "#FF6644";
+  return "#FF4444";
+}
+
+function snrToOlWidth(snr: number | null | undefined): number {
+  if (snr == null) return 3;
+  return Math.max(1.5, Math.min(9, 3 + snr * 0.4));
+}
 
 // --------------------
 // OpenLayers styles
@@ -72,6 +94,13 @@ const offlineStyle = new Style({
     radius: 6,
     fill: new Fill({ color: "rgba(0, 0, 0, 0.50)" }),
     stroke: new Stroke({ color: "white", width: 2 }),
+  }),
+});
+
+const onlinePulseStyle = new Style({
+  image: new Circle({
+    radius: 12,
+    fill: new Fill({ color: "rgba(50, 240, 50, 0.25)" }),
   }),
 });
 
@@ -103,6 +132,7 @@ export function Map() {
   const mbHandlersBoundRef = useRef(false);
   const mbCurrentStyleUrlRef = useRef<string | null>(null);
   const mbKeydownHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
+  const mbPulseAnimRef = useRef<number>(0);
 
   // Shared ref for panel node-select callback (set by whichever provider is active)
   const handleNodeSelectRef = useRef<(nodeId: string) => void>(() => {});
@@ -467,10 +497,12 @@ export function Map() {
       );
       const line = new Feature({ geometry: new LineString(coords) });
       const kind = f.properties?.kind ?? "neighbor";
-      const color = kind === "traceroute" ? "#F59E0B" : kind === "both" ? "#FF66FF" : kind === "heard_by" ? "#6666FF" : "#66FF66";
+      const snr = f.properties?.snr as number | null;
+      const color = snrToOlColor(snr, kind);
+      const width = snrToOlWidth(snr);
       line.setStyle(
         new Style({
-          stroke: new Stroke({ color, width: 4 }),
+          stroke: new Stroke({ color, width }),
         })
       );
       return line;
@@ -727,21 +759,32 @@ export function Map() {
           source: "links",
           layout: { "line-join": "round", "line-cap": "round" },
           paint: {
-            "line-width": 4,
             "line-opacity": 0.9,
+            // SNR-based thickness: strong links thick, weak links thin
+            "line-width": [
+              "case",
+              ["==", ["get", "snr"], null], 3,
+              ["interpolate", ["linear"], ["get", "snr"],
+                -10, 1.5, 0, 3, 5, 5, 10, 7, 20, 9,
+              ],
+            ] as any,
+            // SNR-based color: red (poor) → yellow (marginal) → green (good)
+            // Traceroute links keep amber; null-SNR falls back to kind-based color
             "line-color": [
-              "match",
-              ["get", "kind"],
-              "neighbor",
-              "#66FF66",
-              "heard_by",
-              "#6666FF",
-              "both",
-              "#FF66FF",
-              "traceroute",
-              "#F59E0B",
-              "#FFFFFF",
-            ],
+              "case",
+              ["==", ["get", "kind"], "traceroute"], "#F59E0B",
+              ["==", ["get", "snr"], null], [
+                "match", ["get", "kind"],
+                "neighbor", "#66FF66",
+                "heard_by", "#6666FF",
+                "both", "#FF66FF",
+                "#FFFFFF",
+              ],
+              ["interpolate", ["linear"], ["get", "snr"],
+                -10, "#FF4444", -5, "#FF6644", 0, "#FFAA00",
+                2.5, "#FFDD00", 5, "#88DD00", 10, "#44CC44",
+              ],
+            ] as any,
           },
         });
       }
@@ -772,6 +815,22 @@ export function Map() {
           filter: ["has", "point_count"],
           layout: { "text-field": ["get", "point_count_abbreviated"], "text-size": 12 },
           paint: { "text-color": "#ffffff" },
+        });
+      }
+
+      // online node pulse (behind unclustered nodes)
+      if (!map.getLayer("unclustered-pulse")) {
+        map.addLayer({
+          id: "unclustered-pulse",
+          type: "circle",
+          source: "nodes_clustered",
+          filter: ["all", ["!", ["has", "point_count"]], ["==", ["get", "online"], true]],
+          paint: {
+            "circle-radius": 12,
+            "circle-color": "#32f032",
+            "circle-opacity": 0.3,
+            "circle-stroke-width": 0,
+          },
         });
       }
 
@@ -819,6 +878,22 @@ export function Map() {
             "text-halo-color": "#000000",
             "text-halo-width": 1.25,
             "text-color": "#ffffff",
+          },
+        });
+      }
+
+      // online node pulse (behind plain nodes)
+      if (!map.getLayer("plain-pulse")) {
+        map.addLayer({
+          id: "plain-pulse",
+          type: "circle",
+          source: "nodes_plain",
+          filter: ["==", ["get", "online"], true],
+          paint: {
+            "circle-radius": 12,
+            "circle-color": "#32f032",
+            "circle-opacity": 0.3,
+            "circle-stroke-width": 0,
           },
         });
       }
@@ -1103,6 +1178,52 @@ export function Map() {
       };
       mbKeydownHandlerRef.current = handleKeydown;
       document.addEventListener("keydown", handleKeydown);
+
+      // --- Pulse animation for online nodes ---
+      cancelAnimationFrame(mbPulseAnimRef.current);
+      const animatePulse = () => {
+        const t = (Date.now() % 2000) / 2000;
+        const radius = 8 + 8 * Math.sin(t * Math.PI * 2);
+        const opacity = 0.15 + 0.2 * Math.sin(t * Math.PI * 2);
+        for (const layerId of ["unclustered-pulse", "plain-pulse"]) {
+          if (map.getLayer(layerId)) {
+            map.setPaintProperty(layerId, "circle-radius", radius);
+            map.setPaintProperty(layerId, "circle-opacity", opacity);
+          }
+        }
+        mbPulseAnimRef.current = requestAnimationFrame(animatePulse);
+      };
+      animatePulse();
+
+      // --- Hover tooltips (desktop only) ---
+      const hoverPopup = new mapboxgl.Popup({
+        closeButton: false,
+        closeOnClick: false,
+        offset: 12,
+        className: "map-hover-tooltip",
+      });
+
+      const showTooltip = (e: mapboxgl.MapMouseEvent & { features?: mapboxgl.MapboxGeoJSONFeature[] }) => {
+        const feature = e.features?.[0];
+        if (!feature) return;
+        const p = feature.properties!;
+        const role = p.role != null ? roleTitles[p.role as NodeRole]?.title ?? "" : "";
+        const status = p.online ? "Online" : "Offline";
+        hoverPopup
+          .setLngLat((feature.geometry as any).coordinates)
+          .setHTML(
+            `<strong>${escapeHtml(p.shortname || p.id)}</strong>` +
+            (role ? `<br/>${role}` : "") +
+            `<br/>${status}`
+          )
+          .addTo(map);
+      };
+      const hideTooltip = () => hoverPopup.remove();
+
+      for (const layerId of ["unclustered-nodes", "plain-nodes", SPIDERFY_LAYER_NODES]) {
+        map.on("mouseenter", layerId, showTooltip);
+        map.on("mouseleave", layerId, hideTooltip);
+      }
     };
 
     map.on("style.load", ensureSourcesAndLayers);
@@ -1112,6 +1233,7 @@ export function Map() {
         document.removeEventListener("keydown", mbKeydownHandlerRef.current);
         mbKeydownHandlerRef.current = null;
       }
+      cancelAnimationFrame(mbPulseAnimRef.current);
       if (mbMapRef.current) {
         mbMapRef.current.remove();
         mbMapRef.current = null;
@@ -1310,9 +1432,48 @@ export function Map() {
       }
     });
 
+    // Hover tooltip (desktop only)
+    const tooltipEl = document.createElement("div");
+    tooltipEl.className = "ol-hover-tooltip";
+    tooltipEl.style.cssText =
+      "background:rgba(0,0,0,0.85);color:white;padding:6px 10px;border-radius:6px;" +
+      "font-size:12px;line-height:1.4;pointer-events:none;white-space:nowrap;";
+    const tooltipOverlay = new Overlay({
+      element: tooltipEl,
+      offset: [12, 0],
+      positioning: "center-left",
+    });
+    map.addOverlay(tooltipOverlay);
+
     map.on("pointermove", (evt) => {
       const hit = map.hasFeatureAtPixel(evt.pixel);
       map.getTargetElement().style.cursor = hit ? "pointer" : "";
+
+      if (!hit) {
+        tooltipOverlay.setPosition(undefined);
+        return;
+      }
+
+      let found = false;
+      map.forEachFeatureAtPixel(evt.pixel, (f) => {
+        if (found) return;
+        const props = (f as Feature).getProperties();
+        const nodeData = props.node as IFeatureNode | undefined;
+        if (!nodeData?.id) return;
+        found = true;
+
+        const fullNode = nodesRef.current[nodeData.id];
+        const role = fullNode?.role != null ? roleTitles[fullNode.role]?.title ?? "" : "";
+        const status = nodeData.online ? "Online" : "Offline";
+        tooltipEl.innerHTML =
+          `<strong>${escapeHtml(nodeData.shortname || nodeData.id)}</strong>` +
+          (role ? `<br/>${role}` : "") +
+          `<br/>${status}`;
+        const geom = (f as Feature<Point>).getGeometry();
+        if (geom) tooltipOverlay.setPosition(geom.getCoordinates());
+      });
+
+      if (!found) tooltipOverlay.setPosition(undefined);
     });
 
     // nodes layer
@@ -1335,7 +1496,7 @@ export function Map() {
           } satisfies IFeatureNode,
         });
 
-        feature.setStyle(node.online ? onlineStyle : offlineStyle);
+        feature.setStyle(node.online ? [onlinePulseStyle, onlineStyle] : offlineStyle);
         return feature;
       })
       .filter((f): f is Feature<Point> => Boolean(f));
@@ -1404,11 +1565,13 @@ export function Map() {
         const vectorLine = new Vector({});
         vectorLine.addFeature(featureLine);
 
+        const linkColor = snrToOlColor(neighbor.snr, "neighbor");
+        const linkWidth = snrToOlWidth(neighbor.snr);
         const vectorLineLayer = new VectorLayer({
           source: vectorLine,
           style: new Style({
-            fill: new Fill({ color: "#66FF66" }),
-            stroke: new Stroke({ color: "#66FF66", width: 4 }),
+            fill: new Fill({ color: linkColor }),
+            stroke: new Stroke({ color: linkColor, width: linkWidth }),
           }),
         });
         neighborLayers.push(vectorLineLayer);
@@ -1576,7 +1739,7 @@ export function Map() {
           } satisfies IFeatureNode,
         });
 
-        feature.setStyle(node.online ? onlineStyle : offlineStyle);
+        feature.setStyle(node.online ? [onlinePulseStyle, onlineStyle] : offlineStyle);
         return feature;
       })
       .filter((f): f is Feature<Point> => Boolean(f));
@@ -1607,7 +1770,7 @@ export function Map() {
               neighbors: node.neighbors,
             } satisfies IFeatureNode,
           });
-          f.setStyle(node.online ? onlineStyle : offlineStyle);
+          f.setStyle(node.online ? [onlinePulseStyle, onlineStyle] : offlineStyle);
           return f;
         })
         .filter((f): f is Feature<Point> => Boolean(f));
