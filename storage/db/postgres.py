@@ -159,6 +159,14 @@ class PostgresStorage:
                     CREATE INDEX IF NOT EXISTS idx_mqtt_messages_to_node_id
                         ON mqtt_messages(to_node_id, created_at DESC);
                 """)
+                # Partial index so the backfill query can quickly find
+                # un-processed rows instead of seq-scanning millions.
+                # Use a longer timeout — initial creation scans the whole table.
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_mqtt_messages_backfill
+                        ON mqtt_messages(id)
+                        WHERE from_node_id IS NULL;
+                """, timeout=300)
         except Exception as e:
             logger.error(f"Failed to run migrations: {e}")
             if self.raise_on_write_error:
@@ -225,7 +233,9 @@ class PostgresStorage:
         try:
             while True:
                 async with self.pool.acquire() as conn:
-                    await conn.execute("SET statement_timeout = '120s'")
+                    # Override the pool-level command_timeout (10s) — backfill
+                    # batches can take longer on large tables.
+                    await conn.execute("SET statement_timeout = '120s'", timeout=120)
                     # Fetch candidate IDs and parse in Python to skip bad payloads
                     rows = await conn.fetch("""
                         SELECT id, payload
@@ -234,7 +244,7 @@ class PostgresStorage:
                           AND payload IS NOT NULL
                           AND payload ~ '^\\s*\\{'
                         LIMIT $1
-                    """, BATCH)
+                    """, BATCH, timeout=120)
                     if not rows:
                         break
                     updates = []
@@ -253,7 +263,7 @@ class PostgresStorage:
                             UPDATE mqtt_messages
                             SET from_node_id = $2, to_node_id = $3
                             WHERE id = $1
-                        """, updates)
+                        """, updates, timeout=120)
                     total += len(updates)
                     if len(updates) < BATCH:
                         break
