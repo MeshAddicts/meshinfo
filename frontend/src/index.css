@@ -51,6 +51,16 @@
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
+/* Bottom sheet expanded state — dvh accounts for mobile browser chrome */
+.bottom-sheet-expanded {
+  height: 100dvh !important;
+  max-height: 100dvh !important;
+  transition: height 200ms ease-out, max-height 200ms ease-out;
+}
+.bottom-sheet-collapsing {
+  transition: height 200ms ease-out, max-height 200ms ease-out;
+}
+
 /* OL zoom controls: move to top-right to match Mapbox layout */
 .ol-zoom {
   left: auto !important;

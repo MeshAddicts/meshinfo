@@ -1,9 +1,88 @@
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { getElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLinks";
 import { calculateGeodesicDistance } from "./utils";
 import { normNodeId } from "./linkFeatures";
 import type { IMapNode, NodeDetailsData } from "./types";
+
+// ---------------------------------------------------------------------------
+// Bottom sheet gesture hook — swipe down to dismiss, swipe up to expand
+// All visual changes are imperative (refs + DOM) to avoid fighting React renders.
+// ---------------------------------------------------------------------------
+function useBottomSheetGesture(onClose: () => void) {
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const startY = useRef(0);
+  const dragging = useRef(false);
+  const expandedRef = useRef(false);
+
+  const clearStyles = useCallback(() => {
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+    sheet.style.transform = "";
+    sheet.style.transition = "";
+    sheet.classList.remove("bottom-sheet-expanded", "bottom-sheet-collapsing");
+    expandedRef.current = false;
+  }, []);
+
+  const onTouchStart = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length !== 1) return;
+    dragging.current = true;
+    startY.current = e.touches[0].clientY;
+    if (sheetRef.current) {
+      sheetRef.current.style.transition = "none";
+    }
+  }, []);
+
+  const onTouchMove = useCallback((e: React.TouchEvent) => {
+    if (!dragging.current) return;
+    const dy = e.touches[0].clientY - startY.current;
+    // Downward: free drag. Upward: resistance feel.
+    const visualDy = dy < 0 ? dy * 0.4 : dy;
+    if (sheetRef.current) {
+      sheetRef.current.style.transform = `translateY(${visualDy}px)`;
+    }
+  }, []);
+
+  // Compute delta directly from touchend event — more reliable than tracking via ref
+  const onTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (!dragging.current) return;
+    dragging.current = false;
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+
+    const dy = e.changedTouches[0].clientY - startY.current;
+    const threshold = sheet.offsetHeight * 0.25;
+
+    if (dy > threshold) {
+      if (expandedRef.current) {
+        // Collapse back to default height
+        expandedRef.current = false;
+        sheet.style.transform = "translateY(0)";
+        sheet.classList.remove("bottom-sheet-expanded");
+        sheet.classList.add("bottom-sheet-collapsing");
+        sheet.addEventListener("transitionend", () => {
+          sheet.classList.remove("bottom-sheet-collapsing");
+        }, { once: true });
+      } else {
+        // Dismiss: animate off-screen then call onClose
+        sheet.style.transition = "transform 200ms ease-in";
+        sheet.style.transform = "translateY(100%)";
+        sheet.addEventListener("transitionend", () => onClose(), { once: true });
+      }
+    } else if (dy < -40 && !expandedRef.current) {
+      // Swiped up — expand to full height
+      expandedRef.current = true;
+      sheet.style.transform = "translateY(0)";
+      sheet.classList.add("bottom-sheet-expanded");
+    } else {
+      // Snap back
+      sheet.style.transition = "transform 200ms ease-out";
+      sheet.style.transform = "translateY(0)";
+    }
+  }, [onClose]);
+
+  return { sheetRef, clearStyles, onTouchStart, onTouchMove, onTouchEnd };
+}
 
 function formatLastSeen(raw: string | null | undefined): string {
   if (!raw) return "Unknown";
@@ -168,6 +247,15 @@ export function MapDetailsPanel({
   onClose: () => void;
   onNodeSelect: (nodeId: string) => void;
 }) {
+  const { sheetRef, clearStyles, onTouchStart, onTouchMove, onTouchEnd } = useBottomSheetGesture(onClose);
+
+  // Reset gesture state when a different node is selected
+  const prevNodeId = useRef<string | null>(null);
+  if (data && data.node.id !== prevNodeId.current) {
+    prevNodeId.current = data.node.id;
+    clearStyles();
+  }
+
   if (!data) return null;
 
   const { node, liveNodes, displayName, traceroutes = [], channelLabel } = data;
@@ -206,6 +294,7 @@ export function MapDetailsPanel({
 
   return (
     <div
+      ref={sheetRef}
       className="fixed z-1050 flex flex-col
         bg-gray-900/80 backdrop-blur-xl shadow-2xl
         bottom-0 left-0 right-0 max-h-[70vh] rounded-t-2xl border-t border-white/10
@@ -214,13 +303,23 @@ export function MapDetailsPanel({
         sm:rounded-t-none sm:border-t-0 sm:border-l sm:border-white/10
         sm:animate-[slideInRight_200ms_ease-out]"
     >
-      {/* Drag handle (mobile only) */}
-      <div className="sm:hidden flex justify-center pt-2 pb-1">
+      {/* Drag handle (mobile only) — swipe down to dismiss */}
+      <div
+        className="sm:hidden flex justify-center pt-2 pb-1 cursor-grab active:cursor-grabbing touch-none"
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+      >
         <div className="w-10 h-1 rounded-full bg-white/20" />
       </div>
 
-      {/* Header */}
-      <div className="p-4 pb-3 sm:pt-4 pt-1">
+      {/* Header — also draggable on mobile */}
+      <div
+        className="p-4 pb-3 sm:pt-4 pt-1 max-sm:touch-none"
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+      >
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
             <h2 className="text-base font-semibold text-gray-100 truncate leading-tight">
