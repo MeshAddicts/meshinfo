@@ -415,15 +415,15 @@ export async function unspiderfy(map: MbMap): Promise<void> {
   });
 
   // Build leaf-like features for the collapse animation
+  // Clear state immediately so idle handler doesn't re-spiderfy during collapse
+  activeState = null;
+
   const collapseFeatures: GeoFeature<GeoPoint, GeoJsonProperties>[] = renderedNodes.map((f) => ({
     type: "Feature",
     id: f.properties?.id ?? f.id,
     properties: f.properties,
     geometry: f.geometry as GeoPoint,
   }));
-
-  // Clear state immediately so idle handler doesn't re-spiderfy during collapse
-  activeState = null;
 
   return new Promise<void>((resolve) => {
     const start = performance.now();

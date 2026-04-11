@@ -22,6 +22,7 @@ export function MapQuickControls({
   setLinkMode,
   clusterEnabled,
   setClusterEnabled,
+  hidden = false,
 }: {
   recentDays: number;
   setRecentDays: Dispatch<SetStateAction<number>>;
@@ -29,6 +30,7 @@ export function MapQuickControls({
   setLinkMode: Dispatch<SetStateAction<LinkMode>>;
   clusterEnabled: boolean;
   setClusterEnabled: Dispatch<SetStateAction<boolean>>;
+  hidden?: boolean;
 }) {
   const cycleDays = () => {
     const idx = DAYS_OPTIONS.indexOf(recentDays as (typeof DAYS_OPTIONS)[number]);
@@ -55,7 +57,7 @@ export function MapQuickControls({
     "text-cyan-300";
 
   return (
-    <div className="fixed bottom-4 left-4 right-24 sm:right-auto z-1100 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+    <div className={`fixed bottom-4 left-4 right-24 sm:right-auto z-1100 flex items-center gap-1.5 overflow-x-auto no-scrollbar ${hidden ? "max-sm:hidden" : ""}`}>
       {/* Last Seen */}
       <button
         type="button"

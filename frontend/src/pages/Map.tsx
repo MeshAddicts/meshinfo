@@ -691,11 +691,6 @@ export function Map() {
       localStorage.setItem("savedZoom", map.getZoom().toString());
     });
 
-    map.addControl(
-      new mapboxgl.NavigationControl({ showCompass: true }),
-      "top-right"
-    );
-
     const ensureSourcesAndLayers = () => {
       // clustered nodes source
       if (!map.getSource("nodes_clustered")) {
@@ -1729,6 +1724,7 @@ export function Map() {
         nodeList={nodeList}
         canUseMapbox={canUseMapbox}
         usingMapbox={usingMapbox}
+        hidden={!!detailsData}
       />
 
       <MapQuickControls
@@ -1738,6 +1734,7 @@ export function Map() {
         setLinkMode={setLinkMode}
         clusterEnabled={clusterEnabled}
         setClusterEnabled={setClusterEnabled}
+        hidden={!!detailsData}
       />
 
       {myNodeLabel && (

@@ -51,6 +51,24 @@
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
+/* OL zoom controls: move to top-right to match Mapbox layout */
+.ol-zoom {
+  left: auto !important;
+  right: 8px;
+  top: 8px;
+}
+
+/* Mapbox controls: logo + attribution side by side */
+.mapboxgl-ctrl-top-right {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 4px;
+}
+.mapboxgl-ctrl-top-right .mapboxgl-ctrl {
+  margin: 0 !important;
+}
+
 /* Map details panel slide-in animations */
 @keyframes slideInRight {
   from { transform: translateX(100%); }

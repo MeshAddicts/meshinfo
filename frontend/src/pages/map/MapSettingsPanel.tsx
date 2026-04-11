@@ -41,6 +41,7 @@ export function MapSettingsPanel({
 
   canUseMapbox,
   usingMapbox,
+  hidden = false,
 }: {
   settingsPanelRef: RefObject<HTMLDivElement | null>;
   settingsToggleRef: RefObject<HTMLButtonElement | null>;
@@ -72,6 +73,7 @@ export function MapSettingsPanel({
 
   canUseMapbox: boolean;
   usingMapbox: boolean;
+  hidden?: boolean;
 }) {
   const [nodeSearch, setNodeSearch] = useState("");
   const [legendOpen, setLegendOpen] = useState(false);
@@ -114,7 +116,7 @@ export function MapSettingsPanel({
     "p-2 rounded-xl shadow-2xl border backdrop-blur-xl transition-colors";
 
   return (
-    <div ref={containerRef} className="fixed bottom-4 right-4 z-1100 flex flex-col items-end">
+    <div ref={containerRef} className={`fixed bottom-4 right-4 z-1100 flex flex-col items-end ${hidden ? "max-sm:hidden" : ""}`}>
       {/* Legend popover — above buttons */}
       {legendOpen && !settingsPanelOpen && (
         <div className="mb-2">
