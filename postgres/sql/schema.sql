@@ -196,6 +196,12 @@ CREATE TABLE IF NOT EXISTS mqtt_messages (
 CREATE INDEX IF NOT EXISTS idx_mqtt_messages_created_at ON mqtt_messages(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_mqtt_messages_timestamp ON mqtt_messages(timestamp DESC);
 
+-- Node ID columns for filtered packet queries (managed via ensure_schema migrations)
+ALTER TABLE mqtt_messages ADD COLUMN IF NOT EXISTS from_node_id VARCHAR(8);
+ALTER TABLE mqtt_messages ADD COLUMN IF NOT EXISTS to_node_id VARCHAR(8);
+CREATE INDEX IF NOT EXISTS idx_mqtt_messages_from_node_id ON mqtt_messages(from_node_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mqtt_messages_to_node_id ON mqtt_messages(to_node_id, created_at DESC);
+
 -- Neighbor snapshot history table (currently unused, for time-lapse update later on)
 CREATE TABLE IF NOT EXISTS node_neighborinfo_history (
   id BIGSERIAL PRIMARY KEY,

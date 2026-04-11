@@ -473,6 +473,30 @@ export const Chat = () => {
   // Export menu
   const [exportOpen, setExportOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  const sidebarRef = useRef<HTMLDivElement>(null);
+
+  // Click outside sidebar panels to clear message selection
+  useEffect(() => {
+    if (!urlMsg) return;
+    const onMouseDown = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      if (!t) return;
+      // Ignore clicks inside the sidebar (details/focus panels)
+      if (sidebarRef.current?.contains(t)) return;
+      // Ignore clicks inside mobile sheets
+      const sheet = (t as HTMLElement).closest?.("[data-mobile-sheet]");
+      if (sheet) return;
+      // Ignore clicks on interactive elements in the header/toolbar area
+      const interactive = (t as HTMLElement).closest?.(
+        "button, a, input, select, [role='button']"
+      );
+      if (interactive) return;
+
+      setParam("msg", undefined, "push");
+    };
+    window.addEventListener("mousedown", onMouseDown);
+    return () => window.removeEventListener("mousedown", onMouseDown);
+  }, [urlMsg, setParam]);
 
   // Search input
   const [qInput, setQInput] = useState(urlQ);
@@ -1663,6 +1687,13 @@ export const Chat = () => {
               title="Click to clear focus"
               onClick={() => clearFocus()}
             />
+
+            <StatusChip
+              label={urlMsg ? `Selected: ${urlMsg}` : "Selected: none"}
+              active={!!urlMsg}
+              title="Click to clear selection"
+              onClick={() => setParam("msg", undefined, "push")}
+            />
           </div>
 
           {urlNode ? (
@@ -1731,7 +1762,7 @@ export const Chat = () => {
             </div>
 
             {/* Desktop sidebar only */}
-            <div className="hidden lg:flex lg:col-span-1 flex-col gap-4 min-h-0 h-full">
+            <div ref={sidebarRef} className="hidden lg:flex lg:col-span-1 flex-col gap-4 min-h-0 h-full">
               <FocusPanel
                 urlNode={urlNode}
                 nodes={nodes}

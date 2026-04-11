@@ -22,6 +22,29 @@ class API:
         self.data = data
         self.read_from_postgres = config.get('storage', {}).get('read_from') == 'postgres'
 
+    @staticmethod
+    def _parse_range(value: str | None) -> int | None:
+        """Convert a range string like '1h', '24h', '7d' to seconds. Returns None for 'all' or missing, defaults invalid values to 24h."""
+        DEFAULT_RANGE = 24 * 3600
+        if not value:
+            return None
+        v = value.strip().lower()
+        if v == "all":
+            return None
+        if v.endswith("h"):
+            try:
+                hours = int(v[:-1])
+                return hours * 3600 if hours > 0 else DEFAULT_RANGE
+            except ValueError:
+                return DEFAULT_RANGE
+        if v.endswith("d"):
+            try:
+                days = int(v[:-1])
+                return days * 86400 if days > 0 else DEFAULT_RANGE
+            except ValueError:
+                return DEFAULT_RANGE
+        return DEFAULT_RANGE
+
     async def serve(self):
         @app.get("/")
         async def root():
@@ -215,6 +238,40 @@ class API:
                             texts.append(message)
                 return jsonable_encoder({ "texts": texts })
 
+        @app.get("/v1/nodes/{id}/packets")
+        async def node_packets(request: Request, id: str) -> JSONResponse:
+            try:
+                node_id = int(id)
+                node_id = utils.convert_node_id_from_int_to_hex(node_id)
+            except ValueError:
+                node_id = id.lstrip("!")
+
+            try:
+                limit = int(request.query_params.get("limit", 50))
+            except (TypeError, ValueError):
+                limit = 50
+            limit = max(1, min(limit, 200))
+
+            if self.read_from_postgres:
+                packets = await self.data.pg_storage.query_node_mqtt_messages(node_id, limit=limit)
+                return jsonable_encoder({"packets": packets})
+            else:
+                # In-memory fallback: filter mqtt_messages by from/to
+                packets = []
+                for msg in reversed(self.data.mqtt_messages):
+                    msg_from = msg.get("from")
+                    msg_to = msg.get("to")
+                    # Compare as hex string or int
+                    if isinstance(msg_from, int):
+                        msg_from = utils.convert_node_id_from_int_to_hex(msg_from)
+                    if isinstance(msg_to, int):
+                        msg_to = utils.convert_node_id_from_int_to_hex(msg_to)
+                    if msg_from == node_id or msg_to == node_id:
+                        packets.append(msg)
+                        if len(packets) >= limit:
+                            break
+                return jsonable_encoder({"packets": packets})
+
         @app.get("/v1/nodes/{id}/traceroutes")
         async def node_traceroutes(request: Request, id: str) -> JSONResponse:
             try:
@@ -278,21 +335,25 @@ class API:
         @app.get("/v1/messages")
         async def messages(request: Request) -> JSONResponse:
             search = request.query_params.get("q")
+            range_seconds = self._parse_range(request.query_params.get("range"))
             if self.read_from_postgres:
-                limit = int(request.query_params.get("limit", 1000))
-                limit = max(1, min(limit, 5000))
+                limit = int(request.query_params.get("limit", 5000))
+                limit = max(1, min(limit, 50000))
                 results = await self.data.pg_storage.query_mqtt_messages(
-                    limit=limit, search=search,
+                    limit=limit, search=search, range_seconds=range_seconds,
                 )
                 return jsonable_encoder(results)
             return jsonable_encoder(self.data.messages[:1000])
 
         @app.get("/v1/mqtt_messages")
         async def mqtt_messages(request: Request) -> JSONResponse:
+            range_seconds = self._parse_range(request.query_params.get("range"))
             if self.read_from_postgres:
-                limit = int(request.query_params.get("limit", 1000))
-                limit = max(1, min(limit, 5000))
-                results = await self.data.pg_storage.query_mqtt_messages(limit=limit)
+                limit = int(request.query_params.get("limit", 5000))
+                limit = max(1, min(limit, 50000))
+                results = await self.data.pg_storage.query_mqtt_messages(
+                    limit=limit, range_seconds=range_seconds,
+                )
                 return jsonable_encoder(results)
             return jsonable_encoder(self.data.mqtt_messages[:1000])
 
