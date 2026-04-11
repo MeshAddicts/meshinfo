@@ -626,7 +626,7 @@ export function Map() {
       center: initialCenter,
       zoom: initialZoom,
       attributionControl: false,
-      logoPosition: "bottom-left",
+      logoPosition: "top-right",
     });
 
     map.addControl(new mapboxgl.AttributionControl({ compact: true }), "top-right");
