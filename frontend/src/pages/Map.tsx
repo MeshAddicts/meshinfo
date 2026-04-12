@@ -8,7 +8,7 @@ import mapboxgl, {
 import { Feature, Map as OlMap, Overlay, View } from "ol";
 import { Coordinate } from "ol/coordinate";
 import { click } from "ol/events/condition";
-import { LineString } from "ol/geom";
+import { LineString, Polygon } from "ol/geom";
 import Point from "ol/geom/Point";
 import Select from "ol/interaction/Select";
 import VectorLayer from "ol/layer/Vector";
@@ -285,6 +285,8 @@ export function Map() {
   const olClusterSetupRef = useRef<OlClusterSetup | null>(null);
   const olPersistentLinksLayerRef = useRef<VectorLayer<VectorSource<Feature>, Feature> | null>(null);
   const olHighlightLayerRef = useRef<VectorLayer<VectorSource<Feature>, Feature> | null>(null);
+  const olCoverageLayerRef = useRef<VectorLayer<VectorSource<Feature>, Feature> | null>(null);
+  const olPathLayerRef = useRef<VectorLayer<VectorSource<Feature>, Feature> | null>(null);
 
   // Mapbox refs (Mapbox path)
   const mbMapRef = useRef<MbMap | null>(null);
@@ -538,43 +540,54 @@ export function Map() {
     }
   }, [detailsData]);
 
-  // Draw shortest traceroute path between selected node and pathTargetId
+  // Draw shortest traceroute path between selected node and pathTargetId (both providers)
   useEffect(() => {
+    // Helper: compute shortest path coordinates
+    const computePathCoords = (): [number, number][] | null => {
+      if (!pathTargetId || !detailsData) return null;
+      const paths = findPathsBetween(detailsData.node.id, pathTargetId, rawTraceroutes);
+      if (paths.length === 0) return null;
+      const shortest = paths[0];
+      const coords: [number, number][] = [];
+      for (const hop of shortest.hops) {
+        const n = nodes[hop] ?? nodes[`!${hop}`];
+        if (n?.map_position) coords.push([n.map_position[0], n.map_position[1]]);
+      }
+      return coords.length >= 2 ? coords : null;
+    };
+
+    // Mapbox path-analysis source
     const mb = mbMapRef.current;
-    if (!mb) return;
-    const src = mb.getSource("path-analysis") as MbGeoJSONSource | undefined;
-    if (!src) return;
-
-    if (!pathTargetId || !detailsData) {
-      src.setData({ type: "FeatureCollection", features: [] });
-      return;
+    if (mb) {
+      const src = mb.getSource("path-analysis") as MbGeoJSONSource | undefined;
+      if (src) {
+        const coords = computePathCoords();
+        src.setData(
+          coords
+            ? { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: coords } }] }
+            : { type: "FeatureCollection", features: [] },
+        );
+      }
     }
 
-    const fromId = detailsData.node.id;
-    const paths = findPathsBetween(fromId, pathTargetId, rawTraceroutes);
-    if (paths.length === 0) {
-      src.setData({ type: "FeatureCollection", features: [] });
-      return;
+    // OpenLayers path layer
+    if (olMap) {
+      if (olPathLayerRef.current) {
+        olMap.removeLayer(olPathLayerRef.current);
+        olPathLayerRef.current = null;
+      }
+      const coords = computePathCoords();
+      if (coords) {
+        const coords3857 = coords.map((c) => transform(c, "EPSG:4326", "EPSG:3857"));
+        const pathFeature = new Feature({ geometry: new LineString(coords3857) });
+        pathFeature.setStyle(new Style({ stroke: new Stroke({ color: "#06b6d4", width: 4 }) }));
+        const pathSource = new VectorSource({ features: [pathFeature as Feature] });
+        const pathLayer = new VectorLayer({ source: pathSource });
+        olPathLayerRef.current = pathLayer;
+        olMap.addLayer(pathLayer);
+      }
     }
-    const shortest = paths[0];
-    const coords: [number, number][] = [];
-    for (const hop of shortest.hops) {
-      const n = nodes[hop] ?? nodes[`!${hop}`];
-      if (n?.map_position) coords.push([n.map_position[0], n.map_position[1]]);
-    }
-    if (coords.length < 2) {
-      src.setData({ type: "FeatureCollection", features: [] });
-      return;
-    }
-    src.setData({
-      type: "FeatureCollection",
-      features: [{
-        type: "Feature",
-        properties: {},
-        geometry: { type: "LineString", coordinates: coords },
-      }],
-    });
-  }, [pathTargetId, detailsData, rawTraceroutes, nodes]);
+  }, [pathTargetId, detailsData, rawTraceroutes, nodes, olMap]);
   useEffect(() => { channelFilterRef.current = channelFilter; }, [channelFilter]);
 
   useEffect(() => {
@@ -830,6 +843,66 @@ export function Map() {
     } catch {}
   }
 
+  /** Export the current map view as a PNG download. */
+  function handleExport() {
+    const triggerDownload = (dataUrl: string) => {
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = `meshinfo-map-${new Date().toISOString().replace(/[:.]/g, "-")}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    };
+
+    if (provider === "mapbox" && mbMapRef.current) {
+      try {
+        // Force a synchronous render so custom layers are captured
+        mbMapRef.current.triggerRepaint();
+        // Use a short delay to let the frame finish
+        setTimeout(() => {
+          const canvas = mbMapRef.current!.getCanvas();
+          triggerDownload(canvas.toDataURL("image/png"));
+        }, 100);
+      } catch (err) {
+        console.error("Mapbox export failed:", err);
+      }
+      return;
+    }
+
+    if (provider === "osm" && olMap) {
+      const mapSize = olMap.getSize();
+      if (!mapSize) return;
+      const [w, h] = mapSize;
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      // Composite all OL canvases (base + vector layers)
+      const olCanvases = olMap.getTargetElement().querySelectorAll<HTMLCanvasElement>(
+        ".ol-layer canvas, canvas.ol-layer",
+      );
+      olCanvases.forEach((srcCanvas) => {
+        if (srcCanvas.width === 0 || srcCanvas.height === 0) return;
+        const opacity = srcCanvas.parentElement?.style.opacity;
+        ctx.globalAlpha = opacity === "" || opacity == null ? 1 : Number(opacity);
+        const transform = srcCanvas.style.transform;
+        const match = /^matrix\(([^)]+)\)$/.exec(transform);
+        if (match) {
+          const [a, b, c, d, e, f] = match[1].split(",").map(Number);
+          ctx.setTransform(a, b, c, d, e, f);
+        } else {
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+        }
+        ctx.drawImage(srcCanvas, 0, 0);
+      });
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = 1;
+      triggerDownload(canvas.toDataURL("image/png"));
+    }
+  }
+
   function clearMapboxSelectionAndOverlays() {
     const map = mbMapRef.current;
     const selectedId = mbSelectedIdRef.current;
@@ -971,6 +1044,7 @@ export function Map() {
       zoom: initialZoom,
       attributionControl: false,
       logoPosition: "top-right",
+      preserveDrawingBuffer: true, // required for canvas.toDataURL() export
     });
 
     map.addControl(new mapboxgl.AttributionControl({ compact: true }), "top-right");
@@ -2081,6 +2155,28 @@ export function Map() {
         neighborLayers.push(vectorLineLayer);
         map.addLayer(vectorLineLayer);
       });
+
+      // Coverage radius circle
+      if (olCoverageLayerRef.current) {
+        map.removeLayer(olCoverageLayerRef.current);
+        olCoverageLayerRef.current = null;
+      }
+      if (maxRangeKm) {
+        const circleLonLat = geodesicCircleCoords([node.position[0], node.position[1]], maxRangeKm);
+        const circle3857 = circleLonLat.map((c) => transform(c, "EPSG:4326", "EPSG:3857"));
+        const roleColor = ROLE_COLORS[(fullNode as any)?.role] ?? DEFAULT_NODE_COLOR;
+        const polyFeature = new Feature({ geometry: new Polygon([circle3857]) });
+        polyFeature.setStyle(
+          new Style({
+            fill: new Fill({ color: hexToRgba(roleColor, 0.08) }),
+            stroke: new Stroke({ color: roleColor, width: 1.5, lineDash: [4, 4] }),
+          }),
+        );
+        const covSource = new VectorSource({ features: [polyFeature as Feature] });
+        const covLayer = new VectorLayer({ source: covSource });
+        olCoverageLayerRef.current = covLayer;
+        map.addLayer(covLayer);
+      }
     };
 
     // Expose handleNodeDetails for panel node-select navigation
@@ -2197,10 +2293,31 @@ export function Map() {
       neighborLayers.forEach((layer) => map.removeLayer(layer));
       neighborLayers.length = 0;
 
+      // Clear coverage + path overlays on any click (will be re-added if a node is selected)
+      if (olCoverageLayerRef.current) {
+        map.removeLayer(olCoverageLayerRef.current);
+        olCoverageLayerRef.current = null;
+      }
+      if (olPathLayerRef.current) {
+        map.removeLayer(olPathLayerRef.current);
+        olPathLayerRef.current = null;
+      }
+
+      // Helper: if in path-pick mode, intercept node clicks to set target
+      const handleNodeClickMaybePick = (node: IFeatureNode) => {
+        if (pathPickModeRef.current && selectedNodeIdRef.current && node.id !== selectedNodeIdRef.current) {
+          setPathTargetId(node.id);
+          setPathPickMode(false);
+          return true;
+        }
+        return false;
+      };
+
       if (clusterEnabledRef.current) {
         // Clustered mode — use spiderfy-aware click handler
         const node = handleOlClusterClick(map, clusterSetup.clusterSource, event.pixel);
         if (node) {
+          if (handleNodeClickMaybePick(node)) return;
           select.getFeatures().clear();
           void handleNodeDetails(node);
         } else if (!map.hasFeatureAtPixel(event.pixel)) {
@@ -2222,6 +2339,7 @@ export function Map() {
       const { node } = props as { node: IFeatureNode };
       if (!node?.id) return;
 
+      if (handleNodeClickMaybePick(node)) return;
       void handleNodeDetails(node);
     });
 
@@ -2416,10 +2534,6 @@ export function Map() {
         setMapboxStyle={setMapboxStyle}
         osmBasemap={osmBasemap}
         setOsmBasemap={setOsmBasemap}
-        recentDays={recentDays}
-        setRecentDays={setRecentDays}
-        clusterEnabled={clusterEnabled}
-        setClusterEnabled={setClusterEnabled}
         linkMode={linkMode}
         setLinkMode={setLinkMode}
         myNodeId={myNodeId}
@@ -2427,6 +2541,7 @@ export function Map() {
         nodeList={nodeList}
         canUseMapbox={canUseMapbox}
         usingMapbox={usingMapbox}
+        onExport={handleExport}
         hidden={!!detailsData}
       />
 

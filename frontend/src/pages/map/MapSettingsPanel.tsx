@@ -25,12 +25,6 @@ export function MapSettingsPanel({
   osmBasemap,
   setOsmBasemap,
 
-  recentDays,
-  setRecentDays,
-
-  clusterEnabled,
-  setClusterEnabled,
-
   linkMode,
   setLinkMode,
 
@@ -41,6 +35,7 @@ export function MapSettingsPanel({
 
   canUseMapbox,
   usingMapbox,
+  onExport,
   hidden = false,
 }: {
   settingsPanelRef: RefObject<HTMLDivElement | null>;
@@ -57,12 +52,6 @@ export function MapSettingsPanel({
   osmBasemap: OsmBasemap;
   setOsmBasemap: Dispatch<SetStateAction<OsmBasemap>>;
 
-  recentDays: number;
-  setRecentDays: Dispatch<SetStateAction<number>>;
-
-  clusterEnabled: boolean;
-  setClusterEnabled: Dispatch<SetStateAction<boolean>>;
-
   linkMode: LinkMode;
   setLinkMode: Dispatch<SetStateAction<LinkMode>>;
 
@@ -73,10 +62,13 @@ export function MapSettingsPanel({
 
   canUseMapbox: boolean;
   usingMapbox: boolean;
+  onExport?: () => void;
   hidden?: boolean;
 }) {
   const [nodeSearch, setNodeSearch] = useState("");
   const [legendOpen, setLegendOpen] = useState(false);
+  // Collapsible sections state
+  const [openSection, setOpenSection] = useState<string>("appearance");
   const containerRef = useRef<HTMLDivElement>(null);
 
   const filteredNodes = useMemo(() => {
@@ -115,6 +107,45 @@ export function MapSettingsPanel({
   const iconBtnBase =
     "p-2 rounded-xl shadow-2xl border backdrop-blur-xl transition-colors";
 
+  const toggleSection = (key: string) => {
+    setOpenSection((cur) => (cur === key ? "" : key));
+  };
+
+  const Section = ({
+    id,
+    title,
+    subtitle,
+    children,
+  }: {
+    id: string;
+    title: string;
+    subtitle?: string;
+    children: React.ReactNode;
+  }) => {
+    const open = openSection === id;
+    return (
+      <div className="border-t border-white/5 first:border-t-0">
+        <button
+          type="button"
+          onClick={() => toggleSection(id)}
+          className="w-full flex items-center justify-between py-2.5 text-left hover:text-gray-100 transition-colors"
+        >
+          <div>
+            <div className="text-xs font-semibold text-gray-200">{title}</div>
+            {subtitle && <div className="text-[10px] text-gray-500 mt-0.5">{subtitle}</div>}
+          </div>
+          <svg
+            className={`w-3.5 h-3.5 text-gray-500 transition-transform ${open ? "rotate-180" : ""}`}
+            fill="none" stroke="currentColor" viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+        {open && <div className="pb-3 space-y-3">{children}</div>}
+      </div>
+    );
+  };
+
   return (
     <div ref={containerRef} className={`fixed bottom-4 right-4 z-1100 flex flex-col items-end ${hidden ? "max-sm:hidden" : ""}`}>
       {/* Legend popover — above buttons */}
@@ -128,39 +159,30 @@ export function MapSettingsPanel({
       {settingsPanelOpen && (
         <div
           ref={settingsPanelRef}
-          className="mb-2 w-64 max-w-[calc(100vw-2rem)] max-h-[calc(100vh-8rem)] overflow-y-auto
+          className="mb-2 w-72 max-w-[calc(100vw-2rem)] max-h-[calc(100vh-8rem)] overflow-y-auto
                      rounded-xl shadow-2xl border border-white/10 bg-gray-900/80 backdrop-blur-xl"
         >
-          <div className="p-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-gray-200">
-                Map Settings
-              </h3>
-
+          <div className="px-4 py-3">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold text-gray-200">Map Settings</h3>
               <button
                 type="button"
                 onClick={() => setSettingsPanelOpen(false)}
                 className="p-1 rounded-md hover:bg-white/10 transition-colors"
                 aria-label="Close settings"
               >
-                <svg
-                  className="w-4 h-4 text-gray-500"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M6 18L18 6M6 6l12 12"
-                  />
+                <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
 
-            <div className="space-y-3 text-sm">
-              {/* Provider */}
+            <p className="text-[10px] text-gray-500 mb-2">
+              Filters (last-seen, links, clustering, role, channel) are in the pills at the bottom-left.
+            </p>
+
+            {/* Appearance — provider + style/basemap */}
+            <Section id="appearance" title="Appearance" subtitle="Map provider and visual style">
               <div>
                 <label
                   htmlFor="provider-select"
@@ -177,13 +199,11 @@ export function MapSettingsPanel({
                 >
                   <option value="osm">OSM (OpenLayers)</option>
                   <option value="mapbox" disabled={!canUseMapbox}>
-                    Mapbox (GL JS)
-                    {!canUseMapbox ? " — token not configured" : ""}
+                    Mapbox (GL JS){!canUseMapbox ? " — token not configured" : ""}
                   </option>
                 </select>
               </div>
 
-              {/* Style/Basemap */}
               {usingMapbox ? (
                 <div>
                   <label
@@ -201,9 +221,7 @@ export function MapSettingsPanel({
                   >
                     <option value="mapbox/dark-v11">Dark</option>
                     <option value="mapbox/streets-v12">Streets</option>
-                    <option value="mapbox/satellite-streets-v12">
-                      Satellite Streets
-                    </option>
+                    <option value="mapbox/satellite-streets-v12">Satellite Streets</option>
                   </select>
                 </div>
               ) : (
@@ -229,167 +247,98 @@ export function MapSettingsPanel({
                 </div>
               )}
 
-              {/* Last Seen Filter */}
-              <div>
-                <label
-                  htmlFor="recent-days-select"
-                  className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1.5 block"
-                >
-                  Show Last Seen
-                </label>
-                <select
-                  id="recent-days-select"
-                  aria-label="Filter nodes by last seen timeframe"
-                  className={selectClasses}
-                  value={recentDays}
-                  onChange={(e) => setRecentDays(Number(e.target.value))}
-                >
-                  <option value={30}>30 days</option>
-                  <option value={14}>14 days</option>
-                  <option value={7}>7 days</option>
-                  <option value={5}>5 days</option>
-                  <option value={3}>3 days</option>
-                  <option value={1}>1 day</option>
-                </select>
-              </div>
-
-              {/* Neighbor Links */}
-              <div>
-                <label
-                  htmlFor="link-mode-select"
-                  className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1.5 block"
-                >
-                  Neighbor Links
-                </label>
-                <select
-                  id="link-mode-select"
-                  aria-label="Neighbor link display mode"
-                  className={selectClasses}
-                  value={linkMode}
-                  onChange={(e) => setLinkMode(e.target.value as LinkMode)}
-                >
-                  <option value="selected">Selected Node</option>
-                  <option value="all">All Nodes</option>
-                  <option value="mynode">My Node</option>
-                </select>
-              </div>
-
-              {/* My Node picker — shown when mode is "mynode" */}
-              {linkMode === "mynode" && (
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label
-                      htmlFor="my-node-search"
-                      className="text-[10px] font-medium uppercase tracking-wider text-gray-500"
-                    >
-                      My Node
-                      {myNodeLabel && (
-                        <span className="ml-1 normal-case font-normal text-gray-400">
-                          ({myNodeLabel})
-                        </span>
-                      )}
-                    </label>
-                    {myNodeId && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setMyNodeId("");
-                          setLinkMode("selected");
-                        }}
-                        className="text-[10px] text-red-400 hover:text-red-300 transition-colors"
-                        aria-label="Clear My Node"
-                      >
-                        Clear
-                      </button>
-                    )}
-                  </div>
-                  <input
-                    id="my-node-search"
-                    type="text"
-                    placeholder="Search nodes..."
-                    className={selectClasses}
-                    value={nodeSearch}
-                    onChange={(e) => setNodeSearch(e.target.value)}
-                  />
-                  {nodeSearch && (
-                    <div className="mt-1 max-h-32 overflow-y-auto rounded-lg border border-white/10 bg-gray-800/90">
-                      {filteredNodes.length === 0 && (
-                        <div className="px-3 py-2 text-xs text-gray-500">
-                          No nodes found
-                        </div>
-                      )}
-                      {filteredNodes.map((node) => (
-                        <button
-                          key={node.id}
-                          type="button"
-                          className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/10 text-gray-300 truncate transition-colors"
-                          onClick={() => {
-                            setMyNodeId(node.id);
-                            setNodeSearch("");
-                          }}
-                        >
-                          <span className="font-medium">
-                            {node.shortname || node.id}
-                          </span>
-                          {node.longname && (
-                            <span className="ml-1 text-gray-500">
-                              {node.longname}
-                            </span>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  <p className="text-[10px] text-gray-600 mt-1">
-                    Tip: right-click (or long-press) a node on the map to set it
-                    as My Node.
-                  </p>
-                </div>
-              )}
-
-              {/* Clustering Toggle */}
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5">
-                <div className="flex flex-col">
-                  <label
-                    htmlFor="clustering-checkbox"
-                    className="text-sm font-medium text-gray-300"
-                  >
-                    Node Clustering
-                  </label>
-                  <p className="text-[11px] text-gray-500 mt-0.5">
-                    Group nearby nodes
-                  </p>
-                </div>
-                <div className="relative">
-                  <input
-                    id="clustering-checkbox"
-                    type="checkbox"
-                    checked={clusterEnabled}
-                    onChange={(e) => setClusterEnabled(e.target.checked)}
-                    className="h-4 w-4 rounded-sm border-gray-600 bg-gray-700 text-cyan-500 focus:ring-cyan-500 disabled:opacity-50"
-                    aria-label="Toggle node clustering"
-                  />
-                </div>
-              </div>
-
-              {/* Info Note */}
               {!canUseMapbox && (
-                <div className="text-xs text-gray-500 p-2.5 rounded-lg bg-white/5">
-                  Mapbox features are disabled because{" "}
-                  <code className="bg-white/10 px-1 py-0.5 rounded-sm text-[11px]">
-                    VITE_MAPBOX_TOKEN
-                  </code>{" "}
-                  is not configured.
+                <div className="text-[11px] text-gray-500 p-2 rounded-lg bg-white/5">
+                  Mapbox disabled — <code className="bg-white/10 px-1 rounded-sm text-[10px]">VITE_MAPBOX_TOKEN</code> not configured.
                 </div>
               )}
-            </div>
+            </Section>
+
+            {/* My Node */}
+            <Section id="mynode" title="My Node" subtitle={myNodeLabel || "Not set"}>
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label
+                    htmlFor="my-node-search"
+                    className="text-[10px] font-medium uppercase tracking-wider text-gray-500"
+                  >
+                    Search nodes
+                  </label>
+                  {myNodeId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMyNodeId("");
+                        setLinkMode("selected");
+                      }}
+                      className="text-[10px] text-red-400 hover:text-red-300 transition-colors"
+                      aria-label="Clear My Node"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <input
+                  id="my-node-search"
+                  type="text"
+                  placeholder="Search by name or ID…"
+                  className={selectClasses}
+                  value={nodeSearch}
+                  onChange={(e) => setNodeSearch(e.target.value)}
+                />
+                {nodeSearch && (
+                  <div className="mt-1 max-h-40 overflow-y-auto rounded-lg border border-white/10 bg-gray-800/90">
+                    {filteredNodes.length === 0 && (
+                      <div className="px-3 py-2 text-xs text-gray-500">No nodes found</div>
+                    )}
+                    {filteredNodes.map((node) => (
+                      <button
+                        key={node.id}
+                        type="button"
+                        className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/10 text-gray-300 truncate transition-colors"
+                        onClick={() => {
+                          setMyNodeId(node.id);
+                          setNodeSearch("");
+                        }}
+                      >
+                        <span className="font-medium">{node.shortname || node.id}</span>
+                        {node.longname && <span className="ml-1 text-gray-500">{node.longname}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <p className="text-[10px] text-gray-600 mt-1.5">
+                  Tip: right-click (or long-press) a node on the map to set it as My Node.
+                </p>
+              </div>
+            </Section>
+
+            {/* Export */}
+            {onExport && (
+              <Section id="export" title="Export" subtitle="Save current view as image">
+                <button
+                  type="button"
+                  onClick={onExport}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium
+                    bg-cyan-500/10 border border-cyan-500/30 text-cyan-300
+                    hover:bg-cyan-500/20 transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2m-4-8l-4-4m0 0L8 8m4-4v12" />
+                  </svg>
+                  Download PNG
+                </button>
+                <p className="text-[10px] text-gray-500">
+                  Captures the current map view including all visible nodes and overlays.
+                </p>
+              </Section>
+            )}
           </div>
         </div>
       )}
 
       {/* Icon buttons — always visible at bottom */}
       <div className="flex items-center gap-2">
-        {/* Legend toggle */}
         <button
           type="button"
           onClick={() => {
@@ -410,7 +359,6 @@ export function MapSettingsPanel({
           </div>
         </button>
 
-        {/* Settings toggle */}
         <button
           ref={settingsToggleRef}
           type="button"
