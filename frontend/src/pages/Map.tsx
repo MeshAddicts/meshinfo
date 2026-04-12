@@ -26,7 +26,9 @@ import { reverseGeocode } from "../maps/geocoder";
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
-import { COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS, computeCoverage, coverageToGeoJSON, linkBudgetMaxKm, type CoverageResult } from "./map/coverageAnalysis";
+import { COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS, linkBudgetMaxKm, type CoverageResult } from "./map/coverageAnalysis";
+import { demBoundsAround, sampleDEM } from "./map/terrainDEM";
+import type { CoverageWorkerRequest, CoverageWorkerResponse } from "./map/coverageWorker";
 import { analyzeLineOfSight, type LoSResult } from "./map/losAnalysis";
 import { findPathsBetween } from "./map/pathAnalysis";
 import { MapDetailsPanel } from "./map/MapDetailsPanel";
@@ -70,6 +72,11 @@ import {
   OFFLINE_NODE_COLOR,
   ROLE_COLORS,
 } from "./map/utils";
+
+// 1×1 fully transparent PNG — used as the placeholder image for the
+// coverage-raster source before a real result is computed.
+const TRANSPARENT_1PX_PNG =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 
 // --------------------
 // SNR → color/width helpers (shared by OL link styles)
@@ -401,6 +408,25 @@ export function Map() {
   /** Tracks whether the user has manually overridden the slider
    * (so we don't auto-reset it on every hardware/antenna change once they have). */
   const coverageRadiusManualRef = useRef(false);
+  /** Monotonic request id — ignore worker replies that aren't the latest. */
+  const coverageRequestIdRef = useRef(0);
+  /** Web Worker for coverage raster computation. Lazily created. */
+  const coverageWorkerRef = useRef<Worker | null>(null);
+  const ensureCoverageWorker = useCallback((): Worker => {
+    if (!coverageWorkerRef.current) {
+      coverageWorkerRef.current = new Worker(
+        new URL("./map/coverageWorker.ts", import.meta.url),
+        { type: "module" },
+      );
+    }
+    return coverageWorkerRef.current;
+  }, []);
+  useEffect(() => {
+    return () => {
+      coverageWorkerRef.current?.terminate();
+      coverageWorkerRef.current = null;
+    };
+  }, []);
 
   // Settings panel visibility
   const [settingsPanelOpen, setSettingsPanelOpen] = useState<boolean>(() => {
@@ -752,47 +778,147 @@ export function Map() {
 
     // Fit the map so terrain tiles covering the full radius load
     const radKm = coverageRadiusKm;
-    const degLat = radKm / 111;
-    const degLon = radKm / (111 * Math.cos((origin[1] * Math.PI) / 180));
-    const bounds = new mapboxgl.LngLatBounds(
-      [origin[0] - degLon, origin[1] - degLat],
-      [origin[0] + degLon, origin[1] + degLat],
+    const demBounds = demBoundsAround(origin, radKm, 1.05);
+    mb.fitBounds(
+      new mapboxgl.LngLatBounds(
+        [demBounds.west, demBounds.south],
+        [demBounds.east, demBounds.north],
+      ),
+      { padding: 80, duration: 500, maxZoom: 12 },
     );
-    mb.fitBounds(bounds, { padding: 80, duration: 500, maxZoom: 12 });
 
-    // Wait for terrain to load, then compute
+    const requestId = ++coverageRequestIdRef.current;
+    let cancelled = false;
+
+    // Wait for terrain tiles to load after fitBounds, then sample DEM + dispatch worker
     const timer = setTimeout(() => {
+      if (cancelled) return;
       try {
-        const result = computeCoverage({
+        // Origin terrain & final height resolution (altitude if valid, else terrain+antenna)
+        const rawElev = mb.queryTerrainElevation([origin![0], origin![1]]);
+        const originGround = typeof rawElev === "number" ? rawElev : 0;
+        const altitudeValid =
+          altitude != null && Number.isFinite(altitude) && (altitude as number) >= originGround;
+        const originHeightM = altitudeValid ? (altitude as number) : originGround + 2;
+        const originIsFallback = !altitudeValid;
+
+        // Pre-sample DEM on the main thread (queryTerrainElevation is map-only)
+        const DEM_SIZE = 256;
+        const dem = sampleDEM(
+          {
+            queryTerrainElevation: (p) => {
+              const v = mb.queryTerrainElevation(p as [number, number]);
+              return v;
+            },
+          },
+          demBounds,
+          DEM_SIZE,
+          DEM_SIZE,
+        );
+
+        const envExp = ENVIRONMENTS[coverageEnvIdx].pathLossExponent;
+        const worker = ensureCoverageWorker();
+
+        const handler = (evt: MessageEvent<CoverageWorkerResponse>) => {
+          if (evt.data.requestId !== requestId) return; // stale reply
+          worker.removeEventListener("message", handler);
+          if (cancelled) return;
+
+          // Paint RGBA onto a canvas and push to the image source
+          const canvas = document.createElement("canvas");
+          canvas.width = evt.data.width;
+          canvas.height = evt.data.height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            setIsComputingCoverage(false);
+            return;
+          }
+          // Cast: TS 5.7+ narrowed the ImageData ctor to require `Uint8ClampedArray<ArrayBuffer>`
+          // (not `ArrayBufferLike`). The worker transfers a plain ArrayBuffer so this is safe.
+          const imgData = new ImageData(
+            evt.data.rgba as Uint8ClampedArray<ArrayBuffer>,
+            evt.data.width,
+            evt.data.height,
+          );
+          ctx.putImageData(imgData, 0, 0);
+          const url = canvas.toDataURL("image/png");
+
+          const src = mb.getSource("coverage-raster") as mapboxgl.ImageSource | undefined;
+          const coords: [[number, number], [number, number], [number, number], [number, number]] = [
+            [demBounds.west, demBounds.north],
+            [demBounds.east, demBounds.north],
+            [demBounds.east, demBounds.south],
+            [demBounds.west, demBounds.south],
+          ];
+          if (src && typeof (src as unknown as { updateImage?: Function }).updateImage === "function") {
+            (src as unknown as { updateImage: (o: { url: string; coordinates: typeof coords }) => void }).updateImage({ url, coordinates: coords });
+          }
+          if (mb.getLayer("coverage-raster")) {
+            mb.setLayoutProperty("coverage-raster", "visibility", "visible");
+          }
+
+          setCoverageResult({
+            origin: origin!,
+            originHeightM,
+            originIsFallback,
+            radiusKm: radKm,
+            clearCount: evt.data.clearCount,
+            // Merge "diffracted" into fresnel — the panel only cares about
+            // reachable-with-impairment vs. clear vs. blocked.
+            fresnelCount: evt.data.fresnelCount + evt.data.diffractedCount,
+            blockedCount: evt.data.blockedCount,
+            frequencyGHz: 0.915,
+            antennaDbi: coverageAntennaDbi,
+            txDbm: coverageTxDbm,
+            linkBudgetMaxKm: linkBudgetMaxKm({
+              antennaDbi: coverageAntennaDbi,
+              txDbm: coverageTxDbm,
+              envExponent: envExp,
+              rxSensitivityDbm: coverageSensitivityDbm,
+            }),
+            envExponent: envExp,
+            rxSensitivityDbm: coverageSensitivityDbm,
+          });
+          setIsComputingCoverage(false);
+        };
+
+        worker.addEventListener("message", handler);
+
+        const msg: CoverageWorkerRequest = {
+          requestId,
+          dem: {
+            data: dem.data,
+            width: dem.width,
+            height: dem.height,
+            bounds: dem.bounds,
+          },
           origin: origin!,
-          originAltitudeM: altitude,
-          antennaHeightM: 2,
+          originHeightM,
           targetAntennaHeightM: 2,
           freqGHz: 0.915,
-          radiusKm: radKm,
-          rings: 12,
-          samplesPerRing: 36,
-          losSamples: 30,
-          antennaDbi: coverageAntennaDbi,
-          txDbm: coverageTxDbm,
-          envExponent: ENVIRONMENTS[coverageEnvIdx].pathLossExponent,
-          rxSensitivityDbm: coverageSensitivityDbm,
-          queryTerrainM: (lng, lat) => {
-            const elev = mb.queryTerrainElevation([lng, lat]);
-            return typeof elev === "number" ? elev : null;
+          raySamples: 48,
+          raster: {
+            freqMhz: 915,
+            txDbm: coverageTxDbm,
+            antennaDbi: coverageAntennaDbi,
+            rxSensitivityDbm: coverageSensitivityDbm,
+            fadeMarginDb: 15,
+            cableLossDb: 2,
+            envExponent: envExp,
           },
-        });
-        setCoverageResult(result);
-        const src = mb.getSource("coverage-grid") as MbGeoJSONSource | undefined;
-        src?.setData(coverageToGeoJSON(result));
+        };
+        // Transfer the DEM buffer — it's disposable per request.
+        worker.postMessage(msg, [dem.data.buffer]);
       } catch (err) {
         console.warn("[Map] Coverage computation failed:", err);
         setCoverageResult(null);
-      } finally {
         setIsComputingCoverage(false);
       }
-    }, 1400);
-    return () => clearTimeout(timer);
+    }, 1200);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageTxDbm, coverageEnvIdx, coverageSensitivityDbm, provider, terrain3D, nodes]);
 
   // Auto-update radius to match the link budget when hardware/antenna changes,
@@ -817,14 +943,16 @@ export function Map() {
     }
   }, [activeTool]);
 
-  // Clear coverage-grid when leaving coverage tool
+  // Hide coverage raster when leaving coverage tool. We keep the source/layer
+  // around so re-entering the tool reuses them without re-adding.
   useEffect(() => {
     const mb = mbMapRef.current;
     if (!mb) return;
     if (activeTool !== "coverage") {
       try {
-        const src = mb.getSource("coverage-grid") as MbGeoJSONSource | undefined;
-        src?.setData({ type: "FeatureCollection", features: [] });
+        if (mb.getLayer("coverage-raster")) {
+          mb.setLayoutProperty("coverage-raster", "visibility", "none");
+        }
       } catch {}
     }
   }, [activeTool]);
@@ -1455,55 +1583,32 @@ export function Map() {
         });
       }
 
-      // Coverage-prediction grid source + layer (Phase 9 coverage tool)
-      // Each cell is a pie-sector polygon, painted by status.
-      if (!map.getSource("coverage-grid")) {
-        map.addSource("coverage-grid", {
-          type: "geojson",
-          data: { type: "FeatureCollection", features: [] },
+      // Coverage-prediction raster (Phase 9.5 — raster+viewshed tool).
+      // The worker posts back an RGBA buffer; we upload it as an image source
+      // anchored to the DEM's lng/lat bounds, so it drapes on 3D terrain.
+      // Initial placeholder: a 1×1 transparent PNG at a degenerate quad near 0,0.
+      if (!map.getSource("coverage-raster")) {
+        map.addSource("coverage-raster", {
+          type: "image",
+          url: TRANSPARENT_1PX_PNG,
+          coordinates: [
+            [0, 0.0001],
+            [0.0001, 0.0001],
+            [0.0001, 0],
+            [0, 0],
+          ],
         });
       }
-      // Coverage fill — gradient by predicted RSSI margin (dB above sensitivity+fade).
-      // Higher margin = more saturated green; margin near 0 = yellow/orange.
-      if (!map.getLayer("coverage-grid-fill")) {
+      if (!map.getLayer("coverage-raster")) {
         map.addLayer({
-          id: "coverage-grid-fill",
-          type: "fill",
-          source: "coverage-grid",
+          id: "coverage-raster",
+          type: "raster",
+          source: "coverage-raster",
+          layout: { visibility: "none" },
           paint: {
-            "fill-color": [
-              "interpolate", ["linear"], ["get", "marginDb"],
-              0,  "#f97316",   // orange — right at threshold
-              5,  "#eab308",   // yellow
-              15, "#22c55e",   // green
-              25, "#16a34a",   // dark green — rock solid
-            ],
-            "fill-opacity": [
-              "interpolate", ["linear"], ["get", "marginDb"],
-              0,  0.28,
-              10, 0.40,
-              25, 0.55,
-            ],
-            "fill-antialias": true,
-          },
-        });
-      }
-      // Subtle outline separator
-      if (!map.getLayer("coverage-grid-outline")) {
-        map.addLayer({
-          id: "coverage-grid-outline",
-          type: "line",
-          source: "coverage-grid",
-          paint: {
-            "line-color": [
-              "interpolate", ["linear"], ["get", "marginDb"],
-              0,  "#c2410c",
-              5,  "#ca8a04",
-              15, "#16a34a",
-              25, "#15803d",
-            ],
-            "line-width": 0.4,
-            "line-opacity": 0.2,
+            "raster-opacity": 0.7,
+            "raster-fade-duration": 300,
+            "raster-resampling": "linear",
           },
         });
       }

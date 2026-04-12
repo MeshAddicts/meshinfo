@@ -1,10 +1,10 @@
 /**
- * Coverage prediction — compute LoS from an origin point to a grid of sample points.
- * Paints the map with color-coded reachability.
+ * Coverage prediction — shared constants, presets, and link-budget helpers.
+ *
+ * The actual coverage painting runs through `coverageWorker.ts` which uses
+ * `viewshed.ts` + `coverageRaster.ts`. This module just holds the pure
+ * helpers shared between the panel (UI) and the worker (math).
  */
-import { analyzeLineOfSight, haversineKm, type TerrainSampler } from "./losAnalysis";
-
-const R_EARTH_KM = 6371;
 
 /**
  * Propagation environment — affects excess path loss beyond free space.
@@ -125,301 +125,27 @@ export const COMMON_HARDWARE: { label: string; txDbm: number; isCustom?: boolean
   { label: "Custom", txDbm: 22, isCustom: true },
 ];
 
-export interface CoverageCell {
-  /** Center of this sample cell (lng, lat). */
-  position: [number, number];
-  /** Distance from origin in km. */
-  distanceKm: number;
-  /** Bearing from origin in degrees (0 = N). */
-  bearingDeg: number;
-  /** Status: clear LoS, Fresnel intrusion, diffracted (blocked but recoverable), or blocked. */
-  status: "clear" | "fresnel" | "diffracted" | "blocked";
-  /** Fraction of Fresnel zone obstructed (0 = none, 1 = fully blocked). */
-  fresnelIntrusion: number;
-  /** Knife-edge diffraction loss (dB) from worst obstacle on the path. */
-  diffractionLossDb: number;
-  /** Total path loss (dB) = environment path loss + diffraction. */
-  totalLossDb: number;
-  /** Predicted RSSI at receiver (dBm). */
-  rssiDbm: number;
-  /** Margin above receiver sensitivity (dB). Negative means below threshold. */
-  marginDb: number;
-  /** Which ring (0 = closest to origin). */
-  ring: number;
-  /** Which bearing slot. */
-  bearingIndex: number;
-}
-
+/**
+ * Summary of a coverage computation — populated from the worker response.
+ * The actual pixel data lives on the Mapbox image source; this struct just
+ * carries the stats and link-budget context shown in the side panel.
+ */
 export interface CoverageResult {
   origin: [number, number];
   originHeightM: number;
   originIsFallback: boolean;
   radiusKm: number;
-  rings: number;
-  samplesPerRing: number;
-  cells: CoverageCell[];
+  /** Pixels that pass link budget with full LoS. */
   clearCount: number;
+  /** Pixels that pass link budget but have Fresnel intrusion or diffraction loss. */
   fresnelCount: number;
+  /** Pixels below the link-budget threshold (un-paintable). */
   blockedCount: number;
   frequencyGHz: number;
-  /** Antenna dBi used for this analysis. */
   antennaDbi: number;
-  /** TX power (dBm) used for this analysis. */
   txDbm: number;
-  /** Theoretical max range (km) from the link budget with this dBi. */
+  /** Theoretical max range (km) from the link budget at this config. */
   linkBudgetMaxKm: number;
   envExponent: number;
   rxSensitivityDbm: number;
-}
-
-export interface CoverageInput {
-  origin: [number, number];
-  /** MSL altitude of origin (meters). Falls back to terrain + antennaHeightM. */
-  originAltitudeM?: number | null;
-  antennaHeightM?: number;
-  /** Frequency in GHz. Default 0.915 (US LoRa). */
-  freqGHz?: number;
-  /** Max radius from origin (km). Default 10. */
-  radiusKm?: number;
-  /** Number of rings (concentric circles of samples). Default 8. */
-  rings?: number;
-  /** Number of samples per ring. Default 24 (every 15°). */
-  samplesPerRing?: number;
-  /** Samples along each LoS ray when checking obstructions. Default 40. */
-  losSamples?: number;
-  /** Assumed target antenna height for receiver (matches origin antenna). Default 2m. */
-  targetAntennaHeightM?: number;
-  /** Antenna gain in dBi (symmetric — same at TX and RX). Affects link budget range. */
-  antennaDbi?: number;
-  /** TX power in dBm. Default 22 (typical Meshtastic board). */
-  txDbm?: number;
-  /** Environment path-loss exponent. Default 2.0 (free space). */
-  envExponent?: number;
-  /** Receiver sensitivity in dBm. Default −134 (LongFast SF11). */
-  rxSensitivityDbm?: number;
-  /** Fade margin in dB. Default 15. */
-  fadeMarginDb?: number;
-  /** Cable/feedline loss in dB. Default 2. */
-  cableLossDb?: number;
-  /** Terrain sampler — required. */
-  queryTerrainM: TerrainSampler;
-}
-
-/** Destination point given origin, bearing (deg), and distance (km). */
-function destinationPoint(
-  origin: [number, number],
-  bearingDeg: number,
-  distanceKm: number,
-): [number, number] {
-  const brng = (bearingDeg * Math.PI) / 180;
-  const d = distanceKm / R_EARTH_KM;
-  const lat1 = (origin[1] * Math.PI) / 180;
-  const lon1 = (origin[0] * Math.PI) / 180;
-
-  const lat2 = Math.asin(
-    Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(brng),
-  );
-  const lon2 =
-    lon1 +
-    Math.atan2(
-      Math.sin(brng) * Math.sin(d) * Math.cos(lat1),
-      Math.cos(d) - Math.sin(lat1) * Math.sin(lat2),
-    );
-  return [(lon2 * 180) / Math.PI, (lat2 * 180) / Math.PI];
-}
-
-/**
- * Compute a coverage prediction from an origin point.
- * Generates a polar grid of sample points and checks LoS to each.
- */
-export function computeCoverage(input: CoverageInput): CoverageResult {
-  const {
-    origin,
-    originAltitudeM,
-    antennaHeightM = 2,
-    targetAntennaHeightM,
-    freqGHz = 0.915,
-    radiusKm = 10,
-    rings = 8,
-    samplesPerRing = 24,
-    losSamples = 40,
-    antennaDbi = 3,
-    txDbm = 22,
-    envExponent = 2.0,
-    rxSensitivityDbm = -133,
-    fadeMarginDb = 15,
-    cableLossDb = 2,
-    queryTerrainM,
-  } = input;
-
-  const lbMaxKm = linkBudgetMaxKm({
-    antennaDbi,
-    txDbm,
-    rxSensitivityDbm,
-    fadeMarginDb,
-    cableLossDb,
-    freqMhz: freqGHz * 1000,
-    envExponent,
-  });
-
-  const freqMhz = freqGHz * 1000;
-
-  const originGround = queryTerrainM(origin[0], origin[1]) ?? 0;
-  const originIsFallback =
-    originAltitudeM == null ||
-    !Number.isFinite(originAltitudeM) ||
-    (originAltitudeM as number) < originGround;
-  const originHeightM = originIsFallback ? originGround + antennaHeightM : (originAltitudeM as number);
-
-  const cells: CoverageCell[] = [];
-  let clearCount = 0;
-  let fresnelCount = 0;
-  let blockedCount = 0;
-
-  // Concentric rings, each with N samples around the bearing
-  for (let r = 1; r <= rings; r++) {
-    const ringDist = (radiusKm * r) / rings;
-    for (let s = 0; s < samplesPerRing; s++) {
-      const bearing = (360 * s) / samplesPerRing;
-      const target = destinationPoint(origin, bearing, ringDist);
-      const actualDist = haversineKm(origin, target);
-
-      const losResult = analyzeLineOfSight({
-        from: origin,
-        to: target,
-        fromAltitudeM: originHeightM,
-        toAltitudeM: null,
-        antennaHeightM: targetAntennaHeightM ?? antennaHeightM,
-        freqGHz,
-        samples: losSamples,
-        queryTerrainM,
-      });
-
-      // Compute predicted RSSI and margin with environment + diffraction.
-      const pl = pathLossDb(actualDist, freqMhz, envExponent);
-      const totalLossDb = pl + losResult.diffractionLossDb + cableLossDb;
-      const rssiDbm = txDbm + 2 * antennaDbi - totalLossDb;
-      const marginDb = rssiDbm - rxSensitivityDbm - fadeMarginDb;
-
-      // Status classification:
-      // - clear:      full LoS + fresnel clear + link budget OK
-      // - fresnel:    LoS clear but fresnel intruded, link budget OK
-      // - diffracted: LoS blocked but diffraction loss small enough that link budget still holds
-      // - blocked:    link budget fails (RSSI below sensitivity + margin)
-      let status: "clear" | "fresnel" | "diffracted" | "blocked";
-      if (marginDb < 0) {
-        status = "blocked";
-        blockedCount++;
-      } else if (!losResult.losClear) {
-        status = "diffracted";
-        fresnelCount++; // count as non-green for stats
-      } else if (!losResult.fresnelClear) {
-        status = "fresnel";
-        fresnelCount++;
-      } else {
-        status = "clear";
-        clearCount++;
-      }
-
-      cells.push({
-        position: target,
-        distanceKm: actualDist,
-        bearingDeg: bearing,
-        status,
-        fresnelIntrusion: losResult.worstFresnelIntrusion,
-        diffractionLossDb: losResult.diffractionLossDb,
-        totalLossDb,
-        rssiDbm,
-        marginDb,
-        ring: r,
-        bearingIndex: s,
-      });
-    }
-  }
-
-  return {
-    origin,
-    originHeightM,
-    originIsFallback,
-    radiusKm,
-    rings,
-    samplesPerRing,
-    cells,
-    clearCount,
-    fresnelCount,
-    blockedCount,
-    frequencyGHz: freqGHz,
-    antennaDbi,
-    txDbm,
-    linkBudgetMaxKm: lbMaxKm,
-    envExponent,
-    rxSensitivityDbm,
-  };
-}
-
-/**
- * Export each cell as a pie-sector polygon (annulus wedge) so the coverage
- * area paints the terrain in a continuous splatter instead of dots.
- *
- * Geometry: each cell covers
- *   bearing ∈ [bearing - halfSlice, bearing + halfSlice]
- *   distance ∈ [innerRadius, outerRadius]
- * Innermost ring uses a full pie wedge (no inner arc) so the center is filled.
- */
-export function coverageToGeoJSON(result: CoverageResult) {
-  const { origin, rings, samplesPerRing, radiusKm } = result;
-  const halfSliceDeg = 180 / samplesPerRing; // each wedge spans 360/samples degrees, half on each side
-  const ringStepKm = radiusKm / rings;
-  const arcPoints = 5; // number of intermediate points along each arc for smoothness
-
-  // Only paint reachable cells (margin ≥ 0). Blocked cells show terrain as-is.
-  const features = result.cells.filter((c) => c.marginDb >= 0).map((c) => {
-    const outerKm = c.ring * ringStepKm;
-    const innerKm = Math.max(0, (c.ring - 1) * ringStepKm);
-    const startBearing = c.bearingDeg - halfSliceDeg;
-    const endBearing = c.bearingDeg + halfSliceDeg;
-
-    const coords: [number, number][] = [];
-
-    // Outer arc (start → end bearing at outerKm)
-    for (let i = 0; i <= arcPoints; i++) {
-      const t = i / arcPoints;
-      const bearing = startBearing + (endBearing - startBearing) * t;
-      coords.push(destinationPoint(origin, bearing, outerKm));
-    }
-
-    if (innerKm > 0) {
-      // Inner arc (end → start bearing at innerKm)
-      for (let i = 0; i <= arcPoints; i++) {
-        const t = i / arcPoints;
-        const bearing = endBearing - (endBearing - startBearing) * t;
-        coords.push(destinationPoint(origin, bearing, innerKm));
-      }
-    } else {
-      // Innermost wedge — close with the origin
-      coords.push(origin);
-    }
-
-    // Close polygon
-    coords.push(coords[0]);
-
-    return {
-      type: "Feature" as const,
-      properties: {
-        status: c.status,
-        distanceKm: c.distanceKm,
-        bearingDeg: c.bearingDeg,
-        fresnelIntrusion: c.fresnelIntrusion,
-        diffractionLossDb: c.diffractionLossDb,
-        rssiDbm: c.rssiDbm,
-        marginDb: c.marginDb,
-      },
-      geometry: {
-        type: "Polygon" as const,
-        coordinates: [coords],
-      },
-    };
-  });
-
-  return { type: "FeatureCollection" as const, features };
 }
