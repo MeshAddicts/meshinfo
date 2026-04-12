@@ -26,7 +26,9 @@ import { reverseGeocode } from "../maps/geocoder";
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
+import { findPathsBetween } from "./map/pathAnalysis";
 import { MapDetailsPanel } from "./map/MapDetailsPanel";
+import { MapHealthWidget } from "./map/MapHealthWidget";
 import { MapQuickControls } from "./map/MapQuickControls";
 import { MapSearchBar } from "./map/MapSearchBar";
 import { MapSettingsPanel } from "./map/MapSettingsPanel";
@@ -357,6 +359,8 @@ export function Map() {
 
   const [roleFilter, setRoleFilter] = useState<number | null>(null);
   const [channelFilter, setChannelFilter] = useState<string | null>(null);
+  const [pathPickMode, setPathPickMode] = useState(false);
+  const [pathTargetId, setPathTargetId] = useState<string | null>(null);
 
   // Settings panel visibility
   const [settingsPanelOpen, setSettingsPanelOpen] = useState<boolean>(() => {
@@ -481,6 +485,7 @@ export function Map() {
   const myNodeIdRef = useRef(myNodeId);
   const roleFilterRef = useRef(roleFilter);
   const channelFilterRef = useRef(channelFilter);
+  const pathPickModeRef = useRef(pathPickMode);
   const setDetailsDataRef = useRef(setDetailsData);
 
   useEffect(() => {
@@ -512,6 +517,64 @@ export function Map() {
   }, [linkMode]);
 
   useEffect(() => { roleFilterRef.current = roleFilter; }, [roleFilter]);
+  useEffect(() => {
+    pathPickModeRef.current = pathPickMode;
+    // Visual feedback: crosshair cursor on map canvas
+    const mb = mbMapRef.current;
+    if (mb) {
+      mb.getCanvas().style.cursor = pathPickMode ? "crosshair" : "";
+    }
+    if (olMap) {
+      const el = olMap.getTargetElement();
+      if (el) el.style.cursor = pathPickMode ? "crosshair" : "";
+    }
+  }, [pathPickMode, olMap]);
+
+  // Clear path comparison when selected node changes or panel closes
+  useEffect(() => {
+    if (!detailsData) {
+      setPathTargetId(null);
+      setPathPickMode(false);
+    }
+  }, [detailsData]);
+
+  // Draw shortest traceroute path between selected node and pathTargetId
+  useEffect(() => {
+    const mb = mbMapRef.current;
+    if (!mb) return;
+    const src = mb.getSource("path-analysis") as MbGeoJSONSource | undefined;
+    if (!src) return;
+
+    if (!pathTargetId || !detailsData) {
+      src.setData({ type: "FeatureCollection", features: [] });
+      return;
+    }
+
+    const fromId = detailsData.node.id;
+    const paths = findPathsBetween(fromId, pathTargetId, rawTraceroutes);
+    if (paths.length === 0) {
+      src.setData({ type: "FeatureCollection", features: [] });
+      return;
+    }
+    const shortest = paths[0];
+    const coords: [number, number][] = [];
+    for (const hop of shortest.hops) {
+      const n = nodes[hop] ?? nodes[`!${hop}`];
+      if (n?.map_position) coords.push([n.map_position[0], n.map_position[1]]);
+    }
+    if (coords.length < 2) {
+      src.setData({ type: "FeatureCollection", features: [] });
+      return;
+    }
+    src.setData({
+      type: "FeatureCollection",
+      features: [{
+        type: "Feature",
+        properties: {},
+        geometry: { type: "LineString", coordinates: coords },
+      }],
+    });
+  }, [pathTargetId, detailsData, rawTraceroutes, nodes]);
   useEffect(() => { channelFilterRef.current = channelFilter; }, [channelFilter]);
 
   useEffect(() => {
@@ -801,6 +864,11 @@ export function Map() {
         const hlSrc = map.getSource("link-highlight") as MbGeoJSONSource | undefined;
         hlSrc?.setData({ type: "FeatureCollection", features: [] });
       } catch {}
+      // Clear path analysis
+      try {
+        const paSrc = map.getSource("path-analysis") as MbGeoJSONSource | undefined;
+        paSrc?.setData({ type: "FeatureCollection", features: [] });
+      } catch {}
     }
 
     // Hide the panel
@@ -1015,6 +1083,27 @@ export function Map() {
             "line-width": 5,
             "line-opacity": 0.9,
             "line-blur": 1,
+          },
+        });
+      }
+
+      // Path analysis source + layer
+      if (!map.getSource("path-analysis")) {
+        map.addSource("path-analysis", {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
+      }
+      if (!map.getLayer("path-analysis-line")) {
+        map.addLayer({
+          id: "path-analysis-line",
+          type: "line",
+          source: "path-analysis",
+          layout: { "line-join": "round", "line-cap": "round" },
+          paint: {
+            "line-color": "#06b6d4",
+            "line-width": 4,
+            "line-opacity": 0.95,
           },
         });
       }
@@ -1443,32 +1532,23 @@ export function Map() {
         });
       });
 
-      // Clicking nodes (clustered mode)
-      map.on("click", "unclustered-nodes", (e) => {
+      const onNodeLayerClick = (e: mapboxgl.MapMouseEvent & { features?: mapboxgl.MapboxGeoJSONFeature[] }) => {
         const feature = e.features?.[0];
         if (!feature) return;
         const id = (feature.properties?.id ?? "") as string;
         if (!id) return;
+        // If in path-pick mode, set as path target instead of selecting
+        if (pathPickModeRef.current && mbSelectedIdRef.current && id !== mbSelectedIdRef.current) {
+          setPathTargetId(id);
+          setPathPickMode(false);
+          map.getCanvas().style.cursor = "";
+          return;
+        }
         void handleNodeClick(id);
-      });
-
-      // Clicking nodes (plain mode)
-      map.on("click", "plain-nodes", (e) => {
-        const feature = e.features?.[0];
-        if (!feature) return;
-        const id = (feature.properties?.id ?? "") as string;
-        if (!id) return;
-        void handleNodeClick(id);
-      });
-
-      // Clicking spiderfied nodes
-      map.on("click", SPIDERFY_LAYER_NODES, (e) => {
-        const feature = e.features?.[0];
-        if (!feature) return;
-        const id = (feature.properties?.id ?? "") as string;
-        if (!id) return;
-        void handleNodeClick(id);
-      });
+      };
+      map.on("click", "unclustered-nodes", onNodeLayerClick);
+      map.on("click", "plain-nodes", onNodeLayerClick);
+      map.on("click", SPIDERFY_LAYER_NODES, onNodeLayerClick);
 
       bindHover(SPIDERFY_LAYER_NODES);
 
@@ -1557,6 +1637,10 @@ export function Map() {
         const PAN_PX = 100;
         switch (e.key) {
           case "Escape":
+            if (pathPickModeRef.current) {
+              setPathPickMode(false);
+              break;
+            }
             void unspiderfy(map);
             clearMapboxSelectionAndOverlays();
             break;
@@ -2319,6 +2403,8 @@ export function Map() {
         onSelect={(id) => handleNodeSelectRef.current(id)}
       />
 
+      <MapHealthWidget nodes={nodes} />
+
       <MapSettingsPanel
         settingsPanelRef={settingsPanelRef}
         settingsToggleRef={settingsToggleRef}
@@ -2385,6 +2471,12 @@ export function Map() {
         onClose={clearMapboxSelectionAndOverlays}
         onNodeSelect={(id) => handleNodeSelectRef.current(id)}
         onHoverLink={(id) => handleLinkHoverRef.current(id)}
+        pathAnalysis={{
+          pickMode: pathPickMode,
+          targetId: pathTargetId,
+          onEnterPickMode: () => setPathPickMode(true),
+          onClearPath: () => { setPathTargetId(null); setPathPickMode(false); },
+        }}
       />
 
       <style>

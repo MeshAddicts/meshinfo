@@ -60,3 +60,11 @@ export type NodeDetailsData = {
   heardBy: string[];
   maxRangeKm?: number | null;
 };
+
+// Path analysis props for the details panel
+export type PathAnalysisProps = {
+  pickMode: boolean;
+  targetId: string | null;
+  onEnterPickMode: () => void;
+  onClearPath: () => void;
+};

@@ -5,7 +5,9 @@ import { getElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLin
 import { ROLE_COLORS, DEFAULT_NODE_COLOR } from "./utils";
 import { calculateGeodesicDistance } from "./utils";
 import { normNodeId } from "./linkFeatures";
-import type { IMapNode, NodeDetailsData } from "./types";
+import { findPathsBetween } from "./pathAnalysis";
+import { TelemetrySection } from "./TelemetrySection";
+import type { IMapNode, NodeDetailsData, PathAnalysisProps } from "./types";
 
 // ---------------------------------------------------------------------------
 // Bottom sheet gesture hook — swipe down to dismiss, swipe up to expand
@@ -141,6 +143,153 @@ function NodeLink({
   return <span className="text-gray-500">{label}</span>;
 }
 
+function PathAnalysisSection({
+  fromNode,
+  traceroutes,
+  liveNodes,
+  pathAnalysis,
+  onNodeSelect,
+  onHoverLink,
+}: {
+  fromNode: { id: string; shortname?: string };
+  traceroutes: import("../../types").ITraceroutesResponse[];
+  liveNodes: Record<string, IMapNode>;
+  pathAnalysis: PathAnalysisProps;
+  onNodeSelect: (id: string) => void;
+  onHoverLink?: (id: string | null) => void;
+}) {
+  const paths = pathAnalysis.targetId
+    ? findPathsBetween(fromNode.id, pathAnalysis.targetId, traceroutes)
+    : [];
+
+  const target = pathAnalysis.targetId
+    ? liveNodes[pathAnalysis.targetId] ?? liveNodes[`!${pathAnalysis.targetId}`]
+    : null;
+
+  if (!pathAnalysis.targetId) {
+    return (
+      <div className="px-2 py-1">
+        <button
+          type="button"
+          onClick={pathAnalysis.onEnterPickMode}
+          className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+            pathAnalysis.pickMode
+              ? "bg-cyan-500/20 border-cyan-500/40 text-cyan-300"
+              : "bg-white/5 border-white/10 text-gray-300 hover:bg-white/10"
+          }`}
+        >
+          {pathAnalysis.pickMode ? "Click a second node… (Esc to cancel)" : "Compare path to another node"}
+        </button>
+      </div>
+    );
+  }
+
+  const shortest = paths[0];
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between px-2 py-1">
+        <div className="text-xs text-gray-300">
+          <span className="text-gray-500">To:</span>{" "}
+          <button
+            type="button"
+            onClick={() => onNodeSelect(pathAnalysis.targetId!)}
+            className="text-cyan-400 hover:text-cyan-300"
+          >
+            {target?.shortname ?? pathAnalysis.targetId}
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={pathAnalysis.onClearPath}
+          className="text-[10px] text-gray-500 hover:text-gray-300"
+        >
+          Clear
+        </button>
+      </div>
+
+      {paths.length === 0 ? (
+        <div className="px-2 text-xs text-gray-500">No known traceroute path between these nodes.</div>
+      ) : (
+        <>
+          {shortest && (
+            <div className="px-2 py-1.5 rounded bg-cyan-500/10 border border-cyan-500/20 text-xs">
+              <div className="text-cyan-400 text-[10px] uppercase tracking-wider mb-0.5">Shortest Path</div>
+              <div className="text-gray-200">
+                {shortest.hopCount} {shortest.hopCount === 1 ? "hop" : "hops"}
+                {shortest.snr != null && <span className="text-gray-500 ml-2">SNR {shortest.snr} dB</span>}
+              </div>
+              <PathHopList hops={shortest.hops} liveNodes={liveNodes} onNodeSelect={onNodeSelect} onHoverLink={onHoverLink} />
+            </div>
+          )}
+
+          {paths.length > 1 && (
+            <div className="px-2 pt-1">
+              <div className="text-gray-500 text-[10px] uppercase tracking-wider mb-1">
+                Alternative Paths ({paths.length - 1})
+              </div>
+              <div className="space-y-1">
+                {paths.slice(1, 6).map((p, i) => (
+                  <div key={i} className="text-xs px-2 py-1 rounded bg-white/5">
+                    <div className="text-gray-300">
+                      {p.hopCount} {p.hopCount === 1 ? "hop" : "hops"}
+                      {p.snr != null && <span className="text-gray-500 ml-2">SNR {p.snr} dB</span>}
+                    </div>
+                    <PathHopList hops={p.hops} liveNodes={liveNodes} onNodeSelect={onNodeSelect} onHoverLink={onHoverLink} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function PathHopList({
+  hops,
+  liveNodes,
+  onNodeSelect,
+  onHoverLink,
+}: {
+  hops: string[];
+  liveNodes: Record<string, IMapNode>;
+  onNodeSelect: (id: string) => void;
+  onHoverLink?: (id: string | null) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-1 mt-1">
+      {hops.map((hop, i) => {
+        const lookup = liveNodes[hop] ?? liveNodes[`!${hop}`];
+        const label = lookup?.shortname ?? hop.slice(0, 8);
+        return (
+          <span key={`${hop}-${i}`} className="flex items-center gap-1">
+            {lookup ? (
+              <button
+                type="button"
+                onClick={() => onNodeSelect(hop)}
+                onMouseEnter={() => onHoverLink?.(hop)}
+                onMouseLeave={() => onHoverLink?.(null)}
+                className="text-cyan-400 hover:text-cyan-300 text-[11px]"
+              >
+                {label}
+              </button>
+            ) : (
+              <span className="text-gray-500 text-[11px]">{label}</span>
+            )}
+            {i < hops.length - 1 && (
+              <svg className="w-2.5 h-2.5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            )}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 function NeighborTable({
   rows,
   nodePosition,
@@ -252,11 +401,13 @@ export function MapDetailsPanel({
   onClose,
   onNodeSelect,
   onHoverLink,
+  pathAnalysis,
 }: {
   data: NodeDetailsData | null;
   onClose: () => void;
   onNodeSelect: (nodeId: string) => void;
   onHoverLink?: (otherNodeId: string | null) => void;
+  pathAnalysis?: PathAnalysisProps;
 }) {
   const { sheetRef, clearStyles, onTouchStart, onTouchMove, onTouchEnd } = useBottomSheetGesture(onClose);
 
@@ -474,6 +625,23 @@ export function MapDetailsPanel({
             onNodeSelect={onNodeSelect}
             onHoverLink={onHoverLink}
           />
+        </CollapsibleSection>
+
+        {pathAnalysis && (
+          <CollapsibleSection title="Path Analysis" defaultOpen={!!pathAnalysis.targetId}>
+            <PathAnalysisSection
+              fromNode={node}
+              traceroutes={traceroutes}
+              liveNodes={liveNodes}
+              pathAnalysis={pathAnalysis}
+              onNodeSelect={onNodeSelect}
+              onHoverLink={onHoverLink}
+            />
+          </CollapsibleSection>
+        )}
+
+        <CollapsibleSection title="Telemetry">
+          <TelemetrySection nodeId={node.id} />
         </CollapsibleSection>
 
         <CollapsibleSection
