@@ -19,7 +19,7 @@ import { Circle, Fill, Stroke, Style } from "ol/style";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
-import { NodeRole, roleTitles } from "../types";
+import { NodeRole, roleTitles, type ITraceroutesResponse } from "../types";
 import { env } from "../env";
 import { createBaseTileLayer, type OsmBasemap } from "../maps/baseLayer";
 import { reverseGeocode } from "../maps/geocoder";
@@ -54,6 +54,7 @@ import {
   applyMapboxClusterVisibility,
   buildNodesGeoJSON,
   bumpOlRender,
+  calculateGeodesicDistance,
   computeRecentNodes,
   DEFAULT_NODE_COLOR,
   emptyLineFeatureCollection,
@@ -127,6 +128,84 @@ function bestSnr(nodeId: string, nodes: Record<string, IMapNode>): number | null
     if (n.snr > max) max = n.snr;
   }
   return max === -Infinity ? null : max;
+}
+
+// ---------------------
+// Geodesic circle for coverage radius
+// ---------------------
+function geodesicCircleCoords(
+  center: [number, number], // [lon, lat]
+  radiusKm: number,
+  points: number = 64,
+): [number, number][] {
+  const R = 6371;
+  const lat1 = (center[1] * Math.PI) / 180;
+  const lon1 = (center[0] * Math.PI) / 180;
+  const d = radiusKm / R;
+
+  const coords: [number, number][] = [];
+  for (let i = 0; i <= points; i++) {
+    const brng = (2 * Math.PI * i) / points;
+    const lat2 = Math.asin(
+      Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(brng),
+    );
+    const lon2 =
+      lon1 +
+      Math.atan2(
+        Math.sin(brng) * Math.sin(d) * Math.cos(lat1),
+        Math.cos(d) - Math.sin(lat1) * Math.sin(lat2),
+      );
+    coords.push([(lon2 * 180) / Math.PI, (lat2 * 180) / Math.PI]);
+  }
+  return coords;
+}
+
+/**
+ * Compute max observed range (km) for a node using ALL connections:
+ * neighbors, heard-by, and traceroute peers.
+ */
+function computeMaxRange(
+  nodeId: string,
+  nodePos: [number, number], // [lon, lat]
+  liveNodes: Record<string, IMapNode>,
+  heardBy: string[],
+  traceroutes: ITraceroutesResponse[],
+): number | null {
+  const connectedIds = new Set<string>();
+
+  // Neighbors this node reports
+  const node = liveNodes[nodeId];
+  for (const n of node?.neighbors ?? []) connectedIds.add(n.id);
+
+  // Nodes that hear this node
+  for (const id of heardBy) connectedIds.add(id);
+
+  // Traceroute peers (adjacent hops)
+  const normId = normNodeId(nodeId);
+  for (const tr of traceroutes) {
+    const from = normNodeId(tr?.from);
+    const to = normNodeId(tr?.to);
+    const route: string[] = (tr?.route_ids ?? tr?.route ?? [])
+      .map(normNodeId)
+      .filter(Boolean);
+    const path = [from, ...route, to].filter(Boolean);
+    const idx = path.indexOf(normId);
+    if (idx === -1) continue;
+    if (idx > 0 && path[idx - 1]) connectedIds.add(path[idx - 1]);
+    if (idx < path.length - 1 && path[idx + 1]) connectedIds.add(path[idx + 1]);
+  }
+
+  let maxDist = 0;
+  for (const id of connectedIds) {
+    const other = liveNodes[id] ?? liveNodes[`!${id}`];
+    if (!other?.map_position) continue;
+    const dist = calculateGeodesicDistance(
+      nodePos[1], nodePos[0],
+      other.map_position[1], other.map_position[0],
+    );
+    if (dist > maxDist) maxDist = dist;
+  }
+  return maxDist > 0.05 ? maxDist : null; // skip tiny circles (< 50m)
 }
 
 // Mapbox expression: role-based node color (offline nodes stay gray)
@@ -273,6 +352,9 @@ export function Map() {
     return readJson<string>(LS_KEYS.myNodeId, "");
   });
 
+  const [roleFilter, setRoleFilter] = useState<number | null>(null);
+  const [channelFilter, setChannelFilter] = useState<string | null>(null);
+
   // Settings panel visibility
   const [settingsPanelOpen, setSettingsPanelOpen] = useState<boolean>(() => {
     const stored = readJson<boolean | null>(LS_KEYS.settingsPanelOpen, null);
@@ -370,6 +452,15 @@ export function Map() {
     [config?.server?.node_id, nodes]
   );
 
+  // Available channels for filter cycling
+  const availableChannels = useMemo(() => {
+    const chSet = new Set<string>();
+    for (const n of Object.values(rawNodes)) {
+      if (n.last_channel) chSet.add(n.last_channel);
+    }
+    return [...chSet].sort();
+  }, [rawNodes]);
+
   // ----------------------------
   // Details panel state (React-driven)
   // ----------------------------
@@ -385,6 +476,8 @@ export function Map() {
   const clusterEnabledRef = useRef(clusterEnabled);
   const linkModeRef = useRef(linkMode);
   const myNodeIdRef = useRef(myNodeId);
+  const roleFilterRef = useRef(roleFilter);
+  const channelFilterRef = useRef(channelFilter);
   const setDetailsDataRef = useRef(setDetailsData);
 
   useEffect(() => {
@@ -414,6 +507,9 @@ export function Map() {
   useEffect(() => {
     linkModeRef.current = linkMode;
   }, [linkMode]);
+
+  useEffect(() => { roleFilterRef.current = roleFilter; }, [roleFilter]);
+  useEffect(() => { channelFilterRef.current = channelFilter; }, [channelFilter]);
 
   useEffect(() => {
     myNodeIdRef.current = myNodeId;
@@ -692,6 +788,11 @@ export function Map() {
         const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
         linksSource?.setData(computePersistentLinks());
       } catch {}
+      // Clear coverage circle
+      try {
+        const coverageSrc = map.getSource("coverage") as MbGeoJSONSource | undefined;
+        coverageSrc?.setData({ type: "FeatureCollection", features: [] });
+      } catch {}
     }
 
     // Hide the panel
@@ -839,11 +940,13 @@ export function Map() {
       }
     };
 
+    const getFilters = () => ({ role: roleFilterRef.current, channel: channelFilterRef.current });
+
     const refreshMapboxNodeData = () => {
       const m = mbMapRef.current;
       if (!m) return;
 
-      const data = buildNodesGeoJSON(nodesRef.current, recentDaysRef.current);
+      const data = buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters());
 
       const clustered = m.getSource("nodes_clustered") as MbGeoJSONSource | undefined;
       clustered?.setData(data);
@@ -863,7 +966,7 @@ export function Map() {
       if (!map.getSource("nodes_clustered")) {
         map.addSource("nodes_clustered", {
           type: "geojson",
-          data: buildNodesGeoJSON(nodesRef.current, recentDaysRef.current),
+          data: buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()),
           cluster: true,
           clusterRadius: 50,
           clusterMaxZoom: 24,
@@ -874,7 +977,7 @@ export function Map() {
       if (!map.getSource("nodes_plain")) {
         map.addSource("nodes_plain", {
           type: "geojson",
-          data: buildNodesGeoJSON(nodesRef.current, recentDaysRef.current),
+          data: buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()),
         });
       }
 
@@ -883,6 +986,38 @@ export function Map() {
         map.addSource("links", {
           type: "geojson",
           data: emptyLineFeatureCollection(),
+        });
+      }
+
+      // Coverage radius source + layers
+      if (!map.getSource("coverage")) {
+        map.addSource("coverage", {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
+      }
+      if (!map.getLayer("coverage-fill")) {
+        map.addLayer({
+          id: "coverage-fill",
+          type: "fill",
+          source: "coverage",
+          paint: {
+            "fill-color": ["coalesce", ["get", "color"], "#32f032"],
+            "fill-opacity": 0.08,
+          },
+        });
+      }
+      if (!map.getLayer("coverage-outline")) {
+        map.addLayer({
+          id: "coverage-outline",
+          type: "line",
+          source: "coverage",
+          paint: {
+            "line-color": ["coalesce", ["get", "color"], "#32f032"],
+            "line-width": 1.5,
+            "line-opacity": 0.5,
+            "line-dasharray": [4, 4],
+          },
         });
       }
 
@@ -1134,6 +1269,18 @@ export function Map() {
 
         const heardBy = computeHeardByIds(liveNodes, id);
 
+        // Filter traceroutes relevant to this node (used for links + coverage)
+        const relevantTraceroutes = traceroutesRef.current.filter((tr) => {
+          const norm = normNodeId(id);
+          const from = normNodeId(tr.from);
+          const to = normNodeId(tr.to);
+          if (from === norm || to === norm) return true;
+          const hops = (tr.route_ids ?? tr.route ?? []).map((r: string) => normNodeId(r));
+          return hops.includes(norm);
+        });
+
+        const maxRangeKm = computeMaxRange(id, [nodeLike.position[0], nodeLike.position[1]], liveNodes, heardBy, relevantTraceroutes);
+
         setDetailsDataRef.current({
           node: nodeLike,
           liveNodes,
@@ -1142,21 +1289,12 @@ export function Map() {
           traceroutes: traceroutesRef.current,
           channelLabel: resolveChannelLabel((node as any).last_channel),
           heardBy,
+          maxRangeKm,
         });
 
         // Draw links (neighbor + traceroute)
         const neighborFC = buildMapboxLinkFeatureCollection({ node: nodeLike, liveNodes, heardBy });
-        const tracerouteFC = buildTracerouteLinkFeatureCollection(
-          traceroutesRef.current.filter((tr) => {
-            const norm = normNodeId(id);
-            const from = normNodeId(tr.from);
-            const to = normNodeId(tr.to);
-            if (from === norm || to === norm) return true;
-            const hops = (tr.route_ids ?? tr.route ?? []).map((r: string) => normNodeId(r));
-            return hops.includes(norm);
-          }),
-          liveNodes,
-        );
+        const tracerouteFC = buildTracerouteLinkFeatureCollection(relevantTraceroutes, liveNodes);
         const mergedFC = {
           type: "FeatureCollection" as const,
           features: [...neighborFC.features, ...tracerouteFC.features],
@@ -1172,6 +1310,25 @@ export function Map() {
             type: "FeatureCollection",
             features: [...persistent.features, ...mergedFC.features],
           });
+        }
+
+        // Coverage radius circle — always shown on selection
+        const coverageSrc = map.getSource("coverage") as MbGeoJSONSource | undefined;
+        if (coverageSrc) {
+          if (maxRangeKm) {
+            const roleColor = ROLE_COLORS[(node as any).role] ?? DEFAULT_NODE_COLOR;
+            const circle = geodesicCircleCoords([nodeLike.position[0], nodeLike.position[1]], maxRangeKm);
+            coverageSrc.setData({
+              type: "FeatureCollection",
+              features: [{
+                type: "Feature",
+                properties: { color: roleColor },
+                geometry: { type: "Polygon", coordinates: [circle] },
+              }],
+            });
+          } else {
+            coverageSrc.setData({ type: "FeatureCollection", features: [] });
+          }
         }
       };
 
@@ -1460,7 +1617,7 @@ export function Map() {
     if (!map) return;
     if (provider !== "mapbox") return;
 
-    const data = buildNodesGeoJSON(nodes, recentDays);
+    const data = buildNodesGeoJSON(nodes, recentDays, { role: roleFilter, channel: channelFilter });
 
     const clustered = map.getSource("nodes_clustered") as MbGeoJSONSource | undefined;
     clustered?.setData(data);
@@ -1487,7 +1644,7 @@ export function Map() {
         setDetailsData(null);
       }
     }
-  }, [nodes, recentDays, provider]);
+  }, [nodes, recentDays, provider, roleFilter, channelFilter]);
 
   // Mapbox: react to linkMode / myNodeId / nodes changes for persistent links
   useEffect(() => {
@@ -1727,6 +1884,16 @@ export function Map() {
 
       const heardBy = computeHeardByIds(liveNodes, node.id);
 
+      const relevantTraceroutes = traceroutesRef.current.filter((tr) => {
+        const norm = normNodeId(node.id);
+        const from = normNodeId(tr.from);
+        const to = normNodeId(tr.to);
+        if (from === norm || to === norm) return true;
+        const hops = (tr.route_ids ?? tr.route ?? []).map((r: string) => normNodeId(r));
+        return hops.includes(norm);
+      });
+      const maxRangeKm = computeMaxRange(node.id, [node.position[0], node.position[1]], liveNodes, heardBy, relevantTraceroutes);
+
       setDetailsDataRef.current({
         node: nodeLike,
         liveNodes,
@@ -1735,6 +1902,7 @@ export function Map() {
         traceroutes: traceroutesRef.current,
         channelLabel: resolveChannelLabel((fullNode as any)?.last_channel),
         heardBy,
+        maxRangeKm,
       });
 
       // Draw neighbor lines
@@ -2088,6 +2256,12 @@ export function Map() {
         setLinkMode={setLinkMode}
         clusterEnabled={clusterEnabled}
         setClusterEnabled={setClusterEnabled}
+        roleFilter={roleFilter}
+        setRoleFilter={setRoleFilter}
+        channelFilter={channelFilter}
+        setChannelFilter={setChannelFilter}
+        availableChannels={availableChannels}
+        resolveChannelLabel={resolveChannelLabel}
         hidden={!!detailsData}
       />
 

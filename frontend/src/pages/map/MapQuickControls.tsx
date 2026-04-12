@@ -1,4 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
+import { NodeRole, roleTitles } from "../../types";
 import type { LinkMode } from "./types";
 
 const DAYS_OPTIONS = [1, 3, 5, 7, 14, 30] as const;
@@ -22,6 +23,12 @@ export function MapQuickControls({
   setLinkMode,
   clusterEnabled,
   setClusterEnabled,
+  roleFilter,
+  setRoleFilter,
+  channelFilter,
+  setChannelFilter,
+  availableChannels = [],
+  resolveChannelLabel,
   hidden = false,
 }: {
   recentDays: number;
@@ -30,12 +37,39 @@ export function MapQuickControls({
   setLinkMode: Dispatch<SetStateAction<LinkMode>>;
   clusterEnabled: boolean;
   setClusterEnabled: Dispatch<SetStateAction<boolean>>;
+  roleFilter: number | null;
+  setRoleFilter: Dispatch<SetStateAction<number | null>>;
+  channelFilter: string | null;
+  setChannelFilter: Dispatch<SetStateAction<string | null>>;
+  availableChannels?: string[];
+  resolveChannelLabel?: (id: string | null | undefined) => string | null;
   hidden?: boolean;
 }) {
   const cycleDays = () => {
     const idx = DAYS_OPTIONS.indexOf(recentDays as (typeof DAYS_OPTIONS)[number]);
     const next = idx === -1 ? 7 : DAYS_OPTIONS[(idx + 1) % DAYS_OPTIONS.length];
     setRecentDays(next);
+  };
+
+  // Cycle through common roles: null → Router → Client → Repeater → null
+  const ROLE_CYCLE = [null, NodeRole.ROUTER, NodeRole.ROUTER_CLIENT, NodeRole.CLIENT, NodeRole.REPEATER, NodeRole.TRACKER];
+  const cycleRole = () => {
+    const idx = ROLE_CYCLE.indexOf(roleFilter);
+    setRoleFilter(ROLE_CYCLE[(idx + 1) % ROLE_CYCLE.length]);
+  };
+
+  const cycleChannel = () => {
+    if (availableChannels.length === 0) return;
+    if (channelFilter == null) {
+      setChannelFilter(availableChannels[0]);
+    } else {
+      const idx = availableChannels.indexOf(channelFilter);
+      if (idx === -1 || idx === availableChannels.length - 1) {
+        setChannelFilter(null);
+      } else {
+        setChannelFilter(availableChannels[idx + 1]);
+      }
+    }
   };
 
   const cycleLinkMode = () => {
@@ -90,6 +124,28 @@ export function MapQuickControls({
         </svg>
         {clusterEnabled ? "On" : "Off"}
       </button>
+
+      {/* Role filter */}
+      <button
+        type="button"
+        onClick={cycleRole}
+        className={roleFilter != null ? activePillClasses : pillClasses}
+        title={roleFilter != null ? `Filtering: ${roleTitles[roleFilter as NodeRole]?.title}. Click to cycle.` : "Filter by role. Click to cycle."}
+      >
+        {roleFilter != null ? roleTitles[roleFilter as NodeRole]?.abbreviation ?? "?" : "Role"}
+      </button>
+
+      {/* Channel filter */}
+      {availableChannels.length > 0 && (
+        <button
+          type="button"
+          onClick={cycleChannel}
+          className={channelFilter != null ? activePillClasses : pillClasses}
+          title={channelFilter != null ? `Channel: ${resolveChannelLabel?.(channelFilter) ?? channelFilter}. Click to cycle.` : "Filter by channel. Click to cycle."}
+        >
+          {channelFilter != null ? (resolveChannelLabel?.(channelFilter) ?? `Ch ${channelFilter}`).slice(0, 8) : "Channel"}
+        </button>
+      )}
     </div>
   );
 }

@@ -58,4 +58,5 @@ export type NodeDetailsData = {
   traceroutes?: ITraceroutesResponse[];
   channelLabel?: string | null;
   heardBy: string[];
+  maxRangeKm?: number | null;
 };

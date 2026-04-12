@@ -91,9 +91,17 @@ export function bumpOlRender(map: OlMap) {
 
 export function buildNodesGeoJSON(
   nodes: Record<string, IMapNode>,
-  recentDays: number
+  recentDays: number,
+  filters?: { role?: number | null; channel?: string | null },
 ): FeatureCollection<GeoPoint, GeoJsonProperties> {
-  const recentNodeEntries = computeRecentNodes(nodes, recentDays);
+  let recentNodeEntries = computeRecentNodes(nodes, recentDays);
+
+  if (filters?.role != null) {
+    recentNodeEntries = recentNodeEntries.filter(([, n]) => (n as any).role === filters.role);
+  }
+  if (filters?.channel != null) {
+    recentNodeEntries = recentNodeEntries.filter(([, n]) => (n as any).last_channel === filters.channel);
+  }
 
   const features: GeoFeature<GeoPoint, GeoJsonProperties>[] = [];
 

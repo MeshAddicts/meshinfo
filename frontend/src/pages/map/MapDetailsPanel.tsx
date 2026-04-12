@@ -407,6 +407,12 @@ export function MapDetailsPanel({
             {node.position[1].toFixed(5)}, {node.position[0].toFixed(5)}
           </div>
         </div>
+        {data.maxRangeKm != null && (
+          <div>
+            <div className="text-gray-500 text-[10px] uppercase tracking-wider">Max Range</div>
+            <div className="text-gray-300">{data.maxRangeKm < 1 ? `${Math.round(data.maxRangeKm * 1000)}m` : `${data.maxRangeKm.toFixed(1)}km`}</div>
+          </div>
+        )}
         {node.gateway && (
           <div>
             <div className="text-gray-500 text-[10px] uppercase tracking-wider">Gateway</div>
