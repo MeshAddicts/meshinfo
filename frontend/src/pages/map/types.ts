@@ -61,13 +61,4 @@ export type NodeDetailsData = {
   maxRangeKm?: number | null;
 };
 
-export type MapToolId = "los" | "traceroute";
-
-// Tool-picker props for the details panel
-export type PathAnalysisProps = {
-  pickMode: boolean;
-  targetId: string | null;
-  activeTool: MapToolId | null;
-  onEnterPickMode: (tool: MapToolId) => void;
-  onClearPath: () => void;
-};
+export type MapToolId = "los" | "traceroute" | "coverage";

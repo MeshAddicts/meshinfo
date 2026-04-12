@@ -26,11 +26,15 @@ import { reverseGeocode } from "../maps/geocoder";
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
+import { COMMON_HARDWARE, computeCoverage, coverageToGeoJSON, linkBudgetMaxKm, type CoverageResult } from "./map/coverageAnalysis";
 import { analyzeLineOfSight, type LoSResult } from "./map/losAnalysis";
 import { findPathsBetween } from "./map/pathAnalysis";
 import { MapDetailsPanel } from "./map/MapDetailsPanel";
 import { MapHealthWidget } from "./map/MapHealthWidget";
 import { MapLosPanel } from "./map/MapLosPanel";
+import { MapToolPrompt, MapToolsDrawer } from "./map/MapToolsDrawer";
+import { MapTraceroutePanel } from "./map/MapTraceroutePanel";
+import { MapCoveragePanel } from "./map/MapCoveragePanel";
 import { MapQuickControls } from "./map/MapQuickControls";
 import { MapSearchBar } from "./map/MapSearchBar";
 import { MapSettingsPanel } from "./map/MapSettingsPanel";
@@ -363,9 +367,15 @@ export function Map() {
 
   const [roleFilter, setRoleFilter] = useState<number | null>(null);
   const [channelFilter, setChannelFilter] = useState<string | null>(null);
-  const [pathPickMode, setPathPickMode] = useState(false);
-  const [pathTargetId, setPathTargetId] = useState<string | null>(null);
-  const [activeTool, setActiveTool] = useState<"los" | "traceroute" | null>(null);
+  // ---------------------
+  // Global tool state — tools are independent of the details panel.
+  // Each tool drives its own step-based workflow.
+  // ---------------------
+  const [activeTool, setActiveTool] = useState<"los" | "traceroute" | "coverage" | null>(null);
+  const [toolStep, setToolStep] = useState<"pickFrom" | "pickTo" | "result">("pickFrom");
+  const [toolFromId, setToolFromId] = useState<string | null>(null);
+  const [toolToId, setToolToId] = useState<string | null>(null);
+  const [toolVirtualPos, setToolVirtualPos] = useState<[number, number] | null>(null);
 
   // 3D terrain (Mapbox only)
   const [terrain3D, setTerrain3D] = useState<boolean>(() => readJson<boolean>(LS_KEYS.terrain3D, false));
@@ -373,6 +383,18 @@ export function Map() {
     () => readJson<number>(LS_KEYS.terrainExaggeration, 1.5)
   );
   const [losResult, setLosResult] = useState<LoSResult | null>(null);
+  const [coverageResult, setCoverageResult] = useState<CoverageResult | null>(null);
+  const [isComputingCoverage, setIsComputingCoverage] = useState(false);
+  const [coverageRadiusKm, setCoverageRadiusKm] = useState(10);
+  const [coverageAntennaDbi, setCoverageAntennaDbi] = useState(3);
+  const [coverageHardwareIdx, setCoverageHardwareIdx] = useState(0);
+  const [coverageCustomTxDbm, setCoverageCustomTxDbm] = useState(22);
+  const coverageTxDbm = COMMON_HARDWARE[coverageHardwareIdx].isCustom
+    ? coverageCustomTxDbm
+    : COMMON_HARDWARE[coverageHardwareIdx].txDbm;
+  /** Tracks whether the user has manually overridden the slider
+   * (so we don't auto-reset it on every hardware/antenna change once they have). */
+  const coverageRadiusManualRef = useRef(false);
 
   // Settings panel visibility
   const [settingsPanelOpen, setSettingsPanelOpen] = useState<boolean>(() => {
@@ -499,7 +521,13 @@ export function Map() {
   const myNodeIdRef = useRef(myNodeId);
   const roleFilterRef = useRef(roleFilter);
   const channelFilterRef = useRef(channelFilter);
-  const pathPickModeRef = useRef(pathPickMode);
+  // Tool state refs — used in event handler closures
+  const activeToolRef = useRef(activeTool);
+  const toolStepRef = useRef(toolStep);
+  const toolFromIdRef = useRef(toolFromId);
+
+  // Helper: is the tool currently waiting for a node click?
+  const isPickingNode = activeTool != null && toolStep !== "result";
   const terrain3DRef = useRef(terrain3D);
   const terrainExaggerationRef = useRef(terrainExaggeration);
   const setDetailsDataRef = useRef(setDetailsData);
@@ -533,9 +561,9 @@ export function Map() {
   }, [linkMode]);
 
   useEffect(() => { roleFilterRef.current = roleFilter; }, [roleFilter]);
-  useEffect(() => {
-    pathPickModeRef.current = pathPickMode;
-  }, [pathPickMode]);
+  useEffect(() => { activeToolRef.current = activeTool; }, [activeTool]);
+  useEffect(() => { toolStepRef.current = toolStep; }, [toolStep]);
+  useEffect(() => { toolFromIdRef.current = toolFromId; }, [toolFromId]);
   useEffect(() => {
     terrain3DRef.current = terrain3D;
   }, [terrain3D]);
@@ -543,34 +571,33 @@ export function Map() {
     terrainExaggerationRef.current = terrainExaggeration;
   }, [terrainExaggeration]);
 
-  // Path-pick cursor feedback
+  // Tool-pick cursor feedback
   useEffect(() => {
-    // Visual feedback: crosshair cursor on map canvas
     const mb = mbMapRef.current;
     if (mb) {
-      mb.getCanvas().style.cursor = pathPickMode ? "crosshair" : "";
+      mb.getCanvas().style.cursor = isPickingNode ? "crosshair" : "";
     }
     if (olMap) {
       const el = olMap.getTargetElement();
-      if (el) el.style.cursor = pathPickMode ? "crosshair" : "";
+      if (el) el.style.cursor = isPickingNode ? "crosshair" : "";
     }
-  }, [pathPickMode, olMap]);
+  }, [isPickingNode, olMap]);
 
-  // Clear tool state when selected node changes or panel closes
-  useEffect(() => {
-    if (!detailsData) {
-      setPathTargetId(null);
-      setPathPickMode(false);
-      setActiveTool(null);
-    }
-  }, [detailsData]);
+  // Reset the whole tool state
+  const resetTool = () => {
+    setActiveTool(null);
+    setToolStep("pickFrom");
+    setToolFromId(null);
+    setToolToId(null);
+    setToolVirtualPos(null);
+  };
 
-  // Draw shortest traceroute path between selected node and pathTargetId (both providers)
+  // Draw shortest traceroute path between toolFromId and toolToId (both providers)
   useEffect(() => {
-    // Helper: compute shortest path coordinates
     const computePathCoords = (): [number, number][] | null => {
-      if (activeTool !== "traceroute" || !pathTargetId || !detailsData) return null;
-      const paths = findPathsBetween(detailsData.node.id, pathTargetId, rawTraceroutes);
+      if (activeTool !== "traceroute" || toolStep !== "result") return null;
+      if (!toolFromId || !toolToId) return null;
+      const paths = findPathsBetween(toolFromId, toolToId, rawTraceroutes);
       if (paths.length === 0) return null;
       const shortest = paths[0];
       const coords: [number, number][] = [];
@@ -612,17 +639,20 @@ export function Map() {
         olMap.addLayer(pathLayer);
       }
     }
-  }, [activeTool, pathTargetId, detailsData, rawTraceroutes, nodes, olMap]);
+  }, [activeTool, toolStep, toolFromId, toolToId, rawTraceroutes, nodes, olMap]);
 
-  // Line-of-sight analysis between selected node and pathTargetId.
-  // Only runs when the LOS tool is active.
+  // Line-of-sight analysis between toolFromId and toolToId.
+  // Only runs when the LOS tool is active and both picks are done.
   useEffect(() => {
-    if (activeTool !== "los" || !pathTargetId || !detailsData) {
+    if (activeTool !== "los" || toolStep !== "result") {
+      setLosResult(null);
+      return;
+    }
+    if (!toolFromId || !toolToId) {
       setLosResult(null);
       return;
     }
     if (provider !== "mapbox" || !terrain3D) {
-      // Terrain not available — mark as needing terrain, clear result
       setLosResult(null);
       return;
     }
@@ -631,8 +661,8 @@ export function Map() {
       setLosResult(null);
       return;
     }
-    const fromLive = nodes[detailsData.node.id];
-    const toLive = nodes[pathTargetId] ?? nodes[`!${pathTargetId}`];
+    const fromLive = nodes[toolFromId] ?? nodes[`!${toolFromId}`];
+    const toLive = nodes[toolToId] ?? nodes[`!${toolToId}`];
     if (!fromLive?.map_position || !toLive?.map_position) {
       setLosResult(null);
       return;
@@ -673,7 +703,117 @@ export function Map() {
     // Wait for terrain tiles to settle, then sample
     const timer = setTimeout(run, 1200);
     return () => clearTimeout(timer);
-  }, [activeTool, pathTargetId, detailsData, provider, terrain3D, nodes]);
+  }, [activeTool, toolStep, toolFromId, toolToId, provider, terrain3D, nodes]);
+
+  // Coverage prediction — runs when Coverage tool reaches result step.
+  useEffect(() => {
+    if (activeTool !== "coverage" || toolStep !== "result") {
+      setCoverageResult(null);
+      setIsComputingCoverage(false);
+      return;
+    }
+    if (provider !== "mapbox" || !terrain3D) {
+      setCoverageResult(null);
+      setIsComputingCoverage(false);
+      return;
+    }
+    const mb = mbMapRef.current;
+    if (!mb) {
+      setCoverageResult(null);
+      return;
+    }
+
+    // Determine origin: either a node, or a virtual position on the map
+    let origin: [number, number] | null = null;
+    let altitude: number | null = null;
+    if (toolFromId) {
+      const n = nodes[toolFromId] ?? nodes[`!${toolFromId}`];
+      if (n?.map_position) {
+        origin = [n.map_position[0], n.map_position[1]];
+        altitude = n.position?.altitude ?? null;
+      }
+    } else if (toolVirtualPos) {
+      origin = toolVirtualPos;
+      altitude = null; // virtual = no known altitude, will fall back to terrain + antenna
+    }
+    if (!origin) {
+      setCoverageResult(null);
+      return;
+    }
+
+    // Mark as computing but keep the previous result visible so controls stay up
+    setIsComputingCoverage(true);
+
+    // Fit the map so terrain tiles covering the full radius load
+    const radKm = coverageRadiusKm;
+    const degLat = radKm / 111;
+    const degLon = radKm / (111 * Math.cos((origin[1] * Math.PI) / 180));
+    const bounds = new mapboxgl.LngLatBounds(
+      [origin[0] - degLon, origin[1] - degLat],
+      [origin[0] + degLon, origin[1] + degLat],
+    );
+    mb.fitBounds(bounds, { padding: 80, duration: 500, maxZoom: 12 });
+
+    // Wait for terrain to load, then compute
+    const timer = setTimeout(() => {
+      try {
+        const result = computeCoverage({
+          origin: origin!,
+          originAltitudeM: altitude,
+          antennaHeightM: 2,
+          targetAntennaHeightM: 2,
+          freqGHz: 0.915,
+          radiusKm: radKm,
+          rings: 12,
+          samplesPerRing: 36,
+          losSamples: 30,
+          antennaDbi: coverageAntennaDbi,
+          txDbm: coverageTxDbm,
+          queryTerrainM: (lng, lat) => {
+            const elev = mb.queryTerrainElevation([lng, lat]);
+            return typeof elev === "number" ? elev : null;
+          },
+        });
+        setCoverageResult(result);
+        const src = mb.getSource("coverage-grid") as MbGeoJSONSource | undefined;
+        src?.setData(coverageToGeoJSON(result));
+      } catch (err) {
+        console.warn("[Map] Coverage computation failed:", err);
+        setCoverageResult(null);
+      } finally {
+        setIsComputingCoverage(false);
+      }
+    }, 1400);
+    return () => clearTimeout(timer);
+  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageTxDbm, provider, terrain3D, nodes]);
+
+  // Auto-update radius to match the link budget when hardware/antenna changes,
+  // unless the user has manually overridden the slider.
+  // Cap at 300 km — well beyond realistic Meshtastic range but keeps the slider sane.
+  useEffect(() => {
+    if (coverageRadiusManualRef.current) return;
+    const maxKm = linkBudgetMaxKm({ antennaDbi: coverageAntennaDbi, txDbm: coverageTxDbm });
+    setCoverageRadiusKm(Math.max(2, Math.min(300, Math.round(maxKm))));
+  }, [coverageAntennaDbi, coverageTxDbm]);
+
+  // Reset the manual-override flag when the tool is closed
+  useEffect(() => {
+    if (activeTool !== "coverage") {
+      coverageRadiusManualRef.current = false;
+    }
+  }, [activeTool]);
+
+  // Clear coverage-grid when leaving coverage tool
+  useEffect(() => {
+    const mb = mbMapRef.current;
+    if (!mb) return;
+    if (activeTool !== "coverage") {
+      try {
+        const src = mb.getSource("coverage-grid") as MbGeoJSONSource | undefined;
+        src?.setData({ type: "FeatureCollection", features: [] });
+      } catch {}
+    }
+  }, [activeTool]);
 
   useEffect(() => { channelFilterRef.current = channelFilter; }, [channelFilter]);
 
@@ -1301,6 +1441,55 @@ export function Map() {
         });
       }
 
+      // Coverage-prediction grid source + layer (Phase 9 coverage tool)
+      // Each cell is a pie-sector polygon, painted by status.
+      if (!map.getSource("coverage-grid")) {
+        map.addSource("coverage-grid", {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
+      }
+      if (!map.getLayer("coverage-grid-fill")) {
+        map.addLayer({
+          id: "coverage-grid-fill",
+          type: "fill",
+          source: "coverage-grid",
+          paint: {
+            "fill-color": [
+              "match", ["get", "status"],
+              "clear", "#22c55e",
+              "fresnel", "#eab308",
+              "#22c55e",
+            ],
+            "fill-opacity": [
+              "match", ["get", "status"],
+              "clear", 0.42,
+              "fresnel", 0.32,
+              0.35,
+            ],
+            "fill-antialias": true,
+          },
+        });
+      }
+      // Subtle outline to separate sectors without looking griddy
+      if (!map.getLayer("coverage-grid-outline")) {
+        map.addLayer({
+          id: "coverage-grid-outline",
+          type: "line",
+          source: "coverage-grid",
+          paint: {
+            "line-color": [
+              "match", ["get", "status"],
+              "clear", "#16a34a",
+              "fresnel", "#ca8a04",
+              "#16a34a",
+            ],
+            "line-width": 0.4,
+            "line-opacity": 0.2,
+          },
+        });
+      }
+
       // Shared link paint properties
       const linkWidth = [
         "case",
@@ -1707,18 +1896,47 @@ export function Map() {
         if (!feature) return;
         const id = (feature.properties?.id ?? "") as string;
         if (!id) return;
-        // If in path-pick mode, set as path target instead of selecting
-        if (pathPickModeRef.current && mbSelectedIdRef.current && id !== mbSelectedIdRef.current) {
-          setPathTargetId(id);
-          setPathPickMode(false);
+
+        // Tool pick modes intercept node clicks
+        const activeToolCur = activeToolRef.current;
+        const stepCur = toolStepRef.current;
+        if (activeToolCur && stepCur === "pickFrom") {
+          setToolFromId(id);
+          if (activeToolCur === "coverage") {
+            // Coverage only needs one pick
+            setToolStep("result");
+          } else {
+            setToolStep("pickTo");
+          }
+          map.getCanvas().style.cursor = "crosshair";
+          return;
+        }
+        if (activeToolCur && stepCur === "pickTo") {
+          if (id === toolFromIdRef.current) return; // ignore same-node
+          setToolToId(id);
+          setToolStep("result");
           map.getCanvas().style.cursor = "";
           return;
         }
+
         void handleNodeClick(id);
       };
       map.on("click", "unclustered-nodes", onNodeLayerClick);
       map.on("click", "plain-nodes", onNodeLayerClick);
       map.on("click", SPIDERFY_LAYER_NODES, onNodeLayerClick);
+
+      // Coverage-tool "virtual node" click — fires when user clicks empty map in pickFrom mode
+      map.on("click", (e) => {
+        if (activeToolRef.current !== "coverage" || toolStepRef.current !== "pickFrom") return;
+        // Ignore if clicking on a node layer (handled by onNodeLayerClick)
+        const features = map.queryRenderedFeatures(e.point, {
+          layers: ["unclustered-nodes", "plain-nodes", "clusters", SPIDERFY_LAYER_NODES].filter((id) => map.getLayer(id)),
+        });
+        if (features.length > 0) return;
+        setToolVirtualPos([e.lngLat.lng, e.lngLat.lat]);
+        setToolStep("result");
+        map.getCanvas().style.cursor = "";
+      });
 
       bindHover(SPIDERFY_LAYER_NODES);
 
@@ -1807,8 +2025,8 @@ export function Map() {
         const PAN_PX = 100;
         switch (e.key) {
           case "Escape":
-            if (pathPickModeRef.current) {
-              setPathPickMode(false);
+            if (activeToolRef.current) {
+              resetTool();
               break;
             }
             void unspiderfy(map);
@@ -2474,11 +2692,23 @@ export function Map() {
         olPathLayerRef.current = null;
       }
 
-      // Helper: if in path-pick mode, intercept node clicks to set target
+      // Helper: if a tool is picking a node, intercept the click
       const handleNodeClickMaybePick = (node: IFeatureNode) => {
-        if (pathPickModeRef.current && selectedNodeIdRef.current && node.id !== selectedNodeIdRef.current) {
-          setPathTargetId(node.id);
-          setPathPickMode(false);
+        const activeToolCur = activeToolRef.current;
+        const stepCur = toolStepRef.current;
+        if (activeToolCur && stepCur === "pickFrom") {
+          setToolFromId(node.id);
+          if (activeToolCur === "coverage") {
+            setToolStep("result");
+          } else {
+            setToolStep("pickTo");
+          }
+          return true;
+        }
+        if (activeToolCur && stepCur === "pickTo") {
+          if (node.id === toolFromIdRef.current) return true;
+          setToolToId(node.id);
+          setToolStep("result");
           return true;
         }
         return false;
@@ -2761,30 +2991,103 @@ export function Map() {
         onClose={clearMapboxSelectionAndOverlays}
         onNodeSelect={(id) => handleNodeSelectRef.current(id)}
         onHoverLink={(id) => handleLinkHoverRef.current(id)}
-        pathAnalysis={{
-          pickMode: pathPickMode,
-          targetId: pathTargetId,
-          activeTool,
-          onEnterPickMode: (tool) => { setActiveTool(tool); setPathPickMode(true); },
-          onClearPath: () => { setPathTargetId(null); setPathPickMode(false); setActiveTool(null); },
-        }}
       />
 
-      {/* Floating LoS panel — bottom-center when LOS tool is active */}
-      {pathTargetId && detailsData && activeTool === "los" && (
+      {/* Tools drawer — global, top-left next to search */}
+      <MapToolsDrawer
+        activeTool={activeTool}
+        onSelect={(tool) => {
+          resetTool();
+          if (tool) {
+            setActiveTool(tool);
+            setToolStep("pickFrom");
+          }
+        }}
+        terrainEnabled={provider === "mapbox" && terrain3D}
+      />
+
+      {/* Tool prompts — guide the user through picks */}
+      {activeTool && toolStep === "pickFrom" && (
+        <MapToolPrompt
+          message={
+            activeTool === "coverage"
+              ? "Click a node (or click anywhere on the map for a virtual location)"
+              : activeTool === "los"
+                ? "LOS: pick the first node"
+                : "Traceroute: pick the first node"
+          }
+          hint="Press Esc to cancel"
+          onCancel={resetTool}
+        />
+      )}
+      {activeTool && toolStep === "pickTo" && (
+        <MapToolPrompt
+          message={
+            activeTool === "los"
+              ? "LOS: pick the second node"
+              : "Traceroute: pick the second node"
+          }
+          hint="Press Esc to cancel"
+          onCancel={resetTool}
+        />
+      )}
+
+      {/* Floating LoS panel when LOS tool reached result step */}
+      {activeTool === "los" && toolStep === "result" && toolFromId && toolToId && (
         <MapLosPanel
           result={losResult}
-          fromLabel={detailsData.node.shortname ?? detailsData.node.id.slice(0, 8)}
-          toLabel={
-            (nodes[pathTargetId] ?? nodes[`!${pathTargetId}`])?.shortname
-            ?? pathTargetId.slice(0, 8)
-          }
+          fromLabel={(nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.shortname ?? toolFromId.slice(0, 8)}
+          toLabel={(nodes[toolToId] ?? nodes[`!${toolToId}`])?.shortname ?? toolToId.slice(0, 8)}
           fromColor="#22c55e"
           toColor="#06b6d4"
           terrainNeeded={provider === "mapbox" && !terrain3D}
           onEnableTerrain={provider === "mapbox" ? () => setTerrain3D(true) : undefined}
-          onClose={() => { setPathTargetId(null); setPathPickMode(false); }}
+          onClose={resetTool}
           isComputing={provider === "mapbox" && terrain3D && !losResult}
+        />
+      )}
+
+      {/* Floating Coverage panel */}
+      {activeTool === "coverage" && toolStep === "result" && (toolFromId || toolVirtualPos) && (
+        <MapCoveragePanel
+          result={coverageResult}
+          originLabel={
+            toolFromId
+              ? ((nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.shortname ?? toolFromId.slice(0, 8))
+              : "Virtual location"
+          }
+          terrainNeeded={provider === "mapbox" && !terrain3D}
+          onEnableTerrain={provider === "mapbox" ? () => setTerrain3D(true) : undefined}
+          onClose={resetTool}
+          isComputing={isComputingCoverage}
+          radiusKm={coverageRadiusKm}
+          onRadiusChange={(km) => {
+            coverageRadiusManualRef.current = true;
+            setCoverageRadiusKm(km);
+          }}
+          antennaDbi={coverageAntennaDbi}
+          onAntennaDbiChange={setCoverageAntennaDbi}
+          hardwareIdx={coverageHardwareIdx}
+          onHardwareIdxChange={setCoverageHardwareIdx}
+          customTxDbm={coverageCustomTxDbm}
+          onCustomTxDbmChange={setCoverageCustomTxDbm}
+        />
+      )}
+
+      {/* Floating Traceroute panel */}
+      {activeTool === "traceroute" && toolStep === "result" && toolFromId && toolToId && (
+        <MapTraceroutePanel
+          fromId={toolFromId}
+          toId={toolToId}
+          fromLabel={(nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.shortname ?? toolFromId.slice(0, 8)}
+          toLabel={(nodes[toolToId] ?? nodes[`!${toolToId}`])?.shortname ?? toolToId.slice(0, 8)}
+          fromColor="#22c55e"
+          toColor="#06b6d4"
+          traceroutes={rawTraceroutes}
+          liveNodes={nodes}
+          onNodeSelect={(id) => handleNodeSelectRef.current(id)}
+          onHoverLink={(id) => handleLinkHoverRef.current(id)}
+          onClose={resetTool}
         />
       )}
 
