@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-export type ToolId = "los" | "traceroute" | "coverage";
+export type ToolId = "los" | "traceroute" | "coverage" | "scan";
 
 export interface ToolDef {
   id: ToolId;
@@ -43,6 +43,17 @@ const TOOLS: ToolDef[] = [
         <circle cx="12" cy="12" r="9" strokeWidth={2} strokeDasharray="3 3" />
         <circle cx="12" cy="12" r="5" strokeWidth={2} strokeDasharray="2 2" />
         <circle cx="12" cy="12" r="1.5" strokeWidth={2} fill="currentColor" />
+      </svg>
+    ),
+  },
+  {
+    id: "scan",
+    label: "Scan",
+    description: "Best neighbors — rank LoS to every node in view",
+    requiresTerrain: true,
+    icon: (
+      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M7 12h10M10 18h4" />
       </svg>
     ),
   },

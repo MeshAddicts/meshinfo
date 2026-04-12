@@ -30,6 +30,9 @@ import { COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS, linkBudgetMaxKm, typ
 import { demBoundsAround, sampleDEM } from "./map/terrainDEM";
 import type { CoverageWorkerRequest, CoverageWorkerResponse } from "./map/coverageWorker";
 import { analyzeLineOfSight, type LoSResult } from "./map/losAnalysis";
+import { LosTubeLayer, losPointsToTubeData, obstructionsToGeoJSON, pickObstructions } from "./map/losTubeLayer";
+import { runScan, scanToGeoJSON, type ScanSummary, type ScanTarget } from "./map/scanAnalysis";
+import { MapScanPanel } from "./map/MapScanPanel";
 import { findPathsBetween } from "./map/pathAnalysis";
 import { MapDetailsPanel } from "./map/MapDetailsPanel";
 import { MapHealthWidget } from "./map/MapHealthWidget";
@@ -378,7 +381,7 @@ export function Map() {
   // Global tool state — tools are independent of the details panel.
   // Each tool drives its own step-based workflow.
   // ---------------------
-  const [activeTool, setActiveTool] = useState<"los" | "traceroute" | "coverage" | null>(null);
+  const [activeTool, setActiveTool] = useState<"los" | "traceroute" | "coverage" | "scan" | null>(null);
   const [toolStep, setToolStep] = useState<"pickFrom" | "pickTo" | "result">("pickFrom");
   const [toolFromId, setToolFromId] = useState<string | null>(null);
   const [toolToId, setToolToId] = useState<string | null>(null);
@@ -408,6 +411,12 @@ export function Map() {
   /** Tracks whether the user has manually overridden the slider
    * (so we don't auto-reset it on every hardware/antenna change once they have). */
   const coverageRadiusManualRef = useRef(false);
+  /** Custom WebGL layer instance for the 3D LoS tube. Created once per map. */
+  const losTubeLayerRef = useRef<LosTubeLayer | null>(null);
+  // Scan tool state
+  const [scanSummary, setScanSummary] = useState<ScanSummary | null>(null);
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanHoverId, setScanHoverId] = useState<string | null>(null);
   /** Monotonic request id — ignore worker replies that aren't the latest. */
   const coverageRequestIdRef = useRef(0);
   /** Web Worker for coverage raster computation. Lazily created. */
@@ -736,6 +745,196 @@ export function Map() {
     const timer = setTimeout(run, 1200);
     return () => clearTimeout(timer);
   }, [activeTool, toolStep, toolFromId, toolToId, provider, terrain3D, nodes]);
+
+  // Push the current LoS result into the 3D tube layer + obstruction source.
+  // Clears them when the LoS tool isn't showing a result.
+  useEffect(() => {
+    const mb = mbMapRef.current;
+    if (!mb) return;
+
+    const showing =
+      activeTool === "los" && toolStep === "result" && losResult && toolFromId && toolToId;
+    const obsSrc = mb.getSource("los-obstructions") as MbGeoJSONSource | undefined;
+    const tube = losTubeLayerRef.current;
+
+    if (!showing) {
+      tube?.setData(null);
+      obsSrc?.setData({ type: "FeatureCollection", features: [] });
+      return;
+    }
+
+    const from = nodes[toolFromId!] ?? nodes[`!${toolFromId!}`];
+    const to = nodes[toolToId!] ?? nodes[`!${toolToId!}`];
+    if (!from?.map_position || !to?.map_position) return;
+    const fromPos: [number, number] = [from.map_position[0], from.map_position[1]];
+    const toPos: [number, number] = [to.map_position[0], to.map_position[1]];
+
+    const tubeData = losPointsToTubeData(fromPos, toPos, losResult!.points, losResult!.totalDistanceKm);
+    tube?.setData(tubeData);
+
+    const obstructions = pickObstructions(
+      fromPos,
+      toPos,
+      losResult!.points,
+      losResult!.totalDistanceKm,
+      3,
+    );
+    obsSrc?.setData(obstructionsToGeoJSON(obstructions, 60));
+  }, [activeTool, toolStep, losResult, toolFromId, toolToId, nodes]);
+
+  // -------------------------------------------------------------------------
+  // Scan tool (Option C) — batch LoS to every node in view from a chosen origin
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    if (activeTool !== "scan" || toolStep !== "result") {
+      setScanSummary(null);
+      setIsScanning(false);
+      return;
+    }
+    if (provider !== "mapbox" || !terrain3D) {
+      setScanSummary(null);
+      return;
+    }
+    const mb = mbMapRef.current;
+    if (!mb) return;
+
+    // Resolve origin (node pick or virtual position)
+    let origin: [number, number] | null = null;
+    let originAltitude: number | null = null;
+    let originShortname: string | undefined;
+    if (toolFromId) {
+      const n = nodes[toolFromId] ?? nodes[`!${toolFromId}`];
+      if (n?.map_position) {
+        origin = [n.map_position[0], n.map_position[1]];
+        originAltitude = n.position?.altitude ?? null;
+        originShortname = n.shortname ?? undefined;
+      }
+    } else if (toolVirtualPos) {
+      origin = toolVirtualPos;
+    }
+    if (!origin) {
+      setScanSummary(null);
+      return;
+    }
+
+    setIsScanning(true);
+    let cancelled = false;
+
+    // Give terrain tiles time to settle, then scan every node in the current
+    // viewport. We deliberately don't fitBounds — it'd fight the user's view.
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+      try {
+        const bounds = mb.getBounds();
+        if (!bounds) {
+          setIsScanning(false);
+          return;
+        }
+        const w = bounds.getWest();
+        const e = bounds.getEast();
+        const s = bounds.getSouth();
+        const n = bounds.getNorth();
+
+        const targets: ScanTarget[] = [];
+        const seen = new Set<string>();
+        for (const [rawId, node] of Object.entries(nodes)) {
+          if (!node?.map_position) continue;
+          const [lng, lat] = node.map_position;
+          if (lng < w || lng > e || lat < s || lat > n) continue;
+          const norm = rawId.startsWith("!") ? rawId.slice(1) : rawId;
+          if (toolFromId && (norm === toolFromId || rawId === toolFromId)) continue;
+          if (seen.has(norm)) continue;
+          seen.add(norm);
+          targets.push({
+            id: norm,
+            shortname: node.shortname ?? undefined,
+            position: [lng, lat],
+            altitudeM: node.position?.altitude ?? null,
+          });
+        }
+
+        if (targets.length === 0) {
+          setScanSummary({
+            origin: origin!,
+            originShortname,
+            results: [],
+            clearCount: 0,
+            fresnelCount: 0,
+            diffractedCount: 0,
+            blockedCount: 0,
+          });
+          setIsScanning(false);
+          return;
+        }
+
+        const summary = runScan({
+          origin: origin!,
+          originAltitudeM: originAltitude,
+          originShortname,
+          targets,
+          raySamples: 60,
+          freqGHz: 0.915,
+          queryTerrainM: (lng, lat) => {
+            const elev = mb.queryTerrainElevation([lng, lat]);
+            return typeof elev === "number" ? elev : null;
+          },
+        });
+
+        if (cancelled) return;
+        setScanSummary(summary);
+        const src = mb.getSource("scan-links") as MbGeoJSONSource | undefined;
+        src?.setData(scanToGeoJSON(summary));
+      } catch (err) {
+        console.warn("[Map] Scan failed:", err);
+        setScanSummary(null);
+      } finally {
+        if (!cancelled) setIsScanning(false);
+      }
+    }, 1200);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [activeTool, toolStep, toolFromId, toolVirtualPos, provider, terrain3D, nodes]);
+
+  // Clear scan-links source when leaving scan tool
+  useEffect(() => {
+    const mb = mbMapRef.current;
+    if (!mb) return;
+    if (activeTool !== "scan") {
+      try {
+        const src = mb.getSource("scan-links") as MbGeoJSONSource | undefined;
+        src?.setData({ type: "FeatureCollection", features: [] });
+      } catch {}
+    }
+  }, [activeTool]);
+
+  // Scan hover — highlight a single line using feature-state
+  useEffect(() => {
+    const mb = mbMapRef.current;
+    if (!mb) return;
+    if (!scanSummary) return;
+    // Reset all features' hover state
+    for (let i = 0; i < scanSummary.results.length; i++) {
+      try {
+        mb.setFeatureState(
+          { source: "scan-links", id: i },
+          { hover: false },
+        );
+      } catch {}
+    }
+    if (scanHoverId == null) return;
+    const idx = scanSummary.results.findIndex((r) => r.id === scanHoverId);
+    if (idx >= 0) {
+      try {
+        mb.setFeatureState(
+          { source: "scan-links", id: idx },
+          { hover: true },
+        );
+      } catch {}
+    }
+  }, [scanHoverId, scanSummary]);
 
   // Coverage prediction — runs when Coverage tool reaches result step.
   useEffect(() => {
@@ -1613,6 +1812,78 @@ export function Map() {
         });
       }
 
+      // 3D LoS tube + obstruction pylons (Phase 9+, Option B).
+      // The tube is a custom WebGL layer that draws the chord in world space;
+      // the pylons are fill-extrusions showing where terrain spikes above it.
+      if (!map.getSource("los-obstructions")) {
+        map.addSource("los-obstructions", {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
+      }
+      if (!map.getLayer("los-obstructions-fill")) {
+        map.addLayer({
+          id: "los-obstructions-fill",
+          type: "fill-extrusion",
+          source: "los-obstructions",
+          paint: {
+            "fill-extrusion-color": [
+              "interpolate", ["linear"], ["get", "severity"],
+              0, "#f87171",
+              1, "#b91c1c",
+            ],
+            "fill-extrusion-base": ["get", "baseM"],
+            "fill-extrusion-height": ["get", "topM"],
+            "fill-extrusion-opacity": 0.75,
+            "fill-extrusion-vertical-gradient": true,
+          },
+        });
+      }
+      if (!map.getLayer("los-tube")) {
+        try {
+          if (!losTubeLayerRef.current) losTubeLayerRef.current = new LosTubeLayer();
+          map.addLayer(losTubeLayerRef.current);
+        } catch (err) {
+          console.warn("[Map] Failed to add LoS tube layer:", err);
+        }
+      }
+
+      // Scan tool links — color-coded lines from origin to each scanned target.
+      if (!map.getSource("scan-links")) {
+        map.addSource("scan-links", {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
+      }
+      if (!map.getLayer("scan-links-line")) {
+        map.addLayer({
+          id: "scan-links-line",
+          type: "line",
+          source: "scan-links",
+          layout: { "line-join": "round", "line-cap": "round" },
+          paint: {
+            "line-color": [
+              "match", ["get", "cls"],
+              "clear",      "#22c55e",
+              "fresnel",    "#eab308",
+              "diffracted", "#f97316",
+              "blocked",    "#ef4444",
+              "#9ca3af",
+            ],
+            "line-width": [
+              "case",
+              ["boolean", ["feature-state", "hover"], false], 4,
+              2,
+            ],
+            "line-opacity": [
+              "match", ["get", "cls"],
+              "blocked", 0.4,
+              0.85,
+            ],
+          },
+        });
+      }
+
       // Shared link paint properties
       const linkWidth = [
         "case",
@@ -2025,8 +2296,8 @@ export function Map() {
         const stepCur = toolStepRef.current;
         if (activeToolCur && stepCur === "pickFrom") {
           setToolFromId(id);
-          if (activeToolCur === "coverage") {
-            // Coverage only needs one pick
+          if (activeToolCur === "coverage" || activeToolCur === "scan") {
+            // Single-origin tools skip pickTo
             setToolStep("result");
           } else {
             setToolStep("pickTo");
@@ -2048,9 +2319,11 @@ export function Map() {
       map.on("click", "plain-nodes", onNodeLayerClick);
       map.on("click", SPIDERFY_LAYER_NODES, onNodeLayerClick);
 
-      // Coverage-tool "virtual node" click — fires when user clicks empty map in pickFrom mode
+      // Virtual-origin click (coverage + scan tools). Fires when the user clicks
+      // empty map in pickFrom mode — drops a synthetic origin at that lng/lat.
       map.on("click", (e) => {
-        if (activeToolRef.current !== "coverage" || toolStepRef.current !== "pickFrom") return;
+        const t = activeToolRef.current;
+        if ((t !== "coverage" && t !== "scan") || toolStepRef.current !== "pickFrom") return;
         // Ignore if clicking on a node layer (handled by onNodeLayerClick)
         const features = map.queryRenderedFeatures(e.point, {
           layers: ["unclustered-nodes", "plain-nodes", "clusters", SPIDERFY_LAYER_NODES].filter((id) => map.getLayer(id)),
@@ -2821,7 +3094,7 @@ export function Map() {
         const stepCur = toolStepRef.current;
         if (activeToolCur && stepCur === "pickFrom") {
           setToolFromId(node.id);
-          if (activeToolCur === "coverage") {
+          if (activeToolCur === "coverage" || activeToolCur === "scan") {
             setToolStep("result");
           } else {
             setToolStep("pickTo");
@@ -3135,9 +3408,11 @@ export function Map() {
           message={
             activeTool === "coverage"
               ? "Click a node (or click anywhere on the map for a virtual location)"
-              : activeTool === "los"
-                ? "LOS: pick the first node"
-                : "Traceroute: pick the first node"
+              : activeTool === "scan"
+                ? "Scan: pick an origin (or click anywhere for a virtual location)"
+                : activeTool === "los"
+                  ? "LOS: pick the first node"
+                  : "Traceroute: pick the first node"
           }
           hint="Press Esc to cancel"
           onCancel={resetTool}
@@ -3217,6 +3492,24 @@ export function Map() {
           onNodeSelect={(id) => handleNodeSelectRef.current(id)}
           onHoverLink={(id) => handleLinkHoverRef.current(id)}
           onClose={resetTool}
+        />
+      )}
+
+      {/* Floating Scan panel */}
+      {activeTool === "scan" && toolStep === "result" && (toolFromId || toolVirtualPos) && (
+        <MapScanPanel
+          summary={scanSummary}
+          originLabel={
+            toolFromId
+              ? ((nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.shortname ?? toolFromId.slice(0, 8))
+              : "Virtual location"
+          }
+          isScanning={isScanning}
+          terrainNeeded={provider === "mapbox" && !terrain3D}
+          onEnableTerrain={provider === "mapbox" ? () => setTerrain3D(true) : undefined}
+          onClose={resetTool}
+          onSelectResult={(id) => handleNodeSelectRef.current(id)}
+          onHoverResult={(id) => setScanHoverId(id)}
         />
       )}
 
