@@ -1,6 +1,6 @@
 import type { Coordinate } from "ol/coordinate";
 
-import type { INode, ITraceroutesResponse } from "../../types";
+import type { INode, ITraceroutesResponse, NodeRole } from "../../types";
 import type { ElsewhereLink } from "../../types/config";
 
 export type MapProvider = "osm" | "mapbox";
@@ -41,6 +41,7 @@ export type NodeLike = {
   gateway?: string | null;
   online: boolean;
   position: Coordinate; // [lon, lat]
+  role?: NodeRole;
   neighbors?: {
     id: string;
     snr: number;

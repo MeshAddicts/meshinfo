@@ -28,6 +28,7 @@ import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
 import { MapDetailsPanel } from "./map/MapDetailsPanel";
 import { MapQuickControls } from "./map/MapQuickControls";
+import { MapSearchBar } from "./map/MapSearchBar";
 import { MapSettingsPanel } from "./map/MapSettingsPanel";
 import { LS_KEYS, readJson, toMapboxStyleUrl, writeJson } from "./map/storage";
 import type { IFeatureNode, IMapNode, LinkMode, MapProvider, NodeDetailsData, NodeLike } from "./map/types";
@@ -54,8 +55,11 @@ import {
   buildNodesGeoJSON,
   bumpOlRender,
   computeRecentNodes,
+  DEFAULT_NODE_COLOR,
   emptyLineFeatureCollection,
   escapeHtml,
+  OFFLINE_NODE_COLOR,
+  ROLE_COLORS,
 } from "./map/utils";
 
 // --------------------
@@ -78,6 +82,17 @@ function snrToOlWidth(snr: number | null | undefined): number {
   return Math.max(1.5, Math.min(9, 3 + snr * 0.4));
 }
 
+// Mapbox expression: role-based node color (offline nodes stay gray)
+const mbRoleColorExpr = [
+  "case",
+  ["!", ["boolean", ["get", "online"], false]],
+  OFFLINE_NODE_COLOR,
+  ["match", ["get", "role"],
+    ...Object.entries(ROLE_COLORS).flatMap(([k, v]) => [Number(k), v]),
+    DEFAULT_NODE_COLOR, // fallback
+  ],
+] as any;
+
 // --------------------
 // OpenLayers styles
 // --------------------
@@ -97,20 +112,36 @@ const offlineStyle = new Style({
   }),
 });
 
-const onlinePulseStyle = new Style({
-  image: new Circle({
-    radius: 12,
-    fill: new Fill({ color: "rgba(50, 240, 50, 0.25)" }),
-  }),
-});
+// Cache OL styles per role to avoid creating new objects every render
+const olRoleStyleCache: Record<string, Style[]> = {};
 
-const onlineStyle = new Style({
-  image: new Circle({
-    radius: 6,
-    fill: new Fill({ color: "rgba(50, 240, 50, 1)" }),
-    stroke: new Stroke({ color: "white", width: 2 }),
-  }),
-});
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function getOlNodeStyle(online: boolean, role?: number | null): Style | Style[] {
+  if (!online) return offlineStyle;
+  const color = (role != null && ROLE_COLORS[role]) || DEFAULT_NODE_COLOR;
+  let cached = olRoleStyleCache[color];
+  if (!cached) {
+    const pulseStyle = new Style({
+      image: new Circle({ radius: 12, fill: new Fill({ color: hexToRgba(color, 0.25) }) }),
+    });
+    const nodeStyle = new Style({
+      image: new Circle({
+        radius: 6,
+        fill: new Fill({ color }),
+        stroke: new Stroke({ color: "white", width: 2 }),
+      }),
+    });
+    cached = [pulseStyle, nodeStyle];
+    olRoleStyleCache[color] = cached;
+  }
+  return cached;
+}
 
 export function Map() {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -132,7 +163,6 @@ export function Map() {
   const mbHandlersBoundRef = useRef(false);
   const mbCurrentStyleUrlRef = useRef<string | null>(null);
   const mbKeydownHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
-  const mbPulseAnimRef = useRef<number>(0);
 
   // Shared ref for panel node-select callback (set by whichever provider is active)
   const handleNodeSelectRef = useRef<(nodeId: string) => void>(() => {});
@@ -410,6 +440,56 @@ export function Map() {
     return () => timers.forEach(clearTimeout);
   }, [urlNodeId, flyToTarget, olMap, setSearchParams]);
 
+  // Sync map center/zoom to URL params (debounced)
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const syncUrl = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        let lat: number | undefined;
+        let lng: number | undefined;
+        let z: number | undefined;
+
+        const mb = mbMapRef.current;
+        if (mb && provider === "mapbox") {
+          const c = mb.getCenter();
+          lat = +c.lat.toFixed(5);
+          lng = +c.lng.toFixed(5);
+          z = +mb.getZoom().toFixed(2);
+        } else if (olMap && provider === "osm") {
+          const center = olMap.getView().getCenter();
+          const zoom = olMap.getView().getZoom();
+          if (center) {
+            const [lo, la] = transform(center, "EPSG:3857", "EPSG:4326");
+            lat = +la.toFixed(5);
+            lng = +lo.toFixed(5);
+          }
+          if (zoom != null) z = +zoom.toFixed(2);
+        }
+
+        if (lat != null && lng != null && z != null) {
+          setSearchParams((prev) => {
+            prev.set("lat", String(lat));
+            prev.set("lng", String(lng));
+            prev.set("z", String(z));
+            return prev;
+          }, { replace: true });
+        }
+      }, 800);
+    };
+
+    const mb = mbMapRef.current;
+    if (mb && provider === "mapbox") {
+      mb.on("moveend", syncUrl);
+      return () => { clearTimeout(timer); mb.off("moveend", syncUrl); };
+    }
+    if (olMap && provider === "osm") {
+      olMap.on("moveend", syncUrl);
+      return () => { clearTimeout(timer); olMap.un("moveend", syncUrl); };
+    }
+    return () => clearTimeout(timer);
+  }, [provider, olMap, setSearchParams]);
+
   // Derive "My Node" label from current state
   const myNodeLabel = useMemo(() => {
     if (!myNodeId) return null;
@@ -463,6 +543,7 @@ export function Map() {
           position: node.map_position,
           neighbors: node.neighbors,
           gateway: node.gateway,
+          role: (node as any).role,
         };
         const heardBy = computeHeardByIds(liveNodes, id);
         const neighborFC = buildMapboxLinkFeatureCollection({ node: nodeLike, liveNodes, heardBy });
@@ -626,14 +707,20 @@ export function Map() {
     const savedLon = typeof saved[0] === "number" ? saved[0] : undefined;
     const savedLat = typeof saved[1] === "number" ? saved[1] : undefined;
 
-    // If deep-linking to a node, override initial center/zoom
+    // Priority: ?node= fly-to > URL lat/lng/z > localStorage > defaults
     const flyTarget = flyToTargetRef.current;
+    const urlLat = parseFloat(searchParams.get("lat") ?? "");
+    const urlLng = parseFloat(searchParams.get("lng") ?? "");
+    const urlZ = parseFloat(searchParams.get("z") ?? "");
+
     const initialCenter: [number, number] = flyTarget
       ? [flyTarget[0], flyTarget[1]]
-      : [savedLon ?? centerPos.longitude, savedLat ?? centerPos.latitude];
+      : Number.isFinite(urlLng) && Number.isFinite(urlLat)
+        ? [urlLng, urlLat]
+        : [savedLon ?? centerPos.longitude, savedLat ?? centerPos.latitude];
 
-    let initialZoom = flyTarget ? 14 : 9.5;
-    if (!flyTarget) {
+    let initialZoom = flyTarget ? 14 : Number.isFinite(urlZ) ? urlZ : 9.5;
+    if (!flyTarget && !Number.isFinite(urlZ)) {
       try {
         const z = JSON.parse(localStorage.getItem("savedZoom") ?? "9.5");
         if (typeof z === "number" && Number.isFinite(z)) initialZoom = z;
@@ -827,7 +914,7 @@ export function Map() {
           filter: ["all", ["!", ["has", "point_count"]], ["==", ["get", "online"], true]],
           paint: {
             "circle-radius": 12,
-            "circle-color": "#32f032",
+            "circle-color": mbRoleColorExpr,
             "circle-opacity": 0.3,
             "circle-stroke-width": 0,
           },
@@ -843,12 +930,7 @@ export function Map() {
           filter: ["!", ["has", "point_count"]],
           paint: {
             "circle-radius": ["case", ["boolean", ["feature-state", "selected"], false], 10, 6],
-            "circle-color": [
-              "case",
-              ["boolean", ["get", "online"], false],
-              "#32f032",
-              "rgba(0,0,0,0.50)",
-            ],
+            "circle-color": mbRoleColorExpr,
             "circle-stroke-width": 2,
             "circle-stroke-color": [
               "case",
@@ -891,7 +973,7 @@ export function Map() {
           filter: ["==", ["get", "online"], true],
           paint: {
             "circle-radius": 12,
-            "circle-color": "#32f032",
+            "circle-color": mbRoleColorExpr,
             "circle-opacity": 0.3,
             "circle-stroke-width": 0,
           },
@@ -906,12 +988,7 @@ export function Map() {
           source: "nodes_plain",
           paint: {
             "circle-radius": ["case", ["boolean", ["feature-state", "selected"], false], 10, 6],
-            "circle-color": [
-              "case",
-              ["boolean", ["get", "online"], false],
-              "#32f032",
-              "rgba(0,0,0,0.50)",
-            ],
+            "circle-color": mbRoleColorExpr,
             "circle-stroke-width": 2,
             "circle-stroke-color": [
               "case",
@@ -972,6 +1049,7 @@ export function Map() {
           position: node.map_position,
           neighbors: node.neighbors,
           gateway: node.gateway,
+          role: (node as any).role,
         };
 
         const heardBy = computeHeardByIds(liveNodes, id);
@@ -1179,22 +1257,6 @@ export function Map() {
       mbKeydownHandlerRef.current = handleKeydown;
       document.addEventListener("keydown", handleKeydown);
 
-      // --- Pulse animation for online nodes ---
-      cancelAnimationFrame(mbPulseAnimRef.current);
-      const animatePulse = () => {
-        const t = (Date.now() % 2000) / 2000;
-        const radius = 8 + 8 * Math.sin(t * Math.PI * 2);
-        const opacity = 0.15 + 0.2 * Math.sin(t * Math.PI * 2);
-        for (const layerId of ["unclustered-pulse", "plain-pulse"]) {
-          if (map.getLayer(layerId)) {
-            map.setPaintProperty(layerId, "circle-radius", radius);
-            map.setPaintProperty(layerId, "circle-opacity", opacity);
-          }
-        }
-        mbPulseAnimRef.current = requestAnimationFrame(animatePulse);
-      };
-      animatePulse();
-
       // --- Hover tooltips (desktop only) ---
       const hoverPopup = new mapboxgl.Popup({
         closeButton: false,
@@ -1233,7 +1295,6 @@ export function Map() {
         document.removeEventListener("keydown", mbKeydownHandlerRef.current);
         mbKeydownHandlerRef.current = null;
       }
-      cancelAnimationFrame(mbPulseAnimRef.current);
       if (mbMapRef.current) {
         mbMapRef.current.remove();
         mbMapRef.current = null;
@@ -1384,14 +1445,20 @@ export function Map() {
     const savedLon = typeof saved[0] === "number" ? saved[0] : undefined;
     const savedLat = typeof saved[1] === "number" ? saved[1] : undefined;
 
-    // If deep-linking to a node, override initial center/zoom
+    // Priority: ?node= fly-to > URL lat/lng/z > localStorage > defaults
     const flyTarget = flyToTargetRef.current;
+    const urlLat = parseFloat(searchParams.get("lat") ?? "");
+    const urlLng = parseFloat(searchParams.get("lng") ?? "");
+    const urlZ = parseFloat(searchParams.get("z") ?? "");
+
     const initialCenter = flyTarget
       ? fromLonLat([flyTarget[0], flyTarget[1]])
-      : fromLonLat([savedLon ?? centerPos.longitude, savedLat ?? centerPos.latitude]);
+      : Number.isFinite(urlLng) && Number.isFinite(urlLat)
+        ? fromLonLat([urlLng, urlLat])
+        : fromLonLat([savedLon ?? centerPos.longitude, savedLat ?? centerPos.latitude]);
 
-    let initialZoom = flyTarget ? 14 : 9.5;
-    if (!flyTarget) {
+    let initialZoom = flyTarget ? 14 : Number.isFinite(urlZ) ? urlZ : 9.5;
+    if (!flyTarget && !Number.isFinite(urlZ)) {
       try {
         const z = JSON.parse(localStorage.getItem("savedZoom") ?? "9.5");
         if (typeof z === "number" && Number.isFinite(z)) initialZoom = z;
@@ -1496,7 +1563,7 @@ export function Map() {
           } satisfies IFeatureNode,
         });
 
-        feature.setStyle(node.online ? [onlinePulseStyle, onlineStyle] : offlineStyle);
+        feature.setStyle(getOlNodeStyle(node.online, (node as any).role));
         return feature;
       })
       .filter((f): f is Feature<Point> => Boolean(f));
@@ -1537,6 +1604,7 @@ export function Map() {
         position: node.position,
         neighbors: node.neighbors,
         gateway: node.gateway,
+        role: fullNode?.role,
       };
 
       const heardBy = computeHeardByIds(liveNodes, node.id);
@@ -1739,7 +1807,7 @@ export function Map() {
           } satisfies IFeatureNode,
         });
 
-        feature.setStyle(node.online ? [onlinePulseStyle, onlineStyle] : offlineStyle);
+        feature.setStyle(getOlNodeStyle(node.online, (node as any).role));
         return feature;
       })
       .filter((f): f is Feature<Point> => Boolean(f));
@@ -1770,7 +1838,7 @@ export function Map() {
               neighbors: node.neighbors,
             } satisfies IFeatureNode,
           });
-          f.setStyle(node.online ? [onlinePulseStyle, onlineStyle] : offlineStyle);
+          f.setStyle(getOlNodeStyle(node.online, (node as any).role));
           return f;
         })
         .filter((f): f is Feature<Point> => Boolean(f));
@@ -1864,6 +1932,11 @@ export function Map() {
   return (
     <div className="relative w-full h-full min-h-0 overflow-hidden overscroll-none">
       <div id="map" ref={mapRef} className="absolute inset-0" />
+
+      <MapSearchBar
+        nodes={nodes}
+        onSelect={(id) => handleNodeSelectRef.current(id)}
+      />
 
       <MapSettingsPanel
         settingsPanelRef={settingsPanelRef}

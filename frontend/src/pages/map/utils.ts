@@ -8,8 +8,29 @@ import type {
 import type { Map as MbMap } from "mapbox-gl";
 import type { Map as OlMap } from "ol";
 
+import { NodeRole } from "../../types";
 import { removeSpiderfyLayers } from "./spiderfy";
 import type { IMapNode } from "./types";
+
+// Role → color mapping for node rendering
+export const ROLE_COLORS: Record<number, string> = {
+  [NodeRole.CLIENT]: "#32f032",       // green (default)
+  [NodeRole.CLIENT_MUTE]: "#6b7280",  // gray
+  [NodeRole.ROUTER]: "#3b82f6",       // blue
+  [NodeRole.ROUTER_CLIENT]: "#60a5fa",// light blue
+  [NodeRole.REPEATER]: "#f59e0b",     // amber
+  [NodeRole.TRACKER]: "#a855f7",      // purple
+  [NodeRole.SENSOR]: "#14b8a6",       // teal
+  [NodeRole.TAK]: "#ef4444",          // red
+  [NodeRole.CLIENT_HIDDEN]: "#4b5563",// dark gray
+  [NodeRole.LOST_AND_FOUND]: "#d946ef",// fuchsia
+  [NodeRole.TAK_TRACKER]: "#f87171",  // light red
+  [NodeRole.ROUTER_LATE]: "#93c5fd",  // pale blue
+  [NodeRole.CLIENT_BASE]: "#22c55e",  // emerald
+};
+
+export const DEFAULT_NODE_COLOR = "#32f032";
+export const OFFLINE_NODE_COLOR = "rgba(0,0,0,0.50)";
 
 export function escapeHtml(text: string): string {
   const div = document.createElement("div");

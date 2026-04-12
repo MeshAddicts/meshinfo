@@ -1,6 +1,8 @@
 import { useCallback, useRef, useState } from "react";
 
+import { roleTitles, type NodeRole } from "../../types";
 import { getElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLinks";
+import { ROLE_COLORS, DEFAULT_NODE_COLOR } from "./utils";
 import { calculateGeodesicDistance } from "./utils";
 import { normNodeId } from "./linkFeatures";
 import type { IMapNode, NodeDetailsData } from "./types";
@@ -361,6 +363,21 @@ export function MapDetailsPanel({
             <span className={`w-1.5 h-1.5 rounded-full ${node.online ? "bg-emerald-400" : "bg-gray-500"}`} />
             {node.online ? "Online" : "Offline"}
           </span>
+          {node.role != null && roleTitles[node.role as NodeRole] && (
+            <span
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium"
+              style={{
+                backgroundColor: `${ROLE_COLORS[node.role] ?? DEFAULT_NODE_COLOR}20`,
+                color: ROLE_COLORS[node.role] ?? DEFAULT_NODE_COLOR,
+              }}
+            >
+              <span
+                className="w-1.5 h-1.5 rounded-full"
+                style={{ backgroundColor: ROLE_COLORS[node.role] ?? DEFAULT_NODE_COLOR }}
+              />
+              {roleTitles[node.role as NodeRole].title}
+            </span>
+          )}
           {channelLabel && (
             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-white/10 text-gray-400">
               {channelLabel}
