@@ -8,6 +8,36 @@ import type {
 import type { ITraceroutesResponse } from "../../types";
 import type { IMapNode, NodeLike } from "./types";
 
+/**
+ * Compute a slightly curved arc between two points.
+ * Returns an array of coordinates forming the arc.
+ * The offset factor controls how much the arc bows out (0 = straight line).
+ */
+function arcCoordinates(
+  from: [number, number],
+  to: [number, number],
+  segments: number = 16,
+  offsetFactor: number = 0.15,
+): [number, number][] {
+  const dx = to[0] - from[0];
+  const dy = to[1] - from[1];
+  // Perpendicular offset direction
+  const nx = -dy * offsetFactor;
+  const ny = dx * offsetFactor;
+
+  const coords: [number, number][] = [];
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    // Quadratic bezier with control point offset perpendicular to the line
+    const ct = 4 * t * (1 - t); // peaks at 1.0 at t=0.5
+    coords.push([
+      from[0] + dx * t + nx * ct,
+      from[1] + dy * t + ny * ct,
+    ]);
+  }
+  return coords;
+}
+
 export function computeHeardByIds(liveNodes: Record<string, IMapNode>, targetId: string): string[] {
   return Object.keys(liveNodes).filter((nid) =>
     liveNodes[nid].neighbors?.some((neighbor) => neighbor.id === targetId)
@@ -40,15 +70,15 @@ export function buildMapboxLinkFeatureCollection(opts: {
     const revSnr = (other.neighbors ?? []).find((n) => n.id === node.id)?.snr;
     const snr = fwdSnr ?? revSnr ?? null;
 
+    const from: [number, number] = [node.position[0], node.position[1]];
+    const to: [number, number] = [other.map_position[0], other.map_position[1]];
+
     linkFeatures.push({
       type: "Feature",
       properties: { kind, snr },
       geometry: {
         type: "LineString",
-        coordinates: [
-          [node.position[0], node.position[1]],
-          [other.map_position[0], other.map_position[1]],
-        ],
+        coordinates: kind === "both" ? arcCoordinates(from, to) : [from, to],
       },
     });
   });
@@ -90,15 +120,16 @@ export function buildAllLinksFeatureCollection(
       const revEntry = reverseNeighbors.find((n) => n.id === nodeId);
       const snr = neighbor.snr ?? revEntry?.snr ?? null;
 
+      const from: [number, number] = [node.map_position[0], node.map_position[1]];
+      const to: [number, number] = [other.map_position[0], other.map_position[1]];
+      const kind = isMutual ? "both" : "neighbor";
+
       linkFeatures.push({
         type: "Feature",
-        properties: { kind: isMutual ? "both" : "neighbor", snr },
+        properties: { kind, snr },
         geometry: {
           type: "LineString",
-          coordinates: [
-            [node.map_position[0], node.map_position[1]],
-            [other.map_position[0], other.map_position[1]],
-          ],
+          coordinates: kind === "both" ? arcCoordinates(from, to) : [from, to],
         },
       });
     }

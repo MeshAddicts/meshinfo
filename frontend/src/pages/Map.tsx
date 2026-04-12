@@ -82,6 +82,53 @@ function snrToOlWidth(snr: number | null | undefined): number {
   return Math.max(1.5, Math.min(9, 3 + snr * 0.4));
 }
 
+// ---------------------
+// Tooltip helpers
+// ---------------------
+function relativeTime(iso: string | null | undefined): string {
+  if (!iso) return "Unknown";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(ms)) return "Unknown";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
+/** SVG signal bars (1-4) colored by best SNR. Returns inline SVG string. */
+function signalBarsHtml(snr: number | null): string {
+  // Map SNR to 1–4 bars
+  let bars: number;
+  let color: string;
+  if (snr == null) { bars = 0; color = "#6b7280"; }
+  else if (snr >= 10) { bars = 4; color = "#22c55e"; }
+  else if (snr >= 5) { bars = 3; color = "#84cc16"; }
+  else if (snr >= 0) { bars = 2; color = "#eab308"; }
+  else { bars = 1; color = "#ef4444"; }
+
+  const heights = [4, 7, 10, 13];
+  const rects = heights.map((h, i) => {
+    const fill = i < bars ? color : "#374151";
+    return `<rect x="${i * 5}" y="${16 - h}" width="3.5" height="${h}" rx="0.5" fill="${fill}"/>`;
+  }).join("");
+  return `<svg width="20" height="16" viewBox="0 0 20 16" style="vertical-align:middle;margin-right:4px">${rects}</svg>`;
+}
+
+/** Get the best (max) SNR from a node's neighbors. */
+function bestSnr(nodeId: string, nodes: Record<string, IMapNode>): number | null {
+  const node = nodes[nodeId];
+  if (!node?.neighbors?.length) return null;
+  let max = -Infinity;
+  for (const n of node.neighbors) {
+    if (n.snr > max) max = n.snr;
+  }
+  return max === -Infinity ? null : max;
+}
+
 // Mapbox expression: role-based node color (offline nodes stay gray)
 const mbRoleColorExpr = [
   "case",
@@ -581,9 +628,10 @@ export function Map() {
       const snr = f.properties?.snr as number | null;
       const color = snrToOlColor(snr, kind);
       const width = snrToOlWidth(snr);
+      const dash = kind === "heard_by" ? [8, 6] : kind === "traceroute" ? [2, 6] : undefined;
       line.setStyle(
         new Style({
-          stroke: new Stroke({ color, width }),
+          stroke: new Stroke({ color, width, lineDash: dash }),
         })
       );
       return line;
@@ -838,40 +886,72 @@ export function Map() {
         });
       }
 
-      // links layer
-      if (!map.getLayer("links-line")) {
+      // Shared link paint properties
+      const linkWidth = [
+        "case",
+        ["==", ["get", "snr"], null], 3,
+        ["interpolate", ["linear"], ["get", "snr"],
+          -10, 1.5, 0, 3, 5, 5, 10, 7, 20, 9,
+        ],
+      ] as any;
+      const linkColor = [
+        "case",
+        ["==", ["get", "kind"], "traceroute"], "#F59E0B",
+        ["==", ["get", "snr"], null], [
+          "match", ["get", "kind"],
+          "neighbor", "#66FF66",
+          "heard_by", "#6666FF",
+          "both", "#FF66FF",
+          "#FFFFFF",
+        ],
+        ["interpolate", ["linear"], ["get", "snr"],
+          -10, "#FF4444", -5, "#FF6644", 0, "#FFAA00",
+          2.5, "#FFDD00", 5, "#88DD00", 10, "#44CC44",
+        ],
+      ] as any;
+
+      // Neighbor + both links — solid lines (both uses curved arcs from GeoJSON)
+      if (!map.getLayer("links-solid")) {
         map.addLayer({
-          id: "links-line",
+          id: "links-solid",
           type: "line",
           source: "links",
+          filter: ["in", ["get", "kind"], ["literal", ["neighbor", "both"]]],
+          layout: { "line-join": "round", "line-cap": "round" },
+          paint: { "line-opacity": 0.9, "line-width": linkWidth, "line-color": linkColor },
+        });
+      }
+
+      // Heard-by links — dashed lines
+      if (!map.getLayer("links-dashed")) {
+        map.addLayer({
+          id: "links-dashed",
+          type: "line",
+          source: "links",
+          filter: ["==", ["get", "kind"], "heard_by"],
           layout: { "line-join": "round", "line-cap": "round" },
           paint: {
-            "line-opacity": 0.9,
-            // SNR-based thickness: strong links thick, weak links thin
-            "line-width": [
-              "case",
-              ["==", ["get", "snr"], null], 3,
-              ["interpolate", ["linear"], ["get", "snr"],
-                -10, 1.5, 0, 3, 5, 5, 10, 7, 20, 9,
-              ],
-            ] as any,
-            // SNR-based color: red (poor) → yellow (marginal) → green (good)
-            // Traceroute links keep amber; null-SNR falls back to kind-based color
-            "line-color": [
-              "case",
-              ["==", ["get", "kind"], "traceroute"], "#F59E0B",
-              ["==", ["get", "snr"], null], [
-                "match", ["get", "kind"],
-                "neighbor", "#66FF66",
-                "heard_by", "#6666FF",
-                "both", "#FF66FF",
-                "#FFFFFF",
-              ],
-              ["interpolate", ["linear"], ["get", "snr"],
-                -10, "#FF4444", -5, "#FF6644", 0, "#FFAA00",
-                2.5, "#FFDD00", 5, "#88DD00", 10, "#44CC44",
-              ],
-            ] as any,
+            "line-opacity": 0.7,
+            "line-width": linkWidth,
+            "line-color": linkColor,
+            "line-dasharray": [4, 3],
+          },
+        });
+      }
+
+      // Traceroute links — dotted lines
+      if (!map.getLayer("links-dotted")) {
+        map.addLayer({
+          id: "links-dotted",
+          type: "line",
+          source: "links",
+          filter: ["==", ["get", "kind"], "traceroute"],
+          layout: { "line-join": "round", "line-cap": "round" },
+          paint: {
+            "line-opacity": 0.7,
+            "line-width": linkWidth,
+            "line-color": linkColor,
+            "line-dasharray": [1, 3],
           },
         });
       }
@@ -1247,11 +1327,42 @@ export function Map() {
         longPressPoint = null;
       }, { passive: true });
 
-      // Escape key collapses spiderfy
+      // Keyboard navigation
       const handleKeydown = (e: KeyboardEvent) => {
-        if (e.key === "Escape") {
-          void unspiderfy(map);
-          clearMapboxSelectionAndOverlays();
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+        const PAN_PX = 100;
+        switch (e.key) {
+          case "Escape":
+            void unspiderfy(map);
+            clearMapboxSelectionAndOverlays();
+            break;
+          case "ArrowLeft":
+            e.preventDefault();
+            map.panBy([-PAN_PX, 0], { duration: 200 });
+            break;
+          case "ArrowRight":
+            e.preventDefault();
+            map.panBy([PAN_PX, 0], { duration: 200 });
+            break;
+          case "ArrowUp":
+            e.preventDefault();
+            map.panBy([0, -PAN_PX], { duration: 200 });
+            break;
+          case "ArrowDown":
+            e.preventDefault();
+            map.panBy([0, PAN_PX], { duration: 200 });
+            break;
+          case "=":
+          case "+":
+            e.preventDefault();
+            map.zoomIn({ duration: 200 });
+            break;
+          case "-":
+            e.preventDefault();
+            map.zoomOut({ duration: 200 });
+            break;
         }
       };
       mbKeydownHandlerRef.current = handleKeydown;
@@ -1269,14 +1380,18 @@ export function Map() {
         const feature = e.features?.[0];
         if (!feature) return;
         const p = feature.properties!;
+        const nodeId = p.id as string;
         const role = p.role != null ? roleTitles[p.role as NodeRole]?.title ?? "" : "";
-        const status = p.online ? "Online" : "Offline";
+        const snr = bestSnr(nodeId, nodesRef.current);
         hoverPopup
           .setLngLat((feature.geometry as any).coordinates)
           .setHTML(
-            `<strong>${escapeHtml(p.shortname || p.id)}</strong>` +
-            (role ? `<br/>${role}` : "") +
-            `<br/>${status}`
+            `<div style="display:flex;align-items:center;gap:4px">` +
+            signalBarsHtml(snr) +
+            `<strong>${escapeHtml(p.shortname || nodeId)}</strong>` +
+            `</div>` +
+            (role ? `<span style="opacity:0.6">${role}</span><br/>` : "") +
+            `<span style="opacity:0.6">${relativeTime(p.last_seen)}</span>`
           )
           .addTo(map);
       };
@@ -1531,11 +1646,14 @@ export function Map() {
 
         const fullNode = nodesRef.current[nodeData.id];
         const role = fullNode?.role != null ? roleTitles[fullNode.role]?.title ?? "" : "";
-        const status = nodeData.online ? "Online" : "Offline";
+        const snr = bestSnr(nodeData.id, nodesRef.current);
         tooltipEl.innerHTML =
+          `<div style="display:flex;align-items:center;gap:4px">` +
+          signalBarsHtml(snr) +
           `<strong>${escapeHtml(nodeData.shortname || nodeData.id)}</strong>` +
-          (role ? `<br/>${role}` : "") +
-          `<br/>${status}`;
+          `</div>` +
+          (role ? `<span style="opacity:0.6">${role}</span><br/>` : "") +
+          `<span style="opacity:0.6">${relativeTime(nodeData.last_seen)}</span>`;
         const geom = (f as Feature<Point>).getGeometry();
         if (geom) tooltipOverlay.setPosition(geom.getCoordinates());
       });
