@@ -365,6 +365,7 @@ export function Map() {
   const [channelFilter, setChannelFilter] = useState<string | null>(null);
   const [pathPickMode, setPathPickMode] = useState(false);
   const [pathTargetId, setPathTargetId] = useState<string | null>(null);
+  const [activeTool, setActiveTool] = useState<"los" | "traceroute" | null>(null);
 
   // 3D terrain (Mapbox only)
   const [terrain3D, setTerrain3D] = useState<boolean>(() => readJson<boolean>(LS_KEYS.terrain3D, false));
@@ -555,11 +556,12 @@ export function Map() {
     }
   }, [pathPickMode, olMap]);
 
-  // Clear path comparison when selected node changes or panel closes
+  // Clear tool state when selected node changes or panel closes
   useEffect(() => {
     if (!detailsData) {
       setPathTargetId(null);
       setPathPickMode(false);
+      setActiveTool(null);
     }
   }, [detailsData]);
 
@@ -567,7 +569,7 @@ export function Map() {
   useEffect(() => {
     // Helper: compute shortest path coordinates
     const computePathCoords = (): [number, number][] | null => {
-      if (!pathTargetId || !detailsData) return null;
+      if (activeTool !== "traceroute" || !pathTargetId || !detailsData) return null;
       const paths = findPathsBetween(detailsData.node.id, pathTargetId, rawTraceroutes);
       if (paths.length === 0) return null;
       const shortest = paths[0];
@@ -610,12 +612,12 @@ export function Map() {
         olMap.addLayer(pathLayer);
       }
     }
-  }, [pathTargetId, detailsData, rawTraceroutes, nodes, olMap]);
+  }, [activeTool, pathTargetId, detailsData, rawTraceroutes, nodes, olMap]);
 
   // Line-of-sight analysis between selected node and pathTargetId.
-  // Requires Mapbox with 3D terrain enabled (so we can query real elevations).
+  // Only runs when the LOS tool is active.
   useEffect(() => {
-    if (!pathTargetId || !detailsData) {
+    if (activeTool !== "los" || !pathTargetId || !detailsData) {
       setLosResult(null);
       return;
     }
@@ -671,7 +673,7 @@ export function Map() {
     // Wait for terrain tiles to settle, then sample
     const timer = setTimeout(run, 1200);
     return () => clearTimeout(timer);
-  }, [pathTargetId, detailsData, provider, terrain3D, nodes]);
+  }, [activeTool, pathTargetId, detailsData, provider, terrain3D, nodes]);
 
   useEffect(() => { channelFilterRef.current = channelFilter; }, [channelFilter]);
 
@@ -2762,13 +2764,14 @@ export function Map() {
         pathAnalysis={{
           pickMode: pathPickMode,
           targetId: pathTargetId,
-          onEnterPickMode: () => setPathPickMode(true),
-          onClearPath: () => { setPathTargetId(null); setPathPickMode(false); },
+          activeTool,
+          onEnterPickMode: (tool) => { setActiveTool(tool); setPathPickMode(true); },
+          onClearPath: () => { setPathTargetId(null); setPathPickMode(false); setActiveTool(null); },
         }}
       />
 
-      {/* Floating LoS panel — bottom-center when comparing two nodes */}
-      {pathTargetId && detailsData && (
+      {/* Floating LoS panel — bottom-center when LOS tool is active */}
+      {pathTargetId && detailsData && activeTool === "los" && (
         <MapLosPanel
           result={losResult}
           fromLabel={detailsData.node.shortname ?? detailsData.node.id.slice(0, 8)}

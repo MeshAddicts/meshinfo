@@ -200,24 +200,38 @@ function ToolsSection({
 
   // Tool menu (shown when no comparison active)
   if (!pathAnalysis.targetId) {
+    const picking = pathAnalysis.pickMode;
     return (
       <div className="space-y-1">
         <ToolButton
           icon={
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 19l6-6 4 4 8-8m0 0h-5m5 0v5" />
             </svg>
           }
-          label={pathAnalysis.pickMode ? "Click a second node… (Esc to cancel)" : "Compare with another node"}
-          description="Line-of-sight, Fresnel zone, and traceroute paths"
-          onClick={pathAnalysis.onEnterPickMode}
-          active={pathAnalysis.pickMode}
+          label={picking && pathAnalysis.activeTool === "los" ? "Click a second node… (Esc to cancel)" : "LOS"}
+          description="Line-of-sight + Fresnel zone analysis"
+          onClick={() => pathAnalysis.onEnterPickMode("los")}
+          active={picking && pathAnalysis.activeTool === "los"}
+        />
+        <ToolButton
+          icon={
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+            </svg>
+          }
+          label={picking && pathAnalysis.activeTool === "traceroute" ? "Click a second node… (Esc to cancel)" : "Traceroute"}
+          description="Observed mesh routing between two nodes"
+          onClick={() => pathAnalysis.onEnterPickMode("traceroute")}
+          active={picking && pathAnalysis.activeTool === "traceroute"}
         />
       </div>
     );
   }
 
   const shortest = paths[0];
+
+  const toolLabel = pathAnalysis.activeTool === "los" ? "LOS" : "Traceroute";
 
   return (
     <div className="space-y-2">
@@ -233,58 +247,71 @@ function ToolsSection({
         Back to tools
       </button>
 
-      <div className="px-2 py-1 text-xs text-gray-300">
-        <div className="text-gray-500 text-[10px] uppercase tracking-wider mb-0.5">Comparing with</div>
+      <div className="px-2 py-1">
+        <div className="text-gray-500 text-[10px] uppercase tracking-wider mb-0.5">{toolLabel} — Comparing with</div>
         <button
           type="button"
           onClick={() => onNodeSelect(pathAnalysis.targetId!)}
-          className="text-cyan-400 hover:text-cyan-300 font-medium"
+          className="text-cyan-400 hover:text-cyan-300 font-medium text-xs"
         >
           {target?.shortname ?? pathAnalysis.targetId}
         </button>
       </div>
 
-      {/* LoS analysis is rendered in a floating bottom-center panel (MapLosPanel) */}
-
-      {/* Traceroute-based paths (if any) */}
-      <div className="pt-2 border-t border-white/5">
-        <div className="text-gray-400 text-[10px] uppercase tracking-wider mb-1.5 px-1">Traceroute Paths</div>
-        {paths.length === 0 ? (
-          <div className="px-2 text-xs text-gray-500">No known traceroute path between these nodes.</div>
-        ) : (
-          <div className="space-y-1.5">
-            {shortest && (
-              <div className="px-2 py-1.5 rounded bg-cyan-500/10 border border-cyan-500/20 text-xs">
-                <div className="text-cyan-400 text-[10px] uppercase tracking-wider mb-0.5">Shortest Path</div>
-                <div className="text-gray-200">
-                  {shortest.hopCount} {shortest.hopCount === 1 ? "hop" : "hops"}
-                  {shortest.snr != null && <span className="text-gray-500 ml-2">SNR {shortest.snr} dB</span>}
-                </div>
-                <PathHopList hops={shortest.hops} liveNodes={liveNodes} onNodeSelect={onNodeSelect} onHoverLink={onHoverLink} />
-              </div>
-            )}
-
-            {paths.length > 1 && (
-              <div className="px-2 pt-1">
-                <div className="text-gray-500 text-[10px] uppercase tracking-wider mb-1">
-                  Alternative Paths ({paths.length - 1})
-                </div>
-                <div className="space-y-1">
-                  {paths.slice(1, 6).map((p, i) => (
-                    <div key={i} className="text-xs px-2 py-1 rounded bg-white/5">
-                      <div className="text-gray-300">
-                        {p.hopCount} {p.hopCount === 1 ? "hop" : "hops"}
-                        {p.snr != null && <span className="text-gray-500 ml-2">SNR {p.snr} dB</span>}
-                      </div>
-                      <PathHopList hops={p.hops} liveNodes={liveNodes} onNodeSelect={onNodeSelect} onHoverLink={onHoverLink} />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+      {/* LOS tool — result shown in floating bottom panel (MapLosPanel) */}
+      {pathAnalysis.activeTool === "los" && (
+        <div className="px-2 py-2 rounded-lg bg-white/5 text-[11px] text-gray-400 border border-white/5">
+          <div className="flex items-start gap-2">
+            <svg className="w-3.5 h-3.5 text-gray-500 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+            </svg>
+            <span>Analysis results are shown in the floating panel at the bottom of the map.</span>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {/* Traceroute tool — observed mesh routing */}
+      {pathAnalysis.activeTool === "traceroute" && (
+        <div className="space-y-1.5">
+          {paths.length === 0 ? (
+            <div className="px-2 py-3 rounded-lg bg-white/5 text-xs text-gray-500">
+              No known traceroute path between these nodes.
+            </div>
+          ) : (
+            <>
+              {shortest && (
+                <div className="px-2 py-1.5 rounded bg-cyan-500/10 border border-cyan-500/20 text-xs">
+                  <div className="text-cyan-400 text-[10px] uppercase tracking-wider mb-0.5">Shortest Path</div>
+                  <div className="text-gray-200">
+                    {shortest.hopCount} {shortest.hopCount === 1 ? "hop" : "hops"}
+                    {shortest.snr != null && <span className="text-gray-500 ml-2">SNR {shortest.snr} dB</span>}
+                  </div>
+                  <PathHopList hops={shortest.hops} liveNodes={liveNodes} onNodeSelect={onNodeSelect} onHoverLink={onHoverLink} />
+                </div>
+              )}
+
+              {paths.length > 1 && (
+                <div className="px-2 pt-1">
+                  <div className="text-gray-500 text-[10px] uppercase tracking-wider mb-1">
+                    Alternative Paths ({paths.length - 1})
+                  </div>
+                  <div className="space-y-1">
+                    {paths.slice(1, 6).map((p, i) => (
+                      <div key={i} className="text-xs px-2 py-1 rounded bg-white/5">
+                        <div className="text-gray-300">
+                          {p.hopCount} {p.hopCount === 1 ? "hop" : "hops"}
+                          {p.snr != null && <span className="text-gray-500 ml-2">SNR {p.snr} dB</span>}
+                        </div>
+                        <PathHopList hops={p.hops} liveNodes={liveNodes} onNodeSelect={onNodeSelect} onHoverLink={onHoverLink} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
