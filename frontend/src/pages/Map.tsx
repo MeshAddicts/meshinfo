@@ -26,7 +26,7 @@ import { reverseGeocode } from "../maps/geocoder";
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
-import { COMMON_HARDWARE, computeCoverage, coverageToGeoJSON, linkBudgetMaxKm, type CoverageResult } from "./map/coverageAnalysis";
+import { COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS, computeCoverage, coverageToGeoJSON, linkBudgetMaxKm, type CoverageResult } from "./map/coverageAnalysis";
 import { analyzeLineOfSight, type LoSResult } from "./map/losAnalysis";
 import { findPathsBetween } from "./map/pathAnalysis";
 import { MapDetailsPanel } from "./map/MapDetailsPanel";
@@ -392,6 +392,12 @@ export function Map() {
   const coverageTxDbm = COMMON_HARDWARE[coverageHardwareIdx].isCustom
     ? coverageCustomTxDbm
     : COMMON_HARDWARE[coverageHardwareIdx].txDbm;
+  const [coverageEnvIdx, setCoverageEnvIdx] = useState(0);
+  const [coveragePresetIdx, setCoveragePresetIdx] = useState(1); // LongFast default
+  const [coverageCustomSensDbm, setCoverageCustomSensDbm] = useState(-133);
+  const coverageSensitivityDbm = MESHTASTIC_PRESETS[coveragePresetIdx].isCustom
+    ? coverageCustomSensDbm
+    : MESHTASTIC_PRESETS[coveragePresetIdx].sensitivityDbm;
   /** Tracks whether the user has manually overridden the slider
    * (so we don't auto-reset it on every hardware/antenna change once they have). */
   const coverageRadiusManualRef = useRef(false);
@@ -769,6 +775,8 @@ export function Map() {
           losSamples: 30,
           antennaDbi: coverageAntennaDbi,
           txDbm: coverageTxDbm,
+          envExponent: ENVIRONMENTS[coverageEnvIdx].pathLossExponent,
+          rxSensitivityDbm: coverageSensitivityDbm,
           queryTerrainM: (lng, lat) => {
             const elev = mb.queryTerrainElevation([lng, lat]);
             return typeof elev === "number" ? elev : null;
@@ -785,16 +793,22 @@ export function Map() {
       }
     }, 1400);
     return () => clearTimeout(timer);
-  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageTxDbm, provider, terrain3D, nodes]);
+  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageTxDbm, coverageEnvIdx, coverageSensitivityDbm, provider, terrain3D, nodes]);
 
   // Auto-update radius to match the link budget when hardware/antenna changes,
   // unless the user has manually overridden the slider.
   // Cap at 300 km — well beyond realistic Meshtastic range but keeps the slider sane.
   useEffect(() => {
     if (coverageRadiusManualRef.current) return;
-    const maxKm = linkBudgetMaxKm({ antennaDbi: coverageAntennaDbi, txDbm: coverageTxDbm });
+    const env = ENVIRONMENTS[coverageEnvIdx];
+    const maxKm = linkBudgetMaxKm({
+      antennaDbi: coverageAntennaDbi,
+      txDbm: coverageTxDbm,
+      envExponent: env.pathLossExponent,
+      rxSensitivityDbm: coverageSensitivityDbm,
+    });
     setCoverageRadiusKm(Math.max(2, Math.min(300, Math.round(maxKm))));
-  }, [coverageAntennaDbi, coverageTxDbm]);
+  }, [coverageAntennaDbi, coverageTxDbm, coverageEnvIdx, coverageSensitivityDbm]);
 
   // Reset the manual-override flag when the tool is closed
   useEffect(() => {
@@ -1449,6 +1463,8 @@ export function Map() {
           data: { type: "FeatureCollection", features: [] },
         });
       }
+      // Coverage fill — gradient by predicted RSSI margin (dB above sensitivity+fade).
+      // Higher margin = more saturated green; margin near 0 = yellow/orange.
       if (!map.getLayer("coverage-grid-fill")) {
         map.addLayer({
           id: "coverage-grid-fill",
@@ -1456,22 +1472,23 @@ export function Map() {
           source: "coverage-grid",
           paint: {
             "fill-color": [
-              "match", ["get", "status"],
-              "clear", "#22c55e",
-              "fresnel", "#eab308",
-              "#22c55e",
+              "interpolate", ["linear"], ["get", "marginDb"],
+              0,  "#f97316",   // orange — right at threshold
+              5,  "#eab308",   // yellow
+              15, "#22c55e",   // green
+              25, "#16a34a",   // dark green — rock solid
             ],
             "fill-opacity": [
-              "match", ["get", "status"],
-              "clear", 0.42,
-              "fresnel", 0.32,
-              0.35,
+              "interpolate", ["linear"], ["get", "marginDb"],
+              0,  0.28,
+              10, 0.40,
+              25, 0.55,
             ],
             "fill-antialias": true,
           },
         });
       }
-      // Subtle outline to separate sectors without looking griddy
+      // Subtle outline separator
       if (!map.getLayer("coverage-grid-outline")) {
         map.addLayer({
           id: "coverage-grid-outline",
@@ -1479,10 +1496,11 @@ export function Map() {
           source: "coverage-grid",
           paint: {
             "line-color": [
-              "match", ["get", "status"],
-              "clear", "#16a34a",
-              "fresnel", "#ca8a04",
-              "#16a34a",
+              "interpolate", ["linear"], ["get", "marginDb"],
+              0,  "#c2410c",
+              5,  "#ca8a04",
+              15, "#16a34a",
+              25, "#15803d",
             ],
             "line-width": 0.4,
             "line-opacity": 0.2,
@@ -3071,6 +3089,12 @@ export function Map() {
           onHardwareIdxChange={setCoverageHardwareIdx}
           customTxDbm={coverageCustomTxDbm}
           onCustomTxDbmChange={setCoverageCustomTxDbm}
+          envIdx={coverageEnvIdx}
+          onEnvIdxChange={setCoverageEnvIdx}
+          presetIdx={coveragePresetIdx}
+          onPresetIdxChange={setCoveragePresetIdx}
+          customSensitivityDbm={coverageCustomSensDbm}
+          onCustomSensitivityChange={setCoverageCustomSensDbm}
         />
       )}
 

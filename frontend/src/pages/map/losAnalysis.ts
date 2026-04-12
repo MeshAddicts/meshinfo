@@ -10,6 +10,31 @@
 const R_EARTH_KM = 6371;
 const K_REFRACTION = 4 / 3; // 4/3 earth model for radio LoS
 const FRESNEL_CLEARANCE_THRESHOLD = 0.6; // 60% = typical usable threshold
+const SPEED_OF_LIGHT_MPS = 299_792_458;
+
+/**
+ * ITU-R P.526 single knife-edge diffraction loss approximation.
+ * Given Fresnel-Kirchhoff parameter v, returns loss in dB.
+ * v < -0.7 → no meaningful loss (clear). v=0 is exactly at the edge (6 dB).
+ * v grows with deeper obstruction.
+ */
+function knifeEdgeLossDb(v: number): number {
+  if (v < -0.7) return 0;
+  return 6.9 + 20 * Math.log10(Math.sqrt((v - 0.1) ** 2 + 1) + v - 0.1);
+}
+
+/**
+ * Fresnel-Kirchhoff parameter for an obstruction of height `hMeters`
+ * above the LoS chord, at `d1Km` from transmitter and `d2Km` from receiver.
+ * Negative h = below chord (no obstruction).
+ */
+function knifeEdgeV(hMeters: number, d1Km: number, d2Km: number, freqMhz: number): number {
+  const lambda = SPEED_OF_LIGHT_MPS / (freqMhz * 1e6); // wavelength in meters
+  const d1m = d1Km * 1000;
+  const d2m = d2Km * 1000;
+  if (d1m <= 0 || d2m <= 0) return -Infinity;
+  return hMeters * Math.sqrt((2 * (d1m + d2m)) / (lambda * d1m * d2m));
+}
 
 /** Terrain sampler — returns elevation in meters at a lng/lat, or null if unavailable. */
 export type TerrainSampler = (lng: number, lat: number) => number | null;
@@ -71,6 +96,8 @@ export interface LoSResult {
   worstObstructionDistKm: number;
   /** Worst Fresnel intrusion: how deep into the Fresnel zone (0 = no intrusion, 1 = fully blocked). */
   worstFresnelIntrusion: number;
+  /** Worst-case knife-edge diffraction loss (dB) from the single most blocking obstacle. */
+  diffractionLossDb: number;
   /** Sampled points along the path. */
   points: LoSPoint[];
   frequencyGHz: number;
@@ -156,6 +183,7 @@ export function analyzeLineOfSight(input: LoSInput): LoSResult {
   let worstObstructionM = 0;
   let worstObstructionDistKm = 0;
   let worstFresnelIntrusion = 0;
+  let worstKnifeEdgeV = -Infinity; // most blocking obstacle (highest v)
   let losClear = true;
   let fresnelClear = true;
 
@@ -188,16 +216,20 @@ export function analyzeLineOfSight(input: LoSInput): LoSResult {
 
     if (fresnelIntruded) {
       fresnelClear = false;
-      // Intrusion measured as: 1 = fully blocked, 0 = exactly at 60% threshold
-      // Map clearanceRatio (−∞..0.6) to intrusion (1..0)
       const intrusion = Math.max(0, Math.min(1, (FRESNEL_CLEARANCE_THRESHOLD - clearanceRatio) / FRESNEL_CLEARANCE_THRESHOLD));
       if (intrusion > worstFresnelIntrusion) {
         worstFresnelIntrusion = intrusion;
-        // Only override distance if this is also the worst obstruction, otherwise keep LoS-block position
         if (!blocked && worstObstructionM === 0) {
           worstObstructionDistKm = distanceKm;
         }
       }
+    }
+
+    // Knife-edge diffraction: h = effectiveGround − chord (positive = obstructing)
+    if (i > 0 && i < samples && d2 > 0) {
+      const h = effectiveGround - chord;
+      const v = knifeEdgeV(h, distanceKm, d2, freqGHz * 1000);
+      if (v > worstKnifeEdgeV) worstKnifeEdgeV = v;
     }
 
     points.push({
@@ -214,6 +246,8 @@ export function analyzeLineOfSight(input: LoSInput): LoSResult {
     });
   }
 
+  const diffractionLossDb = knifeEdgeLossDb(worstKnifeEdgeV);
+
   return {
     totalDistanceKm,
     fromHeightM,
@@ -225,6 +259,7 @@ export function analyzeLineOfSight(input: LoSInput): LoSResult {
     worstObstructionM,
     worstObstructionDistKm,
     worstFresnelIntrusion,
+    diffractionLossDb,
     points,
     frequencyGHz: freqGHz,
     elevationDiffM: toHeightM - fromHeightM,

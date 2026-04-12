@@ -1,4 +1,4 @@
-import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageResult } from "./coverageAnalysis";
+import { COMMON_ANTENNAS, COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS, type CoverageResult } from "./coverageAnalysis";
 
 export function MapCoveragePanel({
   result,
@@ -15,6 +15,12 @@ export function MapCoveragePanel({
   onHardwareIdxChange,
   customTxDbm,
   onCustomTxDbmChange,
+  envIdx,
+  onEnvIdxChange,
+  presetIdx,
+  onPresetIdxChange,
+  customSensitivityDbm,
+  onCustomSensitivityChange,
 }: {
   result: CoverageResult | null;
   originLabel: string;
@@ -30,8 +36,15 @@ export function MapCoveragePanel({
   onHardwareIdxChange: (idx: number) => void;
   customTxDbm: number;
   onCustomTxDbmChange: (dbm: number) => void;
+  envIdx: number;
+  onEnvIdxChange: (idx: number) => void;
+  presetIdx: number;
+  onPresetIdxChange: (idx: number) => void;
+  customSensitivityDbm: number;
+  onCustomSensitivityChange: (dbm: number) => void;
 }) {
   const isCustomHardware = COMMON_HARDWARE[hardwareIdx]?.isCustom ?? false;
+  const isCustomPreset = MESHTASTIC_PRESETS[presetIdx]?.isCustom ?? false;
   if (terrainNeeded) {
     return (
       <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(520px,calc(100vw-2rem))]
@@ -94,10 +107,6 @@ export function MapCoveragePanel({
     );
   }
 
-  const total = result.clearCount + result.fresnelCount + result.blockedCount;
-  const clearPct = total > 0 ? Math.round((result.clearCount / total) * 100) : 0;
-  const fresnelPct = total > 0 ? Math.round((result.fresnelCount / total) * 100) : 0;
-  const blockedPct = total > 0 ? Math.round((result.blockedCount / total) * 100) : 0;
 
   return (
     <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(640px,calc(100vw-2rem))]
@@ -140,10 +149,13 @@ export function MapCoveragePanel({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </summary>
-            <div className="absolute right-0 bottom-full mb-1 w-[320px] p-2.5 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-gray-400 leading-relaxed space-y-1">
-              <div>Painted sectors show reachable area at <strong>{(result.frequencyGHz * 1000).toFixed(0)} MHz</strong>. Green = clear LoS, yellow = Fresnel intrusion.</div>
-              <div>Unpainted terrain is either blocked by elevation or beyond the link budget.</div>
-              <div>Model: free-space path loss, 4/3 earth refraction, 15 dB fade margin, 2 dB cable loss, −124 dBm RX sensitivity (LongFast SF11).</div>
+            <div className="absolute right-0 bottom-full mb-1 w-[340px] p-2.5 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-gray-400 leading-relaxed space-y-1">
+              <div>Sector color shows predicted <strong>link margin</strong> (RSSI minus sensitivity and fade margin). Dark green = very reliable, yellow = marginal, orange = at threshold. Unpainted terrain is below sensitivity.</div>
+              <div>Model: log-distance path loss (n=<strong>{result.envExponent}</strong>), 4/3 earth refraction, ITU-R P.526 single knife-edge diffraction, 15 dB fade margin, 2 dB cable loss, RX sensitivity <strong>{result.rxSensitivityDbm} dBm</strong>.</div>
+              <div>Diffraction recovers signal over grazing obstructions — turns hard-blocked paths into usable ones when the obstacle is small.</div>
+              <div className="text-amber-300/80 pt-1 border-t border-white/5 mt-1">
+                <strong>Approximation:</strong> sensitivity figures come from Meshtastic docs for SX126x chips. Real-world values can be 1–3 dB worse due to board noise, temperature, and antenna system losses. SX1276-based boards (e.g. Heltec v2) are ~2–3 dB less sensitive. Foliage, buildings, and multipath beyond the environment exponent are not modeled.
+              </div>
             </div>
           </details>
           <button
@@ -161,27 +173,85 @@ export function MapCoveragePanel({
 
       {/* Stats + legend */}
       <div className="p-3 space-y-3">
-        <div className="grid grid-cols-3 gap-2 text-xs">
-          <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/20 p-2">
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span className="text-emerald-300 text-[10px] uppercase tracking-wider">Clear</span>
+        {/* Reachability summary + RSSI gradient legend */}
+        <div className="flex items-center gap-3 px-2 py-1.5 rounded-lg bg-white/5">
+          <div className="flex-1">
+            <div className="flex items-center gap-2 text-[10px]">
+              <span className="text-gray-500 uppercase tracking-wider">Reachable</span>
+              <span className="text-emerald-300 font-medium">
+                {result.clearCount + result.fresnelCount}
+              </span>
+              <span className="text-gray-600">/ {result.clearCount + result.fresnelCount + result.blockedCount}</span>
+              <span className="text-gray-500">
+                ({Math.round(((result.clearCount + result.fresnelCount) / Math.max(1, result.clearCount + result.fresnelCount + result.blockedCount)) * 100)}%)
+              </span>
             </div>
-            <div className="text-gray-100 font-medium mt-0.5">{result.clearCount} <span className="text-gray-500 text-[10px] font-normal">({clearPct}%)</span></div>
+            <div className="mt-1 h-2 rounded-full overflow-hidden" style={{
+              background: "linear-gradient(to right, #f97316 0%, #eab308 20%, #22c55e 55%, #16a34a 100%)",
+            }} />
+            <div className="flex items-center justify-between text-[9px] text-gray-500 mt-0.5 font-mono">
+              <span>0 dB</span>
+              <span>+5</span>
+              <span>+15</span>
+              <span>+25 dB margin</span>
+            </div>
           </div>
-          <div className="rounded-lg bg-yellow-500/10 border border-yellow-500/20 p-2">
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-yellow-400" />
-              <span className="text-yellow-300 text-[10px] uppercase tracking-wider">Fresnel</span>
-            </div>
-            <div className="text-gray-100 font-medium mt-0.5">{result.fresnelCount} <span className="text-gray-500 text-[10px] font-normal">({fresnelPct}%)</span></div>
+        </div>
+
+        {/* Environment + Modem preset */}
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label htmlFor="coverage-env" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
+              Environment
+            </label>
+            <select
+              id="coverage-env"
+              value={envIdx}
+              onChange={(e) => onEnvIdxChange(Number(e.target.value))}
+              className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
+                focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
+                [&>option]:bg-gray-800 [&>option]:text-gray-200"
+              title={ENVIRONMENTS[envIdx].description}
+            >
+              {ENVIRONMENTS.map((env, i) => (
+                <option key={i} value={i}>{env.label} (n={env.pathLossExponent})</option>
+              ))}
+            </select>
           </div>
-          <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-2">
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-red-400" />
-              <span className="text-red-300 text-[10px] uppercase tracking-wider">Blocked</span>
+          <div>
+            <label htmlFor="coverage-preset" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
+              Modem Preset
+            </label>
+            <div className="flex gap-1">
+              <select
+                id="coverage-preset"
+                value={presetIdx}
+                onChange={(e) => onPresetIdxChange(Number(e.target.value))}
+                className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
+                  focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
+                  [&>option]:bg-gray-800 [&>option]:text-gray-200"
+              >
+                {MESHTASTIC_PRESETS.map((p, i) => (
+                  <option key={i} value={i}>
+                    {p.label}{p.isCustom ? "" : ` · ${p.sensitivityDbm} dBm`}
+                  </option>
+                ))}
+              </select>
+              {isCustomPreset && (
+                <input
+                  type="number"
+                  value={customSensitivityDbm}
+                  onChange={(e) => onCustomSensitivityChange(Number(e.target.value))}
+                  min={-150}
+                  max={-100}
+                  step={1}
+                  aria-label="Custom RX sensitivity (dBm)"
+                  title="RX sensitivity in dBm (e.g. −133)"
+                  className="w-14 rounded-lg border border-white/10 bg-white/5 px-1 py-1 text-xs text-gray-200 text-center
+                    focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50"
+                />
+              )}
             </div>
-            <div className="text-gray-100 font-medium mt-0.5">{result.blockedCount} <span className="text-gray-500 text-[10px] font-normal">({blockedPct}%)</span></div>
           </div>
         </div>
 

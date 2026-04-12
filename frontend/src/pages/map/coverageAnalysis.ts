@@ -7,6 +7,59 @@ import { analyzeLineOfSight, haversineKm, type TerrainSampler } from "./losAnaly
 const R_EARTH_KM = 6371;
 
 /**
+ * Propagation environment — affects excess path loss beyond free space.
+ * Exponents are typical for log-distance path loss models.
+ */
+export interface Environment {
+  id: string;
+  label: string;
+  pathLossExponent: number; // n in PL = 91.67 + 10·n·log10(d_km)
+  description: string;
+}
+export const ENVIRONMENTS: Environment[] = [
+  { id: "open",     label: "Open / Rural",        pathLossExponent: 2.0, description: "Line-of-sight, no obstacles" },
+  { id: "mixed",    label: "Mixed / Light terrain", pathLossExponent: 2.5, description: "Some trees, rolling hills" },
+  { id: "suburban", label: "Suburban",            pathLossExponent: 3.0, description: "Scattered buildings, moderate clutter" },
+  { id: "urban",    label: "Urban / Dense forest", pathLossExponent: 3.5, description: "Heavy clutter, thick canopy" },
+];
+
+/**
+ * Meshtastic modem presets. Sensitivity values match Meshtastic's documented
+ * theoretical figures for SX126x chipsets at the given SF/BW combinations.
+ * (See: meshtastic.org/docs/overview/radio-settings/modem-presets/)
+ *
+ * Real-world sensitivity is typically 1–3 dB worse than theoretical due to
+ * PCB noise, temperature, and antenna system losses. The 15 dB fade margin
+ * in the link budget already accounts for some of this.
+ */
+export interface ModemPreset {
+  id: string;
+  label: string;
+  sensitivityDbm: number;
+  sf: number;
+  bwKhz: number;
+  isCustom?: boolean;
+}
+export const MESHTASTIC_PRESETS: ModemPreset[] = [
+  { id: "MediumFast", label: "MediumFast (SF9, 250 kHz)",  sensitivityDbm: -127, sf: 9,  bwKhz: 250 },
+  { id: "LongFast",   label: "LongFast (SF11, 250 kHz)",   sensitivityDbm: -133, sf: 11, bwKhz: 250 },
+  { id: "LongSlow",   label: "LongSlow (SF12, 125 kHz)",   sensitivityDbm: -137, sf: 12, bwKhz: 125 },
+  { id: "Custom",     label: "Custom",                      sensitivityDbm: -133, sf: 11, bwKhz: 250, isCustom: true },
+];
+
+/**
+ * Path loss at distance `dKm` for a given frequency and environment exponent.
+ * Uses free-space as the d=1km reference, plus excess clutter loss that scales
+ * with the environment exponent. Clamped to d≥10m to avoid weirdness at zero.
+ */
+export function pathLossDb(dKm: number, freqMhz: number, envExponent: number): number {
+  const d = Math.max(0.01, dKm);
+  const freeSpace = 32.45 + 20 * Math.log10(freqMhz) + 20 * Math.log10(d);
+  const excess = (envExponent - 2) * 10 * Math.log10(Math.max(1, d));
+  return freeSpace + excess;
+}
+
+/**
  * Compute the theoretical max range (km) for a symmetric link using free-space
  * path loss at the given frequency. Reasonable for clear-LoS planning.
  *
@@ -22,19 +75,24 @@ export function linkBudgetMaxKm(opts: {
   fadeMarginDb?: number;
   cableLossDb?: number;
   freqMhz?: number;
+  /** Environment path-loss exponent (2.0 = free space). */
+  envExponent?: number;
 }): number {
   const {
     antennaDbi,
-    txDbm = 27,              // Meshtastic default (500 mW)
-    rxSensitivityDbm = -124, // LoRa LongFast (SF11) typical
-    fadeMarginDb = 15,       // conservative margin for real-world
-    cableLossDb = 2,         // typical coax loss
-    freqMhz = 915,           // US Meshtastic
+    txDbm = 22,
+    rxSensitivityDbm = -133, // LongFast (Meshtastic docs theoretical)
+    fadeMarginDb = 15,
+    cableLossDb = 2,
+    freqMhz = 915,
+    envExponent = 2.0,
   } = opts;
 
   const budgetDb = txDbm + 2 * antennaDbi - rxSensitivityDbm - fadeMarginDb - cableLossDb;
-  const plConstant = 32.45 + 20 * Math.log10(freqMhz); // 91.67 at 915 MHz
-  const dKm = Math.pow(10, (budgetDb - plConstant) / 20);
+  // Solve budgetDb = pathLossDb(d) = 91.67 + 10·n·log10(d)  (for d ≥ 1km)
+  // → d = 10^((budget - 91.67) / (10·n))
+  const plConstant = 32.45 + 20 * Math.log10(freqMhz);
+  const dKm = Math.pow(10, (budgetDb - plConstant) / (10 * envExponent));
   return dKm;
 }
 
@@ -74,10 +132,18 @@ export interface CoverageCell {
   distanceKm: number;
   /** Bearing from origin in degrees (0 = N). */
   bearingDeg: number;
-  /** Status: clear LoS, Fresnel intrusion, or blocked. */
-  status: "clear" | "fresnel" | "blocked";
+  /** Status: clear LoS, Fresnel intrusion, diffracted (blocked but recoverable), or blocked. */
+  status: "clear" | "fresnel" | "diffracted" | "blocked";
   /** Fraction of Fresnel zone obstructed (0 = none, 1 = fully blocked). */
   fresnelIntrusion: number;
+  /** Knife-edge diffraction loss (dB) from worst obstacle on the path. */
+  diffractionLossDb: number;
+  /** Total path loss (dB) = environment path loss + diffraction. */
+  totalLossDb: number;
+  /** Predicted RSSI at receiver (dBm). */
+  rssiDbm: number;
+  /** Margin above receiver sensitivity (dB). Negative means below threshold. */
+  marginDb: number;
   /** Which ring (0 = closest to origin). */
   ring: number;
   /** Which bearing slot. */
@@ -102,6 +168,8 @@ export interface CoverageResult {
   txDbm: number;
   /** Theoretical max range (km) from the link budget with this dBi. */
   linkBudgetMaxKm: number;
+  envExponent: number;
+  rxSensitivityDbm: number;
 }
 
 export interface CoverageInput {
@@ -125,6 +193,14 @@ export interface CoverageInput {
   antennaDbi?: number;
   /** TX power in dBm. Default 22 (typical Meshtastic board). */
   txDbm?: number;
+  /** Environment path-loss exponent. Default 2.0 (free space). */
+  envExponent?: number;
+  /** Receiver sensitivity in dBm. Default −134 (LongFast SF11). */
+  rxSensitivityDbm?: number;
+  /** Fade margin in dB. Default 15. */
+  fadeMarginDb?: number;
+  /** Cable/feedline loss in dB. Default 2. */
+  cableLossDb?: number;
   /** Terrain sampler — required. */
   queryTerrainM: TerrainSampler;
 }
@@ -169,14 +245,24 @@ export function computeCoverage(input: CoverageInput): CoverageResult {
     losSamples = 40,
     antennaDbi = 3,
     txDbm = 22,
+    envExponent = 2.0,
+    rxSensitivityDbm = -133,
+    fadeMarginDb = 15,
+    cableLossDb = 2,
     queryTerrainM,
   } = input;
 
   const lbMaxKm = linkBudgetMaxKm({
     antennaDbi,
     txDbm,
+    rxSensitivityDbm,
+    fadeMarginDb,
+    cableLossDb,
     freqMhz: freqGHz * 1000,
+    envExponent,
   });
+
+  const freqMhz = freqGHz * 1000;
 
   const originGround = queryTerrainM(origin[0], origin[1]) ?? 0;
   const originIsFallback =
@@ -209,14 +295,24 @@ export function computeCoverage(input: CoverageInput): CoverageResult {
         queryTerrainM,
       });
 
-      let status: "clear" | "fresnel" | "blocked";
-      // If beyond link-budget range, mark as blocked regardless of LoS
-      if (actualDist > lbMaxKm) {
+      // Compute predicted RSSI and margin with environment + diffraction.
+      const pl = pathLossDb(actualDist, freqMhz, envExponent);
+      const totalLossDb = pl + losResult.diffractionLossDb + cableLossDb;
+      const rssiDbm = txDbm + 2 * antennaDbi - totalLossDb;
+      const marginDb = rssiDbm - rxSensitivityDbm - fadeMarginDb;
+
+      // Status classification:
+      // - clear:      full LoS + fresnel clear + link budget OK
+      // - fresnel:    LoS clear but fresnel intruded, link budget OK
+      // - diffracted: LoS blocked but diffraction loss small enough that link budget still holds
+      // - blocked:    link budget fails (RSSI below sensitivity + margin)
+      let status: "clear" | "fresnel" | "diffracted" | "blocked";
+      if (marginDb < 0) {
         status = "blocked";
         blockedCount++;
       } else if (!losResult.losClear) {
-        status = "blocked";
-        blockedCount++;
+        status = "diffracted";
+        fresnelCount++; // count as non-green for stats
       } else if (!losResult.fresnelClear) {
         status = "fresnel";
         fresnelCount++;
@@ -231,6 +327,10 @@ export function computeCoverage(input: CoverageInput): CoverageResult {
         bearingDeg: bearing,
         status,
         fresnelIntrusion: losResult.worstFresnelIntrusion,
+        diffractionLossDb: losResult.diffractionLossDb,
+        totalLossDb,
+        rssiDbm,
+        marginDb,
         ring: r,
         bearingIndex: s,
       });
@@ -252,6 +352,8 @@ export function computeCoverage(input: CoverageInput): CoverageResult {
     antennaDbi,
     txDbm,
     linkBudgetMaxKm: lbMaxKm,
+    envExponent,
+    rxSensitivityDbm,
   };
 }
 
@@ -270,8 +372,8 @@ export function coverageToGeoJSON(result: CoverageResult) {
   const ringStepKm = radiusKm / rings;
   const arcPoints = 5; // number of intermediate points along each arc for smoothness
 
-  // Only paint reachable cells (clear + fresnel). Blocked cells show terrain as-is.
-  const features = result.cells.filter((c) => c.status !== "blocked").map((c) => {
+  // Only paint reachable cells (margin ≥ 0). Blocked cells show terrain as-is.
+  const features = result.cells.filter((c) => c.marginDb >= 0).map((c) => {
     const outerKm = c.ring * ringStepKm;
     const innerKm = Math.max(0, (c.ring - 1) * ringStepKm);
     const startBearing = c.bearingDeg - halfSliceDeg;
@@ -308,6 +410,9 @@ export function coverageToGeoJSON(result: CoverageResult) {
         distanceKm: c.distanceKm,
         bearingDeg: c.bearingDeg,
         fresnelIntrusion: c.fresnelIntrusion,
+        diffractionLossDb: c.diffractionLossDb,
+        rssiDbm: c.rssiDbm,
+        marginDb: c.marginDb,
       },
       geometry: {
         type: "Polygon" as const,
