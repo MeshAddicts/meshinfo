@@ -143,7 +143,39 @@ function NodeLink({
   return <span className="text-gray-500">{label}</span>;
 }
 
-function PathAnalysisSection({
+function ToolButton({
+  icon,
+  label,
+  description,
+  onClick,
+  active,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  description?: string;
+  onClick: () => void;
+  active?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full flex items-start gap-2.5 px-2.5 py-2 rounded-lg border transition-colors text-left ${
+        active
+          ? "bg-cyan-500/20 border-cyan-500/40 text-cyan-200"
+          : "bg-white/5 border-white/10 text-gray-300 hover:bg-white/10 hover:border-white/20 hover:text-gray-100"
+      }`}
+    >
+      <div className={`shrink-0 mt-0.5 ${active ? "text-cyan-400" : "text-gray-500"}`}>{icon}</div>
+      <div className="flex-1 min-w-0">
+        <div className="text-xs font-medium">{label}</div>
+        {description && <div className="text-[10px] text-gray-500 mt-0.5">{description}</div>}
+      </div>
+    </button>
+  );
+}
+
+function ToolsSection({
   fromNode,
   traceroutes,
   liveNodes,
@@ -166,20 +198,21 @@ function PathAnalysisSection({
     ? liveNodes[pathAnalysis.targetId] ?? liveNodes[`!${pathAnalysis.targetId}`]
     : null;
 
+  // Tool menu (shown when no comparison active)
   if (!pathAnalysis.targetId) {
     return (
-      <div className="px-2 py-1">
-        <button
-          type="button"
+      <div className="space-y-1">
+        <ToolButton
+          icon={
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+          }
+          label={pathAnalysis.pickMode ? "Click a second node… (Esc to cancel)" : "Compare with another node"}
+          description="Line-of-sight, Fresnel zone, and traceroute paths"
           onClick={pathAnalysis.onEnterPickMode}
-          className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
-            pathAnalysis.pickMode
-              ? "bg-cyan-500/20 border-cyan-500/40 text-cyan-300"
-              : "bg-white/5 border-white/10 text-gray-300 hover:bg-white/10"
-          }`}
-        >
-          {pathAnalysis.pickMode ? "Click a second node… (Esc to cancel)" : "Compare path to another node"}
-        </button>
+          active={pathAnalysis.pickMode}
+        />
       </div>
     );
   }
@@ -188,23 +221,26 @@ function PathAnalysisSection({
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between px-2 py-1">
-        <div className="text-xs text-gray-300">
-          <span className="text-gray-500">To:</span>{" "}
-          <button
-            type="button"
-            onClick={() => onNodeSelect(pathAnalysis.targetId!)}
-            className="text-cyan-400 hover:text-cyan-300"
-          >
-            {target?.shortname ?? pathAnalysis.targetId}
-          </button>
-        </div>
+      {/* Tool header with back button */}
+      <button
+        type="button"
+        onClick={pathAnalysis.onClearPath}
+        className="w-full flex items-center gap-1.5 px-2 py-1 text-[10px] text-gray-500 hover:text-gray-300 transition-colors"
+      >
+        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+        </svg>
+        Back to tools
+      </button>
+
+      <div className="px-2 py-1 text-xs text-gray-300">
+        <div className="text-gray-500 text-[10px] uppercase tracking-wider mb-0.5">Comparing with</div>
         <button
           type="button"
-          onClick={pathAnalysis.onClearPath}
-          className="text-[10px] text-gray-500 hover:text-gray-300"
+          onClick={() => onNodeSelect(pathAnalysis.targetId!)}
+          className="text-cyan-400 hover:text-cyan-300 font-medium"
         >
-          Clear
+          {target?.shortname ?? pathAnalysis.targetId}
         </button>
       </div>
 
@@ -634,8 +670,8 @@ export function MapDetailsPanel({
         </CollapsibleSection>
 
         {pathAnalysis && (
-          <CollapsibleSection title="Compare Nodes" defaultOpen={!!pathAnalysis.targetId}>
-            <PathAnalysisSection
+          <CollapsibleSection title="Tools" defaultOpen={!!pathAnalysis.targetId}>
+            <ToolsSection
               fromNode={node}
               traceroutes={traceroutes}
               liveNodes={liveNodes}

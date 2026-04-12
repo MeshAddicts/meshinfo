@@ -130,11 +130,27 @@ export function analyzeLineOfSight(input: LoSInput): LoSResult {
   const fromGround = queryTerrainM(from[0], from[1]) ?? 0;
   const toGround = queryTerrainM(to[0], to[1]) ?? 0;
 
-  const fromIsFallback = fromAltitudeM == null || !Number.isFinite(fromAltitudeM);
-  const toIsFallback = toAltitudeM == null || !Number.isFinite(toAltitudeM);
+  /**
+   * Resolve final node height:
+   * - If altitude is missing/invalid → use terrain + antenna (fallback)
+   * - If altitude is below terrain (bogus GPS data — nodes can't be underground)
+   *   → also fall back to terrain + antenna
+   * - Otherwise use the reported altitude.
+   */
+  const resolveHeight = (altitude: number | null | undefined, ground: number) => {
+    const valid = altitude != null && Number.isFinite(altitude);
+    if (!valid || (altitude as number) < ground) {
+      return { height: ground + antennaHeightM, isFallback: true };
+    }
+    return { height: altitude as number, isFallback: false };
+  };
 
-  const fromHeightM = fromIsFallback ? fromGround + antennaHeightM : (fromAltitudeM as number);
-  const toHeightM = toIsFallback ? toGround + antennaHeightM : (toAltitudeM as number);
+  const fromResolved = resolveHeight(fromAltitudeM, fromGround);
+  const toResolved = resolveHeight(toAltitudeM, toGround);
+  const fromHeightM = fromResolved.height;
+  const toHeightM = toResolved.height;
+  const fromIsFallback = fromResolved.isFallback;
+  const toIsFallback = toResolved.isFallback;
 
   const points: LoSPoint[] = [];
   let worstObstructionM = 0;

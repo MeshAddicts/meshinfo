@@ -153,7 +153,7 @@ export function MapLosPanel({
             <div className="absolute right-0 bottom-full mb-1 min-w-[260px] p-2 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-gray-400 leading-relaxed">
               <div>Uses real terrain elevations and <strong>4/3 earth radius</strong> for atmospheric refraction.</div>
               <div>Frequency: <strong>{(los.frequencyGHz * 1000).toFixed(0)} MHz</strong>. Fresnel zone needs ≥60% clearance.</div>
-              <div>&quot;~&quot; means node had no GPS altitude — assumed as <strong>terrain + 2m</strong>.</div>
+              <div>&quot;~&quot; means node had no GPS altitude (or reported below terrain) — assumed as <strong>terrain + 2m</strong>.</div>
             </div>
           </details>
           <button
