@@ -364,6 +364,12 @@ export function Map() {
   const [pathPickMode, setPathPickMode] = useState(false);
   const [pathTargetId, setPathTargetId] = useState<string | null>(null);
 
+  // 3D terrain (Mapbox only)
+  const [terrain3D, setTerrain3D] = useState<boolean>(() => readJson<boolean>(LS_KEYS.terrain3D, false));
+  const [terrainExaggeration, setTerrainExaggeration] = useState<number>(
+    () => readJson<number>(LS_KEYS.terrainExaggeration, 1.5)
+  );
+
   // Settings panel visibility
   const [settingsPanelOpen, setSettingsPanelOpen] = useState<boolean>(() => {
     const stored = readJson<boolean | null>(LS_KEYS.settingsPanelOpen, null);
@@ -380,6 +386,8 @@ export function Map() {
   useEffect(() => writeJson(LS_KEYS.linkMode, linkMode), [linkMode]);
   useEffect(() => writeJson(LS_KEYS.myNodeId, myNodeId), [myNodeId]);
   useEffect(() => writeJson(LS_KEYS.settingsPanelOpen, settingsPanelOpen), [settingsPanelOpen]);
+  useEffect(() => writeJson(LS_KEYS.terrain3D, terrain3D), [terrain3D]);
+  useEffect(() => writeJson(LS_KEYS.terrainExaggeration, terrainExaggeration), [terrainExaggeration]);
 
   // If token disappears / not configured, force provider to osm
   useEffect(() => {
@@ -488,6 +496,8 @@ export function Map() {
   const roleFilterRef = useRef(roleFilter);
   const channelFilterRef = useRef(channelFilter);
   const pathPickModeRef = useRef(pathPickMode);
+  const terrain3DRef = useRef(terrain3D);
+  const terrainExaggerationRef = useRef(terrainExaggeration);
   const setDetailsDataRef = useRef(setDetailsData);
 
   useEffect(() => {
@@ -521,6 +531,16 @@ export function Map() {
   useEffect(() => { roleFilterRef.current = roleFilter; }, [roleFilter]);
   useEffect(() => {
     pathPickModeRef.current = pathPickMode;
+  }, [pathPickMode]);
+  useEffect(() => {
+    terrain3DRef.current = terrain3D;
+  }, [terrain3D]);
+  useEffect(() => {
+    terrainExaggerationRef.current = terrainExaggeration;
+  }, [terrainExaggeration]);
+
+  // Path-pick cursor feedback
+  useEffect(() => {
     // Visual feedback: crosshair cursor on map canvas
     const mb = mbMapRef.current;
     if (mb) {
@@ -1432,6 +1452,15 @@ export function Map() {
       // Apply current cluster visibility (use ref to avoid stale closure)
       applyMapboxClusterVisibility(map, clusterEnabledRef.current);
 
+      // Re-apply terrain if it was enabled (style.load wipes this)
+      if (terrain3DRef.current) {
+        try {
+          applyTerrainState(map, true, terrainExaggerationRef.current);
+        } catch (err) {
+          console.warn("[Map] Terrain re-apply failed after style load:", err);
+        }
+      }
+
       // Ensure sources have current data (important after style changes)
       refreshMapboxNodeData();
 
@@ -1833,6 +1862,81 @@ export function Map() {
     if (!hasMapbox) return;
     applyMapboxClusterVisibility(map, clusterEnabled);
   }, [clusterEnabled, provider, hasMapbox]);
+
+  // Mapbox: 3D terrain — add/remove DEM source, terrain, and sky layer.
+  // Safe to call repeatedly: each action is idempotent and survives style reloads.
+  const applyTerrainState = (map: MbMap, enabled: boolean, exaggeration: number) => {
+    if (enabled) {
+      // 1. DEM source (creates raster-dem source for terrain heights)
+      if (!map.getSource("mapbox-dem")) {
+        map.addSource("mapbox-dem", {
+          type: "raster-dem",
+          url: "mapbox://mapbox.mapbox-terrain-dem-v1",
+          tileSize: 512,
+          maxzoom: 14,
+        });
+      }
+      // 2. Apply terrain with current exaggeration
+      map.setTerrain({ source: "mapbox-dem", exaggeration });
+      // 3. Add atmospheric sky layer (only once)
+      if (!map.getLayer("sky")) {
+        map.addLayer({
+          id: "sky",
+          type: "sky",
+          paint: {
+            "sky-type": "atmosphere",
+            "sky-atmosphere-sun": [0.0, 90.0],
+            "sky-atmosphere-sun-intensity": 15,
+          },
+        });
+      }
+    } else {
+      // Disable terrain and remove sky
+      try { map.setTerrain(null); } catch {}
+      if (map.getLayer("sky")) {
+        try { map.removeLayer("sky"); } catch {}
+      }
+      // Leave the DEM source in place — cheap and allows quick re-enable
+    }
+  };
+
+  // Effect: react to terrain3D / exaggeration changes
+  useEffect(() => {
+    const map = mbMapRef.current;
+    if (!map) return;
+    if (provider !== "mapbox") return;
+    if (!hasMapbox) return;
+
+    const run = () => {
+      try {
+        applyTerrainState(map, terrain3D, terrainExaggeration);
+      } catch (err) {
+        console.warn("[Map] Terrain apply failed:", err);
+      }
+
+      // When disabling 3D, reset pitch + bearing to 0 for a clean 2D view
+      if (!terrain3D) {
+        map.easeTo({ pitch: 0, bearing: 0, duration: 400 });
+      } else if (map.getPitch() < 5) {
+        // Turning on terrain: nudge pitch to 45° so the 3D effect is visible
+        map.easeTo({ pitch: 45, duration: 500 });
+      }
+    };
+
+    if (map.isStyleLoaded()) {
+      run();
+    } else {
+      map.once("style.load", run);
+    }
+  }, [terrain3D, terrainExaggeration, provider, hasMapbox]);
+
+  // If user switches provider away from Mapbox, disable 3D terrain state
+  useEffect(() => {
+    if (provider !== "mapbox" && terrain3D) {
+      setTerrain3D(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provider]);
 
   // Mapbox: live updates (nodes appear/disappear) via setData()
   useEffect(() => {
@@ -2541,6 +2645,10 @@ export function Map() {
         nodeList={nodeList}
         canUseMapbox={canUseMapbox}
         usingMapbox={usingMapbox}
+        terrain3D={terrain3D}
+        setTerrain3D={setTerrain3D}
+        terrainExaggeration={terrainExaggeration}
+        setTerrainExaggeration={setTerrainExaggeration}
         onExport={handleExport}
         hidden={!!detailsData}
       />

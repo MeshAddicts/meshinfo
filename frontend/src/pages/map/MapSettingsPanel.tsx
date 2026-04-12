@@ -35,6 +35,10 @@ export function MapSettingsPanel({
 
   canUseMapbox,
   usingMapbox,
+  terrain3D,
+  setTerrain3D,
+  terrainExaggeration,
+  setTerrainExaggeration,
   onExport,
   hidden = false,
 }: {
@@ -62,6 +66,10 @@ export function MapSettingsPanel({
 
   canUseMapbox: boolean;
   usingMapbox: boolean;
+  terrain3D: boolean;
+  setTerrain3D: Dispatch<SetStateAction<boolean>>;
+  terrainExaggeration: number;
+  setTerrainExaggeration: Dispatch<SetStateAction<number>>;
   onExport?: () => void;
   hidden?: boolean;
 }) {
@@ -253,6 +261,59 @@ export function MapSettingsPanel({
                 </div>
               )}
             </Section>
+
+            {/* 3D Terrain — Mapbox only */}
+            {usingMapbox && (
+              <Section id="terrain" title="3D Terrain" subtitle={terrain3D ? `On · ${terrainExaggeration.toFixed(1)}× exaggeration` : "Off"}>
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5">
+                  <div className="flex flex-col">
+                    <label htmlFor="terrain-3d-checkbox" className="text-sm font-medium text-gray-300">
+                      Enable 3D Terrain
+                    </label>
+                    <p className="text-[11px] text-gray-500 mt-0.5">
+                      Drapes map onto real elevation
+                    </p>
+                  </div>
+                  <input
+                    id="terrain-3d-checkbox"
+                    type="checkbox"
+                    checked={terrain3D}
+                    onChange={(e) => setTerrain3D(e.target.checked)}
+                    className="h-4 w-4 rounded-sm border-gray-600 bg-gray-700 text-cyan-500 focus:ring-cyan-500"
+                    aria-label="Toggle 3D terrain"
+                  />
+                </div>
+
+                {terrain3D && (
+                  <>
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label htmlFor="terrain-exag" className="text-[10px] font-medium uppercase tracking-wider text-gray-500">
+                          Exaggeration
+                        </label>
+                        <span className="text-[10px] text-gray-400">{terrainExaggeration.toFixed(1)}×</span>
+                      </div>
+                      <input
+                        id="terrain-exag"
+                        type="range"
+                        min={0.5}
+                        max={3}
+                        step={0.1}
+                        value={terrainExaggeration}
+                        onChange={(e) => setTerrainExaggeration(Number(e.target.value))}
+                        className="w-full accent-cyan-500"
+                        aria-label="Terrain exaggeration"
+                      />
+                    </div>
+                    <div className="text-[10px] text-gray-500 p-2 rounded-lg bg-white/5 leading-relaxed">
+                      <strong className="text-gray-400">Tip:</strong> hold{" "}
+                      <kbd className="bg-white/10 px-1 rounded-sm text-[10px] mx-0.5">Right-Click</kbd>
+                      {" "}and drag to rotate/pitch. Ctrl + scroll changes pitch.
+                    </div>
+                  </>
+                )}
+              </Section>
+            )}
 
             {/* My Node */}
             <Section id="mynode" title="My Node" subtitle={myNodeLabel || "Not set"}>
