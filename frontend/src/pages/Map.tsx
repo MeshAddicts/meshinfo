@@ -668,7 +668,7 @@ export function Map() {
 
     // Fit the viewport to include both points so terrain tiles load for sampling
     const bounds = new mapboxgl.LngLatBounds(fromPos, toPos);
-    mb.fitBounds(bounds, { padding: 80, duration: 600, maxZoom: 13 });
+    mb.fitBounds(bounds, { padding: 120, duration: 600, maxZoom: 11 });
 
     // Wait for terrain tiles to settle, then sample
     const timer = setTimeout(run, 1200);
