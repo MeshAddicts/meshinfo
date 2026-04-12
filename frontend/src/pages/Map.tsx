@@ -282,6 +282,7 @@ export function Map() {
   const olNodesSourceRef = useRef<VectorSource<Feature<Point>> | null>(null);
   const olClusterSetupRef = useRef<OlClusterSetup | null>(null);
   const olPersistentLinksLayerRef = useRef<VectorLayer<VectorSource<Feature>, Feature> | null>(null);
+  const olHighlightLayerRef = useRef<VectorLayer<VectorSource<Feature>, Feature> | null>(null);
 
   // Mapbox refs (Mapbox path)
   const mbMapRef = useRef<MbMap | null>(null);
@@ -292,6 +293,8 @@ export function Map() {
 
   // Shared ref for panel node-select callback (set by whichever provider is active)
   const handleNodeSelectRef = useRef<(nodeId: string) => void>(() => {});
+  const handleLinkHoverRef = useRef<(otherId: string | null) => void>(() => {});
+  const selectedNodeIdRef = useRef<string | null>(null);
 
   const { data: rawNodes = {} } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
@@ -780,7 +783,7 @@ export function Map() {
     }
 
     mbSelectedIdRef.current = null;
-
+    selectedNodeIdRef.current = null;
 
     // Restore persistent links (all/mynode) or clear if mode is "selected"
     if (map) {
@@ -792,6 +795,11 @@ export function Map() {
       try {
         const coverageSrc = map.getSource("coverage") as MbGeoJSONSource | undefined;
         coverageSrc?.setData({ type: "FeatureCollection", features: [] });
+      } catch {}
+      // Clear link highlight
+      try {
+        const hlSrc = map.getSource("link-highlight") as MbGeoJSONSource | undefined;
+        hlSrc?.setData({ type: "FeatureCollection", features: [] });
       } catch {}
     }
 
@@ -986,6 +994,28 @@ export function Map() {
         map.addSource("links", {
           type: "geojson",
           data: emptyLineFeatureCollection(),
+        });
+      }
+
+      // Link highlight source + layer (for hover-highlight from details panel)
+      if (!map.getSource("link-highlight")) {
+        map.addSource("link-highlight", {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
+      }
+      if (!map.getLayer("link-highlight-line")) {
+        map.addLayer({
+          id: "link-highlight-line",
+          type: "line",
+          source: "link-highlight",
+          layout: { "line-join": "round", "line-cap": "round" },
+          paint: {
+            "line-color": "#ffffff",
+            "line-width": 5,
+            "line-opacity": 0.9,
+            "line-blur": 1,
+          },
         });
       }
 
@@ -1251,6 +1281,7 @@ export function Map() {
         const node = liveNodes[id];
         if (!node?.map_position) return;
 
+        selectedNodeIdRef.current = id;
         setSelected(id);
 
         const displayName = await reverseGeocode(node.map_position[0], node.map_position[1]);
@@ -1334,6 +1365,40 @@ export function Map() {
 
       // Expose handleNodeClick for panel node-select navigation
       handleNodeSelectRef.current = (id: string) => void handleNodeClick(id);
+
+      // Hover callback for details-panel link highlight
+      handleLinkHoverRef.current = (otherId: string | null) => {
+        const m = mbMapRef.current;
+        if (!m) return;
+        const src = m.getSource("link-highlight") as MbGeoJSONSource | undefined;
+        if (!src) return;
+        const selectedId = mbSelectedIdRef.current;
+        if (!otherId || !selectedId) {
+          src.setData({ type: "FeatureCollection", features: [] });
+          return;
+        }
+        const liveNodes = nodesRef.current;
+        const selected = liveNodes[selectedId];
+        const other = liveNodes[otherId] ?? liveNodes[`!${otherId}`];
+        if (!selected?.map_position || !other?.map_position) {
+          src.setData({ type: "FeatureCollection", features: [] });
+          return;
+        }
+        src.setData({
+          type: "FeatureCollection",
+          features: [{
+            type: "Feature",
+            properties: {},
+            geometry: {
+              type: "LineString",
+              coordinates: [
+                [selected.map_position[0], selected.map_position[1]],
+                [other.map_position[0], other.map_position[1]],
+              ],
+            },
+          }],
+        });
+      };
 
       // Cursor behaviors (both render modes)
       const setCursor = (value: string) => {
@@ -1865,6 +1930,7 @@ export function Map() {
     const neighborLayers: VectorLayer<VectorSource<Feature>, Feature>[] = [];
 
     const handleNodeDetails = async (node: IFeatureNode) => {
+      selectedNodeIdRef.current = node.id;
       const displayName = await reverseGeocode(node.position[0], node.position[1]);
 
       const liveNodes = nodesRef.current;
@@ -1947,6 +2013,35 @@ export function Map() {
         neighbors: targetNode.neighbors,
         gateway: targetNode.gateway,
       });
+    };
+
+    // OL: link-highlight callback for details panel hover
+    handleLinkHoverRef.current = (otherId: string | null) => {
+      if (olHighlightLayerRef.current) {
+        map.removeLayer(olHighlightLayerRef.current);
+        olHighlightLayerRef.current = null;
+      }
+      if (!otherId) return;
+
+      const selId = selectedNodeIdRef.current;
+      if (!selId) return;
+      const selNode = nodesRef.current[selId];
+      if (!selNode?.map_position) return;
+
+      const otherNode = nodesRef.current[otherId] ?? nodesRef.current[`!${otherId}`];
+      if (!otherNode?.map_position) return;
+
+      const coords = [selNode.map_position, otherNode.map_position].map((c) =>
+        transform([c[0], c[1]], "EPSG:4326", "EPSG:3857"),
+      );
+      const hlFeature = new Feature({ geometry: new LineString(coords) });
+      hlFeature.setStyle(
+        new Style({ stroke: new Stroke({ color: "#ffffff", width: 5 }) }),
+      );
+      const hlSource = new VectorSource({ features: [hlFeature as Feature] });
+      const hlLayer = new VectorLayer({ source: hlSource });
+      olHighlightLayerRef.current = hlLayer;
+      map.addLayer(hlLayer);
     };
 
     // Select interaction for non-clustered mode
@@ -2289,6 +2384,7 @@ export function Map() {
         data={detailsData}
         onClose={clearMapboxSelectionAndOverlays}
         onNodeSelect={(id) => handleNodeSelectRef.current(id)}
+        onHoverLink={(id) => handleLinkHoverRef.current(id)}
       />
 
       <style>

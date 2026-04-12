@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { roleTitles, type NodeRole } from "../../types";
 import { getElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLinks";
@@ -146,11 +146,13 @@ function NeighborTable({
   nodePosition,
   liveNodes,
   onNodeSelect,
+  onHoverLink,
 }: {
   rows: { id: string; snr: number }[];
   nodePosition: [number, number];
   liveNodes: Record<string, IMapNode>;
   onNodeSelect: (nodeId: string) => void;
+  onHoverLink?: (otherNodeId: string | null) => void;
 }) {
   if (rows.length === 0) {
     return <span className="text-gray-500 text-xs ml-2">None</span>;
@@ -180,7 +182,12 @@ function NeighborTable({
         }
 
         return (
-          <div key={row.id} className="flex items-center justify-between text-xs px-2 py-1 rounded bg-white/5 hover:bg-white/10 transition-colors">
+          <div
+            key={row.id}
+            className="flex items-center justify-between text-xs px-2 py-1 rounded bg-white/5 hover:bg-white/10 transition-colors"
+            onMouseEnter={() => onHoverLink?.(row.id)}
+            onMouseLeave={() => onHoverLink?.(null)}
+          >
             <NodeLink
               id={row.id}
               label={nnode.shortname ?? row.id}
@@ -244,10 +251,12 @@ export function MapDetailsPanel({
   data,
   onClose,
   onNodeSelect,
+  onHoverLink,
 }: {
   data: NodeDetailsData | null;
   onClose: () => void;
   onNodeSelect: (nodeId: string) => void;
+  onHoverLink?: (otherNodeId: string | null) => void;
 }) {
   const { sheetRef, clearStyles, onTouchStart, onTouchMove, onTouchEnd } = useBottomSheetGesture(onClose);
 
@@ -257,6 +266,11 @@ export function MapDetailsPanel({
     prevNodeId.current = data.node.id;
     clearStyles();
   }
+
+  // Clear highlight on unmount
+  useEffect(() => {
+    return () => { onHoverLink?.(null); };
+  }, [onHoverLink]);
 
   if (!data) return null;
 
@@ -444,6 +458,7 @@ export function MapDetailsPanel({
             nodePosition={[node.position[0], node.position[1]]}
             liveNodes={liveNodes}
             onNodeSelect={onNodeSelect}
+            onHoverLink={onHoverLink}
           />
         </CollapsibleSection>
 
@@ -457,6 +472,7 @@ export function MapDetailsPanel({
             nodePosition={[node.position[0], node.position[1]]}
             liveNodes={liveNodes}
             onNodeSelect={onNodeSelect}
+            onHoverLink={onHoverLink}
           />
         </CollapsibleSection>
 
@@ -477,7 +493,12 @@ export function MapDetailsPanel({
                 const linkedNode = liveNodes[lookupId];
                 const label = linkedNode?.shortname ?? linkedId;
                 return (
-                  <div key={linkedId} className="flex items-center justify-between text-xs px-2 py-1 rounded bg-white/5">
+                  <div
+                    key={linkedId}
+                    className="flex items-center justify-between text-xs px-2 py-1 rounded bg-white/5 hover:bg-white/10 transition-colors"
+                    onMouseEnter={() => onHoverLink?.(lookupId)}
+                    onMouseLeave={() => onHoverLink?.(null)}
+                  >
                     <NodeLink
                       id={lookupId}
                       label={label}
