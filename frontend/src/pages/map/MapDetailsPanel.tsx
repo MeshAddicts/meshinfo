@@ -187,7 +187,7 @@ function PathAnalysisSection({
   const shortest = paths[0];
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       <div className="flex items-center justify-between px-2 py-1">
         <div className="text-xs text-gray-300">
           <span className="text-gray-500">To:</span>{" "}
@@ -208,41 +208,47 @@ function PathAnalysisSection({
         </button>
       </div>
 
-      {paths.length === 0 ? (
-        <div className="px-2 text-xs text-gray-500">No known traceroute path between these nodes.</div>
-      ) : (
-        <>
-          {shortest && (
-            <div className="px-2 py-1.5 rounded bg-cyan-500/10 border border-cyan-500/20 text-xs">
-              <div className="text-cyan-400 text-[10px] uppercase tracking-wider mb-0.5">Shortest Path</div>
-              <div className="text-gray-200">
-                {shortest.hopCount} {shortest.hopCount === 1 ? "hop" : "hops"}
-                {shortest.snr != null && <span className="text-gray-500 ml-2">SNR {shortest.snr} dB</span>}
-              </div>
-              <PathHopList hops={shortest.hops} liveNodes={liveNodes} onNodeSelect={onNodeSelect} onHoverLink={onHoverLink} />
-            </div>
-          )}
+      {/* LoS analysis is rendered in a floating bottom-center panel (MapLosPanel) */}
 
-          {paths.length > 1 && (
-            <div className="px-2 pt-1">
-              <div className="text-gray-500 text-[10px] uppercase tracking-wider mb-1">
-                Alternative Paths ({paths.length - 1})
+      {/* Traceroute-based paths (if any) */}
+      <div className="pt-2 border-t border-white/5">
+        <div className="text-gray-400 text-[10px] uppercase tracking-wider mb-1.5 px-1">Traceroute Paths</div>
+        {paths.length === 0 ? (
+          <div className="px-2 text-xs text-gray-500">No known traceroute path between these nodes.</div>
+        ) : (
+          <div className="space-y-1.5">
+            {shortest && (
+              <div className="px-2 py-1.5 rounded bg-cyan-500/10 border border-cyan-500/20 text-xs">
+                <div className="text-cyan-400 text-[10px] uppercase tracking-wider mb-0.5">Shortest Path</div>
+                <div className="text-gray-200">
+                  {shortest.hopCount} {shortest.hopCount === 1 ? "hop" : "hops"}
+                  {shortest.snr != null && <span className="text-gray-500 ml-2">SNR {shortest.snr} dB</span>}
+                </div>
+                <PathHopList hops={shortest.hops} liveNodes={liveNodes} onNodeSelect={onNodeSelect} onHoverLink={onHoverLink} />
               </div>
-              <div className="space-y-1">
-                {paths.slice(1, 6).map((p, i) => (
-                  <div key={i} className="text-xs px-2 py-1 rounded bg-white/5">
-                    <div className="text-gray-300">
-                      {p.hopCount} {p.hopCount === 1 ? "hop" : "hops"}
-                      {p.snr != null && <span className="text-gray-500 ml-2">SNR {p.snr} dB</span>}
+            )}
+
+            {paths.length > 1 && (
+              <div className="px-2 pt-1">
+                <div className="text-gray-500 text-[10px] uppercase tracking-wider mb-1">
+                  Alternative Paths ({paths.length - 1})
+                </div>
+                <div className="space-y-1">
+                  {paths.slice(1, 6).map((p, i) => (
+                    <div key={i} className="text-xs px-2 py-1 rounded bg-white/5">
+                      <div className="text-gray-300">
+                        {p.hopCount} {p.hopCount === 1 ? "hop" : "hops"}
+                        {p.snr != null && <span className="text-gray-500 ml-2">SNR {p.snr} dB</span>}
+                      </div>
+                      <PathHopList hops={p.hops} liveNodes={liveNodes} onNodeSelect={onNodeSelect} onHoverLink={onHoverLink} />
                     </div>
-                    <PathHopList hops={p.hops} liveNodes={liveNodes} onNodeSelect={onNodeSelect} onHoverLink={onHoverLink} />
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
-        </>
-      )}
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -628,7 +634,7 @@ export function MapDetailsPanel({
         </CollapsibleSection>
 
         {pathAnalysis && (
-          <CollapsibleSection title="Path Analysis" defaultOpen={!!pathAnalysis.targetId}>
+          <CollapsibleSection title="Compare Nodes" defaultOpen={!!pathAnalysis.targetId}>
             <PathAnalysisSection
               fromNode={node}
               traceroutes={traceroutes}

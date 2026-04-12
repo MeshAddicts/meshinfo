@@ -26,9 +26,11 @@ import { reverseGeocode } from "../maps/geocoder";
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
+import { analyzeLineOfSight, type LoSResult } from "./map/losAnalysis";
 import { findPathsBetween } from "./map/pathAnalysis";
 import { MapDetailsPanel } from "./map/MapDetailsPanel";
 import { MapHealthWidget } from "./map/MapHealthWidget";
+import { MapLosPanel } from "./map/MapLosPanel";
 import { MapQuickControls } from "./map/MapQuickControls";
 import { MapSearchBar } from "./map/MapSearchBar";
 import { MapSettingsPanel } from "./map/MapSettingsPanel";
@@ -369,6 +371,7 @@ export function Map() {
   const [terrainExaggeration, setTerrainExaggeration] = useState<number>(
     () => readJson<number>(LS_KEYS.terrainExaggeration, 1.5)
   );
+  const [losResult, setLosResult] = useState<LoSResult | null>(null);
 
   // Settings panel visibility
   const [settingsPanelOpen, setSettingsPanelOpen] = useState<boolean>(() => {
@@ -608,6 +611,68 @@ export function Map() {
       }
     }
   }, [pathTargetId, detailsData, rawTraceroutes, nodes, olMap]);
+
+  // Line-of-sight analysis between selected node and pathTargetId.
+  // Requires Mapbox with 3D terrain enabled (so we can query real elevations).
+  useEffect(() => {
+    if (!pathTargetId || !detailsData) {
+      setLosResult(null);
+      return;
+    }
+    if (provider !== "mapbox" || !terrain3D) {
+      // Terrain not available — mark as needing terrain, clear result
+      setLosResult(null);
+      return;
+    }
+    const mb = mbMapRef.current;
+    if (!mb) {
+      setLosResult(null);
+      return;
+    }
+    const fromLive = nodes[detailsData.node.id];
+    const toLive = nodes[pathTargetId] ?? nodes[`!${pathTargetId}`];
+    if (!fromLive?.map_position || !toLive?.map_position) {
+      setLosResult(null);
+      return;
+    }
+
+    const fromPos: [number, number] = [fromLive.map_position[0], fromLive.map_position[1]];
+    const toPos: [number, number] = [toLive.map_position[0], toLive.map_position[1]];
+    const fromAltitude = fromLive.position?.altitude ?? null;
+    const toAltitude = toLive.position?.altitude ?? null;
+
+    // Give terrain DEM tiles a moment to load before sampling
+    const run = () => {
+      try {
+        const result = analyzeLineOfSight({
+          from: fromPos,
+          to: toPos,
+          fromAltitudeM: fromAltitude,
+          toAltitudeM: toAltitude,
+          antennaHeightM: 2,
+          freqGHz: 0.915,
+          samples: 150,
+          queryTerrainM: (lng, lat) => {
+            const elev = mb.queryTerrainElevation([lng, lat]);
+            return typeof elev === "number" ? elev : null;
+          },
+        });
+        setLosResult(result);
+      } catch (err) {
+        console.warn("[Map] LoS analysis failed:", err);
+        setLosResult(null);
+      }
+    };
+
+    // Fit the viewport to include both points so terrain tiles load for sampling
+    const bounds = new mapboxgl.LngLatBounds(fromPos, toPos);
+    mb.fitBounds(bounds, { padding: 80, duration: 600, maxZoom: 13 });
+
+    // Wait for terrain tiles to settle, then sample
+    const timer = setTimeout(run, 1200);
+    return () => clearTimeout(timer);
+  }, [pathTargetId, detailsData, provider, terrain3D, nodes]);
+
   useEffect(() => { channelFilterRef.current = channelFilter; }, [channelFilter]);
 
   useEffect(() => {
@@ -2701,6 +2766,24 @@ export function Map() {
           onClearPath: () => { setPathTargetId(null); setPathPickMode(false); },
         }}
       />
+
+      {/* Floating LoS panel — bottom-center when comparing two nodes */}
+      {pathTargetId && detailsData && (
+        <MapLosPanel
+          result={losResult}
+          fromLabel={detailsData.node.shortname ?? detailsData.node.id.slice(0, 8)}
+          toLabel={
+            (nodes[pathTargetId] ?? nodes[`!${pathTargetId}`])?.shortname
+            ?? pathTargetId.slice(0, 8)
+          }
+          fromColor="#22c55e"
+          toColor="#06b6d4"
+          terrainNeeded={provider === "mapbox" && !terrain3D}
+          onEnableTerrain={provider === "mapbox" ? () => setTerrain3D(true) : undefined}
+          onClose={() => { setPathTargetId(null); setPathPickMode(false); }}
+          isComputing={provider === "mapbox" && terrain3D && !losResult}
+        />
+      )}
 
       <style>
         {`
