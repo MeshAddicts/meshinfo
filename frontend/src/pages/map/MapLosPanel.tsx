@@ -86,20 +86,37 @@ export function MapLosPanel({
   }
 
   const los = result;
-  const statusLabel = los.losClear
-    ? (los.fresnelClear ? "Clear Line of Sight" : "LoS Clear · Fresnel Intrusion")
-    : "Obstructed";
-  const statusColor = los.losClear
-    ? (los.fresnelClear ? "emerald" : "yellow")
-    : "red";
+  // Status pill is driven by ITM mode when available — that's the
+  // physically authoritative answer. Geometric Fresnel/obstruction info
+  // stays as secondary indicators below.
+  let statusLabel: string;
+  let statusColor: "emerald" | "yellow" | "orange" | "red";
+  if (los.itmMode === "troposcatter") {
+    statusLabel = "Beyond radio horizon";
+    statusColor = "red";
+  } else if (los.itmMode === "diffraction") {
+    statusLabel = "Diffraction path";
+    statusColor = "orange";
+  } else if (los.itmMode === "line_of_sight") {
+    statusLabel = los.fresnelClear ? "Clear Line of Sight" : "LoS · Fresnel Intrusion";
+    statusColor = los.fresnelClear ? "emerald" : "yellow";
+  } else {
+    // Fallback: ITM not loaded yet — use geometric read.
+    statusLabel = los.losClear
+      ? (los.fresnelClear ? "Clear Line of Sight" : "LoS · Fresnel Intrusion")
+      : "Obstructed";
+    statusColor = los.losClear ? (los.fresnelClear ? "emerald" : "yellow") : "red";
+  }
   const statusClasses = {
     emerald: "bg-emerald-500/15 border-emerald-500/30 text-emerald-300",
     yellow: "bg-yellow-500/15 border-yellow-500/30 text-yellow-300",
+    orange: "bg-orange-500/15 border-orange-500/30 text-orange-300",
     red: "bg-red-500/15 border-red-500/30 text-red-300",
   }[statusColor];
   const dotColor = {
     emerald: "bg-emerald-400",
     yellow: "bg-yellow-400",
+    orange: "bg-orange-400",
     red: "bg-red-400",
   }[statusColor];
 
@@ -170,7 +187,7 @@ export function MapLosPanel({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </summary>
-            <div className="absolute right-0 bottom-full mb-1 min-w-[260px] w-72 p-2 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-gray-400 leading-relaxed space-y-1">
+            <div className="absolute right-0 bottom-full mb-1 min-w-65 w-72 p-2 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-gray-400 leading-relaxed space-y-1">
               <div>
                 <strong>Geometry:</strong> real terrain elevations with{" "}
                 <strong>4/3 earth radius</strong> for atmospheric refraction.

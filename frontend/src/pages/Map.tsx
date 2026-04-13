@@ -26,7 +26,7 @@ import { reverseGeocode } from "../maps/geocoder";
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
-import { COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS, linkBudgetMaxKm, type CoverageResult } from "./map/coverageAnalysis";
+import { COMMON_HARDWARE, effectiveSensitivityDbm, ENVIRONMENTS, MESHTASTIC_PRESETS, type CoverageResult } from "./map/coverageAnalysis";
 import { demBoundsAround, downsampleDEM, sampleDEMAt, type DEM, type DEMBounds } from "./map/terrainDEM";
 import { buildDemFromTerrainRgb } from "./map/terrainRgb";
 import { CoverageWorkerPool } from "./map/coverageWorkerPool";
@@ -435,16 +435,30 @@ export function Map() {
    * terrain-aware results). No manual override — keeping the derived
    * value keeps the coverage panel simpler and the behavior honest.
    */
+  /** Chipset-corrected RX sensitivity actually used in calcs. */
+  const coverageEffectiveSensitivityDbm = useMemo(() => {
+    const hw = COMMON_HARDWARE[coverageHardwareIdx];
+    return effectiveSensitivityDbm(coverageSensitivityDbm, hw.chipset);
+  }, [coverageSensitivityDbm, coverageHardwareIdx]);
+  /**
+   * DEM/raster size radius — derived from a simple free-space budget
+   * just so the analysis area scales with hardware. Not shown to users
+   * and not used for painting (ITM handles that). Capped at 500 km
+   * because DEM resolution beyond that is too coarse to be meaningful.
+   */
   const coverageRadiusKm = useMemo(() => {
-    const env = ENVIRONMENTS[coverageEnvIdx];
-    const maxKm = linkBudgetMaxKm({
-      antennaDbi: coverageAntennaDbi,
-      txDbm: coverageTxDbm,
-      envExponent: env.pathLossExponent,
-      rxSensitivityDbm: coverageSensitivityDbm,
-    });
-    return Math.max(2, Math.min(500, Math.round(maxKm)));
-  }, [coverageAntennaDbi, coverageTxDbm, coverageEnvIdx, coverageSensitivityDbm]);
+    const CABLE = 0.5;
+    const FADE = 15;
+    const budget =
+      coverageTxDbm +
+      2 * coverageAntennaDbi -
+      coverageEffectiveSensitivityDbm -
+      FADE -
+      CABLE;
+    const plConstant = 32.45 + 20 * Math.log10(915);
+    const maxKm = Math.pow(10, (budget - plConstant) / 20);
+    return Math.max(5, Math.min(500, Math.round(maxKm)));
+  }, [coverageAntennaDbi, coverageTxDbm, coverageEffectiveSensitivityDbm]);
   /** Custom WebGL layer instance for the 3D LoS tube. Created once per map. */
   const losTubeLayerRef = useRef<LosTubeLayer | null>(null);
   /** DOM-based pin for the Coverage tool's origin (draggable-capable). */
@@ -553,7 +567,6 @@ export function Map() {
           antennaDbi: result.antennaDbi,
           txDbm: result.txDbm,
           rxSensitivityDbm: result.rxSensitivityDbm,
-          linkBudgetMaxKm: Math.round(result.linkBudgetMaxKm),
           model: "Longley-Rice v1.4 (ITS) via WASM",
           generatedAt: stamp,
         },
@@ -594,7 +607,6 @@ export function Map() {
         `Analysis radius: ${result.radiusKm} km`,
         `TX: ${result.txDbm} dBm, antenna ${result.antennaDbi} dBi`,
         `RX sensitivity: ${result.rxSensitivityDbm} dBm`,
-        `Link-budget range: ~${Math.round(result.linkBudgetMaxKm)} km`,
         `Generated: ${stamp}`,
       ].map(esc).join("\n");
 
@@ -1426,14 +1438,13 @@ export function Map() {
     // slice task, and stitches the RGBA responses.
     const DEM_SIZE = COVERAGE_DETAIL_SIZE[coverageDetail];
     const envEntry = ENVIRONMENTS[coverageEnvIdx];
-    const envExp = envEntry.pathLossExponent;
     const rasterParams: RasterParams = {
       freqMhz: 915,
       txDbm: coverageTxDbm,
       antennaDbi: coverageAntennaDbi,
-      rxSensitivityDbm: coverageSensitivityDbm,
+      rxSensitivityDbm: coverageEffectiveSensitivityDbm,
       fadeMarginDb: 15,
-      cableLossDb: 2,
+      cableLossDb: 0.5,
       clutterLossDb: envEntry.clutterLossDb,
       // ITM climate & ground constants. Continental Temperate + N=301 is
       // a reasonable default for most North-American Meshtastic networks.
@@ -1548,14 +1559,7 @@ export function Map() {
           frequencyGHz: 0.915,
           antennaDbi: coverageAntennaDbi,
           txDbm: coverageTxDbm,
-          linkBudgetMaxKm: linkBudgetMaxKm({
-            antennaDbi: coverageAntennaDbi,
-            txDbm: coverageTxDbm,
-            envExponent: envExp,
-            rxSensitivityDbm: coverageSensitivityDbm,
-          }),
-          envExponent: envExp,
-          rxSensitivityDbm: coverageSensitivityDbm,
+          rxSensitivityDbm: coverageEffectiveSensitivityDbm,
         });
         setIsComputingCoverage(false);
       } catch (err) {

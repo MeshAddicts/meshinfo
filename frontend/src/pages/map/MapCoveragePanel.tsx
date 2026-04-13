@@ -256,18 +256,19 @@ export function MapCoveragePanel({
                 <div className="mt-0.5">
                   Climate: <strong>Continental Temperate</strong> ·
                   Reliability: <strong>50 / 50 / 50 %</strong> (time / location
-                  / situation) · Cable loss: <strong>2 dB</strong> ·
+                  / situation) · Cable loss: <strong>0.5 dB</strong> ·
                   Fade margin: <strong>15 dB</strong> ·
-                  RX sensitivity: <strong>{result.rxSensitivityDbm} dBm</strong>.
+                  RX sensitivity: <strong>{result.rxSensitivityDbm} dBm</strong>{" "}
+                  (real-world; SX1262 datasheet is ~3 dB more sensitive).
                 </div>
               </div>
               <div className="text-amber-300/80 pt-1 border-t border-white/5 mt-1">
-                <strong>Caveats:</strong> sensitivity figures come from
-                Meshtastic docs for SX126x chips; real-world values are often
-                1–3 dB worse due to board noise. SX1276 boards (e.g. Heltec v2)
-                are ~2–3 dB less sensitive. ITM does not model buildings or
-                foliage; the <em>Environment</em> selector adds a flat clutter
-                loss as a rough compensation.
+                <strong>Caveats:</strong> RX sensitivity uses real-world typical
+                values (~3 dB worse than datasheet) and adjusts down another
+                ~2 dB for SX1276-based boards (Heltec v2). ITM does not model
+                buildings or foliage; the <em>Environment</em> selector adds a
+                flat clutter loss as a rough compensation. Antenna gain is
+                applied symmetrically (same antenna at both ends).
               </div>
             </div>
           </details>

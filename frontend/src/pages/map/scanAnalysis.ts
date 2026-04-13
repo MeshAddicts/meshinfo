@@ -52,7 +52,6 @@ export interface ScanInput {
   rxSensitivityDbm?: number;
   fadeMarginDb?: number;
   cableLossDb?: number;
-  envExponent?: number;
   /**
    * If set, targets farther than this from the origin are skipped before the
    * (expensive) LoS call. Speeds up big scans. Default Infinity.
@@ -95,10 +94,9 @@ export function runScan(input: ScanInput): ScanSummary {
     freqGHz = 0.915,
     txDbm = 22,
     antennaDbi = 3,
-    rxSensitivityDbm = -133,
+    rxSensitivityDbm = -130,
     fadeMarginDb = 15,
-    cableLossDb = 2,
-    envExponent = 2.0,
+    cableLossDb = 0.5,
     maxDistanceKm = Infinity,
   } = input;
 
@@ -125,7 +123,7 @@ export function runScan(input: ScanInput): ScanSummary {
       queryTerrainM,
     });
 
-    const pl = pathLossDb(d, freqMhz, envExponent);
+    const pl = pathLossDb(d, freqMhz);
     const totalLossDb = pl + los.diffractionLossDb + cableLossDb;
     const rssiDbm = txDbm + 2 * antennaDbi - totalLossDb;
     const marginDb = rssiDbm - rxSensitivityDbm - fadeMarginDb;

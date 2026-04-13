@@ -14,13 +14,6 @@ export interface Environment {
   id: string;
   label: string;
   /**
-   * Path-loss exponent for the legacy log-distance model. Still used by
-   * `linkBudgetMaxKm()` to drive the "theoretical range" preview in the
-   * panel. The actual per-pixel coverage math (ITM / Longley-Rice) uses
-   * the `clutterLossDb` field below.
-   */
-  pathLossExponent: number;
-  /**
    * Excess loss (dB) added on top of ITM's terrain-aware prediction to
    * represent building / vegetation clutter. ITM itself doesn't model
    * buildings or foliage — this is a crude but tunable compensation.
@@ -29,83 +22,79 @@ export interface Environment {
   description: string;
 }
 export const ENVIRONMENTS: Environment[] = [
-  { id: "open",     label: "Open / Rural",         pathLossExponent: 2.0, clutterLossDb: 0,  description: "Line-of-sight with no obstacles — open country, water, desert" },
-  { id: "mixed",    label: "Light terrain",        pathLossExponent: 2.5, clutterLossDb: 3,  description: "Scattered trees and rolling hills — mixed countryside" },
-  { id: "suburban", label: "Suburban",             pathLossExponent: 3.0, clutterLossDb: 6,  description: "Residential neighborhoods with buildings and moderate clutter" },
-  { id: "urban",    label: "Urban / Dense forest", pathLossExponent: 3.5, clutterLossDb: 12, description: "Heavy obstruction — city core, thick canopy, industrial" },
+  { id: "open",     label: "Open / Rural",         clutterLossDb: 0,  description: "Line-of-sight with no obstacles — open country, water, desert" },
+  { id: "mixed",    label: "Light terrain",        clutterLossDb: 3,  description: "Scattered trees and rolling hills — mixed countryside" },
+  { id: "suburban", label: "Suburban",             clutterLossDb: 6,  description: "Residential neighborhoods with buildings and moderate clutter" },
+  { id: "urban",    label: "Urban / Dense forest", clutterLossDb: 12, description: "Heavy obstruction — city core, thick canopy, industrial" },
 ];
 
 /**
- * Meshtastic modem presets. Sensitivity values match Meshtastic's documented
- * theoretical figures for SX126x chipsets at the given SF/BW combinations.
- * (See: meshtastic.org/docs/overview/radio-settings/modem-presets/)
+ * Meshtastic modem presets. The `sensitivityDbm` we use in calculations is
+ * a **real-world typical** value — roughly 3 dB worse than the SX1262
+ * datasheet ("spec") figure. Real-world degradation comes from PCB
+ * noise, temperature, antenna system losses, and board-level matching.
  *
- * Real-world sensitivity is typically 1–3 dB worse than theoretical due to
- * PCB noise, temperature, and antenna system losses. The 15 dB fade margin
- * in the link budget already accounts for some of this.
+ * For SX1276-based boards (Heltec LoRa32 v2 etc.) the sensitivity is
+ * typically another ~2 dB worse again — handled via the `chipset` field
+ * on COMMON_HARDWARE + the `effectiveSensitivityDbm` helper below.
+ *
+ * Both values are exposed so the panel tooltip can show spec + real-world
+ * side by side for transparency. Datasheet references:
+ * meshtastic.org/docs/overview/radio-settings/modem-presets/
  */
 export interface ModemPreset {
   id: string;
   label: string;
+  /** Real-world typical sensitivity (dBm). Used for link-budget math. */
   sensitivityDbm: number;
+  /** Datasheet/spec sensitivity from the SX1262 datasheet (dBm). */
+  datasheetSensitivityDbm: number;
   sf: number;
   bwKhz: number;
   isCustom?: boolean;
 }
 export const MESHTASTIC_PRESETS: ModemPreset[] = [
-  { id: "MediumFast", label: "MediumFast (SF9, 250 kHz)",  sensitivityDbm: -127, sf: 9,  bwKhz: 250 },
-  { id: "LongFast",   label: "LongFast (SF11, 250 kHz)",   sensitivityDbm: -133, sf: 11, bwKhz: 250 },
-  { id: "LongSlow",   label: "LongSlow (SF12, 125 kHz)",   sensitivityDbm: -137, sf: 12, bwKhz: 125 },
-  { id: "Custom",     label: "Custom",                      sensitivityDbm: -133, sf: 11, bwKhz: 250, isCustom: true },
+  { id: "MediumFast", label: "MediumFast (SF9, 250 kHz)",  sensitivityDbm: -124, datasheetSensitivityDbm: -127, sf: 9,  bwKhz: 250 },
+  { id: "LongFast",   label: "LongFast (SF11, 250 kHz)",   sensitivityDbm: -130, datasheetSensitivityDbm: -133, sf: 11, bwKhz: 250 },
+  { id: "LongSlow",   label: "LongSlow (SF12, 125 kHz)",   sensitivityDbm: -134, datasheetSensitivityDbm: -137, sf: 12, bwKhz: 125 },
+  { id: "Custom",     label: "Custom",                      sensitivityDbm: -130, datasheetSensitivityDbm: -133, sf: 11, bwKhz: 250, isCustom: true },
 ];
 
 /**
- * Path loss at distance `dKm` for a given frequency and environment exponent.
- * Uses free-space as the d=1km reference, plus excess clutter loss that scales
- * with the environment exponent. Clamped to d≥10m to avoid weirdness at zero.
+ * Additional sensitivity penalty for SX1276-based boards — they use the
+ * older chipset which is typically ~2 dB less sensitive than SX1262
+ * at the same SF/BW combination.
  */
-export function pathLossDb(dKm: number, freqMhz: number, envExponent: number): number {
-  const d = Math.max(0.01, dKm);
-  const freeSpace = 32.45 + 20 * Math.log10(freqMhz) + 20 * Math.log10(d);
-  const excess = (envExponent - 2) * 10 * Math.log10(Math.max(1, d));
-  return freeSpace + excess;
+export const SX1276_SENSITIVITY_OFFSET_DB = -2;
+
+/**
+ * Chipset used by a given hardware entry. Drives the sensitivity
+ * correction applied in link-budget math.
+ */
+export type LoraChipset = "SX1262" | "SX1276";
+
+/**
+ * Compute the effective RX sensitivity (dBm) for a modem preset +
+ * chipset combination. Always more negative (i.e. less sensitive) than
+ * the preset's base value when SX1276 is selected.
+ */
+export function effectiveSensitivityDbm(
+  presetSensitivityDbm: number,
+  chipset: LoraChipset,
+): number {
+  return presetSensitivityDbm + (chipset === "SX1276" ? SX1276_SENSITIVITY_OFFSET_DB : 0);
 }
 
 /**
- * Compute the theoretical max range (km) for a symmetric link using free-space
- * path loss at the given frequency. Reasonable for clear-LoS planning.
+ * Simple free-space path loss for backward compatibility with the scan
+ * tool (which hasn't been migrated to ITM yet). The coverage tool uses
+ * Longley-Rice directly and does not call this. Clamped to d≥10m.
  *
- * Budget = TX + G_tx + G_rx − sensitivity − margin − cable_loss
- * Free-space path loss (915 MHz): PL = 32.45 + 20·log10(f_MHz) + 20·log10(d_km)
- *                               = 91.67 + 20·log10(d_km)  at 915 MHz
- * Solving for d: d_km = 10^((budget − 91.67) / 20)
+ * PL = 32.45 + 20·log10(f_MHz) + 20·log10(d_km)
  */
-export function linkBudgetMaxKm(opts: {
-  antennaDbi: number;
-  txDbm?: number;
-  rxSensitivityDbm?: number;
-  fadeMarginDb?: number;
-  cableLossDb?: number;
-  freqMhz?: number;
-  /** Environment path-loss exponent (2.0 = free space). */
-  envExponent?: number;
-}): number {
-  const {
-    antennaDbi,
-    txDbm = 22,
-    rxSensitivityDbm = -133, // LongFast (Meshtastic docs theoretical)
-    fadeMarginDb = 15,
-    cableLossDb = 2,
-    freqMhz = 915,
-    envExponent = 2.0,
-  } = opts;
-
-  const budgetDb = txDbm + 2 * antennaDbi - rxSensitivityDbm - fadeMarginDb - cableLossDb;
-  // Solve budgetDb = pathLossDb(d) = 91.67 + 10·n·log10(d)  (for d ≥ 1km)
-  // → d = 10^((budget - 91.67) / (10·n))
-  const plConstant = 32.45 + 20 * Math.log10(freqMhz);
-  const dKm = Math.pow(10, (budgetDb - plConstant) / (10 * envExponent));
-  return dKm;
+export function pathLossDb(dKm: number, freqMhz: number): number {
+  const d = Math.max(0.01, dKm);
+  return 32.45 + 20 * Math.log10(freqMhz) + 20 * Math.log10(d);
 }
 
 /**
@@ -129,20 +118,29 @@ export const COMMON_ANTENNAS: { dbi: number; label: string }[] = [
  * Values are realistic defaults — most boards ship at these figures,
  * though actual output can vary by firmware settings and region.
  */
+export interface HardwareEntry {
+  label: string;
+  txDbm: number;
+  chipset: LoraChipset;
+  isCustom?: boolean;
+}
+
 // Ordered by TX power (descending), ties broken alphabetically. Custom last.
-export const COMMON_HARDWARE: { label: string; txDbm: number; isCustom?: boolean }[] = [
-  { label: "LILYGO T3-S3 1W", txDbm: 30 },
-  { label: "Heltec V3", txDbm: 22 },
-  { label: "Heltec V4", txDbm: 22 },
-  { label: "LILYGO T-Beam", txDbm: 22 },
-  { label: "LILYGO T-Deck", txDbm: 22 },
-  { label: "LILYGO T-Echo", txDbm: 22 },
-  { label: "RAK WisBlock (RAK4631)", txDbm: 22 },
-  { label: "Seeed T1000-E", txDbm: 22 },
-  { label: "Station G2", txDbm: 22 },
-  { label: "Heltec LoRa32 v2 (SX1276)", txDbm: 20 },
-  { label: "nRF52 (generic)", txDbm: 20 },
-  { label: "Custom", txDbm: 22, isCustom: true },
+// `chipset` drives the sensitivity offset: SX1276 boards are typically ~2 dB
+// less sensitive than SX1262 at the same preset.
+export const COMMON_HARDWARE: HardwareEntry[] = [
+  { label: "LILYGO T3-S3 1W", txDbm: 30, chipset: "SX1262" },
+  { label: "Heltec V3", txDbm: 22, chipset: "SX1262" },
+  { label: "Heltec V4", txDbm: 22, chipset: "SX1262" },
+  { label: "LILYGO T-Beam", txDbm: 22, chipset: "SX1262" },
+  { label: "LILYGO T-Deck", txDbm: 22, chipset: "SX1262" },
+  { label: "LILYGO T-Echo", txDbm: 22, chipset: "SX1262" },
+  { label: "RAK WisBlock (RAK4631)", txDbm: 22, chipset: "SX1262" },
+  { label: "Seeed T1000-E", txDbm: 22, chipset: "SX1262" },
+  { label: "Station G2", txDbm: 22, chipset: "SX1262" },
+  { label: "Heltec LoRa32 v2 (SX1276)", txDbm: 20, chipset: "SX1276" },
+  { label: "nRF52 (generic)", txDbm: 20, chipset: "SX1262" },
+  { label: "Custom", txDbm: 22, chipset: "SX1262", isCustom: true },
 ];
 
 /**
@@ -164,8 +162,6 @@ export interface CoverageResult {
   frequencyGHz: number;
   antennaDbi: number;
   txDbm: number;
-  /** Theoretical max range (km) from the link budget at this config. */
-  linkBudgetMaxKm: number;
-  envExponent: number;
+  /** Effective RX sensitivity (dBm) used — includes chipset correction. */
   rxSensitivityDbm: number;
 }
