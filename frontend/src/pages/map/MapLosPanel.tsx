@@ -131,6 +131,26 @@ export function MapLosPanel({
             <span className="text-gray-500">
               {Math.round(los.fromHeightM)}{los.fromIsFallback && "~"}m → {Math.round(los.toHeightM)}{los.toIsFallback && "~"}m
             </span>
+            {los.itmLossDb != null && (
+              <>
+                <span className="text-gray-600 mx-1">·</span>
+                <span
+                  className="text-cyan-300 font-medium"
+                  title={
+                    los.itmFreeSpaceDb != null
+                      ? `Longley-Rice path loss. Free-space at this distance: ${Math.round(los.itmFreeSpaceDb)} dB (excess: ${Math.round(los.itmLossDb - los.itmFreeSpaceDb)} dB)`
+                      : "Longley-Rice basic transmission loss"
+                  }
+                >
+                  {Math.round(los.itmLossDb)} dB
+                  {los.itmMode && (
+                    <span className="text-gray-500 ml-1">
+                      ({los.itmMode.replace("_", " ")})
+                    </span>
+                  )}
+                </span>
+              </>
+            )}
           </span>
           {!los.losClear && (
             <span className="text-[10px] text-red-300">
@@ -150,10 +170,24 @@ export function MapLosPanel({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </summary>
-            <div className="absolute right-0 bottom-full mb-1 min-w-[260px] p-2 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-gray-400 leading-relaxed">
-              <div>Uses real terrain elevations and <strong>4/3 earth radius</strong> for atmospheric refraction.</div>
-              <div>Frequency: <strong>{(los.frequencyGHz * 1000).toFixed(0)} MHz</strong>. Fresnel zone needs ≥60% clearance.</div>
-              <div>&quot;~&quot; means node had no GPS altitude (or reported below terrain) — assumed as <strong>terrain + 2m</strong>.</div>
+            <div className="absolute right-0 bottom-full mb-1 min-w-[260px] w-72 p-2 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-gray-400 leading-relaxed space-y-1">
+              <div>
+                <strong>Geometry:</strong> real terrain elevations with{" "}
+                <strong>4/3 earth radius</strong> for atmospheric refraction.
+                Fresnel zone needs ≥60% clearance for "clear."
+              </div>
+              {los.itmLossDb != null && (
+                <div className="pt-1 border-t border-white/5">
+                  <strong>Path loss:</strong> Longley-Rice v1.4 (ITS) via WASM —
+                  same model as the Coverage tool. Assumes continental temperate
+                  climate, vertical polarization, 50 % reliability.
+                </div>
+              )}
+              <div className="pt-1 border-t border-white/5">
+                Frequency: <strong>{(los.frequencyGHz * 1000).toFixed(0)} MHz</strong>.
+                "~" means node had no GPS altitude (or reported below terrain) —
+                assumed as <strong>terrain + 2m</strong>.
+              </div>
             </div>
           </details>
           <button

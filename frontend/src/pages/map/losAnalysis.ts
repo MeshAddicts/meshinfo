@@ -103,6 +103,16 @@ export interface LoSResult {
   frequencyGHz: number;
   /** Elevation delta between endpoints (meters). */
   elevationDiffM: number;
+  /**
+   * Longley-Rice (ITM) basic transmission loss in dB. Populated
+   * asynchronously by the caller after the geometric analysis returns;
+   * absent when the ITM WASM isn't available.
+   */
+  itmLossDb?: number;
+  /** Free-space loss at the same distance/frequency, for reference. */
+  itmFreeSpaceDb?: number;
+  /** ITM-reported propagation mode (LoS / diffraction / troposcatter). */
+  itmMode?: string;
 }
 
 /** Great-circle distance (km) between two lng/lat points. */

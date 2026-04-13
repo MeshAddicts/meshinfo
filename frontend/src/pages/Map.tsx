@@ -34,6 +34,7 @@ import type { CoverageSliceRequest } from "./map/coverageSliceWorker";
 import type { RasterParams } from "./map/coverageRaster";
 import { extractCoverageContours, type ContourFeatureCollection } from "./map/coverageContours";
 import { analyzeLineOfSight, type LoSResult } from "./map/losAnalysis";
+import { Climate, computeP2PLoss, Polarization } from "./map/itm";
 import { LosTubeLayer, losPointsToTubeData, obstructionsToGeoJSON, pickObstructions } from "./map/losTubeLayer";
 import { runScan, scanToGeoJSON, type ScanSummary, type ScanTarget } from "./map/scanAnalysis";
 import { MapScanPanel } from "./map/MapScanPanel";
@@ -1108,9 +1109,10 @@ export function Map() {
     const toAltitude = toLive.position?.altitude ?? null;
 
     // Give terrain DEM tiles a moment to load before sampling
-    const run = () => {
+    const run = async () => {
+      let result: LoSResult;
       try {
-        const result = analyzeLineOfSight({
+        result = analyzeLineOfSight({
           from: fromPos,
           to: toPos,
           fromAltitudeM: fromAltitude,
@@ -1123,10 +1125,45 @@ export function Map() {
             return typeof elev === "number" ? elev : null;
           },
         });
-        setLosResult(result);
       } catch (err) {
         console.warn("[Map] LoS analysis failed:", err);
         setLosResult(null);
+        return;
+      }
+      // Show the geometric result immediately — ITM enhances it
+      // asynchronously on top.
+      setLosResult(result);
+
+      // Enhance with Longley-Rice path loss. Runs in parallel with the
+      // panel first-paint so the panel stays responsive. If the WASM
+      // isn't built, we silently skip and the panel keeps the geometric
+      // view only.
+      try {
+        const profileM = new Float64Array(result.points.map((p) => p.ground));
+        if (profileM.length < 2) return;
+        const spacingM = (result.totalDistanceKm * 1000) / (profileM.length - 1);
+        const fromGroundM = result.points[0].ground;
+        const toGroundM = result.points[result.points.length - 1].ground;
+        const itm = await computeP2PLoss({
+          txHeightM: Math.max(0.5, result.fromHeightM - fromGroundM),
+          rxHeightM: Math.max(0.5, result.toHeightM - toGroundM),
+          profileM,
+          pointSpacingM: spacingM,
+          climate: Climate.ContinentalTemperate,
+          surfaceRefractivityN: 301,
+          freqMhz: result.frequencyGHz * 1000,
+          polarization: Polarization.Vertical,
+          groundDielectric: 15,
+          groundConductivity: 0.005,
+        });
+        setLosResult({
+          ...result,
+          itmLossDb: itm.lossDb,
+          itmFreeSpaceDb: itm.intermediate.aFreeSpaceDb,
+          itmMode: itm.intermediate.mode,
+        });
+      } catch (itmErr) {
+        console.warn("[Map] LoS ITM enhancement unavailable:", itmErr);
       }
     };
 
