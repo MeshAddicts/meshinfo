@@ -82,6 +82,11 @@ class MQTT:
                     se.ParseFromString(msg.payload)
                     mp = se.packet
                     outs = json.loads(MessageToJson(mp, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
+                    # Extract gateway_id (the node that uplinked this packet to MQTT)
+                    if se.gateway_id:
+                        gw = se.gateway_id.replace('!', '')
+                        if len(gw) <= 8:
+                            outs['sender'] = gw
                     logger.debug("Decoded protobuf message: %s", outs)
                 except Exception as _:
                     pass
@@ -101,7 +106,10 @@ class MQTT:
                             data = mesh_pb2.Data()
                             data.ParseFromString(decrypted_bytes)
                             mp.decoded.CopyFrom(data)
+                            saved_sender = outs.get('sender')
                             outs = json.loads(MessageToJson(mp, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
+                            if saved_sender:
+                                outs['sender'] = saved_sender
                             break
                         except Exception as e:
                             logger.debug("Decryption failed: %s", e)
@@ -120,6 +128,12 @@ class MQTT:
                 outs['topic'] = msg.topic.value
                 outs["qos"] = getattr(msg, "qos", None)
                 outs["retain"] = getattr(msg, "retain", None)
+
+                # Fallback: extract gateway from topic suffix if gateway_id was empty
+                if not outs.get('sender'):
+                    topic_parts = msg.topic.value.split('/')
+                    if topic_parts and topic_parts[-1].startswith('!'):
+                        outs['sender'] = topic_parts[-1].replace('!', '')
 
                 # Calculate hops_away from hop_start and hop_limit
                 hop_start = outs.get("hop_start")
@@ -302,6 +316,12 @@ class MQTT:
                     j['topic'] = msg.topic.value
                     j["qos"] = getattr(msg, "qos", None)
                     j["retain"] = getattr(msg, "retain", None)
+
+                    # Extract gateway node from topic suffix (e.g. msh/US/2/json/LongFast/!67ea9400)
+                    if 'sender' not in j or not j.get('sender'):
+                        topic_parts = msg.topic.value.split('/')
+                        if topic_parts and topic_parts[-1].startswith('!'):
+                            j['sender'] = topic_parts[-1].replace('!', '')
 
                     await self.handle_log(j)
 
