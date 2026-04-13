@@ -13,14 +13,26 @@
 export interface Environment {
   id: string;
   label: string;
-  pathLossExponent: number; // n in PL = 91.67 + 10·n·log10(d_km)
+  /**
+   * Path-loss exponent for the legacy log-distance model. Still used by
+   * `linkBudgetMaxKm()` to drive the "theoretical range" preview in the
+   * panel. The actual per-pixel coverage math (ITM / Longley-Rice) uses
+   * the `clutterLossDb` field below.
+   */
+  pathLossExponent: number;
+  /**
+   * Excess loss (dB) added on top of ITM's terrain-aware prediction to
+   * represent building / vegetation clutter. ITM itself doesn't model
+   * buildings or foliage — this is a crude but tunable compensation.
+   */
+  clutterLossDb: number;
   description: string;
 }
 export const ENVIRONMENTS: Environment[] = [
-  { id: "open",     label: "Open / Rural",        pathLossExponent: 2.0, description: "Line-of-sight with no obstacles — open country, water, desert" },
-  { id: "mixed",    label: "Light terrain",       pathLossExponent: 2.5, description: "Scattered trees and rolling hills — mixed countryside" },
-  { id: "suburban", label: "Suburban",            pathLossExponent: 3.0, description: "Residential neighborhoods with buildings and moderate clutter" },
-  { id: "urban",    label: "Urban / Dense forest", pathLossExponent: 3.5, description: "Heavy obstruction — city core, thick canopy, industrial" },
+  { id: "open",     label: "Open / Rural",         pathLossExponent: 2.0, clutterLossDb: 0,  description: "Line-of-sight with no obstacles — open country, water, desert" },
+  { id: "mixed",    label: "Light terrain",        pathLossExponent: 2.5, clutterLossDb: 3,  description: "Scattered trees and rolling hills — mixed countryside" },
+  { id: "suburban", label: "Suburban",             pathLossExponent: 3.0, clutterLossDb: 6,  description: "Residential neighborhoods with buildings and moderate clutter" },
+  { id: "urban",    label: "Urban / Dense forest", pathLossExponent: 3.5, clutterLossDb: 12, description: "Heavy obstruction — city core, thick canopy, industrial" },
 ];
 
 /**

@@ -1,36 +1,36 @@
 /**
- * Per-pixel RGBA coverage renderer.
+ * Per-pixel RGBA coverage renderer — Longley-Rice (ITM v1.4) edition.
  *
- * Given a DEM + viewshed (precomputed per-pixel distance and worst knife-edge
- * Fresnel parameter), compute link budget / RSSI / margin per pixel and paint
- * the output RGBA buffer using the same gradient as the old polygon layer:
- *   0 dB  → orange (#f97316)
- *   5 dB  → yellow (#eab308)
- *  15 dB  → green  (#22c55e)
- *  25 dB  → dark   (#16a34a)
- * Alpha scales with margin; margin < 0 pixels are fully transparent so the
- * terrain shows through unchanged.
+ * For every pixel in the DEM grid we:
+ *   1. Compute its lng/lat and great-circle distance to the origin.
+ *   2. Ray-march the DEM along the origin→pixel line, sampling a small
+ *      terrain profile (elevations at regular spacing).
+ *   3. Hand the profile + antenna + freq + climate params to the ITM
+ *      WASM module, which returns basic transmission loss in dB.
+ *   4. Compute RSSI + link-budget margin and paint the pixel with the
+ *      same orange/yellow/green gradient as before.
+ *
+ * Replaces the older knife-edge + NLoS penalty path. ITM handles LoS,
+ * diffraction, troposcatter, earth-bulge, and ground-reflection
+ * regimes internally, so the output is a lot more defensible.
+ *
+ * Performance notes:
+ *   - ItmContext pre-allocates WASM scratch buffers once; the hot loop
+ *     does zero allocation.
+ *   - Profile length adapts to path distance (15–96 samples). Short
+ *     paths get fewer samples to keep per-pixel compute tight.
+ *   - DEM sampling uses the existing bilinear `sampleDEMAt`.
  */
-import type { DEM } from "./terrainDEM";
-import { knifeEdgeLossDb, type Viewshed } from "./viewshed";
+import { type DEM, sampleDEMAt } from "./terrainDEM";
+import {
+  Climate,
+  computeP2PLossFast,
+  type ItmContext,
+  ModeOfVariability,
+  Polarization,
+} from "./itm";
 
-/**
- * Excess loss applied to non-line-of-sight (terrain-blocked) paths on top
- * of the single-knife-edge diffraction we already compute.
- *
- * ITU-R P.526 single-knife-edge alone systematically under-predicts real
- * NLoS loss because it ignores:
- *   - multiple obstacles along the ridge (Deygout / Bullington methods)
- *   - foliage / ground clutter past the obstacle
- *   - multipath destructive interference
- *   - scattering and diffraction around the edge (not just over it)
- *
- * Published measurements typically find NLoS paths another 6–12 dB lossier
- * than single-knife-edge predicts in realistic mixed terrain. 8 dB is a
- * reasonable midpoint that prevents the tool from painting coverage on the
- * far side of large ridges when the math just barely closes.
- */
-const NLOS_EXCESS_LOSS_DB = 8;
+const R_EARTH_KM = 6371;
 
 export interface RasterParams {
   /** Frequency in MHz. */
@@ -45,8 +45,34 @@ export interface RasterParams {
   fadeMarginDb: number;
   /** Cable/feedline loss (dB). */
   cableLossDb: number;
-  /** Environment path-loss exponent (2.0 = free space). */
-  envExponent: number;
+  /**
+   * Environment clutter loss (dB), added on top of ITM's own terrain
+   * prediction. ITM doesn't model buildings/foliage, so this is a
+   * crude compensation for suburban/urban/dense-vegetation settings.
+   * Open: 0 dB. Light terrain: 2 dB. Suburban: 5 dB. Urban: 10 dB.
+   */
+  clutterLossDb: number;
+  /** ITM climate region. */
+  climate: Climate;
+  /** Surface refractivity in N-units (e.g. 301 for continental). */
+  surfaceRefractivityN: number;
+  /** Antenna polarization. */
+  polarization: Polarization;
+  /** Ground dielectric constant ε_r. */
+  groundDielectric: number;
+  /** Ground conductivity σ (S/m). */
+  groundConductivity: number;
+  /** TLS reliability percentages (time/location/situation). Default 50/50/50. */
+  timePct?: number;
+  locationPct?: number;
+  situationPct?: number;
+}
+
+export interface RasterOrigin {
+  /** Origin lng/lat. */
+  position: [number, number];
+  /** Resolved origin MSL height in meters. */
+  heightM: number;
 }
 
 export interface RasterResult {
@@ -54,38 +80,29 @@ export interface RasterResult {
   rgba: Uint8ClampedArray;
   width: number;
   height: number;
-  /** Summary counts from classification. */
+  /** Pixels clearly within budget (margin ≥ 15 dB). */
   clearCount: number;
+  /** Pixels marginally within budget (0 ≤ margin < 15 dB). */
   fresnelCount: number;
+  /** Placeholder so the existing result type still shapes the same —
+   *  LR doesn't return a separate "diffracted" bucket. */
   diffractedCount: number;
+  /** Pixels below threshold (margin < 0 or compute failed). */
   blockedCount: number;
-  /** Max margin (dB) seen across all reachable pixels. */
+  /** Max margin across reachable pixels. */
   maxMarginDb: number;
 }
 
-/** Same formula as coverageAnalysis.pathLossDb, duplicated to avoid importing into worker. */
-function pathLossDb(dKm: number, freqMhz: number, envExponent: number): number {
-  const d = Math.max(0.01, dKm);
-  const freeSpace = 32.45 + 20 * Math.log10(freqMhz) + 20 * Math.log10(d);
-  const excess = (envExponent - 2) * 10 * Math.log10(Math.max(1, d));
-  return freeSpace + excess;
-}
+// ---------------------------------------------------------------------------
+// Gradient painting — unchanged
+// ---------------------------------------------------------------------------
 
-/** Linearly interpolate between two 0–255 channel values. */
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
 
-/**
- * Gradient: orange → yellow → green → darkGreen, keyed by marginDb.
- * Alpha ramps from 0.35 at margin=0 to 0.7 at margin=25.
- */
 function gradient(marginDb: number): [number, number, number, number] {
-  // Stops: [marginDb, r, g, b]
-  // orange   #f97316 = (249,115,22)
-  // yellow   #eab308 = (234,179,8)
-  // green    #22c55e = (34,197,94)
-  // darkgrn  #16a34a = (22,163,74)
+  // orange #f97316 → yellow #eab308 → green #22c55e → dark green #16a34a
   let r: number, g: number, b: number;
   if (marginDb <= 0) {
     r = 249; g = 115; b = 22;
@@ -101,81 +118,198 @@ function gradient(marginDb: number): [number, number, number, number] {
   } else {
     r = 22; g = 163; b = 74;
   }
-
-  // Alpha: 0.35 at margin=0 up to 0.7 at margin=25, clamped.
   const aT = Math.min(1, Math.max(0, marginDb / 25));
   const a = Math.round(255 * (0.35 + 0.35 * aT));
   return [Math.round(r), Math.round(g), Math.round(b), a];
 }
 
+// ---------------------------------------------------------------------------
+// Geo helpers
+// ---------------------------------------------------------------------------
+
+function haversineKm(
+  lng1: number, lat1: number, lng2: number, lat2: number,
+): number {
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lng2 - lng1) * Math.PI) / 180;
+  const a1 = (lat1 * Math.PI) / 180;
+  const a2 = (lat2 * Math.PI) / 180;
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.sin(dLon / 2) ** 2 * Math.cos(a1) * Math.cos(a2);
+  return 2 * R_EARTH_KM * Math.asin(Math.sqrt(s));
+}
+
 /**
- * Compute per-pixel RSSI margin from a viewshed and paint the RGBA buffer.
- *
- * `dem` is only used to confirm pixel validity (NaN elevations → transparent).
+ * Pick a sensible number of terrain-profile samples for a given path
+ * length. ITM's accuracy improves with more samples but so does the
+ * per-pixel cost. Roughly 1.5 samples/km, clamped to [15, 96].
+ */
+function profileSampleCount(distanceKm: number): number {
+  const raw = Math.round(distanceKm * 1.5);
+  return Math.max(15, Math.min(96, raw));
+}
+
+// ---------------------------------------------------------------------------
+// Main render
+// ---------------------------------------------------------------------------
+
+/**
+ * Paint the full DEM grid via ITM. The `profileBuf` parameter is reused
+ * across pixels to avoid per-pixel allocation (Float64Array). Its length
+ * must be ≥ `profileSampleCount(maxDistance)` — we size it to the DEM
+ * diagonal in km × 1.5 rounded up.
  */
 export function renderCoverageRaster(
   dem: DEM,
-  viewshed: Viewshed,
   params: RasterParams,
+  itm: ItmContext,
+  origin: RasterOrigin,
 ): RasterResult {
-  const { width, height } = viewshed;
+  const { width, height, bounds } = dem;
   const rgba = new Uint8ClampedArray(width * height * 4);
   const {
-    freqMhz,
-    txDbm,
-    antennaDbi,
-    rxSensitivityDbm,
-    fadeMarginDb,
-    cableLossDb,
-    envExponent,
+    freqMhz, txDbm, antennaDbi,
+    rxSensitivityDbm, fadeMarginDb, cableLossDb, clutterLossDb,
+    climate, surfaceRefractivityN, polarization,
+    groundDielectric, groundConductivity,
+    timePct = 50, locationPct = 50, situationPct = 50,
   } = params;
 
   let clearCount = 0;
   let fresnelCount = 0;
-  let diffractedCount = 0;
   let blockedCount = 0;
   let maxMarginDb = -Infinity;
 
-  for (let i = 0; i < width * height; i++) {
-    const dKm = viewshed.distanceKm[i];
-    const v = viewshed.worstV[i];
-    const demElev = dem.data[i];
+  // Pre-allocate a profile buffer big enough for the worst-case path.
+  // DEM bbox diagonal is a decent upper bound for how far any pixel can
+  // be from the origin. We size the buffer accordingly.
+  const diagonalKm = haversineKm(
+    bounds.west, bounds.south, bounds.east, bounds.north,
+  );
+  const maxSamples = profileSampleCount(diagonalKm);
+  const profileBuf = new Float64Array(maxSamples);
 
-    // Pixels outside the DEM or missing terrain → fully transparent.
-    if (Number.isNaN(dKm) || Number.isNaN(demElev)) {
-      rgba[i * 4 + 3] = 0;
-      continue;
+  const [origLng, origLat] = origin.position;
+  const lonStep = (bounds.east - bounds.west) / (width - 1);
+  const latStep = (bounds.north - bounds.south) / (height - 1);
+
+  // Reusable input object — mutating it in-place avoids GC pressure
+  // from allocating 65k+ objects per compute.
+  const itmInput = {
+    txHeightM: origin.heightM,
+    rxHeightM: 0, // rebuilt per-pixel from terrain
+    profileM: profileBuf,
+    pointSpacingM: 0,
+    climate,
+    surfaceRefractivityN,
+    freqMhz,
+    polarization,
+    groundDielectric,
+    groundConductivity,
+    mdvar: ModeOfVariability.SingleMessage,
+    time: timePct,
+    location: locationPct,
+    situation: situationPct,
+  };
+
+  const receiverAntennaAboveGroundM = 2; // mirrors previous pipeline
+  const txGain = antennaDbi;
+  const rxGain = antennaDbi;
+
+  for (let j = 0; j < height; j++) {
+    const lat = bounds.north - j * latStep;
+    const rowOffset = j * width;
+    for (let i = 0; i < width; i++) {
+      const pxIdx = rowOffset + i;
+      const demElev = dem.data[pxIdx];
+      if (Number.isNaN(demElev)) {
+        // No terrain data — leave transparent.
+        rgba[pxIdx * 4 + 3] = 0;
+        continue;
+      }
+      const lng = bounds.west + i * lonStep;
+      const distKm = haversineKm(origLng, origLat, lng, lat);
+
+      // Degenerate: origin itself. Paint as dark green (max margin).
+      if (distKm < 0.01) {
+        const [r, g, b, a] = gradient(50);
+        rgba[pxIdx * 4] = r;
+        rgba[pxIdx * 4 + 1] = g;
+        rgba[pxIdx * 4 + 2] = b;
+        rgba[pxIdx * 4 + 3] = a;
+        clearCount++;
+        if (50 > maxMarginDb) maxMarginDb = 50;
+        continue;
+      }
+
+      // Build the terrain profile by linearly interpolating the path in
+      // lng/lat space and sampling the DEM at each step. For the short
+      // paths Meshtastic cares about (up to ~500 km) this is accurate
+      // enough — great-circle curvature deviation stays under 1% of the
+      // straight-line distance.
+      const nSamples = profileSampleCount(distKm);
+      let validProfile = true;
+      for (let s = 0; s < nSamples; s++) {
+        const t = s / (nSamples - 1);
+        const sLng = origLng + (lng - origLng) * t;
+        const sLat = origLat + (lat - origLat) * t;
+        const elev = sampleDEMAt(dem, sLng, sLat);
+        if (Number.isNaN(elev)) {
+          validProfile = false;
+          break;
+        }
+        profileBuf[s] = elev;
+      }
+      if (!validProfile) {
+        rgba[pxIdx * 4 + 3] = 0;
+        continue;
+      }
+
+      // Resample the profile view into the first `nSamples` slots — the
+      // buffer can be longer than we need for short paths. ITM reads
+      // exactly `pfl[0]+1` elevations starting at `pfl[2]`, so length
+      // beyond that is ignored, but we still set profileM.length
+      // correctly by giving ITM the subview.
+      // We can't slice here (profileBuf is Float64Array, slice would
+      // alloc). Instead, pass a subarray (no-copy view).
+      itmInput.profileM = profileBuf.subarray(0, nSamples);
+      itmInput.pointSpacingM = (distKm * 1000) / (nSamples - 1);
+      itmInput.rxHeightM = receiverAntennaAboveGroundM;
+
+      const lossDb = computeP2PLossFast(itm, itmInput);
+      if (!Number.isFinite(lossDb) || lossDb <= 0) {
+        // ITM error — paint transparent so user sees something's off
+        // rather than coloring by garbage.
+        rgba[pxIdx * 4 + 3] = 0;
+        blockedCount++;
+        continue;
+      }
+
+      const totalLossDb = lossDb + clutterLossDb + cableLossDb;
+      const rssiDbm = txDbm + txGain + rxGain - totalLossDb;
+      const marginDb = rssiDbm - rxSensitivityDbm - fadeMarginDb;
+
+      if (marginDb < 0) {
+        blockedCount++;
+        rgba[pxIdx * 4 + 3] = 0;
+        continue;
+      }
+
+      if (marginDb >= 15) {
+        clearCount++;
+      } else {
+        fresnelCount++;
+      }
+      if (marginDb > maxMarginDb) maxMarginDb = marginDb;
+
+      const [r, g, b, a] = gradient(marginDb);
+      const o = pxIdx * 4;
+      rgba[o] = r;
+      rgba[o + 1] = g;
+      rgba[o + 2] = b;
+      rgba[o + 3] = a;
     }
-
-    const diffractionLossDb = knifeEdgeLossDb(v);
-    const nlosExcessDb = viewshed.blocked[i] ? NLOS_EXCESS_LOSS_DB : 0;
-    const totalLossDb =
-      pathLossDb(dKm, freqMhz, envExponent) + diffractionLossDb + nlosExcessDb + cableLossDb;
-    const rssiDbm = txDbm + 2 * antennaDbi - totalLossDb;
-    const marginDb = rssiDbm - rxSensitivityDbm - fadeMarginDb;
-
-    if (marginDb < 0) {
-      blockedCount++;
-      rgba[i * 4 + 3] = 0;
-      continue;
-    }
-
-    // Classify for summary stats (mirrors old coverageAnalysis logic).
-    if (viewshed.blocked[i]) {
-      diffractedCount++;
-    } else if (diffractionLossDb > 0.1) {
-      fresnelCount++;
-    } else {
-      clearCount++;
-    }
-    if (marginDb > maxMarginDb) maxMarginDb = marginDb;
-
-    const [r, g, b, a] = gradient(marginDb);
-    const o = i * 4;
-    rgba[o] = r;
-    rgba[o + 1] = g;
-    rgba[o + 2] = b;
-    rgba[o + 3] = a;
   }
 
   return {
@@ -184,7 +318,7 @@ export function renderCoverageRaster(
     height,
     clearCount,
     fresnelCount,
-    diffractedCount,
+    diffractedCount: 0,
     blockedCount,
     maxMarginDb: maxMarginDb === -Infinity ? 0 : maxMarginDb,
   };

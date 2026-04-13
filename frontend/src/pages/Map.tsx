@@ -1060,6 +1060,25 @@ export function Map() {
         pendingHandler = null;
         if (cancelled) return;
 
+        if (evt.data.itmUnavailable) {
+          console.warn(
+            "[Map] Coverage compute: ITM WASM not built. Run `yarn build:wasm`.",
+          );
+          setCoverageResult(null);
+          setIsComputingCoverage(false);
+          return;
+        }
+
+        // Surface compute time in dev tools so we can see how the LR pass
+        // scales across hardware. Useful ahead of the Phase 10D worker-pool
+        // parallelism work.
+        console.info(
+          `[Map] Coverage compute: ${evt.data.computeMs.toFixed(0)} ms ` +
+            `for ${evt.data.width}x${evt.data.height} px ` +
+            `(${((evt.data.clearCount + evt.data.fresnelCount + evt.data.blockedCount) /
+              (evt.data.width * evt.data.height) * 100).toFixed(0)}% terrain-covered)`,
+        );
+
         // Paint RGBA onto a canvas and push to the image source.
         const canvas = document.createElement("canvas");
         canvas.width = evt.data.width;
@@ -1121,18 +1140,18 @@ export function Map() {
       pendingHandler = handler;
       worker.addEventListener("message", handler);
 
+      const envEntry = ENVIRONMENTS[coverageEnvIdx];
       const msg: CoverageWorkerRequest = {
         requestId,
         bounds: demBounds,
-        demWidth: 256,
-        demHeight: 256,
+        demWidth: 384,
+        demHeight: 384,
         mapboxToken,
         origin: origin!,
         originAltitudeM: altitude,
         antennaHeightM: 2,
         targetAntennaHeightM: 2,
         freqGHz: 0.915,
-        raySamples: 48,
         raster: {
           freqMhz: 915,
           txDbm: coverageTxDbm,
@@ -1140,7 +1159,18 @@ export function Map() {
           rxSensitivityDbm: coverageSensitivityDbm,
           fadeMarginDb: 15,
           cableLossDb: 2,
-          envExponent: envExp,
+          clutterLossDb: envEntry.clutterLossDb,
+          // ITM climate & ground constants. Continental Temperate + N=301 is
+          // a reasonable default for most North-American Meshtastic networks.
+          // Tweakable from the UI in a future polish phase.
+          climate: 5 /* Climate.ContinentalTemperate */,
+          surfaceRefractivityN: 301,
+          polarization: 1 /* Polarization.Vertical */,
+          groundDielectric: 15,
+          groundConductivity: 0.005,
+          timePct: 50,
+          locationPct: 50,
+          situationPct: 50,
         },
       };
       worker.postMessage(msg);

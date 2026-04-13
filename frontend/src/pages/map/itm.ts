@@ -174,6 +174,15 @@ let modulePromise: Promise<ItmModuleLoaded> | null = null;
 interface ItmModuleLoaded {
   _malloc: (size: number) => number;
   _free: (ptr: number) => void;
+  /** Fast variant — just returns loss; used by the hot per-pixel loop. */
+  _ITM_P2P_TLS: (
+    h_tx_m: number, h_rx_m: number, pfl_ptr: number,
+    climate: number, n0: number, f_mhz: number, pol: number,
+    epsilon: number, sigma: number, mdvar: number,
+    time_pct: number, location_pct: number, situation_pct: number,
+    a_db_ptr: number, warnings_ptr: number,
+  ) => number;
+  /** With intermediate struct; used by the diagnostic `computeP2PLoss`. */
   _ITM_P2P_TLS_Ex: (
     h_tx_m: number, h_rx_m: number, pfl_ptr: number,
     climate: number, n0: number, f_mhz: number, pol: number,
@@ -355,4 +364,108 @@ export async function isItmAvailable(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Fast-path context for tight loops (65k+ calls during a coverage render)
+// ---------------------------------------------------------------------------
+
+/**
+ * Holds the loaded WASM module plus pre-allocated scratch buffers for
+ * repeated ITM calls. Allocating + freeing the PFL / output pointers on
+ * every pixel is the dominant overhead in a coverage pass; an
+ * `ItmContext` amortizes that away.
+ *
+ * Build with `loadItmContext()`, tear down with `disposeItmContext()`.
+ */
+export interface ItmContext {
+  readonly mod: ItmModuleLoaded;
+  /** `_malloc`'d buffer for the PFL array. */
+  readonly pflPtr: number;
+  /** Maximum PFL payload (elevations) that fits in `pflPtr`. */
+  readonly pflCapacity: number;
+  /** Output pointer: single double (loss in dB). */
+  readonly aDbPtr: number;
+  /** Output pointer: long (warning bit-field). */
+  readonly warnPtr: number;
+}
+
+/**
+ * Load the WASM and pre-allocate scratch buffers big enough for
+ * `maxProfileSamples` elevations per call. Typical coverage work uses
+ * 20–80 samples; 128 gives headroom.
+ */
+export async function loadItmContext(
+  maxProfileSamples = 128,
+): Promise<ItmContext> {
+  const mod = await loadItm();
+  const pflDoubles = 2 + maxProfileSamples;
+  const pflPtr = mod._malloc(pflDoubles * 8);
+  const aDbPtr = mod._malloc(8);
+  const warnPtr = mod._malloc(4);
+  return { mod, pflPtr, pflCapacity: maxProfileSamples, aDbPtr, warnPtr };
+}
+
+/** Free the scratch buffers. Call when the context is no longer needed. */
+export function disposeItmContext(ctx: ItmContext): void {
+  ctx.mod._free(ctx.pflPtr);
+  ctx.mod._free(ctx.aDbPtr);
+  ctx.mod._free(ctx.warnPtr);
+}
+
+/**
+ * Per-pixel input for `computeP2PLossFast`. Same fields as `P2PInput`
+ * but treated as positional for speed; the wrapper rebuilds the PFL
+ * in-place each call without reallocation.
+ */
+export interface FastP2PInput {
+  txHeightM: number;
+  rxHeightM: number;
+  profileM: ArrayLike<number>;
+  pointSpacingM: number;
+  climate: Climate;
+  surfaceRefractivityN: number;
+  freqMhz: number;
+  polarization: Polarization;
+  groundDielectric: number;
+  groundConductivity: number;
+  mdvar: number;
+  time: number;
+  location: number;
+  situation: number;
+}
+
+/**
+ * Compute point-to-point loss using a shared context — no async, no
+ * allocation. Returns just the loss in dB. Designed for hot loops.
+ *
+ * The upstream `ITM_P2P_TLS` variant is used (no `_Ex`) because the
+ * intermediate values we'd otherwise decode per pixel aren't needed
+ * inside a coverage raster loop. If you want them, use the async
+ * `computeP2PLoss` instead.
+ */
+export function computeP2PLossFast(ctx: ItmContext, input: FastP2PInput): number {
+  const { mod, pflPtr, aDbPtr, warnPtr, pflCapacity } = ctx;
+  const n = input.profileM.length;
+  if (n > pflCapacity) {
+    throw new Error(
+      `profile length ${n} exceeds ItmContext capacity ${pflCapacity}`,
+    );
+  }
+  const idx = pflPtr / 8;
+  mod.HEAPF64[idx] = n - 1;
+  mod.HEAPF64[idx + 1] = input.pointSpacingM;
+  for (let i = 0; i < n; i++) {
+    mod.HEAPF64[idx + 2 + i] = input.profileM[i];
+  }
+  mod._ITM_P2P_TLS(
+    input.txHeightM, input.rxHeightM, pflPtr,
+    input.climate, input.surfaceRefractivityN,
+    input.freqMhz, input.polarization,
+    input.groundDielectric, input.groundConductivity,
+    input.mdvar,
+    input.time, input.location, input.situation,
+    aDbPtr, warnPtr,
+  );
+  return mod.HEAPF64[aDbPtr / 8];
 }
