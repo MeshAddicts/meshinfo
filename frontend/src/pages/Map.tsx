@@ -3508,7 +3508,19 @@ export function Map() {
           terrainNeeded={provider === "mapbox" && !terrain3D}
           onEnableTerrain={provider === "mapbox" ? () => setTerrain3D(true) : undefined}
           onClose={resetTool}
-          onSelectResult={(id) => handleNodeSelectRef.current(id)}
+          onSelectResult={(id) => {
+            // Fly to the target, then open its details panel.
+            const n = nodes[id] ?? nodes[`!${id}`];
+            const mb = mbMapRef.current;
+            if (n?.map_position && mb) {
+              mb.easeTo({
+                center: [n.map_position[0], n.map_position[1]],
+                zoom: Math.max(mb.getZoom(), 13),
+                duration: 800,
+              });
+            }
+            handleNodeSelectRef.current(id);
+          }}
           onHoverResult={(id) => setScanHoverId(id)}
         />
       )}

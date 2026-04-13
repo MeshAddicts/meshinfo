@@ -32,9 +32,9 @@ export function MapScanPanel({
 }) {
   if (terrainNeeded && onEnableTerrain) {
     return (
-      <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(420px,calc(100vw-2rem))]
+      <div className="fixed left-3 top-1/2 -translate-y-1/2 z-1050 w-85 max-w-[calc(100vw-1.5rem)]
         rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl p-4
-        animate-[slideInUp_200ms_ease-out]">
+        animate-[slideInLeft_220ms_ease-out]">
         <div className="text-xs text-gray-200 mb-3">
           Scanning requires 3D terrain so the tool can evaluate obstructions along each path.
         </div>
@@ -62,9 +62,10 @@ export function MapScanPanel({
     : 0;
 
   return (
-    <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(560px,calc(100vw-2rem))] max-h-[65vh] overflow-hidden
+    <div className="fixed left-3 top-1/2 -translate-y-1/2 z-1050 w-85 max-w-[calc(100vw-1.5rem)]
+      max-h-[calc(100vh-8rem)] overflow-hidden
       rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
-      animate-[slideInUp_200ms_ease-out] flex flex-col">
+      animate-[slideInLeft_220ms_ease-out] flex flex-col">
 
       {/* Header */}
       <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-white/5 shrink-0">
