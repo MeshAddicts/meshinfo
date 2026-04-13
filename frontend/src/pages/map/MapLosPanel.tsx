@@ -178,9 +178,9 @@ export function MapLosPanel({
               </div>
               {los.itmLossDb != null && (
                 <div className="pt-1 border-t border-white/5">
-                  <strong>Path loss:</strong> Longley-Rice v1.4 (ITS) via WASM —
-                  same model as the Coverage tool. Assumes continental temperate
-                  climate, vertical polarization, 50 % reliability.
+                  <strong>Path loss:</strong> Longley-Rice v1.4 (ITS) via WASM.
+                  Assumes continental temperate climate, vertical polarization,
+                  50 % reliability.
                 </div>
               )}
               <div className="pt-1 border-t border-white/5">
