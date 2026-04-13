@@ -62,7 +62,7 @@ export function MapCoveragePanel({
   onDetailChange,
   showContours,
   onShowContoursChange,
-  onExportGeoJSON,
+  onExport,
 }: {
   result: CoverageResult | null;
   originLabel: string;
@@ -88,7 +88,7 @@ export function MapCoveragePanel({
   onDetailChange: (d: CoverageDetail) => void;
   showContours: boolean;
   onShowContoursChange: (show: boolean) => void;
-  onExportGeoJSON: () => void;
+  onExport: (format: "geojson" | "kml") => void;
 }) {
   const isCustomHardware = COMMON_HARDWARE[hardwareIdx]?.isCustom ?? false;
   const isCustomPreset = MESHTASTIC_PRESETS[presetIdx]?.isCustom ?? false;
@@ -214,15 +214,6 @@ export function MapCoveragePanel({
                   reference C++ ported to WebAssembly. Handles line-of-sight,
                   multi-edge diffraction, and troposcatter with 4/3 earth
                   refraction.
-                </div>
-              </div>
-              <div className="pt-1 border-t border-white/5">
-                <div className="text-gray-300 font-medium">Terrain</div>
-                <div className="mt-0.5">
-                  Elevation tiles from Mapbox{" "}
-                  <code className="text-[9px] text-cyan-300/70">mapbox.terrain-rgb</code>,
-                  sampled on the GPU-adjacent thread pool; no dependency on
-                  the map's viewport.
                 </div>
               </div>
               <div className="pt-1 border-t border-white/5">
@@ -536,16 +527,31 @@ export function MapCoveragePanel({
               </InfoTip>
             </span>
           </label>
-          <button
-            type="button"
-            onClick={onExportGeoJSON}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border border-cyan-500/40 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20 transition-colors"
-          >
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
-            </svg>
-            Export GeoJSON
-          </button>
+          <div className="flex items-center gap-1 text-[11px]">
+            <span className="text-gray-500 mr-1">Export</span>
+            <button
+              type="button"
+              onClick={() => onExport("geojson")}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md font-medium border border-cyan-500/40 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20 transition-colors"
+              title="Download as GeoJSON (QGIS, Leaflet, geojson.io)"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+              </svg>
+              GeoJSON
+            </button>
+            <button
+              type="button"
+              onClick={() => onExport("kml")}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md font-medium border border-cyan-500/40 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20 transition-colors"
+              title="Download as KML (Google Earth, SPLAT!)"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+              </svg>
+              KML
+            </button>
+          </div>
         </div>
       </div>
     </div>

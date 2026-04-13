@@ -509,44 +509,122 @@ export function Map() {
   const [showCoverageContours, setShowCoverageContours] = useState(false);
 
   /**
-   * Export the most recent coverage compute as a GeoJSON FeatureCollection
-   * containing the iso-margin contour polylines (0 / 10 / 20 dB) plus a
-   * metadata feature with origin + link-budget params. Useful for
-   * dropping into Google Earth, QGIS, SPLAT!, or similar RF tools.
+   * Export the most recent coverage compute as either GeoJSON or KML.
+   * Both formats contain the iso-margin contour polylines (0 / 10 / 20 dB)
+   * plus the origin + link-budget metadata. GeoJSON for QGIS, Leaflet,
+   * geojson.io; KML for Google Earth, SPLAT!, and similar RF tools.
    */
-  const handleCoverageExport = useCallback(() => {
+  const handleCoverageExport = useCallback((format: "geojson" | "kml") => {
     const contours = coverageContoursRef.current;
-    const margin = coverageMarginRef.current;
     const result = coverageResultRef.current;
-    if (!contours || !margin || !result) {
+    if (!contours || !result) {
       console.warn("[Map] Coverage export: no data to export.");
       return;
     }
-    const originGeo = {
-      type: "Feature" as const,
-      geometry: { type: "Point" as const, coordinates: [result.origin[0], result.origin[1]] },
-      properties: {
-        kind: "origin",
-        originHeightM: Math.round(result.originHeightM),
-        originIsFallback: result.originIsFallback,
-        radiusKm: result.radiusKm,
-        antennaDbi: result.antennaDbi,
-        txDbm: result.txDbm,
-        rxSensitivityDbm: result.rxSensitivityDbm,
-        linkBudgetMaxKm: Math.round(result.linkBudgetMaxKm),
-        model: "Longley-Rice v1.4 (ITS) via WASM",
-        generatedAt: new Date().toISOString(),
-      },
-    };
-    const geojson = {
-      type: "FeatureCollection" as const,
-      features: [originGeo, ...contours.features],
-    };
-    const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: "application/geo+json" });
+    const stamp = new Date().toISOString();
+    const fileStamp = stamp.replace(/[:.]/g, "-");
+
+    let payload: string;
+    let mime: string;
+    let ext: string;
+
+    if (format === "geojson") {
+      const originGeo = {
+        type: "Feature" as const,
+        geometry: { type: "Point" as const, coordinates: [result.origin[0], result.origin[1]] },
+        properties: {
+          kind: "origin",
+          originHeightM: Math.round(result.originHeightM),
+          originIsFallback: result.originIsFallback,
+          radiusKm: result.radiusKm,
+          antennaDbi: result.antennaDbi,
+          txDbm: result.txDbm,
+          rxSensitivityDbm: result.rxSensitivityDbm,
+          linkBudgetMaxKm: Math.round(result.linkBudgetMaxKm),
+          model: "Longley-Rice v1.4 (ITS) via WASM",
+          generatedAt: stamp,
+        },
+      };
+      payload = JSON.stringify({
+        type: "FeatureCollection",
+        features: [originGeo, ...contours.features],
+      }, null, 2);
+      mime = "application/geo+json";
+      ext = "geojson";
+    } else {
+      // KML builder. Color format is aabbggrr (alpha, then B, G, R —
+      // byte-reversed from CSS hex). Amber #f59e0b → ff0b9ef5, etc.
+      const esc = (s: string) =>
+        s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const styleFor = (threshold: number) => {
+        if (threshold <= 0) return "contour0";
+        if (threshold <= 10) return "contour10";
+        return "contour20";
+      };
+      const coordsToKml = (coords: [number, number][]) =>
+        coords.map(([lng, lat]) => `${lng},${lat},0`).join(" ");
+
+      const placemarks = contours.features.map((f) => `
+    <Placemark>
+      <name>${f.properties.thresholdDb} dB margin contour</name>
+      <styleUrl>#${styleFor(f.properties.thresholdDb)}</styleUrl>
+      <LineString>
+        <altitudeMode>clampToGround</altitudeMode>
+        <tessellate>1</tessellate>
+        <coordinates>${coordsToKml(f.geometry.coordinates)}</coordinates>
+      </LineString>
+    </Placemark>`).join("");
+
+      const description = [
+        `Model: Longley-Rice v1.4 (ITS) via WASM`,
+        `Origin height: ${Math.round(result.originHeightM)} m${result.originIsFallback ? " (fallback)" : ""}`,
+        `Analysis radius: ${result.radiusKm} km`,
+        `TX: ${result.txDbm} dBm, antenna ${result.antennaDbi} dBi`,
+        `RX sensitivity: ${result.rxSensitivityDbm} dBm`,
+        `Link-budget range: ~${Math.round(result.linkBudgetMaxKm)} km`,
+        `Generated: ${stamp}`,
+      ].map(esc).join("\n");
+
+      payload = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>MeshInfo coverage</name>
+    <description><![CDATA[${description}]]></description>
+    <Style id="origin">
+      <IconStyle>
+        <color>ffd3f322</color>
+        <scale>1.1</scale>
+        <Icon><href>http://maps.google.com/mapfiles/kml/paddle/blu-circle.png</href></Icon>
+      </IconStyle>
+    </Style>
+    <Style id="contour0">
+      <LineStyle><color>ff0b9ef5</color><width>3</width></LineStyle>
+    </Style>
+    <Style id="contour10">
+      <LineStyle><color>ff5ec522</color><width>2</width></LineStyle>
+    </Style>
+    <Style id="contour20">
+      <LineStyle><color>ffacef86</color><width>2</width></LineStyle>
+    </Style>
+    <Placemark>
+      <name>Coverage origin</name>
+      <description><![CDATA[${esc(`${Math.round(result.originHeightM)} m MSL · TX ${result.txDbm} dBm · ${result.antennaDbi} dBi`)}]]></description>
+      <styleUrl>#origin</styleUrl>
+      <Point>
+        <coordinates>${result.origin[0]},${result.origin[1]},${Math.round(result.originHeightM)}</coordinates>
+      </Point>
+    </Placemark>${placemarks}
+  </Document>
+</kml>`;
+      mime = "application/vnd.google-earth.kml+xml";
+      ext = "kml";
+    }
+
+    const blob = new Blob([payload], { type: mime });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `meshinfo-coverage-${new Date().toISOString().replace(/[:.]/g, "-")}.geojson`;
+    a.download = `meshinfo-coverage-${fileStamp}.${ext}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -4044,7 +4122,7 @@ export function Map() {
           onDetailChange={setCoverageDetail}
           showContours={showCoverageContours}
           onShowContoursChange={setShowCoverageContours}
-          onExportGeoJSON={handleCoverageExport}
+          onExport={handleCoverageExport}
         />
       )}
 
