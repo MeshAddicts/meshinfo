@@ -40,6 +40,13 @@ export interface CoverageSliceRequest {
 export interface CoverageSliceResponse {
   requestId: number;
   rgba: Uint8ClampedArray;
+  /**
+   * Per-pixel link margin in dB (NaN for no-data / compute-failed pixels).
+   * Size = demWidth × (rowEnd − rowStart). Main thread stitches the
+   * per-slice grids into a full-size grid, then runs marching squares to
+   * extract contour iso-lines and to drive GeoJSON export.
+   */
+  marginDb: Float32Array;
   rowStart: number;
   rowEnd: number;
   clearCount: number;
@@ -76,10 +83,14 @@ self.onmessage = async (evt: MessageEvent<CoverageSliceRequest>) => {
     itm = await getItmContext();
   } catch (err) {
     console.warn("[coverageSliceWorker] ITM WASM not available:", err);
-    const empty = new Uint8ClampedArray(msg.demWidth * (msg.rowEnd - msg.rowStart) * 4);
+    const sliceN = msg.demWidth * (msg.rowEnd - msg.rowStart);
+    const empty = new Uint8ClampedArray(sliceN * 4);
+    const emptyMargin = new Float32Array(sliceN);
+    emptyMargin.fill(Number.NaN);
     post({
       requestId: msg.requestId,
       rgba: empty,
+      marginDb: emptyMargin,
       rowStart: msg.rowStart,
       rowEnd: msg.rowEnd,
       clearCount: 0,
@@ -87,7 +98,7 @@ self.onmessage = async (evt: MessageEvent<CoverageSliceRequest>) => {
       blockedCount: 0,
       maxMarginDb: 0,
       itmUnavailable: true,
-    }, [empty.buffer]);
+    }, [empty.buffer, emptyMargin.buffer]);
     return;
   }
 
@@ -108,26 +119,31 @@ self.onmessage = async (evt: MessageEvent<CoverageSliceRequest>) => {
     post({
       requestId: msg.requestId,
       rgba: rendered.rgba,
+      marginDb: rendered.marginDb,
       rowStart: msg.rowStart,
       rowEnd: msg.rowEnd,
       clearCount: rendered.clearCount,
       fresnelCount: rendered.fresnelCount,
       blockedCount: rendered.blockedCount,
       maxMarginDb: rendered.maxMarginDb,
-    }, [rendered.rgba.buffer]);
+    }, [rendered.rgba.buffer, rendered.marginDb.buffer]);
   } catch (err) {
     console.warn("[coverageSliceWorker] compute failed:", err);
-    const empty = new Uint8ClampedArray(msg.demWidth * (msg.rowEnd - msg.rowStart) * 4);
+    const sliceN = msg.demWidth * (msg.rowEnd - msg.rowStart);
+    const empty = new Uint8ClampedArray(sliceN * 4);
+    const emptyMargin = new Float32Array(sliceN);
+    emptyMargin.fill(Number.NaN);
     post({
       requestId: msg.requestId,
       rgba: empty,
+      marginDb: emptyMargin,
       rowStart: msg.rowStart,
       rowEnd: msg.rowEnd,
       clearCount: 0,
       fresnelCount: 0,
       blockedCount: 0,
       maxMarginDb: 0,
-    }, [empty.buffer]);
+    }, [empty.buffer, emptyMargin.buffer]);
   }
 };
 

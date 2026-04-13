@@ -60,6 +60,9 @@ export function MapCoveragePanel({
   onCustomSensitivityChange,
   detail,
   onDetailChange,
+  showContours,
+  onShowContoursChange,
+  onExportGeoJSON,
 }: {
   result: CoverageResult | null;
   originLabel: string;
@@ -83,6 +86,9 @@ export function MapCoveragePanel({
   onCustomSensitivityChange: (dbm: number) => void;
   detail: CoverageDetail;
   onDetailChange: (d: CoverageDetail) => void;
+  showContours: boolean;
+  onShowContoursChange: (show: boolean) => void;
+  onExportGeoJSON: () => void;
 }) {
   const isCustomHardware = COMMON_HARDWARE[hardwareIdx]?.isCustom ?? false;
   const isCustomPreset = MESHTASTIC_PRESETS[presetIdx]?.isCustom ?? false;
@@ -190,12 +196,52 @@ export function MapCoveragePanel({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </summary>
-            <div className="absolute right-0 bottom-full mb-1 w-[340px] p-2.5 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-gray-400 leading-relaxed space-y-1">
-              <div>Sector color shows predicted <strong>link margin</strong> (RSSI minus sensitivity and fade margin). Dark green = very reliable, yellow = marginal, orange = at threshold. Unpainted terrain is below sensitivity.</div>
-              <div>Model: log-distance path loss (n=<strong>{result.envExponent}</strong>), 4/3 earth refraction, ITU-R P.526 single knife-edge diffraction, 15 dB fade margin, 2 dB cable loss, RX sensitivity <strong>{result.rxSensitivityDbm} dBm</strong>.</div>
-              <div>Diffraction recovers signal over grazing obstructions — turns hard-blocked paths into usable ones when the obstacle is small.</div>
+            <div className="absolute right-0 bottom-full mb-1 w-85 p-2.5 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-gray-400 leading-relaxed space-y-1">
+              <div>Pixel color shows predicted <strong>link margin</strong> (RSSI minus sensitivity and fade margin). Dark green = very reliable, yellow = marginal, orange = at threshold. Unpainted terrain is below sensitivity.</div>
+              <div className="pt-1 border-t border-white/5">
+                <div className="text-gray-300 font-medium">Propagation model</div>
+                <div className="font-mono text-[9px] text-gray-500 mt-0.5">
+                  Longley-Rice v1.4 (ITS) via WASM
+                </div>
+                <div className="mt-1">
+                  Per-pixel basic transmission loss from{" "}
+                  <a
+                    href="https://its.ntia.gov/software/itm"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-cyan-300/80 hover:text-cyan-200 underline decoration-dotted"
+                  >NTIA's Irregular Terrain Model</a>,
+                  reference C++ ported to WebAssembly. Handles line-of-sight,
+                  multi-edge diffraction, and troposcatter with 4/3 earth
+                  refraction.
+                </div>
+              </div>
+              <div className="pt-1 border-t border-white/5">
+                <div className="text-gray-300 font-medium">Terrain</div>
+                <div className="mt-0.5">
+                  Elevation tiles from Mapbox{" "}
+                  <code className="text-[9px] text-cyan-300/70">mapbox.terrain-rgb</code>,
+                  sampled on the GPU-adjacent thread pool; no dependency on
+                  the map's viewport.
+                </div>
+              </div>
+              <div className="pt-1 border-t border-white/5">
+                <div className="text-gray-300 font-medium">Link budget</div>
+                <div className="mt-0.5">
+                  Climate: <strong>Continental Temperate</strong> ·
+                  Reliability: <strong>50 / 50 / 50 %</strong> (time / location
+                  / situation) · Cable loss: <strong>2 dB</strong> ·
+                  Fade margin: <strong>15 dB</strong> ·
+                  RX sensitivity: <strong>{result.rxSensitivityDbm} dBm</strong>.
+                </div>
+              </div>
               <div className="text-amber-300/80 pt-1 border-t border-white/5 mt-1">
-                <strong>Approximation:</strong> sensitivity figures come from Meshtastic docs for SX126x chips. Real-world values can be 1–3 dB worse due to board noise, temperature, and antenna system losses. SX1276-based boards (e.g. Heltec v2) are ~2–3 dB less sensitive. Foliage, buildings, and multipath beyond the environment exponent are not modeled.
+                <strong>Caveats:</strong> sensitivity figures come from
+                Meshtastic docs for SX126x chips; real-world values are often
+                1–3 dB worse due to board noise. SX1276 boards (e.g. Heltec v2)
+                are ~2–3 dB less sensitive. ITM does not model buildings or
+                foliage; the <em>Environment</em> selector adds a flat clutter
+                loss as a rough compensation.
               </div>
             </div>
           </details>
@@ -469,6 +515,37 @@ export function MapCoveragePanel({
               );
             })}
           </div>
+        </div>
+
+        {/* Contours + Export row */}
+        <div className="flex items-center justify-between gap-3 pt-1">
+          <label className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer select-none group">
+            <input
+              type="checkbox"
+              checked={showContours}
+              onChange={(e) => onShowContoursChange(e.target.checked)}
+              className="w-3.5 h-3.5 accent-cyan-500 cursor-pointer"
+            />
+            <span className="inline-flex items-center gap-1">
+              Contours
+              <InfoTip align="right">
+                Overlay iso-margin lines at 0 dB (amber — edge of
+                coverage), +10 dB (green — reliable), and +20 dB (light
+                green — strong signal). Extracted from the same margin
+                grid via marching squares.
+              </InfoTip>
+            </span>
+          </label>
+          <button
+            type="button"
+            onClick={onExportGeoJSON}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium border border-cyan-500/40 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20 transition-colors"
+          >
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+            </svg>
+            Export GeoJSON
+          </button>
         </div>
       </div>
     </div>

@@ -78,6 +78,13 @@ export interface RasterOrigin {
 export interface RasterResult {
   /** RGBA bytes, row-major, length = width × height × 4. */
   rgba: Uint8ClampedArray;
+  /**
+   * Per-pixel link margin in dB (RSSI − sensitivity − fade). `NaN` for
+   * pixels with no terrain data or where the compute failed. Used
+   * downstream for contour extraction (marching squares) and export.
+   * Row-major, same dimensions as rgba/width×height.
+   */
+  marginDb: Float32Array;
   width: number;
   height: number;
   /** Pixels clearly within budget (margin ≥ 15 dB). */
@@ -190,6 +197,10 @@ export function renderCoverageRaster(
   const rowEnd = rowRange?.rowEnd ?? height;
   const sliceHeight = rowEnd - rowStart;
   const rgba = new Uint8ClampedArray(width * sliceHeight * 4);
+  const marginDbBuf = new Float32Array(width * sliceHeight);
+  // Default to NaN so "unreachable" / "no data" pixels distinguish from
+  // "0 dB margin reachable" in downstream contour work.
+  marginDbBuf.fill(Number.NaN);
   const {
     freqMhz, txDbm, antennaDbi,
     rxSensitivityDbm, fadeMarginDb, cableLossDb, clutterLossDb,
@@ -315,6 +326,10 @@ export function renderCoverageRaster(
       const rssiDbm = txDbm + txGain + rxGain - totalLossDb;
       const marginDb = rssiDbm - rxSensitivityDbm - fadeMarginDb;
 
+      // Record the real margin even for blocked pixels — contour
+      // extraction needs both sides of the 0-dB boundary.
+      marginDbBuf[outPxIdx] = marginDb;
+
       if (marginDb < 0) {
         blockedCount++;
         rgba[outPxIdx * 4 + 3] = 0;
@@ -339,6 +354,7 @@ export function renderCoverageRaster(
 
   return {
     rgba,
+    marginDb: marginDbBuf,
     width,
     height: sliceHeight,
     clearCount,

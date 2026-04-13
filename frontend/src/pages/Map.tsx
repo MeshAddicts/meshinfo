@@ -32,6 +32,7 @@ import { buildDemFromTerrainRgb } from "./map/terrainRgb";
 import { CoverageWorkerPool } from "./map/coverageWorkerPool";
 import type { CoverageSliceRequest } from "./map/coverageSliceWorker";
 import type { RasterParams } from "./map/coverageRaster";
+import { extractCoverageContours, type ContourFeatureCollection } from "./map/coverageContours";
 import { analyzeLineOfSight, type LoSResult } from "./map/losAnalysis";
 import { LosTubeLayer, losPointsToTubeData, obstructionsToGeoJSON, pickObstructions } from "./map/losTubeLayer";
 import { runScan, scanToGeoJSON, type ScanSummary, type ScanTarget } from "./map/scanAnalysis";
@@ -493,6 +494,72 @@ export function Map() {
   const dragPreviewPendingRef = useRef<[number, number] | null>(null);
 
   /**
+   * Cached GeoJSON of the latest contour extraction. Kept so the panel
+   * can hand it off directly to the Export button without recomputing.
+   */
+  const coverageContoursRef = useRef<ContourFeatureCollection | null>(null);
+  /** Cached margin grid from the last full compute — for ad-hoc export. */
+  const coverageMarginRef = useRef<{
+    data: Float32Array;
+    width: number;
+    height: number;
+    bounds: DEMBounds;
+  } | null>(null);
+  /** Whether contours are visible on the map. Session-scoped toggle. */
+  const [showCoverageContours, setShowCoverageContours] = useState(false);
+
+  /**
+   * Export the most recent coverage compute as a GeoJSON FeatureCollection
+   * containing the iso-margin contour polylines (0 / 10 / 20 dB) plus a
+   * metadata feature with origin + link-budget params. Useful for
+   * dropping into Google Earth, QGIS, SPLAT!, or similar RF tools.
+   */
+  const handleCoverageExport = useCallback(() => {
+    const contours = coverageContoursRef.current;
+    const margin = coverageMarginRef.current;
+    const result = coverageResultRef.current;
+    if (!contours || !margin || !result) {
+      console.warn("[Map] Coverage export: no data to export.");
+      return;
+    }
+    const originGeo = {
+      type: "Feature" as const,
+      geometry: { type: "Point" as const, coordinates: [result.origin[0], result.origin[1]] },
+      properties: {
+        kind: "origin",
+        originHeightM: Math.round(result.originHeightM),
+        originIsFallback: result.originIsFallback,
+        radiusKm: result.radiusKm,
+        antennaDbi: result.antennaDbi,
+        txDbm: result.txDbm,
+        rxSensitivityDbm: result.rxSensitivityDbm,
+        linkBudgetMaxKm: Math.round(result.linkBudgetMaxKm),
+        model: "Longley-Rice v1.4 (ITS) via WASM",
+        generatedAt: new Date().toISOString(),
+      },
+    };
+    const geojson = {
+      type: "FeatureCollection" as const,
+      features: [originGeo, ...contours.features],
+    };
+    const blob = new Blob([JSON.stringify(geojson, null, 2)], { type: "application/geo+json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `meshinfo-coverage-${new Date().toISOString().replace(/[:.]/g, "-")}.geojson`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }, []);
+
+  /** Tracks the latest coverage result for export (refs can read it). */
+  const coverageResultRef = useRef<CoverageResult | null>(null);
+  useEffect(() => {
+    coverageResultRef.current = coverageResult;
+  }, [coverageResult]);
+
+  /**
    * Shared helper: run the pool over a DEM, stitch the slice responses,
    * and paint the resulting RGBA to the Mapbox `coverage-raster` image
    * source. Used by BOTH the main (authoritative) compute and the
@@ -513,6 +580,8 @@ export function Map() {
     blockedCount: number;
     demCoveredPixels: number;
     totalPx: number;
+    /** Stitched full-grid margin array (dB). NaN for no-data pixels. */
+    marginDb: Float32Array;
     itmUnavailable?: boolean;
   } | null> => {
     const { dem, origin, originHeightM, params, requestId } = opts;
@@ -524,6 +593,7 @@ export function Map() {
 
     const sliceResponses: Array<{
       rgba: Uint8ClampedArray;
+      marginDb: Float32Array;
       rowStart: number;
       rowEnd: number;
       clearCount: number;
@@ -563,19 +633,24 @@ export function Map() {
     if (requestId !== coverageRequestIdRef.current) return null;
 
     if (sliceResponses.some((r) => r.itmUnavailable)) {
+      const nanMargin = new Float32Array(dem.width * dem.height);
+      nanMargin.fill(Number.NaN);
       return {
         clearCount: 0, fresnelCount: 0, blockedCount: 0,
         demCoveredPixels: 0, totalPx: dem.width * dem.height,
+        marginDb: nanMargin,
         itmUnavailable: true,
       };
     }
 
     const fullRgba = new Uint8ClampedArray(dem.width * dem.height * 4);
+    const fullMargin = new Float32Array(dem.width * dem.height);
     let clearCount = 0;
     let fresnelCount = 0;
     let blockedCount = 0;
     for (const s of sliceResponses) {
       fullRgba.set(s.rgba, s.rowStart * dem.width * 4);
+      fullMargin.set(s.marginDb, s.rowStart * dem.width);
       clearCount += s.clearCount;
       fresnelCount += s.fresnelCount;
       blockedCount += s.blockedCount;
@@ -617,6 +692,7 @@ export function Map() {
       blockedCount,
       demCoveredPixels,
       totalPx: dem.width * dem.height,
+      marginDb: fullMargin,
     };
   }, [ensureCoveragePool]);
 
@@ -842,8 +918,14 @@ export function Map() {
         if (mb.getLayer("coverage-raster")) {
           mb.setLayoutProperty("coverage-raster", "visibility", "none");
         }
+        if (mb.getLayer("coverage-contours-line")) {
+          mb.setLayoutProperty("coverage-contours-line", "visibility", "none");
+        }
+        (mb.getSource("coverage-contours") as MbGeoJSONSource | undefined)?.setData(empty);
       } catch {}
       losTubeLayerRef.current?.setData(null);
+      coverageContoursRef.current = null;
+      coverageMarginRef.current = null;
     }
 
     if (olMap) {
@@ -1298,6 +1380,28 @@ export function Map() {
         coverageLastRasterParamsRef.current = rasterParams;
         coverageLastOriginContextRef.current = { bounds: dem.bounds };
 
+        // 5. Extract iso-contours from the margin grid and push them to
+        //    the line layer. 0 dB = edge of coverage (most useful),
+        //    +10 dB = reliably reachable, +20 dB = strong signal.
+        coverageMarginRef.current = {
+          data: rendered.marginDb,
+          width: dem.width,
+          height: dem.height,
+          bounds: dem.bounds,
+        };
+        const contours = extractCoverageContours({
+          margin: rendered.marginDb,
+          width: dem.width,
+          height: dem.height,
+          bounds: dem.bounds,
+          thresholdsDb: [0, 10, 20],
+        });
+        coverageContoursRef.current = contours;
+        try {
+          const src = mb.getSource("coverage-contours") as MbGeoJSONSource | undefined;
+          src?.setData(contours);
+        } catch {}
+
         const computeMs = performance.now() - t0;
         console.info(
           `[Map] Coverage compute: ${computeMs.toFixed(0)} ms ` +
@@ -1374,9 +1478,27 @@ export function Map() {
         if (mb.getLayer("coverage-raster")) {
           mb.setLayoutProperty("coverage-raster", "visibility", "none");
         }
+        if (mb.getLayer("coverage-contours-line")) {
+          mb.setLayoutProperty("coverage-contours-line", "visibility", "none");
+        }
       } catch {}
     }
   }, [activeTool]);
+
+  // Toggle contour layer visibility in step with the panel checkbox
+  // (only meaningful while the coverage tool is open).
+  useEffect(() => {
+    const mb = mbMapRef.current;
+    if (!mb) return;
+    if (!mb.getLayer("coverage-contours-line")) return;
+    try {
+      mb.setLayoutProperty(
+        "coverage-contours-line",
+        "visibility",
+        activeTool === "coverage" && showCoverageContours ? "visible" : "none",
+      );
+    } catch {}
+  }, [activeTool, showCoverageContours, coverageResult]);
 
   // Sync the coverage origin pin to the current origin (node pick or
   // virtual placement). A DOM-based mapboxgl.Marker so it stays at a
@@ -2155,6 +2277,48 @@ export function Map() {
             "raster-opacity": 0.7,
             "raster-fade-duration": 300,
             "raster-resampling": "linear",
+          },
+        });
+      }
+
+      // Coverage contours — iso-margin lines extracted from the margin
+      // grid via marching squares. Painted as lines on top of the raster
+      // so edges of coverage and "reliable vs marginal" boundaries read
+      // clearly at a glance.
+      if (!map.getSource("coverage-contours")) {
+        map.addSource("coverage-contours", {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
+      }
+      if (!map.getLayer("coverage-contours-line")) {
+        map.addLayer({
+          id: "coverage-contours-line",
+          type: "line",
+          source: "coverage-contours",
+          layout: {
+            "line-join": "round",
+            "line-cap": "round",
+            visibility: "none",
+          },
+          paint: {
+            // Color by threshold: 0 dB (edge) = amber, 10 dB = green,
+            // 20 dB = bright green ("strongly reliable").
+            "line-color": [
+              "match", ["get", "thresholdDb"],
+              0,  "#f59e0b",
+              10, "#22c55e",
+              20, "#86efac",
+              "#a1a1aa",
+            ],
+            "line-width": [
+              "match", ["get", "thresholdDb"],
+              0,  2.2,
+              10, 1.6,
+              20, 1.2,
+              1,
+            ],
+            "line-opacity": 0.92,
           },
         });
       }
@@ -3878,6 +4042,9 @@ export function Map() {
           onCustomSensitivityChange={setCoverageCustomSensDbm}
           detail={coverageDetail}
           onDetailChange={setCoverageDetail}
+          showContours={showCoverageContours}
+          onShowContoursChange={setShowCoverageContours}
+          onExportGeoJSON={handleCoverageExport}
         />
       )}
 
