@@ -410,7 +410,6 @@ export function Map() {
   const [losResult, setLosResult] = useState<LoSResult | null>(null);
   const [coverageResult, setCoverageResult] = useState<CoverageResult | null>(null);
   const [isComputingCoverage, setIsComputingCoverage] = useState(false);
-  const [coverageRadiusKm, setCoverageRadiusKm] = useState(10);
   const [coverageAntennaDbi, setCoverageAntennaDbi] = useState(3);
   const [coverageHardwareIdx, setCoverageHardwareIdx] = useState(0);
   const [coverageCustomTxDbm, setCoverageCustomTxDbm] = useState(22);
@@ -429,9 +428,22 @@ export function Map() {
    * sharper edges. Session-scoped (not persisted to localStorage).
    */
   const [coverageDetail, setCoverageDetail] = useState<CoverageDetail>("standard");
-  /** Tracks whether the user has manually overridden the slider
-   * (so we don't auto-reset it on every hardware/antenna change once they have). */
-  const coverageRadiusManualRef = useRef(false);
+  /**
+   * Analysis radius derived purely from the link-budget math (capped at
+   * 500 km beyond which the DEM resolution can't produce meaningful
+   * terrain-aware results). No manual override — keeping the derived
+   * value keeps the coverage panel simpler and the behavior honest.
+   */
+  const coverageRadiusKm = useMemo(() => {
+    const env = ENVIRONMENTS[coverageEnvIdx];
+    const maxKm = linkBudgetMaxKm({
+      antennaDbi: coverageAntennaDbi,
+      txDbm: coverageTxDbm,
+      envExponent: env.pathLossExponent,
+      rxSensitivityDbm: coverageSensitivityDbm,
+    });
+    return Math.max(2, Math.min(500, Math.round(maxKm)));
+  }, [coverageAntennaDbi, coverageTxDbm, coverageEnvIdx, coverageSensitivityDbm]);
   /** Custom WebGL layer instance for the 3D LoS tube. Created once per map. */
   const losTubeLayerRef = useRef<LosTubeLayer | null>(null);
   /** DOM-based pin for the Coverage tool's origin (draggable-capable). */
@@ -1521,30 +1533,6 @@ export function Map() {
       cancelled = true;
     };
   }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageTxDbm, coverageEnvIdx, coverageSensitivityDbm, coverageDetail, provider, terrain3D, nodes]);
-
-  // Auto-update radius to match the link budget when hardware/antenna changes,
-  // unless the user has manually overridden the slider.
-  // Cap at 500 km — anything more is basically "free-space to the horizon" and
-  // the DEM resolution at that scale (~2 km/pixel on a 256 grid) can't produce
-  // meaningful terrain-aware viewshed results anyway.
-  useEffect(() => {
-    if (coverageRadiusManualRef.current) return;
-    const env = ENVIRONMENTS[coverageEnvIdx];
-    const maxKm = linkBudgetMaxKm({
-      antennaDbi: coverageAntennaDbi,
-      txDbm: coverageTxDbm,
-      envExponent: env.pathLossExponent,
-      rxSensitivityDbm: coverageSensitivityDbm,
-    });
-    setCoverageRadiusKm(Math.max(2, Math.min(500, Math.round(maxKm))));
-  }, [coverageAntennaDbi, coverageTxDbm, coverageEnvIdx, coverageSensitivityDbm]);
-
-  // Reset the manual-override flag when the tool is closed
-  useEffect(() => {
-    if (activeTool !== "coverage") {
-      coverageRadiusManualRef.current = false;
-    }
-  }, [activeTool]);
 
   // Hide coverage raster when leaving coverage tool. We keep the source/layer
   // around so re-entering the tool reuses them without re-adding.
@@ -4095,17 +4083,14 @@ export function Map() {
           originLabel={
             toolFromId
               ? ((nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.shortname ?? toolFromId.slice(0, 8))
-              : "Virtual location"
+              : toolVirtualPos
+                ? `${toolVirtualPos[1].toFixed(5)}, ${toolVirtualPos[0].toFixed(5)}`
+                : ""
           }
           terrainNeeded={provider === "mapbox" && !terrain3D}
           onEnableTerrain={provider === "mapbox" ? () => setTerrain3D(true) : undefined}
           onClose={resetTool}
           isComputing={isComputingCoverage}
-          radiusKm={coverageRadiusKm}
-          onRadiusChange={(km) => {
-            coverageRadiusManualRef.current = true;
-            setCoverageRadiusKm(km);
-          }}
           antennaDbi={coverageAntennaDbi}
           onAntennaDbiChange={setCoverageAntennaDbi}
           hardwareIdx={coverageHardwareIdx}

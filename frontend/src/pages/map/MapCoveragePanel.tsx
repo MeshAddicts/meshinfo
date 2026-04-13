@@ -44,8 +44,6 @@ export function MapCoveragePanel({
   onEnableTerrain,
   onClose,
   isComputing,
-  radiusKm,
-  onRadiusChange,
   antennaDbi,
   onAntennaDbiChange,
   hardwareIdx,
@@ -70,8 +68,6 @@ export function MapCoveragePanel({
   onEnableTerrain?: () => void;
   onClose: () => void;
   isComputing: boolean;
-  radiusKm: number;
-  onRadiusChange: (km: number) => void;
   antennaDbi: number;
   onAntennaDbiChange: (dbi: number) => void;
   hardwareIdx: number;
@@ -138,7 +134,7 @@ export function MapCoveragePanel({
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-xs text-gray-400">
             <div className="w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-            Computing coverage from {originLabel} ({radiusKm}km radius)…
+            Computing coverage from {originLabel}…
           </div>
           <button
             type="button"
@@ -190,6 +186,45 @@ export function MapCoveragePanel({
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          {/* Export dropdown — opens upward so it doesn't push the panel.
+              Uses a styled <details> so a map click elsewhere closes it
+              for free via the browser's native behavior. */}
+          <details className="text-[10px] text-gray-400 relative group">
+            <summary
+              className="cursor-pointer list-none p-1 rounded-md hover:text-gray-200 hover:bg-white/5 transition-colors flex items-center gap-1"
+              aria-label="Export coverage"
+              title="Export coverage"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+              </svg>
+            </summary>
+            <div className="absolute right-0 bottom-full mb-1 w-40 p-1 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl z-50 flex flex-col">
+              <button
+                type="button"
+                onClick={(e) => {
+                  // Close the <details> after picking a format.
+                  (e.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open");
+                  onExport("geojson");
+                }}
+                className="text-left px-2 py-1.5 rounded text-[11px] text-gray-200 hover:bg-cyan-500/20 hover:text-cyan-200 transition-colors"
+              >
+                <div className="font-medium">GeoJSON</div>
+                <div className="text-[9px] text-gray-500">QGIS · Leaflet · geojson.io</div>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  (e.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open");
+                  onExport("kml");
+                }}
+                className="text-left px-2 py-1.5 rounded text-[11px] text-gray-200 hover:bg-cyan-500/20 hover:text-cyan-200 transition-colors"
+              >
+                <div className="font-medium">KML</div>
+                <div className="text-[9px] text-gray-500">Google Earth · SPLAT!</div>
+              </button>
+            </div>
+          </details>
           <details className="text-[10px] text-gray-500 relative">
             <summary className="cursor-pointer hover:text-gray-400 select-none list-none p-1">
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -415,142 +450,81 @@ export function MapCoveragePanel({
               )}
             </div>
           </div>
-          <div>
-            <label htmlFor="coverage-antenna" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
-              Antenna
-            </label>
-            <select
-              id="coverage-antenna"
-              value={antennaDbi}
-              onChange={(e) => onAntennaDbiChange(Number(e.target.value))}
-              className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
-                focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
-                [&>option]:bg-gray-800 [&>option]:text-gray-200"
-            >
-              {COMMON_ANTENNAS.map((a) => (
-                <option key={a.dbi} value={a.dbi}>{a.label}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label htmlFor="coverage-radius" className="text-[10px] font-medium uppercase tracking-wider text-gray-500">
-                <span className="inline-flex items-center gap-1">
-                  Analysis range
-                  <InfoTip align="left">
-                    How far from the pin the tool computes coverage. Defaults to
-                    the theoretical link-budget range for the chosen hardware,
-                    capped at 500 km (beyond that the terrain grid gets too
-                    coarse to be meaningful).
-                  </InfoTip>
-                </span>
+          {/* Middle column: Antenna on top, Contours toggle below. Share
+              the vertical space of a single hardware-sized cell. */}
+          <div className="flex flex-col gap-1.5 min-w-0">
+            <div>
+              <label htmlFor="coverage-antenna" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
+                Antenna
               </label>
-              <span className="text-[10px] text-gray-300 font-medium">{radiusKm} km</span>
+              <select
+                id="coverage-antenna"
+                value={antennaDbi}
+                onChange={(e) => onAntennaDbiChange(Number(e.target.value))}
+                className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
+                  focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
+                  [&>option]:bg-gray-800 [&>option]:text-gray-200"
+              >
+                {COMMON_ANTENNAS.map((a) => (
+                  <option key={a.dbi} value={a.dbi}>{a.label}</option>
+                ))}
+              </select>
             </div>
-            <input
-              id="coverage-radius"
-              type="range"
-              min={2}
-              max={Math.max(30, Math.min(500, Math.ceil(result.linkBudgetMaxKm)))}
-              step={1}
-              value={radiusKm}
-              onChange={(e) => onRadiusChange(Number(e.target.value))}
-              className="w-full accent-cyan-500"
-              aria-label="Analysis range (km)"
-            />
-            <div
-              className="text-[9px] text-gray-500 mt-0.5 text-right"
-              title={
-                result.linkBudgetMaxKm > 500
-                  ? "Slider capped at 500 km — beyond that, terrain sampling resolution is too coarse to be meaningful."
-                  : undefined
-              }
-            >
-              budget ~{Math.round(result.linkBudgetMaxKm)} km
-              {result.linkBudgetMaxKm > 500 && <span className="text-amber-500/70"> · capped at 500</span>}
-            </div>
+            <label className="flex items-center gap-1.5 text-[11px] text-gray-300 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={showContours}
+                onChange={(e) => onShowContoursChange(e.target.checked)}
+                className="w-3.5 h-3.5 accent-cyan-500 cursor-pointer"
+              />
+              <span className="inline-flex items-center gap-1 min-w-0">
+                Contours
+                <InfoTip align="right">
+                  Overlay iso-margin lines at 0 dB (amber — edge of
+                  coverage), +10 dB (green — reliable), and +20 dB (light
+                  green — strong signal). Extracted from the same margin
+                  grid via marching squares.
+                </InfoTip>
+              </span>
+            </label>
           </div>
-        </div>
 
-        {/* Detail / resolution selector */}
-        <div>
-          <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 flex items-center gap-1">
-            <span>Detail</span>
-            <InfoTip align="left">
-              Coverage grid resolution. Higher detail = crisper edges around
-              terrain features, but slower to compute. Standard feels instant;
-              Ultra is best for a definitive one-off survey.
-            </InfoTip>
-          </label>
-          <div className="flex gap-1 rounded-lg border border-white/10 bg-white/5 p-0.5 text-[10px] font-medium">
-            {([
-              { key: "standard", label: "Standard", sub: "512 px" },
-              { key: "high",     label: "High",     sub: "768 px" },
-              { key: "ultra",    label: "Ultra",    sub: "1024 px" },
-            ] as const).map((opt) => {
-              const active = detail === opt.key;
-              return (
-                <button
-                  key={opt.key}
-                  type="button"
-                  onClick={() => onDetailChange(opt.key)}
-                  className={`flex-1 rounded-md px-2 py-1 transition-colors ${
-                    active
-                      ? "bg-cyan-500/20 text-cyan-200"
-                      : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
-                  }`}
-                >
-                  <div>{opt.label}</div>
-                  <div className="text-[9px] text-gray-500 font-normal">{opt.sub}</div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Contours + Export row */}
-        <div className="flex items-center justify-between gap-3 pt-1">
-          <label className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer select-none group">
-            <input
-              type="checkbox"
-              checked={showContours}
-              onChange={(e) => onShowContoursChange(e.target.checked)}
-              className="w-3.5 h-3.5 accent-cyan-500 cursor-pointer"
-            />
-            <span className="inline-flex items-center gap-1">
-              Contours
-              <InfoTip align="right">
-                Overlay iso-margin lines at 0 dB (amber — edge of
-                coverage), +10 dB (green — reliable), and +20 dB (light
-                green — strong signal). Extracted from the same margin
-                grid via marching squares.
+          {/* Third column: Detail level buttons — replaces the old
+              Analysis range slider, which is now derived from the link
+              budget automatically. */}
+          <div>
+            <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 flex items-center gap-1">
+              <span>Detail</span>
+              <InfoTip align="left">
+                Coverage grid resolution. Higher detail = crisper edges around
+                terrain features, but slower to compute. Standard feels instant;
+                Ultra is best for a definitive one-off survey.
               </InfoTip>
-            </span>
-          </label>
-          <div className="flex items-center gap-1 text-[11px]">
-            <span className="text-gray-500 mr-1">Export</span>
-            <button
-              type="button"
-              onClick={() => onExport("geojson")}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-md font-medium border border-cyan-500/40 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20 transition-colors"
-              title="Download as GeoJSON (QGIS, Leaflet, geojson.io)"
-            >
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
-              </svg>
-              GeoJSON
-            </button>
-            <button
-              type="button"
-              onClick={() => onExport("kml")}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-md font-medium border border-cyan-500/40 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20 transition-colors"
-              title="Download as KML (Google Earth, SPLAT!)"
-            >
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
-              </svg>
-              KML
-            </button>
+            </label>
+            <div className="flex gap-1 rounded-lg border border-white/10 bg-white/5 p-0.5 text-[10px] font-medium">
+              {([
+                { key: "standard", label: "Std",  sub: "512 px" },
+                { key: "high",     label: "High", sub: "768 px" },
+                { key: "ultra",    label: "Ultra", sub: "1024 px" },
+              ] as const).map((opt) => {
+                const active = detail === opt.key;
+                return (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    onClick={() => onDetailChange(opt.key)}
+                    className={`flex-1 rounded-md px-1.5 py-1 transition-colors ${
+                      active
+                        ? "bg-cyan-500/20 text-cyan-200"
+                        : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
+                    }`}
+                  >
+                    <div>{opt.label}</div>
+                    <div className="text-[9px] text-gray-500 font-normal">{opt.sub}</div>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>
