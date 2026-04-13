@@ -4149,6 +4149,14 @@ export function Map() {
           showContours={showCoverageContours}
           onShowContoursChange={setShowCoverageContours}
           onExport={handleCoverageExport}
+          onOriginChange={(lngLat) => {
+            // Typing a custom coord always detaches from any node anchor
+            // and places a virtual pin. Mirrors the marker dragend path so
+            // the existing recompute pipeline picks it up.
+            setToolFromId(null);
+            setToolVirtualPos(lngLat);
+            mbMapRef.current?.easeTo({ center: lngLat, duration: 600 });
+          }}
         />
       )}
 

@@ -1,4 +1,24 @@
+import { useState } from "react";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS, type CoverageResult } from "./coverageAnalysis";
+
+/**
+ * Parse a free-form coord string into [lng, lat]. Accepts "lat, lng" with
+ * optional comma and any whitespace separator. Returns null if the input
+ * isn't two valid numbers within geographic bounds.
+ *
+ * Convention follows Google Maps / clipboard share format (lat first), since
+ * that's what users will paste. We swap to [lng, lat] internally because
+ * Mapbox uses lng-first throughout.
+ */
+function parseLatLng(input: string): [number, number] | null {
+  const parts = input.trim().split(/[\s,]+/).filter(Boolean);
+  if (parts.length !== 2) return null;
+  const lat = Number(parts[0]);
+  const lng = Number(parts[1]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return [lng, lat];
+}
 
 /**
  * Detail-level presets for the coverage DEM resolution. Standard (512²)
@@ -61,6 +81,7 @@ export function MapCoveragePanel({
   showContours,
   onShowContoursChange,
   onExport,
+  onOriginChange,
 }: {
   result: CoverageResult | null;
   originLabel: string;
@@ -85,9 +106,21 @@ export function MapCoveragePanel({
   showContours: boolean;
   onShowContoursChange: (show: boolean) => void;
   onExport: (format: "geojson" | "kml") => void;
+  /**
+   * Called when the user types a custom coord into the origin label.
+   * Receives [lng, lat]. Caller should detach any node anchor and move
+   * the pin to the new location.
+   */
+  onOriginChange?: (lngLat: [number, number]) => void;
 }) {
   const isCustomHardware = COMMON_HARDWARE[hardwareIdx]?.isCustom ?? false;
   const isCustomPreset = MESHTASTIC_PRESETS[presetIdx]?.isCustom ?? false;
+  // Inline editor for the origin label. Click the coord text → input.
+  // Enter commits, Escape cancels, blur commits silently (so a stray
+  // map click doesn't lose the user's typed value if it was valid).
+  const [editingOrigin, setEditingOrigin] = useState(false);
+  const [originDraft, setOriginDraft] = useState("");
+  const [originDraftError, setOriginDraftError] = useState(false);
   if (terrainNeeded) {
     return (
       <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(520px,calc(100vw-2rem))]
@@ -176,11 +209,68 @@ export function MapCoveragePanel({
             </svg>
             Coverage
           </span>
-          <div className="text-[11px] text-gray-300 truncate">
-            <span className="text-gray-500">From:</span>{" "}
-            <span className="font-medium text-gray-200">{originLabel}</span>
-            <span className="text-gray-500 ml-2">·</span>
-            <span className="text-gray-500 ml-2">
+          <div className="text-[11px] text-gray-300 flex items-center gap-1 min-w-0">
+            <span className="text-gray-500 shrink-0">From:</span>
+            {editingOrigin ? (
+              <input
+                type="text"
+                autoFocus
+                value={originDraft}
+                placeholder="lat, lng"
+                title="Enter coordinates as lat, lng (Google Maps format)"
+                aria-invalid={originDraftError}
+                onChange={(e) => {
+                  setOriginDraft(e.target.value);
+                  if (originDraftError) setOriginDraftError(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    const parsed = parseLatLng(originDraft);
+                    if (!parsed) { setOriginDraftError(true); return; }
+                    setEditingOrigin(false);
+                    setOriginDraftError(false);
+                    onOriginChange?.(parsed);
+                  } else if (e.key === "Escape") {
+                    e.preventDefault();
+                    setEditingOrigin(false);
+                    setOriginDraftError(false);
+                  }
+                }}
+                onBlur={() => {
+                  // Commit silently if valid, otherwise just close. A
+                  // bad value on blur is treated as a cancel so an
+                  // accidental click-away doesn't blow up.
+                  const parsed = parseLatLng(originDraft);
+                  setEditingOrigin(false);
+                  setOriginDraftError(false);
+                  if (parsed) onOriginChange?.(parsed);
+                }}
+                className={`min-w-0 w-44 rounded-md bg-white/10 border px-1.5 py-0.5 text-[11px] font-mono text-gray-100
+                  focus:outline-hidden focus:ring-1 ${
+                    originDraftError
+                      ? "border-red-500/60 focus:border-red-500/80 focus:ring-red-500/40"
+                      : "border-cyan-500/40 focus:border-cyan-500/70 focus:ring-cyan-500/40"
+                  }`}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  // Pre-fill with current pin coordinates (works whether the
+                  // origin is a node anchor or a virtual placement).
+                  const [lng, lat] = result.origin;
+                  setOriginDraft(`${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+                  setEditingOrigin(true);
+                }}
+                title="Click to enter custom coordinates"
+                className="font-medium text-gray-200 hover:text-cyan-300 hover:underline decoration-dotted underline-offset-2 transition-colors truncate min-w-0 cursor-pointer"
+              >
+                {originLabel}
+              </button>
+            )}
+            <span className="text-gray-500 ml-1 shrink-0">·</span>
+            <span className="text-gray-500 shrink-0">
               {Math.round(result.originHeightM)}m{result.originIsFallback ? "~" : ""}
             </span>
           </div>
