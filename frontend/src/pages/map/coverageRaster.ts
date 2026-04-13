@@ -155,19 +155,41 @@ function profileSampleCount(distanceKm: number): number {
 // ---------------------------------------------------------------------------
 
 /**
- * Paint the full DEM grid via ITM. The `profileBuf` parameter is reused
+ * Optional row-range — when present, only the rows in
+ * `[rowStart, rowEnd)` are computed and the returned RGBA has height
+ * `rowEnd - rowStart`. Used by the worker pool to split work across
+ * cores; each worker fills its own slice and the main thread stitches
+ * them back together.
+ */
+export interface RowRange {
+  rowStart: number;
+  rowEnd: number;
+}
+
+/**
+ * Paint a DEM slice via ITM. The `profileBuf` parameter is reused
  * across pixels to avoid per-pixel allocation (Float64Array). Its length
  * must be ≥ `profileSampleCount(maxDistance)` — we size it to the DEM
  * diagonal in km × 1.5 rounded up.
+ *
+ * When `rowRange` is omitted the full grid is rendered (preserves old
+ * behavior for tests / non-parallel callers). When provided, only rows
+ * `[rowStart, rowEnd)` are painted and the returned `rgba` has height
+ * `rowEnd - rowStart` (callers stitch by writing into the full-size
+ * buffer at `rowStart * width * 4`).
  */
 export function renderCoverageRaster(
   dem: DEM,
   params: RasterParams,
   itm: ItmContext,
   origin: RasterOrigin,
+  rowRange?: RowRange,
 ): RasterResult {
   const { width, height, bounds } = dem;
-  const rgba = new Uint8ClampedArray(width * height * 4);
+  const rowStart = rowRange?.rowStart ?? 0;
+  const rowEnd = rowRange?.rowEnd ?? height;
+  const sliceHeight = rowEnd - rowStart;
+  const rgba = new Uint8ClampedArray(width * sliceHeight * 4);
   const {
     freqMhz, txDbm, antennaDbi,
     rxSensitivityDbm, fadeMarginDb, cableLossDb, clutterLossDb,
@@ -217,15 +239,18 @@ export function renderCoverageRaster(
   const txGain = antennaDbi;
   const rxGain = antennaDbi;
 
-  for (let j = 0; j < height; j++) {
+  for (let j = rowStart; j < rowEnd; j++) {
     const lat = bounds.north - j * latStep;
-    const rowOffset = j * width;
+    const demRowOffset = j * width;
+    // Output row offset is relative to the slice, not the full grid.
+    const outRowOffset = (j - rowStart) * width;
     for (let i = 0; i < width; i++) {
-      const pxIdx = rowOffset + i;
+      const pxIdx = demRowOffset + i;
+      const outPxIdx = outRowOffset + i;
       const demElev = dem.data[pxIdx];
       if (Number.isNaN(demElev)) {
         // No terrain data — leave transparent.
-        rgba[pxIdx * 4 + 3] = 0;
+        rgba[outPxIdx * 4 + 3] = 0;
         continue;
       }
       const lng = bounds.west + i * lonStep;
@@ -234,10 +259,10 @@ export function renderCoverageRaster(
       // Degenerate: origin itself. Paint as dark green (max margin).
       if (distKm < 0.01) {
         const [r, g, b, a] = gradient(50);
-        rgba[pxIdx * 4] = r;
-        rgba[pxIdx * 4 + 1] = g;
-        rgba[pxIdx * 4 + 2] = b;
-        rgba[pxIdx * 4 + 3] = a;
+        rgba[outPxIdx * 4] = r;
+        rgba[outPxIdx * 4 + 1] = g;
+        rgba[outPxIdx * 4 + 2] = b;
+        rgba[outPxIdx * 4 + 3] = a;
         clearCount++;
         if (50 > maxMarginDb) maxMarginDb = 50;
         continue;
@@ -262,7 +287,7 @@ export function renderCoverageRaster(
         profileBuf[s] = elev;
       }
       if (!validProfile) {
-        rgba[pxIdx * 4 + 3] = 0;
+        rgba[outPxIdx * 4 + 3] = 0;
         continue;
       }
 
@@ -281,7 +306,7 @@ export function renderCoverageRaster(
       if (!Number.isFinite(lossDb) || lossDb <= 0) {
         // ITM error — paint transparent so user sees something's off
         // rather than coloring by garbage.
-        rgba[pxIdx * 4 + 3] = 0;
+        rgba[outPxIdx * 4 + 3] = 0;
         blockedCount++;
         continue;
       }
@@ -292,7 +317,7 @@ export function renderCoverageRaster(
 
       if (marginDb < 0) {
         blockedCount++;
-        rgba[pxIdx * 4 + 3] = 0;
+        rgba[outPxIdx * 4 + 3] = 0;
         continue;
       }
 
@@ -304,7 +329,7 @@ export function renderCoverageRaster(
       if (marginDb > maxMarginDb) maxMarginDb = marginDb;
 
       const [r, g, b, a] = gradient(marginDb);
-      const o = pxIdx * 4;
+      const o = outPxIdx * 4;
       rgba[o] = r;
       rgba[o + 1] = g;
       rgba[o + 2] = b;
@@ -315,7 +340,7 @@ export function renderCoverageRaster(
   return {
     rgba,
     width,
-    height,
+    height: sliceHeight,
     clearCount,
     fresnelCount,
     diffractedCount: 0,

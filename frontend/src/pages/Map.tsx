@@ -27,8 +27,11 @@ import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
 import { COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS, linkBudgetMaxKm, type CoverageResult } from "./map/coverageAnalysis";
-import { demBoundsAround } from "./map/terrainDEM";
-import type { CoverageWorkerRequest, CoverageWorkerResponse } from "./map/coverageWorker";
+import { demBoundsAround, sampleDEMAt } from "./map/terrainDEM";
+import { buildDemFromTerrainRgb } from "./map/terrainRgb";
+import { CoverageWorkerPool } from "./map/coverageWorkerPool";
+import type { CoverageSliceRequest } from "./map/coverageSliceWorker";
+import type { RasterParams } from "./map/coverageRaster";
 import { analyzeLineOfSight, type LoSResult } from "./map/losAnalysis";
 import { LosTubeLayer, losPointsToTubeData, obstructionsToGeoJSON, pickObstructions } from "./map/losTubeLayer";
 import { runScan, scanToGeoJSON, type ScanSummary, type ScanTarget } from "./map/scanAnalysis";
@@ -39,7 +42,7 @@ import { MapHealthWidget } from "./map/MapHealthWidget";
 import { MapLosPanel } from "./map/MapLosPanel";
 import { MapToolPrompt, MapToolsDrawer } from "./map/MapToolsDrawer";
 import { MapTraceroutePanel } from "./map/MapTraceroutePanel";
-import { MapCoveragePanel } from "./map/MapCoveragePanel";
+import { COVERAGE_DETAIL_SIZE, type CoverageDetail, MapCoveragePanel } from "./map/MapCoveragePanel";
 import { MapQuickControls } from "./map/MapQuickControls";
 import { MapSearchBar } from "./map/MapSearchBar";
 import { MapSettingsPanel } from "./map/MapSettingsPanel";
@@ -419,6 +422,12 @@ export function Map() {
   const coverageSensitivityDbm = MESHTASTIC_PRESETS[coveragePresetIdx].isCustom
     ? coverageCustomSensDbm
     : MESHTASTIC_PRESETS[coveragePresetIdx].sensitivityDbm;
+  /**
+   * Coverage detail level — controls DEM resolution. "standard" (512²) is the
+   * default; "high" (768²) and "ultra" (1024²) trade compute time for
+   * sharper edges. Session-scoped (not persisted to localStorage).
+   */
+  const [coverageDetail, setCoverageDetail] = useState<CoverageDetail>("standard");
   /** Tracks whether the user has manually overridden the slider
    * (so we don't auto-reset it on every hardware/antenna change once they have). */
   const coverageRadiusManualRef = useRef(false);
@@ -434,21 +443,21 @@ export function Map() {
   const [scanHoverId, setScanHoverId] = useState<string | null>(null);
   /** Monotonic request id — ignore worker replies that aren't the latest. */
   const coverageRequestIdRef = useRef(0);
-  /** Web Worker for coverage raster computation. Lazily created. */
-  const coverageWorkerRef = useRef<Worker | null>(null);
-  const ensureCoverageWorker = useCallback((): Worker => {
-    if (!coverageWorkerRef.current) {
-      coverageWorkerRef.current = new Worker(
-        new URL("./map/coverageWorker.ts", import.meta.url),
-        { type: "module" },
-      );
+  /**
+   * Worker pool for parallel coverage compute. Lazily created on first
+   * use, kept warm across re-computes. Terminated on unmount.
+   */
+  const coveragePoolRef = useRef<CoverageWorkerPool | null>(null);
+  const ensureCoveragePool = useCallback((): CoverageWorkerPool => {
+    if (!coveragePoolRef.current) {
+      coveragePoolRef.current = new CoverageWorkerPool();
     }
-    return coverageWorkerRef.current;
+    return coveragePoolRef.current;
   }, []);
   useEffect(() => {
     return () => {
-      coverageWorkerRef.current?.terminate();
-      coverageWorkerRef.current = null;
+      coveragePoolRef.current?.terminate();
+      coveragePoolRef.current = null;
     };
   }, []);
 
@@ -1030,9 +1039,8 @@ export function Map() {
 
     const radKm = coverageRadiusKm;
     const demBounds = demBoundsAround(origin, radKm, 1.05);
-    // Phase 10A: the worker now fetches Mapbox terrain-rgb tiles directly,
-    // so we no longer need to wait for the map's terrain to be loaded in
-    // the viewport. Just center the camera politely and dispatch to worker.
+    // Gently center on the pin; tiles are fetched directly from Mapbox's
+    // terrain-rgb endpoint independent of the viewport.
     mb.easeTo({ center: origin, duration: 300 });
 
     const mapboxToken = env.MAPBOX_TOKEN;
@@ -1044,23 +1052,115 @@ export function Map() {
 
     const requestId = ++coverageRequestIdRef.current;
     let cancelled = false;
-    // Hoisted so the outer cleanup can detach the listener if the effect
-    // re-runs before the worker replies.
-    let pendingWorker: Worker | null = null;
-    let pendingHandler: ((evt: MessageEvent<CoverageWorkerResponse>) => void) | null = null;
 
-    try {
-      const envExp = ENVIRONMENTS[coverageEnvIdx].pathLossExponent;
-      const worker = ensureCoverageWorker();
-      pendingWorker = worker;
+    // Coverage compute now runs across a pool of workers (Phase 10D).
+    // Main thread fetches the DEM once, copies it to each worker as a
+    // slice task, and stitches the RGBA responses.
+    const DEM_SIZE = COVERAGE_DETAIL_SIZE[coverageDetail];
+    const envEntry = ENVIRONMENTS[coverageEnvIdx];
+    const envExp = envEntry.pathLossExponent;
+    const rasterParams: RasterParams = {
+      freqMhz: 915,
+      txDbm: coverageTxDbm,
+      antennaDbi: coverageAntennaDbi,
+      rxSensitivityDbm: coverageSensitivityDbm,
+      fadeMarginDb: 15,
+      cableLossDb: 2,
+      clutterLossDb: envEntry.clutterLossDb,
+      // ITM climate & ground constants. Continental Temperate + N=301 is
+      // a reasonable default for most North-American Meshtastic networks.
+      climate: 5 /* Climate.ContinentalTemperate */,
+      surfaceRefractivityN: 301,
+      polarization: 1 /* Polarization.Vertical */,
+      groundDielectric: 15,
+      groundConductivity: 0.005,
+      timePct: 50,
+      locationPct: 50,
+      situationPct: 50,
+    };
 
-      const handler = (evt: MessageEvent<CoverageWorkerResponse>) => {
-        if (evt.data.requestId !== requestId) return; // stale reply
-        worker.removeEventListener("message", handler);
-        pendingHandler = null;
-        if (cancelled) return;
+    (async () => {
+      const t0 = performance.now();
+      // Phase-granular timing so we can see where the ~hundreds of ms
+      // end up after the worker pool lands.
+      const timings: Record<string, number> = {};
+      const mark = (name: string, fromMs: number) => {
+        timings[name] = performance.now() - fromMs;
+      };
+      try {
+        // 1. Fetch terrain-rgb tiles and build the full DEM on the main
+        //    thread. Uses the same `terrainRgb` module the old worker did.
+        const tFetch = performance.now();
+        const dem = await buildDemFromTerrainRgb({
+          bounds: demBounds,
+          targetWidth: DEM_SIZE,
+          targetHeight: DEM_SIZE,
+          token: mapboxToken,
+        });
+        mark("demFetchMs", tFetch);
+        if (cancelled || requestId !== coverageRequestIdRef.current) return;
 
-        if (evt.data.itmUnavailable) {
+        // 2. Resolve origin height by sampling the DEM at the pin location.
+        const originGround = sampleDEMAt(dem, origin![0], origin![1]);
+        const altValid =
+          altitude != null &&
+          Number.isFinite(altitude) &&
+          !Number.isNaN(originGround) &&
+          altitude >= originGround;
+        const originHeightM = altValid
+          ? (altitude as number)
+          : (Number.isNaN(originGround) ? 0 : originGround) + 2;
+        const originIsFallback = !altValid;
+
+        // 3. Split DEM rows across the pool and dispatch slice tasks.
+        const pool = ensureCoveragePool();
+        const poolSize = pool.size;
+        const rowsPerTask = Math.ceil(DEM_SIZE / poolSize);
+        const tasks: Promise<unknown>[] = [];
+        const sliceResponses: Array<{
+          rgba: Uint8ClampedArray;
+          rowStart: number;
+          rowEnd: number;
+          clearCount: number;
+          fresnelCount: number;
+          blockedCount: number;
+          itmUnavailable?: boolean;
+        }> = [];
+
+        const tDispatch = performance.now();
+        for (let i = 0; i < poolSize; i++) {
+          const rowStart = i * rowsPerTask;
+          if (rowStart >= DEM_SIZE) break;
+          const rowEnd = Math.min(rowStart + rowsPerTask, DEM_SIZE);
+          // Each worker needs its own copy of the DEM — `postMessage`
+          // with a transferable moves ownership, and we have many
+          // workers reading the same source. 384² × 4 B × 8 workers
+          // ≈ 4.5 MB of copies per compute — cheap.
+          const demCopy = new Float32Array(dem.data);
+          const req: CoverageSliceRequest = {
+            requestId,
+            demBuffer: demCopy.buffer,
+            demWidth: dem.width,
+            demHeight: dem.height,
+            bounds: dem.bounds,
+            origin: origin!,
+            originHeightM,
+            params: rasterParams,
+            rowStart,
+            rowEnd,
+          };
+          tasks.push(
+            pool.dispatch(req, [demCopy.buffer]).then((resp) => {
+              sliceResponses.push(resp);
+            }),
+          );
+        }
+        await Promise.all(tasks);
+        mark("poolComputeMs", tDispatch);
+        if (cancelled || requestId !== coverageRequestIdRef.current) return;
+
+        // If any worker reported the WASM missing, bail with a clear log.
+        if (sliceResponses.some((r) => r.itmUnavailable)) {
           console.warn(
             "[Map] Coverage compute: ITM WASM not built. Run `yarn build:wasm`.",
           );
@@ -1069,34 +1169,40 @@ export function Map() {
           return;
         }
 
-        // Surface compute time in dev tools so we can see how the LR pass
-        // scales across hardware. Useful ahead of the Phase 10D worker-pool
-        // parallelism work.
-        console.info(
-          `[Map] Coverage compute: ${evt.data.computeMs.toFixed(0)} ms ` +
-            `for ${evt.data.width}x${evt.data.height} px ` +
-            `(${((evt.data.clearCount + evt.data.fresnelCount + evt.data.blockedCount) /
-              (evt.data.width * evt.data.height) * 100).toFixed(0)}% terrain-covered)`,
-        );
+        // 4. Stitch slice RGBAs into one full-size image.
+        const tStitch = performance.now();
+        const fullRgba = new Uint8ClampedArray(DEM_SIZE * DEM_SIZE * 4);
+        let clearCount = 0;
+        let fresnelCount = 0;
+        let blockedCount = 0;
+        let demCoveredPixels = 0;
+        for (const s of sliceResponses) {
+          fullRgba.set(s.rgba, s.rowStart * DEM_SIZE * 4);
+          clearCount += s.clearCount;
+          fresnelCount += s.fresnelCount;
+          blockedCount += s.blockedCount;
+          demCoveredPixels += s.clearCount + s.fresnelCount + s.blockedCount;
+        }
+        mark("stitchMs", tStitch);
 
-        // Paint RGBA onto a canvas and push to the image source.
+        // 5. Push pixels to the Mapbox image source.
+        const tEncode = performance.now();
         const canvas = document.createElement("canvas");
-        canvas.width = evt.data.width;
-        canvas.height = evt.data.height;
+        canvas.width = DEM_SIZE;
+        canvas.height = DEM_SIZE;
         const ctx = canvas.getContext("2d");
         if (!ctx) {
           setIsComputingCoverage(false);
           return;
         }
-        // Cast: TS 5.7+ narrowed the ImageData ctor to require `Uint8ClampedArray<ArrayBuffer>`
-        // (not `ArrayBufferLike`). The worker transfers a plain ArrayBuffer so this is safe.
         const imgData = new ImageData(
-          evt.data.rgba as Uint8ClampedArray<ArrayBuffer>,
-          evt.data.width,
-          evt.data.height,
+          fullRgba as Uint8ClampedArray<ArrayBuffer>,
+          DEM_SIZE,
+          DEM_SIZE,
         );
         ctx.putImageData(imgData, 0, 0);
         const url = canvas.toDataURL("image/png");
+        mark("encodeMs", tEncode);
 
         const src = mb.getSource("coverage-raster") as mapboxgl.ImageSource | undefined;
         const coords: [[number, number], [number, number], [number, number], [number, number]] = [
@@ -1112,16 +1218,23 @@ export function Map() {
           mb.setLayoutProperty("coverage-raster", "visibility", "visible");
         }
 
+        const computeMs = performance.now() - t0;
+        const totalPx = DEM_SIZE * DEM_SIZE;
+        console.info(
+          `[Map] Coverage compute: ${computeMs.toFixed(0)} ms ` +
+            `for ${DEM_SIZE}x${DEM_SIZE} px across ${poolSize} workers ` +
+            `(${Math.round((demCoveredPixels / totalPx) * 100)}% terrain-covered)`,
+          timings,
+        );
+
         setCoverageResult({
           origin: origin!,
-          originHeightM: evt.data.originHeightM,
-          originIsFallback: evt.data.originIsFallback,
+          originHeightM,
+          originIsFallback,
           radiusKm: radKm,
-          clearCount: evt.data.clearCount,
-          // Merge "diffracted" into fresnel — the panel only cares about
-          // reachable-with-impairment vs. clear vs. blocked.
-          fresnelCount: evt.data.fresnelCount + evt.data.diffractedCount,
-          blockedCount: evt.data.blockedCount,
+          clearCount,
+          fresnelCount,
+          blockedCount,
           frequencyGHz: 0.915,
           antennaDbi: coverageAntennaDbi,
           txDbm: coverageTxDbm,
@@ -1135,61 +1248,18 @@ export function Map() {
           rxSensitivityDbm: coverageSensitivityDbm,
         });
         setIsComputingCoverage(false);
-      };
-
-      pendingHandler = handler;
-      worker.addEventListener("message", handler);
-
-      const envEntry = ENVIRONMENTS[coverageEnvIdx];
-      const msg: CoverageWorkerRequest = {
-        requestId,
-        bounds: demBounds,
-        demWidth: 384,
-        demHeight: 384,
-        mapboxToken,
-        origin: origin!,
-        originAltitudeM: altitude,
-        antennaHeightM: 2,
-        targetAntennaHeightM: 2,
-        freqGHz: 0.915,
-        raster: {
-          freqMhz: 915,
-          txDbm: coverageTxDbm,
-          antennaDbi: coverageAntennaDbi,
-          rxSensitivityDbm: coverageSensitivityDbm,
-          fadeMarginDb: 15,
-          cableLossDb: 2,
-          clutterLossDb: envEntry.clutterLossDb,
-          // ITM climate & ground constants. Continental Temperate + N=301 is
-          // a reasonable default for most North-American Meshtastic networks.
-          // Tweakable from the UI in a future polish phase.
-          climate: 5 /* Climate.ContinentalTemperate */,
-          surfaceRefractivityN: 301,
-          polarization: 1 /* Polarization.Vertical */,
-          groundDielectric: 15,
-          groundConductivity: 0.005,
-          timePct: 50,
-          locationPct: 50,
-          situationPct: 50,
-        },
-      };
-      worker.postMessage(msg);
-    } catch (err) {
-      console.warn("[Map] Coverage computation failed:", err);
-      setCoverageResult(null);
-      setIsComputingCoverage(false);
-    }
+      } catch (err) {
+        if (cancelled) return;
+        console.warn("[Map] Coverage computation failed:", err);
+        setCoverageResult(null);
+        setIsComputingCoverage(false);
+      }
+    })();
 
     return () => {
       cancelled = true;
-      // Detach any in-flight worker handler so stale callbacks can't fire
-      // (and so the listener list doesn't grow across re-runs).
-      if (pendingWorker && pendingHandler) {
-        pendingWorker.removeEventListener("message", pendingHandler);
-        pendingHandler = null;
-      }
     };
-  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageTxDbm, coverageEnvIdx, coverageSensitivityDbm, provider, terrain3D, nodes]);
+  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageTxDbm, coverageEnvIdx, coverageSensitivityDbm, coverageDetail, provider, terrain3D, nodes]);
 
   // Auto-update radius to match the link budget when hardware/antenna changes,
   // unless the user has manually overridden the slider.
@@ -3678,6 +3748,8 @@ export function Map() {
           onPresetIdxChange={setCoveragePresetIdx}
           customSensitivityDbm={coverageCustomSensDbm}
           onCustomSensitivityChange={setCoverageCustomSensDbm}
+          detail={coverageDetail}
+          onDetailChange={setCoverageDetail}
         />
       )}
 

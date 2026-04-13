@@ -1,6 +1,19 @@
 import { COMMON_ANTENNAS, COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS, type CoverageResult } from "./coverageAnalysis";
 
 /**
+ * Detail-level presets for the coverage DEM resolution. Standard (512²)
+ * is the default and feels instant on the worker pool; Ultra (1024²)
+ * quadruples the pixel count and is for "definitive survey" use.
+ */
+export type CoverageDetail = "standard" | "high" | "ultra";
+
+export const COVERAGE_DETAIL_SIZE: Record<CoverageDetail, number> = {
+  standard: 512,
+  high: 768,
+  ultra: 1024,
+};
+
+/**
  * Tiny info icon with a styled hover tooltip. More discoverable than a
  * browser-native `title=` attribute (which requires a long hover delay and
  * renders in OS-styled gray). `align` controls whether the tooltip anchors
@@ -45,6 +58,8 @@ export function MapCoveragePanel({
   onPresetIdxChange,
   customSensitivityDbm,
   onCustomSensitivityChange,
+  detail,
+  onDetailChange,
 }: {
   result: CoverageResult | null;
   originLabel: string;
@@ -66,6 +81,8 @@ export function MapCoveragePanel({
   onPresetIdxChange: (idx: number) => void;
   customSensitivityDbm: number;
   onCustomSensitivityChange: (dbm: number) => void;
+  detail: CoverageDetail;
+  onDetailChange: (d: CoverageDetail) => void;
 }) {
   const isCustomHardware = COMMON_HARDWARE[hardwareIdx]?.isCustom ?? false;
   const isCustomPreset = MESHTASTIC_PRESETS[presetIdx]?.isCustom ?? false;
@@ -415,6 +432,42 @@ export function MapCoveragePanel({
               budget ~{Math.round(result.linkBudgetMaxKm)} km
               {result.linkBudgetMaxKm > 500 && <span className="text-amber-500/70"> · capped at 500</span>}
             </div>
+          </div>
+        </div>
+
+        {/* Detail / resolution selector */}
+        <div>
+          <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 flex items-center gap-1">
+            <span>Detail</span>
+            <InfoTip align="left">
+              Coverage grid resolution. Higher detail = crisper edges around
+              terrain features, but slower to compute. Standard feels instant;
+              Ultra is best for a definitive one-off survey.
+            </InfoTip>
+          </label>
+          <div className="flex gap-1 rounded-lg border border-white/10 bg-white/5 p-0.5 text-[10px] font-medium">
+            {([
+              { key: "standard", label: "Standard", sub: "512 px" },
+              { key: "high",     label: "High",     sub: "768 px" },
+              { key: "ultra",    label: "Ultra",    sub: "1024 px" },
+            ] as const).map((opt) => {
+              const active = detail === opt.key;
+              return (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => onDetailChange(opt.key)}
+                  className={`flex-1 rounded-md px-2 py-1 transition-colors ${
+                    active
+                      ? "bg-cyan-500/20 text-cyan-200"
+                      : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
+                  }`}
+                >
+                  <div>{opt.label}</div>
+                  <div className="text-[9px] text-gray-500 font-normal">{opt.sub}</div>
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
