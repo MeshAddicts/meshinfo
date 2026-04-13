@@ -138,17 +138,141 @@ class PostgresStorage:
                 with open("postgres/sql/schema.sql", "r") as f:
                     schema_sql = f.read()
                 await conn.execute(schema_sql)
-
-                # Migrations — idempotent column additions for existing databases
-                await conn.execute("""
-                    ALTER TABLE nodes ADD COLUMN IF NOT EXISTS gateway VARCHAR(8);
-                """)
-
                 logger.info("PostgreSQL schema verified/created")
         except Exception as e:
             logger.error(f"Failed to ensure schema: {e}")
             if self.raise_on_write_error:
                 raise
+
+        # Migrations — idempotent column additions for existing databases.
+        # Run independently so they succeed even if schema.sql execution fails.
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute("""
+                    ALTER TABLE nodes ADD COLUMN IF NOT EXISTS gateway VARCHAR(8);
+                    ALTER TABLE mqtt_messages ADD COLUMN IF NOT EXISTS from_node_id VARCHAR(8);
+                    ALTER TABLE mqtt_messages ADD COLUMN IF NOT EXISTS to_node_id VARCHAR(8);
+                """)
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_mqtt_messages_from_node_id
+                        ON mqtt_messages(from_node_id, created_at DESC);
+                    CREATE INDEX IF NOT EXISTS idx_mqtt_messages_to_node_id
+                        ON mqtt_messages(to_node_id, created_at DESC);
+                """)
+                # Partial index so the backfill query can quickly find
+                # un-processed rows instead of seq-scanning millions.
+                # Use a longer timeout — initial creation scans the whole table.
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_mqtt_messages_backfill
+                        ON mqtt_messages(id)
+                        WHERE from_node_id IS NULL;
+                """, timeout=300)
+        except Exception as e:
+            logger.error(f"Failed to run migrations: {e}")
+            if self.raise_on_write_error:
+                raise
+
+        # Mqtt node-ID trigger + backfill — run independently so a failure here
+        # does not prevent the core schema from being applied.
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute("""
+                    CREATE OR REPLACE FUNCTION mqtt_messages_extract_node_ids()
+                    RETURNS TRIGGER AS $fn$
+                    DECLARE
+                        v_from TEXT;
+                        v_to TEXT;
+                    BEGIN
+                        IF (NEW.from_node_id IS NULL OR NEW.to_node_id IS NULL) AND NEW.payload IS NOT NULL AND NEW.payload ~ '^\\s*\\{' THEN
+                            BEGIN
+                                v_from := NEW.payload::jsonb ->> 'from';
+                                v_to   := NEW.payload::jsonb ->> 'to';
+                                IF NEW.from_node_id IS NULL AND v_from IS NOT NULL THEN
+                                    IF v_from ~ '^[0-9]+$' THEN
+                                        NEW.from_node_id := lpad(to_hex(v_from::bigint), 8, '0');
+                                    ELSE
+                                        NEW.from_node_id := left(regexp_replace(v_from, '^!', ''), 8);
+                                    END IF;
+                                END IF;
+                                IF NEW.to_node_id IS NULL AND v_to IS NOT NULL THEN
+                                    IF v_to ~ '^[0-9]+$' THEN
+                                        NEW.to_node_id := lpad(to_hex(v_to::bigint), 8, '0');
+                                    ELSE
+                                        NEW.to_node_id := left(regexp_replace(v_to, '^!', ''), 8);
+                                    END IF;
+                                END IF;
+                            EXCEPTION WHEN OTHERS THEN
+                                NULL;
+                            END;
+                        END IF;
+                        RETURN NEW;
+                    END;
+                    $fn$ LANGUAGE plpgsql;
+                """)
+                await conn.execute("""
+                    DROP TRIGGER IF EXISTS trg_mqtt_messages_extract_node_ids ON mqtt_messages;
+                """)
+                await conn.execute("""
+                    CREATE TRIGGER trg_mqtt_messages_extract_node_ids
+                        BEFORE INSERT ON mqtt_messages
+                        FOR EACH ROW
+                        EXECUTE FUNCTION mqtt_messages_extract_node_ids();
+                """)
+                logger.info("MQTT node-ID trigger installed")
+        except Exception as e:
+            logger.warning(f"MQTT node-ID trigger setup skipped: {e}")
+
+        # Backfill existing rows in the background — don't block startup
+        import asyncio
+        asyncio.ensure_future(self._backfill_mqtt_node_ids())
+
+    async def _backfill_mqtt_node_ids(self):
+        """Backfill from_node_id/to_node_id for existing mqtt_messages rows in batches."""
+        BATCH = 5000
+        total = 0
+        try:
+            while True:
+                async with self.pool.acquire() as conn:
+                    # Override the pool-level command_timeout (10s) — backfill
+                    # batches can take longer on large tables.
+                    await conn.execute("SET statement_timeout = '120s'", timeout=120)
+                    # Fetch candidate IDs and parse in Python to skip bad payloads
+                    rows = await conn.fetch("""
+                        SELECT id, payload
+                        FROM mqtt_messages
+                        WHERE from_node_id IS NULL
+                          AND payload IS NOT NULL
+                          AND payload ~ '^\\s*\\{'
+                        LIMIT $1
+                    """, BATCH, timeout=120)
+                    if not rows:
+                        break
+                    updates = []
+                    for row in rows:
+                        try:
+                            j = json.loads(row["payload"])
+                        except Exception:
+                            # Mark as processed with empty node IDs so we don't retry
+                            updates.append((row["id"], "", ""))
+                            continue
+                        fid = self._normalize_node_id(j.get("from")) or ""
+                        tid = self._normalize_node_id(j.get("to")) or ""
+                        updates.append((row["id"], fid, tid))
+                    if updates:
+                        await conn.executemany("""
+                            UPDATE mqtt_messages
+                            SET from_node_id = $2, to_node_id = $3
+                            WHERE id = $1
+                        """, updates, timeout=120)
+                    total += len(updates)
+                    if len(updates) < BATCH:
+                        break
+            if total > 0:
+                logger.info(f"MQTT node-ID backfill complete: {total} rows updated")
+            else:
+                logger.info("MQTT node-ID backfill: nothing to do")
+        except Exception as e:
+            logger.warning(f"MQTT node-ID backfill failed after {total} rows: {type(e).__name__}: {e}")
 
     # --------------------------- readiness helper ---------------------------
 
@@ -909,51 +1033,80 @@ class PostgresStorage:
         except (TypeError, ValueError):
             ts_i = None
 
+        # Extract from/to node IDs for indexed filtering
+        from_node_id = None
+        to_node_id = None
+        if isinstance(mqtt_msg, dict):
+            from_node_id = self._normalize_node_id(mqtt_msg.get("from"))
+            to_node_id = self._normalize_node_id(mqtt_msg.get("to"))
+
         try:
             async with self.pool.acquire() as conn:
                 await conn.execute(
                     """
-                    INSERT INTO mqtt_messages (topic, payload, qos, retain, timestamp)
-                    VALUES ($1, $2, $3, $4, $5)
+                    INSERT INTO mqtt_messages (topic, payload, qos, retain, timestamp, from_node_id, to_node_id)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
                     """,
                     topic,
                     payload_text,
                     qos_i,
                     retain_b,
                     ts_i,
+                    from_node_id,
+                    to_node_id,
                 )
         except Exception as e:
             logger.error(f"Failed to write mqtt message to PostgreSQL: {e}")
             if self.raise_on_write_error:
                 raise
 
-    async def query_mqtt_messages(self, limit: int = 1000, search: str | None = None) -> list:
+    async def query_mqtt_messages(
+        self,
+        limit: int = 1000,
+        search: str | None = None,
+        range_seconds: int | None = None,
+    ) -> list:
         """Query mqtt_messages from PostgreSQL, returning parsed message dicts.
 
         Args:
             limit: Max messages to return.
             search: Optional search term to filter by topic or payload content.
+            range_seconds: If provided, only include messages with
+                        timestamp >= (now_unix - range_seconds).
         """
         if not self._ready("query_mqtt_messages"):
             return []
         try:
+            import time
             async with self.pool.acquire() as conn:
+                conditions = []
+                params: list = []
+                idx = 1
+
+                if range_seconds is not None:
+                    threshold = int(time.time()) - range_seconds
+                    conditions.append(f"timestamp >= ${idx}")
+                    params.append(threshold)
+                    idx += 1
+
                 if search:
-                    rows = await conn.fetch(
-                        """SELECT topic, payload, qos, retain, timestamp, created_at
-                           FROM mqtt_messages
-                           WHERE topic ILIKE '%' || $1 || '%'
-                              OR payload ILIKE '%' || $1 || '%'
-                           ORDER BY created_at DESC LIMIT $2""",
-                        search, limit,
+                    conditions.append(
+                        f"(topic ILIKE '%' || ${idx} || '%'"
+                        f" OR payload ILIKE '%' || ${idx} || '%')"
                     )
-                else:
-                    rows = await conn.fetch(
-                        """SELECT topic, payload, qos, retain, timestamp, created_at
-                           FROM mqtt_messages
-                           ORDER BY created_at DESC LIMIT $1""",
-                        limit,
-                    )
+                    params.append(search)
+                    idx += 1
+
+                where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+                params.append(limit)
+
+                rows = await conn.fetch(
+                    f"""SELECT topic, payload, qos, retain, timestamp, created_at
+                        FROM mqtt_messages
+                        {where}
+                        ORDER BY created_at DESC LIMIT ${idx}""",
+                    *params,
+                )
 
             results = []
             for row in rows:
@@ -974,6 +1127,41 @@ class PostgresStorage:
             return results
         except Exception as e:
             logger.error("Failed to query mqtt_messages: %s", e)
+            return []
+
+    async def query_node_mqtt_messages(self, node_id: str, limit: int = 50) -> list:
+        """Query mqtt_messages for a specific node (as sender or recipient)."""
+        if not self._ready("query_node_mqtt_messages"):
+            return []
+        node_id = self._normalize_node_id(node_id) or node_id
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """SELECT topic, payload, qos, retain, timestamp, created_at
+                       FROM mqtt_messages
+                       WHERE from_node_id = $1 OR to_node_id = $1
+                       ORDER BY created_at DESC LIMIT $2""",
+                    node_id, limit,
+                )
+
+            results = []
+            for row in rows:
+                payload_text = row["payload"]
+                if payload_text:
+                    try:
+                        msg = json.loads(payload_text)
+                    except (json.JSONDecodeError, TypeError):
+                        msg = {"raw": payload_text}
+                else:
+                    msg = {}
+                if "topic" not in msg:
+                    msg["topic"] = row["topic"]
+                if "timestamp" not in msg:
+                    msg["timestamp"] = row["timestamp"]
+                results.append(msg)
+            return results
+        except Exception as e:
+            logger.error("Failed to query node mqtt_messages: %s", e)
             return []
 
     # ============================================================================
