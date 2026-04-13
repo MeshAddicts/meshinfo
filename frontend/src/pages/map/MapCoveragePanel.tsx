@@ -1,5 +1,29 @@
 import { COMMON_ANTENNAS, COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS, type CoverageResult } from "./coverageAnalysis";
 
+/**
+ * Tiny info icon with a styled hover tooltip. More discoverable than a
+ * browser-native `title=` attribute (which requires a long hover delay and
+ * renders in OS-styled gray). `align` controls whether the tooltip anchors
+ * to the right edge of the icon (default) or left — use "left" when the icon
+ * is far to the right of the panel to avoid spilling off-screen.
+ */
+function InfoTip({ children, align = "right" }: { children: React.ReactNode; align?: "left" | "right" }) {
+  return (
+    <span className="relative inline-flex items-center group">
+      <svg className="w-3 h-3 text-gray-600 group-hover:text-gray-400 transition-colors cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      <span
+        className={`invisible group-hover:visible absolute bottom-full mb-1 w-60 p-2 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-[10px] text-gray-300 leading-relaxed z-50 normal-case tracking-normal font-normal ${
+          align === "left" ? "left-0" : "right-0"
+        }`}
+      >
+        {children}
+      </span>
+    </span>
+  );
+}
+
 export function MapCoveragePanel({
   result,
   originLabel,
@@ -174,29 +198,74 @@ export function MapCoveragePanel({
       {/* Stats + legend */}
       <div className="p-3 space-y-3">
         {/* Reachability summary + RSSI gradient legend */}
-        <div className="flex items-center gap-3 px-2 py-1.5 rounded-lg bg-white/5">
-          <div className="flex-1">
-            <div className="flex items-center gap-2 text-[10px]">
-              <span className="text-gray-500 uppercase tracking-wider">Reachable</span>
-              <span className="text-emerald-300 font-medium">
-                {result.clearCount + result.fresnelCount}
-              </span>
-              <span className="text-gray-600">/ {result.clearCount + result.fresnelCount + result.blockedCount}</span>
-              <span className="text-gray-500">
-                ({Math.round(((result.clearCount + result.fresnelCount) / Math.max(1, result.clearCount + result.fresnelCount + result.blockedCount)) * 100)}%)
-              </span>
+        {(() => {
+          const reachablePx = result.clearCount + result.fresnelCount;
+          const totalPx = reachablePx + result.blockedCount;
+          const pct = totalPx > 0 ? (reachablePx / totalPx) * 100 : 0;
+          // DEM bbox is padded by 5% on each side, so total scanned area ≈ (2·r·1.05)².
+          const scannedKm2 = (2 * result.radiusKm * 1.05) ** 2;
+          const reachableKm2 = scannedKm2 * (totalPx > 0 ? reachablePx / totalPx : 0);
+          const fmt = (n: number) => n >= 100 ? Math.round(n).toLocaleString() : n.toFixed(1);
+
+          // Diagnostics for when the map paints nothing:
+          //   - If virtually all pixels were NaN, the DEM didn't sample — tiles
+          //     weren't loaded for the area. Tell the user to zoom/pan out.
+          //   - If the DEM sampled but no pixels closed the budget, tell the
+          //     user the link budget itself is failing (try more power / range).
+          const TOTAL_PIXELS = 65536; // 256×256 grid
+          const terrainCoverage = totalPx / TOTAL_PIXELS;
+          const noTerrainData = terrainCoverage < 0.05; // <5% of grid had terrain
+          const noLinkBudget = !noTerrainData && reachablePx === 0;
+          return (
+            <div className="flex items-center gap-3 px-2 py-1.5 rounded-lg bg-white/5">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 text-[10px]">
+                  <span className="text-gray-500 uppercase tracking-wider inline-flex items-center gap-1">
+                    Reachable
+                    <InfoTip align="left">
+                      Estimated area where the link budget succeeds (RSSI above
+                      sensitivity + fade margin). Computed from the
+                      {" "}{reachablePx.toLocaleString()} of {totalPx.toLocaleString()}{" "}
+                      grid cells that passed.
+                    </InfoTip>
+                  </span>
+                  <span className="text-emerald-300 font-medium tabular-nums">
+                    ~{fmt(reachableKm2)} km²
+                  </span>
+                  <span className="text-gray-500 tabular-nums">
+                    ({Math.round(pct)}% of {fmt(scannedKm2)} km²)
+                  </span>
+                </div>
+                <div className="mt-1 h-2 rounded-full overflow-hidden" style={{
+                  background: "linear-gradient(to right, #f97316 0%, #eab308 20%, #22c55e 55%, #16a34a 100%)",
+                }} />
+                <div className="flex items-center justify-between text-[9px] text-gray-500 mt-0.5 font-mono">
+                  <span>0 dB</span>
+                  <span>+5</span>
+                  <span>+15</span>
+                  <span>+25 dB margin</span>
+                </div>
+                {(noTerrainData || noLinkBudget) && (
+                  <div className="mt-1.5 px-2 py-1 rounded bg-amber-500/10 border border-amber-500/30 text-[10px] text-amber-300 leading-snug">
+                    {noTerrainData ? (
+                      <>
+                        <strong>No terrain data loaded</strong> for the pin area.
+                        Try zooming / panning around so Mapbox fetches terrain
+                        tiles first, then re-drop the pin.
+                      </>
+                    ) : (
+                      <>
+                        <strong>Link budget fails everywhere</strong> within range.
+                        Try a lower-sensitivity preset, more TX power, higher-gain
+                        antenna, or a smaller analysis range.
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="mt-1 h-2 rounded-full overflow-hidden" style={{
-              background: "linear-gradient(to right, #f97316 0%, #eab308 20%, #22c55e 55%, #16a34a 100%)",
-            }} />
-            <div className="flex items-center justify-between text-[9px] text-gray-500 mt-0.5 font-mono">
-              <span>0 dB</span>
-              <span>+5</span>
-              <span>+15</span>
-              <span>+25 dB margin</span>
-            </div>
-          </div>
-        </div>
+          );
+        })()}
 
         {/* Environment + Modem preset */}
         <div className="grid grid-cols-2 gap-2">
@@ -214,7 +283,7 @@ export function MapCoveragePanel({
               title={ENVIRONMENTS[envIdx].description}
             >
               {ENVIRONMENTS.map((env, i) => (
-                <option key={i} value={i}>{env.label} (n={env.pathLossExponent})</option>
+                <option key={i} value={i}>{env.label}</option>
               ))}
             </select>
           </div>
@@ -312,7 +381,15 @@ export function MapCoveragePanel({
           <div>
             <div className="flex items-center justify-between mb-1">
               <label htmlFor="coverage-radius" className="text-[10px] font-medium uppercase tracking-wider text-gray-500">
-                Scan radius
+                <span className="inline-flex items-center gap-1">
+                  Analysis range
+                  <InfoTip align="left">
+                    How far from the pin the tool computes coverage. Defaults to
+                    the theoretical link-budget range for the chosen hardware,
+                    capped at 500 km (beyond that the terrain grid gets too
+                    coarse to be meaningful).
+                  </InfoTip>
+                </span>
               </label>
               <span className="text-[10px] text-gray-300 font-medium">{radiusKm} km</span>
             </div>
@@ -320,15 +397,23 @@ export function MapCoveragePanel({
               id="coverage-radius"
               type="range"
               min={2}
-              max={Math.max(30, Math.min(300, Math.ceil(result.linkBudgetMaxKm)))}
+              max={Math.max(30, Math.min(500, Math.ceil(result.linkBudgetMaxKm)))}
               step={1}
               value={radiusKm}
               onChange={(e) => onRadiusChange(Number(e.target.value))}
               className="w-full accent-cyan-500"
-              aria-label="Scan radius"
+              aria-label="Analysis range (km)"
             />
-            <div className="text-[9px] text-gray-500 mt-0.5 text-right">
+            <div
+              className="text-[9px] text-gray-500 mt-0.5 text-right"
+              title={
+                result.linkBudgetMaxKm > 500
+                  ? "Slider capped at 500 km — beyond that, terrain sampling resolution is too coarse to be meaningful."
+                  : undefined
+              }
+            >
               budget ~{Math.round(result.linkBudgetMaxKm)} km
+              {result.linkBudgetMaxKm > 500 && <span className="text-amber-500/70"> · capped at 500</span>}
             </div>
           </div>
         </div>

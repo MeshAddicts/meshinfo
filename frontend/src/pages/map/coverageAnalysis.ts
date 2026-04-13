@@ -17,10 +17,10 @@ export interface Environment {
   description: string;
 }
 export const ENVIRONMENTS: Environment[] = [
-  { id: "open",     label: "Open / Rural",        pathLossExponent: 2.0, description: "Line-of-sight, no obstacles" },
-  { id: "mixed",    label: "Mixed / Light terrain", pathLossExponent: 2.5, description: "Some trees, rolling hills" },
-  { id: "suburban", label: "Suburban",            pathLossExponent: 3.0, description: "Scattered buildings, moderate clutter" },
-  { id: "urban",    label: "Urban / Dense forest", pathLossExponent: 3.5, description: "Heavy clutter, thick canopy" },
+  { id: "open",     label: "Open / Rural",        pathLossExponent: 2.0, description: "Line-of-sight with no obstacles — open country, water, desert" },
+  { id: "mixed",    label: "Light terrain",       pathLossExponent: 2.5, description: "Scattered trees and rolling hills — mixed countryside" },
+  { id: "suburban", label: "Suburban",            pathLossExponent: 3.0, description: "Residential neighborhoods with buildings and moderate clutter" },
+  { id: "urban",    label: "Urban / Dense forest", pathLossExponent: 3.5, description: "Heavy obstruction — city core, thick canopy, industrial" },
 ];
 
 /**
@@ -96,14 +96,20 @@ export function linkBudgetMaxKm(opts: {
   return dKm;
 }
 
-/** Common Meshtastic antenna gains. */
+/**
+ * Common Meshtastic antenna gains. Descriptors like "omni" / "yagi" are
+ * intentionally omitted for now — the coverage model assumes isotropic
+ * radiation and can't yet account for directional patterns. When directional
+ * antennas are added, specific models (e.g. Rockland, Signal Plus) should
+ * go here with their radiation patterns.
+ */
 export const COMMON_ANTENNAS: { dbi: number; label: string }[] = [
-  { dbi: 3, label: "3 dBi (stock/rubber duck)" },
-  { dbi: 5.8, label: "5.8 dBi (mid omni)" },
-  { dbi: 6, label: "6 dBi (omni)" },
-  { dbi: 8, label: "8 dBi (high-gain omni)" },
-  { dbi: 10, label: "10 dBi (tall omni)" },
-  { dbi: 12, label: "12 dBi (yagi/panel)" },
+  { dbi: 3,   label: "3 dBi" },
+  { dbi: 5.8, label: "5.8 dBi" },
+  { dbi: 6,   label: "6 dBi" },
+  { dbi: 8,   label: "8 dBi" },
+  { dbi: 10,  label: "10 dBi" },
+  { dbi: 12,  label: "12 dBi" },
 ];
 
 /**
@@ -111,17 +117,19 @@ export const COMMON_ANTENNAS: { dbi: number; label: string }[] = [
  * Values are realistic defaults — most boards ship at these figures,
  * though actual output can vary by firmware settings and region.
  */
+// Ordered by TX power (descending), ties broken alphabetically. Custom last.
 export const COMMON_HARDWARE: { label: string; txDbm: number; isCustom?: boolean }[] = [
+  { label: "LILYGO T3-S3 1W", txDbm: 30 },
   { label: "Heltec V3", txDbm: 22 },
+  { label: "Heltec V4", txDbm: 22 },
   { label: "LILYGO T-Beam", txDbm: 22 },
-  { label: "LILYGO T-Echo", txDbm: 22 },
   { label: "LILYGO T-Deck", txDbm: 22 },
+  { label: "LILYGO T-Echo", txDbm: 22 },
   { label: "RAK WisBlock (RAK4631)", txDbm: 22 },
-  { label: "Station G2", txDbm: 22 },
   { label: "Seeed T1000-E", txDbm: 22 },
+  { label: "Station G2", txDbm: 22 },
   { label: "Heltec LoRa32 v2 (SX1276)", txDbm: 20 },
   { label: "nRF52 (generic)", txDbm: 20 },
-  { label: "E22-900M30S (high-power)", txDbm: 30 },
   { label: "Custom", txDbm: 22, isCustom: true },
 ];
 

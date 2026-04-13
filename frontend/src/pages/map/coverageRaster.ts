@@ -14,6 +14,24 @@
 import type { DEM } from "./terrainDEM";
 import { knifeEdgeLossDb, type Viewshed } from "./viewshed";
 
+/**
+ * Excess loss applied to non-line-of-sight (terrain-blocked) paths on top
+ * of the single-knife-edge diffraction we already compute.
+ *
+ * ITU-R P.526 single-knife-edge alone systematically under-predicts real
+ * NLoS loss because it ignores:
+ *   - multiple obstacles along the ridge (Deygout / Bullington methods)
+ *   - foliage / ground clutter past the obstacle
+ *   - multipath destructive interference
+ *   - scattering and diffraction around the edge (not just over it)
+ *
+ * Published measurements typically find NLoS paths another 6–12 dB lossier
+ * than single-knife-edge predicts in realistic mixed terrain. 8 dB is a
+ * reasonable midpoint that prevents the tool from painting coverage on the
+ * far side of large ridges when the math just barely closes.
+ */
+const NLOS_EXCESS_LOSS_DB = 8;
+
 export interface RasterParams {
   /** Frequency in MHz. */
   freqMhz: number;
@@ -130,7 +148,9 @@ export function renderCoverageRaster(
     }
 
     const diffractionLossDb = knifeEdgeLossDb(v);
-    const totalLossDb = pathLossDb(dKm, freqMhz, envExponent) + diffractionLossDb + cableLossDb;
+    const nlosExcessDb = viewshed.blocked[i] ? NLOS_EXCESS_LOSS_DB : 0;
+    const totalLossDb =
+      pathLossDb(dKm, freqMhz, envExponent) + diffractionLossDb + nlosExcessDb + cableLossDb;
     const rssiDbm = txDbm + 2 * antennaDbi - totalLossDb;
     const marginDb = rssiDbm - rxSensitivityDbm - fadeMarginDb;
 

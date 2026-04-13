@@ -424,6 +424,10 @@ export function Map() {
   const coverageRadiusManualRef = useRef(false);
   /** Custom WebGL layer instance for the 3D LoS tube. Created once per map. */
   const losTubeLayerRef = useRef<LosTubeLayer | null>(null);
+  /** DOM-based pin for the Coverage tool's origin (draggable-capable). */
+  const coverageOriginMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  /** Terrain elevation under the cursor (meters MSL). Null when unavailable. */
+  const [hoverElevationM, setHoverElevationM] = useState<number | null>(null);
   // Scan tool state
   const [scanSummary, setScanSummary] = useState<ScanSummary | null>(null);
   const [isScanning, setIsScanning] = useState(false);
@@ -662,6 +666,10 @@ export function Map() {
       try {
         (mb.getSource("path-analysis") as MbGeoJSONSource | undefined)?.setData(empty);
       } catch {}
+      if (coverageOriginMarkerRef.current) {
+        coverageOriginMarkerRef.current.remove();
+        coverageOriginMarkerRef.current = null;
+      }
       try {
         if (mb.getLayer("coverage-raster")) {
           mb.setLayoutProperty("coverage-raster", "visibility", "none");
@@ -1020,16 +1028,14 @@ export function Map() {
     // Mark as computing but keep the previous result visible so controls stay up
     setIsComputingCoverage(true);
 
-    // Fit the map so terrain tiles covering the full radius load
     const radKm = coverageRadiusKm;
     const demBounds = demBoundsAround(origin, radKm, 1.05);
-    mb.fitBounds(
-      new mapboxgl.LngLatBounds(
-        [demBounds.west, demBounds.south],
-        [demBounds.east, demBounds.north],
-      ),
-      { padding: 80, duration: 500, maxZoom: 12 },
-    );
+    // Just center on the pin — no camera-yank. Terrain data availability is
+    // a known limitation of the current pipeline and will be fixed properly
+    // when we swap to direct terrain-rgb tile fetching alongside the
+    // Longley-Rice upgrade (see project_propagation_upgrade.md). Until then,
+    // the amber "no terrain data" banner explains the failure mode.
+    mb.easeTo({ center: origin, duration: 300 });
 
     const requestId = ++coverageRequestIdRef.current;
     let cancelled = false;
@@ -1038,8 +1044,17 @@ export function Map() {
     let pendingWorker: Worker | null = null;
     let pendingHandler: ((evt: MessageEvent<CoverageWorkerResponse>) => void) | null = null;
 
-    // Wait for terrain tiles to load after fitBounds, then sample DEM + dispatch worker
-    const timer = setTimeout(() => {
+    // Wait for the map to actually settle (ease finished, terrain tiles
+    // loaded) before sampling the DEM. A blind setTimeout often fired while
+    // tiles for the pin's new area were still in flight — producing mostly
+    // NaN elevations and a mostly-transparent coverage raster. `map.once
+    // ("idle", ...)` is Mapbox's own signal for "done loading + animating."
+    // Safety timeout kicks us off after 4s in case idle never fires (e.g.
+    // offline / stalled tile request) so we at least try the sample.
+    let ranCompute = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const doCompute = () => {
       if (cancelled) return;
       try {
         // Origin terrain & final height resolution (altitude if valid, else terrain+antenna)
@@ -1130,6 +1145,7 @@ export function Map() {
             rxSensitivityDbm: coverageSensitivityDbm,
           });
           setIsComputingCoverage(false);
+
         };
 
         pendingHandler = handler;
@@ -1165,10 +1181,22 @@ export function Map() {
         setCoverageResult(null);
         setIsComputingCoverage(false);
       }
-    }, 1200);
+    };
+
+    const runCompute = () => {
+      if (cancelled || ranCompute) return;
+      ranCompute = true;
+      if (timer) { clearTimeout(timer); timer = null; }
+      mb.off("idle", runCompute);
+      doCompute();
+    };
+    mb.once("idle", runCompute);
+    timer = setTimeout(runCompute, 1500);
+
     return () => {
       cancelled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
+      mb.off("idle", runCompute);
       // Detach any in-flight worker handler so stale callbacks can't fire
       // (and so the listener list doesn't grow across re-runs).
       if (pendingWorker && pendingHandler) {
@@ -1180,7 +1208,9 @@ export function Map() {
 
   // Auto-update radius to match the link budget when hardware/antenna changes,
   // unless the user has manually overridden the slider.
-  // Cap at 300 km — well beyond realistic Meshtastic range but keeps the slider sane.
+  // Cap at 500 km — anything more is basically "free-space to the horizon" and
+  // the DEM resolution at that scale (~2 km/pixel on a 256 grid) can't produce
+  // meaningful terrain-aware viewshed results anyway.
   useEffect(() => {
     if (coverageRadiusManualRef.current) return;
     const env = ENVIRONMENTS[coverageEnvIdx];
@@ -1190,7 +1220,7 @@ export function Map() {
       envExponent: env.pathLossExponent,
       rxSensitivityDbm: coverageSensitivityDbm,
     });
-    setCoverageRadiusKm(Math.max(2, Math.min(300, Math.round(maxKm))));
+    setCoverageRadiusKm(Math.max(2, Math.min(500, Math.round(maxKm))));
   }, [coverageAntennaDbi, coverageTxDbm, coverageEnvIdx, coverageSensitivityDbm]);
 
   // Reset the manual-override flag when the tool is closed
@@ -1213,6 +1243,65 @@ export function Map() {
       } catch {}
     }
   }, [activeTool]);
+
+  // Sync the coverage origin pin to the current origin (node pick or
+  // virtual placement). A DOM-based mapboxgl.Marker so it stays at a
+  // consistent screen size at all zooms and is trivial to make draggable later.
+  useEffect(() => {
+    const mb = mbMapRef.current;
+    if (!mb) return;
+
+    const clear = () => {
+      if (coverageOriginMarkerRef.current) {
+        coverageOriginMarkerRef.current.remove();
+        coverageOriginMarkerRef.current = null;
+      }
+    };
+
+    if (activeTool !== "coverage" || toolStep !== "result") {
+      clear();
+      return;
+    }
+
+    let origin: [number, number] | null = null;
+    if (toolFromId) {
+      const n = nodes[toolFromId] ?? nodes[`!${toolFromId}`];
+      if (n?.map_position) origin = [n.map_position[0], n.map_position[1]];
+    } else if (toolVirtualPos) {
+      origin = toolVirtualPos;
+    }
+    if (!origin) {
+      clear();
+      return;
+    }
+
+    if (coverageOriginMarkerRef.current) {
+      coverageOriginMarkerRef.current.setLngLat(origin);
+    } else {
+      const marker = new mapboxgl.Marker({ color: "#22d3ee", draggable: true })
+        .setLngLat(origin)
+        .addTo(mb);
+      // On drag release: switch to a virtual origin at the new location and
+      // kick a fresh compute. If the origin was a node pick, we "detach" it —
+      // the pin is now in free-placement mode.
+      marker.on("dragend", () => {
+        const ll = marker.getLngLat();
+        setToolFromId(null);
+        setToolVirtualPos([ll.lng, ll.lat]);
+      });
+      coverageOriginMarkerRef.current = marker;
+    }
+  }, [activeTool, toolStep, toolFromId, toolVirtualPos, nodes]);
+
+  // Unmount cleanup for the pin marker
+  useEffect(() => {
+    return () => {
+      if (coverageOriginMarkerRef.current) {
+        coverageOriginMarkerRef.current.remove();
+        coverageOriginMarkerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => { channelFilterRef.current = channelFilter; }, [channelFilter]);
 
@@ -1887,6 +1976,11 @@ export function Map() {
         });
       }
 
+      // Note: the coverage origin pin uses mapboxgl.Marker (DOM-based) instead
+      // of a source/layer — it's easier to make screen-space-constant-sized
+      // and upgrade to draggable in a future pass without re-jiggering the
+      // custom layer stack.
+
       // 3D LoS tube + obstruction pylons (Phase 9+, Option B).
       // The tube is a custom WebGL layer that draws the chord in world space;
       // the pylons are fill-extrusions showing where terrain spikes above it.
@@ -2535,6 +2629,29 @@ export function Map() {
       };
       mbKeydownHandlerRef.current = handleKeydown;
       document.addEventListener("keydown", handleKeydown);
+
+      // Live terrain elevation under the cursor (when 3D terrain is on).
+      // Throttled via rAF so we don't call queryTerrainElevation on every pixel.
+      let elevRafQueued = false;
+      let pendingElevE: { lng: number; lat: number } | null = null;
+      const onMapMouseMove = (e: mapboxgl.MapMouseEvent) => {
+        pendingElevE = { lng: e.lngLat.lng, lat: e.lngLat.lat };
+        if (elevRafQueued) return;
+        elevRafQueued = true;
+        requestAnimationFrame(() => {
+          elevRafQueued = false;
+          if (!pendingElevE || !mbMapRef.current) return;
+          try {
+            const elev = mbMapRef.current.queryTerrainElevation([pendingElevE.lng, pendingElevE.lat]);
+            setHoverElevationM(typeof elev === "number" && Number.isFinite(elev) ? elev : null);
+          } catch {
+            setHoverElevationM(null);
+          }
+        });
+      };
+      const onMapMouseOut = () => setHoverElevationM(null);
+      map.on("mousemove", onMapMouseMove);
+      map.on("mouseout", onMapMouseOut);
 
       // --- Hover tooltips (desktop only) ---
       const hoverPopup = new mapboxgl.Popup({
@@ -3477,6 +3594,18 @@ export function Map() {
         onNodeSelect={(id) => handleNodeSelectRef.current(id)}
         onHoverLink={(id) => handleLinkHoverRef.current(id)}
       />
+
+      {/* Live terrain elevation under the cursor — helps sanity-check coverage
+          paints. Only renders when 3D terrain is on and we got a valid sample. */}
+      {provider === "mapbox" && terrain3D && hoverElevationM != null && (
+        <div className="fixed top-3 left-95 sm:left-105 z-30 px-2.5 py-1 rounded-full text-[11px] font-medium border border-white/10 bg-gray-900/80 backdrop-blur-xl text-gray-300 shadow-2xl pointer-events-none select-none flex items-center gap-1.5">
+          <svg className="w-3 h-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21l6-6 4 4 8-8" />
+          </svg>
+          <span className="tabular-nums">{Math.round(hoverElevationM)} m</span>
+          <span className="text-gray-600 text-[9px] uppercase tracking-wider">elev</span>
+        </div>
+      )}
 
       {/* Tools drawer — global, top-left next to search */}
       <MapToolsDrawer
