@@ -27,7 +27,7 @@ import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
 import { COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS, linkBudgetMaxKm, type CoverageResult } from "./map/coverageAnalysis";
-import { demBoundsAround, sampleDEMAt } from "./map/terrainDEM";
+import { demBoundsAround, downsampleDEM, sampleDEMAt, type DEM, type DEMBounds } from "./map/terrainDEM";
 import { buildDemFromTerrainRgb } from "./map/terrainRgb";
 import { CoverageWorkerPool } from "./map/coverageWorkerPool";
 import type { CoverageSliceRequest } from "./map/coverageSliceWorker";
@@ -460,6 +460,165 @@ export function Map() {
       coveragePoolRef.current = null;
     };
   }, []);
+
+  /**
+   * Cached authoritative DEM from the most recent coverage compute.
+   * Used so the drag-preview pass can skip the tile-fetch step and reuse
+   * the already-built terrain data.
+   */
+  const coverageDemRef = useRef<DEM | null>(null);
+  /**
+   * Downsampled version of the above (256×256 regardless of the main
+   * detail setting). Lets the drag preview run LR at ~8-12fps by cutting
+   * the per-frame pixel count by 4–16×.
+   */
+  const coverageDragDemRef = useRef<DEM | null>(null);
+  /**
+   * Most recent raster params snapshot — drag preview reuses these
+   * untouched. Updated at the end of every full compute.
+   */
+  const coverageLastRasterParamsRef = useRef<RasterParams | null>(null);
+  /**
+   * Last-known origin height resolution (height + isFallback) from the
+   * most recent full compute. Drag re-samples DEM per move, but uses
+   * the last params for frequency/power/etc.
+   */
+  const coverageLastOriginContextRef = useRef<{ bounds: DEMBounds } | null>(null);
+  /**
+   * "Busy" flag for drag-preview dispatches — we only allow one
+   * preview compute in flight at a time, and remember the latest
+   * position so we can re-fire once the previous completes.
+   */
+  const dragPreviewBusyRef = useRef(false);
+  const dragPreviewPendingRef = useRef<[number, number] | null>(null);
+
+  /**
+   * Shared helper: run the pool over a DEM, stitch the slice responses,
+   * and paint the resulting RGBA to the Mapbox `coverage-raster` image
+   * source. Used by BOTH the main (authoritative) compute and the
+   * drag-preview path; only the DEM size + request id differ.
+   *
+   * Returns null if the request was superseded by a newer one or the
+   * WASM isn't available. Returns summary counts on success.
+   */
+  const renderCoverageToImageSource = useCallback(async (opts: {
+    dem: DEM;
+    origin: [number, number];
+    originHeightM: number;
+    params: RasterParams;
+    requestId: number;
+  }): Promise<{
+    clearCount: number;
+    fresnelCount: number;
+    blockedCount: number;
+    demCoveredPixels: number;
+    totalPx: number;
+    itmUnavailable?: boolean;
+  } | null> => {
+    const { dem, origin, originHeightM, params, requestId } = opts;
+    const mb = mbMapRef.current;
+    if (!mb) return null;
+    const pool = ensureCoveragePool();
+    const poolSize = pool.size;
+    const rowsPerTask = Math.ceil(dem.height / poolSize);
+
+    const sliceResponses: Array<{
+      rgba: Uint8ClampedArray;
+      rowStart: number;
+      rowEnd: number;
+      clearCount: number;
+      fresnelCount: number;
+      blockedCount: number;
+      itmUnavailable?: boolean;
+    }> = [];
+    const tasks: Promise<unknown>[] = [];
+
+    for (let i = 0; i < poolSize; i++) {
+      const rowStart = i * rowsPerTask;
+      if (rowStart >= dem.height) break;
+      const rowEnd = Math.min(rowStart + rowsPerTask, dem.height);
+      const demCopy = new Float32Array(dem.data);
+      const req: CoverageSliceRequest = {
+        requestId,
+        demBuffer: demCopy.buffer,
+        demWidth: dem.width,
+        demHeight: dem.height,
+        bounds: dem.bounds,
+        origin,
+        originHeightM,
+        params,
+        rowStart,
+        rowEnd,
+      };
+      tasks.push(
+        pool.dispatch(req, [demCopy.buffer]).then((resp) => {
+          sliceResponses.push(resp);
+        }),
+      );
+    }
+    await Promise.all(tasks);
+
+    // Stale-request check: if a newer request has started (or the
+    // drag-preview counter overtook us), bail without painting.
+    if (requestId !== coverageRequestIdRef.current) return null;
+
+    if (sliceResponses.some((r) => r.itmUnavailable)) {
+      return {
+        clearCount: 0, fresnelCount: 0, blockedCount: 0,
+        demCoveredPixels: 0, totalPx: dem.width * dem.height,
+        itmUnavailable: true,
+      };
+    }
+
+    const fullRgba = new Uint8ClampedArray(dem.width * dem.height * 4);
+    let clearCount = 0;
+    let fresnelCount = 0;
+    let blockedCount = 0;
+    for (const s of sliceResponses) {
+      fullRgba.set(s.rgba, s.rowStart * dem.width * 4);
+      clearCount += s.clearCount;
+      fresnelCount += s.fresnelCount;
+      blockedCount += s.blockedCount;
+    }
+    const demCoveredPixels = clearCount + fresnelCount + blockedCount;
+
+    // Encode via a data URL and push to the image source. For small
+    // grids (256–1024²) toDataURL is ≈ 3–40 ms and not worth optimizing.
+    const canvas = document.createElement("canvas");
+    canvas.width = dem.width;
+    canvas.height = dem.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    const imgData = new ImageData(
+      fullRgba as Uint8ClampedArray<ArrayBuffer>,
+      dem.width,
+      dem.height,
+    );
+    ctx.putImageData(imgData, 0, 0);
+    const url = canvas.toDataURL("image/png");
+
+    const src = mb.getSource("coverage-raster") as mapboxgl.ImageSource | undefined;
+    const coords: [[number, number], [number, number], [number, number], [number, number]] = [
+      [dem.bounds.west, dem.bounds.north],
+      [dem.bounds.east, dem.bounds.north],
+      [dem.bounds.east, dem.bounds.south],
+      [dem.bounds.west, dem.bounds.south],
+    ];
+    if (src && typeof (src as unknown as { updateImage?: Function }).updateImage === "function") {
+      (src as unknown as { updateImage: (o: { url: string; coordinates: typeof coords }) => void }).updateImage({ url, coordinates: coords });
+    }
+    if (mb.getLayer("coverage-raster")) {
+      mb.setLayoutProperty("coverage-raster", "visibility", "visible");
+    }
+
+    return {
+      clearCount,
+      fresnelCount,
+      blockedCount,
+      demCoveredPixels,
+      totalPx: dem.width * dem.height,
+    };
+  }, [ensureCoveragePool]);
 
   // Settings panel visibility
   const [settingsPanelOpen, setSettingsPanelOpen] = useState<boolean>(() => {
@@ -1112,55 +1271,19 @@ export function Map() {
           : (Number.isNaN(originGround) ? 0 : originGround) + 2;
         const originIsFallback = !altValid;
 
-        // 3. Split DEM rows across the pool and dispatch slice tasks.
-        const pool = ensureCoveragePool();
-        const poolSize = pool.size;
-        const rowsPerTask = Math.ceil(DEM_SIZE / poolSize);
-        const tasks: Promise<unknown>[] = [];
-        const sliceResponses: Array<{
-          rgba: Uint8ClampedArray;
-          rowStart: number;
-          rowEnd: number;
-          clearCount: number;
-          fresnelCount: number;
-          blockedCount: number;
-          itmUnavailable?: boolean;
-        }> = [];
-
+        // 3. Dispatch the pool over the full-resolution DEM.
         const tDispatch = performance.now();
-        for (let i = 0; i < poolSize; i++) {
-          const rowStart = i * rowsPerTask;
-          if (rowStart >= DEM_SIZE) break;
-          const rowEnd = Math.min(rowStart + rowsPerTask, DEM_SIZE);
-          // Each worker needs its own copy of the DEM — `postMessage`
-          // with a transferable moves ownership, and we have many
-          // workers reading the same source. 384² × 4 B × 8 workers
-          // ≈ 4.5 MB of copies per compute — cheap.
-          const demCopy = new Float32Array(dem.data);
-          const req: CoverageSliceRequest = {
-            requestId,
-            demBuffer: demCopy.buffer,
-            demWidth: dem.width,
-            demHeight: dem.height,
-            bounds: dem.bounds,
-            origin: origin!,
-            originHeightM,
-            params: rasterParams,
-            rowStart,
-            rowEnd,
-          };
-          tasks.push(
-            pool.dispatch(req, [demCopy.buffer]).then((resp) => {
-              sliceResponses.push(resp);
-            }),
-          );
-        }
-        await Promise.all(tasks);
+        const rendered = await renderCoverageToImageSource({
+          dem,
+          origin: origin!,
+          originHeightM,
+          params: rasterParams,
+          requestId,
+        });
         mark("poolComputeMs", tDispatch);
         if (cancelled || requestId !== coverageRequestIdRef.current) return;
-
-        // If any worker reported the WASM missing, bail with a clear log.
-        if (sliceResponses.some((r) => r.itmUnavailable)) {
+        if (!rendered) return;
+        if (rendered.itmUnavailable) {
           console.warn(
             "[Map] Coverage compute: ITM WASM not built. Run `yarn build:wasm`.",
           );
@@ -1169,61 +1292,17 @@ export function Map() {
           return;
         }
 
-        // 4. Stitch slice RGBAs into one full-size image.
-        const tStitch = performance.now();
-        const fullRgba = new Uint8ClampedArray(DEM_SIZE * DEM_SIZE * 4);
-        let clearCount = 0;
-        let fresnelCount = 0;
-        let blockedCount = 0;
-        let demCoveredPixels = 0;
-        for (const s of sliceResponses) {
-          fullRgba.set(s.rgba, s.rowStart * DEM_SIZE * 4);
-          clearCount += s.clearCount;
-          fresnelCount += s.fresnelCount;
-          blockedCount += s.blockedCount;
-          demCoveredPixels += s.clearCount + s.fresnelCount + s.blockedCount;
-        }
-        mark("stitchMs", tStitch);
-
-        // 5. Push pixels to the Mapbox image source.
-        const tEncode = performance.now();
-        const canvas = document.createElement("canvas");
-        canvas.width = DEM_SIZE;
-        canvas.height = DEM_SIZE;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          setIsComputingCoverage(false);
-          return;
-        }
-        const imgData = new ImageData(
-          fullRgba as Uint8ClampedArray<ArrayBuffer>,
-          DEM_SIZE,
-          DEM_SIZE,
-        );
-        ctx.putImageData(imgData, 0, 0);
-        const url = canvas.toDataURL("image/png");
-        mark("encodeMs", tEncode);
-
-        const src = mb.getSource("coverage-raster") as mapboxgl.ImageSource | undefined;
-        const coords: [[number, number], [number, number], [number, number], [number, number]] = [
-          [demBounds.west, demBounds.north],
-          [demBounds.east, demBounds.north],
-          [demBounds.east, demBounds.south],
-          [demBounds.west, demBounds.south],
-        ];
-        if (src && typeof (src as unknown as { updateImage?: Function }).updateImage === "function") {
-          (src as unknown as { updateImage: (o: { url: string; coordinates: typeof coords }) => void }).updateImage({ url, coordinates: coords });
-        }
-        if (mb.getLayer("coverage-raster")) {
-          mb.setLayoutProperty("coverage-raster", "visibility", "visible");
-        }
+        // 4. Cache full + downsampled DEM for the drag-preview pass.
+        coverageDemRef.current = dem;
+        coverageDragDemRef.current = downsampleDEM(dem, 256, 256);
+        coverageLastRasterParamsRef.current = rasterParams;
+        coverageLastOriginContextRef.current = { bounds: dem.bounds };
 
         const computeMs = performance.now() - t0;
-        const totalPx = DEM_SIZE * DEM_SIZE;
         console.info(
           `[Map] Coverage compute: ${computeMs.toFixed(0)} ms ` +
-            `for ${DEM_SIZE}x${DEM_SIZE} px across ${poolSize} workers ` +
-            `(${Math.round((demCoveredPixels / totalPx) * 100)}% terrain-covered)`,
+            `for ${DEM_SIZE}x${DEM_SIZE} px across ${ensureCoveragePool().size} workers ` +
+            `(${Math.round((rendered.demCoveredPixels / rendered.totalPx) * 100)}% terrain-covered)`,
           timings,
         );
 
@@ -1232,9 +1311,9 @@ export function Map() {
           originHeightM,
           originIsFallback,
           radiusKm: radKm,
-          clearCount,
-          fresnelCount,
-          blockedCount,
+          clearCount: rendered.clearCount,
+          fresnelCount: rendered.fresnelCount,
+          blockedCount: rendered.blockedCount,
           frequencyGHz: 0.915,
           antennaDbi: coverageAntennaDbi,
           txDbm: coverageTxDbm,
@@ -1336,11 +1415,60 @@ export function Map() {
       const marker = new mapboxgl.Marker({ color: "#22d3ee", draggable: true })
         .setLngLat(origin)
         .addTo(mb);
+
+      // Live drag preview: re-render LR at a lower resolution (256²)
+      // using the cached downsampled DEM. Skips the tile-fetch step
+      // entirely — the full DEM was already fetched for the current
+      // pin area. At ~50-100 ms per preview pass this feels roughly
+      // like 10–15 fps of coverage tracking the pin. Backpressure:
+      // one compute in flight at a time; newest position wins.
+      const runDragPreview = async (lngLat: [number, number]) => {
+        if (dragPreviewBusyRef.current) {
+          dragPreviewPendingRef.current = lngLat;
+          return;
+        }
+        const dem = coverageDragDemRef.current;
+        const params = coverageLastRasterParamsRef.current;
+        if (!dem || !params) return;
+        dragPreviewBusyRef.current = true;
+        try {
+          // Use negative request IDs for drag previews so they never
+          // collide with the authoritative compute's id namespace.
+          const previewId = -Math.floor(performance.now());
+          const ground = sampleDEMAt(dem, lngLat[0], lngLat[1]);
+          const originH = (Number.isNaN(ground) ? 0 : ground) + 2;
+          coverageRequestIdRef.current = previewId;
+          await renderCoverageToImageSource({
+            dem,
+            origin: lngLat,
+            originHeightM: originH,
+            params,
+            requestId: previewId,
+          });
+        } finally {
+          dragPreviewBusyRef.current = false;
+          const pending = dragPreviewPendingRef.current;
+          if (pending) {
+            dragPreviewPendingRef.current = null;
+            // Re-fire with the most recent drag position we saw.
+            runDragPreview(pending);
+          }
+        }
+      };
+
+      marker.on("drag", () => {
+        const ll = marker.getLngLat();
+        runDragPreview([ll.lng, ll.lat]);
+      });
+
       // On drag release: switch to a virtual origin at the new location and
-      // kick a fresh compute. If the origin was a node pick, we "detach" it —
-      // the pin is now in free-placement mode.
+      // kick a fresh compute at full detail. If the origin was a node pick,
+      // we "detach" it — the pin is now in free-placement mode.
       marker.on("dragend", () => {
         const ll = marker.getLngLat();
+        // Drop the pending preview; the authoritative compute coming
+        // from setToolVirtualPos will replace whatever we painted.
+        dragPreviewPendingRef.current = null;
         setToolFromId(null);
         setToolVirtualPos([ll.lng, ll.lat]);
       });

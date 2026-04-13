@@ -121,3 +121,39 @@ export function demPixelToLngLat(dem: DEM, x: number, y: number): [number, numbe
   const lat = bounds.north - (y / (height - 1)) * (bounds.north - bounds.south);
   return [lng, lat];
 }
+
+/**
+ * Downsample a DEM to a smaller grid by block-averaging. Used to build
+ * a cheaper "drag preview" DEM from the authoritative high-resolution
+ * DEM — the pin-drag handler can run LR over this at ~10fps without
+ * re-fetching tiles or re-computing the full grid.
+ *
+ * NaN pixels are treated as missing (skipped in the average). A fully
+ * missing block produces a NaN output pixel.
+ */
+export function downsampleDEM(src: DEM, targetWidth: number, targetHeight: number): DEM {
+  const data = new Float32Array(targetWidth * targetHeight);
+  const sxStep = src.width / targetWidth;
+  const syStep = src.height / targetHeight;
+  for (let j = 0; j < targetHeight; j++) {
+    const y0 = Math.floor(j * syStep);
+    const y1 = Math.max(y0 + 1, Math.floor((j + 1) * syStep));
+    for (let i = 0; i < targetWidth; i++) {
+      const x0 = Math.floor(i * sxStep);
+      const x1 = Math.max(x0 + 1, Math.floor((i + 1) * sxStep));
+      let sum = 0;
+      let count = 0;
+      for (let y = y0; y < y1 && y < src.height; y++) {
+        for (let x = x0; x < x1 && x < src.width; x++) {
+          const v = src.data[y * src.width + x];
+          if (!Number.isNaN(v)) {
+            sum += v;
+            count++;
+          }
+        }
+      }
+      data[j * targetWidth + i] = count > 0 ? sum / count : NaN;
+    }
+  }
+  return { data, width: targetWidth, height: targetHeight, bounds: src.bounds };
+}
