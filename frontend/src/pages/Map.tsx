@@ -27,7 +27,7 @@ import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
 import { COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS, linkBudgetMaxKm, type CoverageResult } from "./map/coverageAnalysis";
-import { demBoundsAround, sampleDEM } from "./map/terrainDEM";
+import { demBoundsAround } from "./map/terrainDEM";
 import type { CoverageWorkerRequest, CoverageWorkerResponse } from "./map/coverageWorker";
 import { analyzeLineOfSight, type LoSResult } from "./map/losAnalysis";
 import { LosTubeLayer, losPointsToTubeData, obstructionsToGeoJSON, pickObstructions } from "./map/losTubeLayer";
@@ -1030,12 +1030,17 @@ export function Map() {
 
     const radKm = coverageRadiusKm;
     const demBounds = demBoundsAround(origin, radKm, 1.05);
-    // Just center on the pin — no camera-yank. Terrain data availability is
-    // a known limitation of the current pipeline and will be fixed properly
-    // when we swap to direct terrain-rgb tile fetching alongside the
-    // Longley-Rice upgrade (see project_propagation_upgrade.md). Until then,
-    // the amber "no terrain data" banner explains the failure mode.
+    // Phase 10A: the worker now fetches Mapbox terrain-rgb tiles directly,
+    // so we no longer need to wait for the map's terrain to be loaded in
+    // the viewport. Just center the camera politely and dispatch to worker.
     mb.easeTo({ center: origin, duration: 300 });
+
+    const mapboxToken = env.MAPBOX_TOKEN;
+    if (!mapboxToken) {
+      console.warn("[Map] Coverage compute aborted — Mapbox token missing.");
+      setIsComputingCoverage(false);
+      return;
+    }
 
     const requestId = ++coverageRequestIdRef.current;
     let cancelled = false;
@@ -1044,159 +1049,109 @@ export function Map() {
     let pendingWorker: Worker | null = null;
     let pendingHandler: ((evt: MessageEvent<CoverageWorkerResponse>) => void) | null = null;
 
-    // Wait for the map to actually settle (ease finished, terrain tiles
-    // loaded) before sampling the DEM. A blind setTimeout often fired while
-    // tiles for the pin's new area were still in flight — producing mostly
-    // NaN elevations and a mostly-transparent coverage raster. `map.once
-    // ("idle", ...)` is Mapbox's own signal for "done loading + animating."
-    // Safety timeout kicks us off after 4s in case idle never fires (e.g.
-    // offline / stalled tile request) so we at least try the sample.
-    let ranCompute = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const envExp = ENVIRONMENTS[coverageEnvIdx].pathLossExponent;
+      const worker = ensureCoverageWorker();
+      pendingWorker = worker;
 
-    const doCompute = () => {
-      if (cancelled) return;
-      try {
-        // Origin terrain & final height resolution (altitude if valid, else terrain+antenna)
-        const rawElev = mb.queryTerrainElevation([origin![0], origin![1]]);
-        const originGround = typeof rawElev === "number" ? rawElev : 0;
-        const altitudeValid =
-          altitude != null && Number.isFinite(altitude) && (altitude as number) >= originGround;
-        const originHeightM = altitudeValid ? (altitude as number) : originGround + 2;
-        const originIsFallback = !altitudeValid;
+      const handler = (evt: MessageEvent<CoverageWorkerResponse>) => {
+        if (evt.data.requestId !== requestId) return; // stale reply
+        worker.removeEventListener("message", handler);
+        pendingHandler = null;
+        if (cancelled) return;
 
-        // Pre-sample DEM on the main thread (queryTerrainElevation is map-only)
-        const DEM_SIZE = 256;
-        const dem = sampleDEM(
-          {
-            queryTerrainElevation: (p) => {
-              const v = mb.queryTerrainElevation(p as [number, number]);
-              return v;
-            },
-          },
-          demBounds,
-          DEM_SIZE,
-          DEM_SIZE,
-        );
-
-        const envExp = ENVIRONMENTS[coverageEnvIdx].pathLossExponent;
-        const worker = ensureCoverageWorker();
-        pendingWorker = worker;
-
-        const handler = (evt: MessageEvent<CoverageWorkerResponse>) => {
-          if (evt.data.requestId !== requestId) return; // stale reply
-          worker.removeEventListener("message", handler);
-          pendingHandler = null;
-          if (cancelled) return;
-
-          // Paint RGBA onto a canvas and push to the image source
-          const canvas = document.createElement("canvas");
-          canvas.width = evt.data.width;
-          canvas.height = evt.data.height;
-          const ctx = canvas.getContext("2d");
-          if (!ctx) {
-            setIsComputingCoverage(false);
-            return;
-          }
-          // Cast: TS 5.7+ narrowed the ImageData ctor to require `Uint8ClampedArray<ArrayBuffer>`
-          // (not `ArrayBufferLike`). The worker transfers a plain ArrayBuffer so this is safe.
-          const imgData = new ImageData(
-            evt.data.rgba as Uint8ClampedArray<ArrayBuffer>,
-            evt.data.width,
-            evt.data.height,
-          );
-          ctx.putImageData(imgData, 0, 0);
-          const url = canvas.toDataURL("image/png");
-
-          const src = mb.getSource("coverage-raster") as mapboxgl.ImageSource | undefined;
-          const coords: [[number, number], [number, number], [number, number], [number, number]] = [
-            [demBounds.west, demBounds.north],
-            [demBounds.east, demBounds.north],
-            [demBounds.east, demBounds.south],
-            [demBounds.west, demBounds.south],
-          ];
-          if (src && typeof (src as unknown as { updateImage?: Function }).updateImage === "function") {
-            (src as unknown as { updateImage: (o: { url: string; coordinates: typeof coords }) => void }).updateImage({ url, coordinates: coords });
-          }
-          if (mb.getLayer("coverage-raster")) {
-            mb.setLayoutProperty("coverage-raster", "visibility", "visible");
-          }
-
-          setCoverageResult({
-            origin: origin!,
-            originHeightM,
-            originIsFallback,
-            radiusKm: radKm,
-            clearCount: evt.data.clearCount,
-            // Merge "diffracted" into fresnel — the panel only cares about
-            // reachable-with-impairment vs. clear vs. blocked.
-            fresnelCount: evt.data.fresnelCount + evt.data.diffractedCount,
-            blockedCount: evt.data.blockedCount,
-            frequencyGHz: 0.915,
-            antennaDbi: coverageAntennaDbi,
-            txDbm: coverageTxDbm,
-            linkBudgetMaxKm: linkBudgetMaxKm({
-              antennaDbi: coverageAntennaDbi,
-              txDbm: coverageTxDbm,
-              envExponent: envExp,
-              rxSensitivityDbm: coverageSensitivityDbm,
-            }),
-            envExponent: envExp,
-            rxSensitivityDbm: coverageSensitivityDbm,
-          });
+        // Paint RGBA onto a canvas and push to the image source.
+        const canvas = document.createElement("canvas");
+        canvas.width = evt.data.width;
+        canvas.height = evt.data.height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
           setIsComputingCoverage(false);
+          return;
+        }
+        // Cast: TS 5.7+ narrowed the ImageData ctor to require `Uint8ClampedArray<ArrayBuffer>`
+        // (not `ArrayBufferLike`). The worker transfers a plain ArrayBuffer so this is safe.
+        const imgData = new ImageData(
+          evt.data.rgba as Uint8ClampedArray<ArrayBuffer>,
+          evt.data.width,
+          evt.data.height,
+        );
+        ctx.putImageData(imgData, 0, 0);
+        const url = canvas.toDataURL("image/png");
 
-        };
+        const src = mb.getSource("coverage-raster") as mapboxgl.ImageSource | undefined;
+        const coords: [[number, number], [number, number], [number, number], [number, number]] = [
+          [demBounds.west, demBounds.north],
+          [demBounds.east, demBounds.north],
+          [demBounds.east, demBounds.south],
+          [demBounds.west, demBounds.south],
+        ];
+        if (src && typeof (src as unknown as { updateImage?: Function }).updateImage === "function") {
+          (src as unknown as { updateImage: (o: { url: string; coordinates: typeof coords }) => void }).updateImage({ url, coordinates: coords });
+        }
+        if (mb.getLayer("coverage-raster")) {
+          mb.setLayoutProperty("coverage-raster", "visibility", "visible");
+        }
 
-        pendingHandler = handler;
-        worker.addEventListener("message", handler);
-
-        const msg: CoverageWorkerRequest = {
-          requestId,
-          dem: {
-            data: dem.data,
-            width: dem.width,
-            height: dem.height,
-            bounds: dem.bounds,
-          },
+        setCoverageResult({
           origin: origin!,
-          originHeightM,
-          targetAntennaHeightM: 2,
-          freqGHz: 0.915,
-          raySamples: 48,
-          raster: {
-            freqMhz: 915,
-            txDbm: coverageTxDbm,
+          originHeightM: evt.data.originHeightM,
+          originIsFallback: evt.data.originIsFallback,
+          radiusKm: radKm,
+          clearCount: evt.data.clearCount,
+          // Merge "diffracted" into fresnel — the panel only cares about
+          // reachable-with-impairment vs. clear vs. blocked.
+          fresnelCount: evt.data.fresnelCount + evt.data.diffractedCount,
+          blockedCount: evt.data.blockedCount,
+          frequencyGHz: 0.915,
+          antennaDbi: coverageAntennaDbi,
+          txDbm: coverageTxDbm,
+          linkBudgetMaxKm: linkBudgetMaxKm({
             antennaDbi: coverageAntennaDbi,
-            rxSensitivityDbm: coverageSensitivityDbm,
-            fadeMarginDb: 15,
-            cableLossDb: 2,
+            txDbm: coverageTxDbm,
             envExponent: envExp,
-          },
-        };
-        // Transfer the DEM buffer — it's disposable per request.
-        worker.postMessage(msg, [dem.data.buffer]);
-      } catch (err) {
-        console.warn("[Map] Coverage computation failed:", err);
-        setCoverageResult(null);
+            rxSensitivityDbm: coverageSensitivityDbm,
+          }),
+          envExponent: envExp,
+          rxSensitivityDbm: coverageSensitivityDbm,
+        });
         setIsComputingCoverage(false);
-      }
-    };
+      };
 
-    const runCompute = () => {
-      if (cancelled || ranCompute) return;
-      ranCompute = true;
-      if (timer) { clearTimeout(timer); timer = null; }
-      mb.off("idle", runCompute);
-      doCompute();
-    };
-    mb.once("idle", runCompute);
-    timer = setTimeout(runCompute, 1500);
+      pendingHandler = handler;
+      worker.addEventListener("message", handler);
+
+      const msg: CoverageWorkerRequest = {
+        requestId,
+        bounds: demBounds,
+        demWidth: 256,
+        demHeight: 256,
+        mapboxToken,
+        origin: origin!,
+        originAltitudeM: altitude,
+        antennaHeightM: 2,
+        targetAntennaHeightM: 2,
+        freqGHz: 0.915,
+        raySamples: 48,
+        raster: {
+          freqMhz: 915,
+          txDbm: coverageTxDbm,
+          antennaDbi: coverageAntennaDbi,
+          rxSensitivityDbm: coverageSensitivityDbm,
+          fadeMarginDb: 15,
+          cableLossDb: 2,
+          envExponent: envExp,
+        },
+      };
+      worker.postMessage(msg);
+    } catch (err) {
+      console.warn("[Map] Coverage computation failed:", err);
+      setCoverageResult(null);
+      setIsComputingCoverage(false);
+    }
 
     return () => {
       cancelled = true;
-      if (timer) clearTimeout(timer);
-      mb.off("idle", runCompute);
       // Detach any in-flight worker handler so stale callbacks can't fire
       // (and so the listener list doesn't grow across re-runs).
       if (pendingWorker && pendingHandler) {
