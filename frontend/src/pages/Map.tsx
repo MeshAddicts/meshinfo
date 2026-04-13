@@ -300,6 +300,15 @@ export function Map() {
   const olNodesSourceRef = useRef<VectorSource<Feature<Point>> | null>(null);
   const olClusterSetupRef = useRef<OlClusterSetup | null>(null);
   const olPersistentLinksLayerRef = useRef<VectorLayer<VectorSource<Feature>, Feature> | null>(null);
+  /**
+   * JSON signature of the last persistent-links payload pushed to Mapbox / OL.
+   * We skip `setData`/layer rebuild when the computed GeoJSON is byte-identical
+   * to avoid thrashing map tiles on every 5s API poll when nothing relevant
+   * to links has actually changed. JSON.stringify is O(n) but far cheaper than
+   * Mapbox re-tiling or OL re-tessellating line features.
+   */
+  const persistentLinksMbJsonRef = useRef<string>("");
+  const persistentLinksOlJsonRef = useRef<string>("");
   const olHighlightLayerRef = useRef<VectorLayer<VectorSource<Feature>, Feature> | null>(null);
   const olCoverageLayerRef = useRef<VectorLayer<VectorSource<Feature>, Feature> | null>(null);
   const olPathLayerRef = useRef<VectorLayer<VectorSource<Feature>, Feature> | null>(null);
@@ -310,6 +319,8 @@ export function Map() {
   const mbHandlersBoundRef = useRef(false);
   const mbCurrentStyleUrlRef = useRef<string | null>(null);
   const mbKeydownHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
+  /** Cleanup function for the Mapbox canvas touch-listener trio. */
+  const mbTouchCleanupRef = useRef<(() => void) | null>(null);
 
   // Shared ref for panel node-select callback (set by whichever provider is active)
   const handleNodeSelectRef = useRef<(nodeId: string) => void>(() => {});
@@ -624,13 +635,47 @@ export function Map() {
     }
   }, [isPickingNode, olMap]);
 
-  // Reset the whole tool state
+  // Reset the whole tool state. Also imperatively clears map visual geometry
+  // so there's no one-tick flash of stale tubes / rasters / scan lines while
+  // React re-runs the dependent effects.
   const resetTool = () => {
     setActiveTool(null);
     setToolStep("pickFrom");
     setToolFromId(null);
     setToolToId(null);
     setToolVirtualPos(null);
+    setLosResult(null);
+    setCoverageResult(null);
+    setScanSummary(null);
+    setIsComputingCoverage(false);
+    setIsScanning(false);
+
+    const mb = mbMapRef.current;
+    if (mb) {
+      const empty: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
+      try {
+        (mb.getSource("los-obstructions") as MbGeoJSONSource | undefined)?.setData(empty);
+      } catch {}
+      try {
+        (mb.getSource("scan-links") as MbGeoJSONSource | undefined)?.setData(empty);
+      } catch {}
+      try {
+        (mb.getSource("path-analysis") as MbGeoJSONSource | undefined)?.setData(empty);
+      } catch {}
+      try {
+        if (mb.getLayer("coverage-raster")) {
+          mb.setLayoutProperty("coverage-raster", "visibility", "none");
+        }
+      } catch {}
+      losTubeLayerRef.current?.setData(null);
+    }
+
+    if (olMap) {
+      if (olPathLayerRef.current) {
+        olMap.removeLayer(olPathLayerRef.current);
+        olPathLayerRef.current = null;
+      }
+    }
   };
 
   // Draw shortest traceroute path between toolFromId and toolToId (both providers)
@@ -988,6 +1033,10 @@ export function Map() {
 
     const requestId = ++coverageRequestIdRef.current;
     let cancelled = false;
+    // Hoisted so the outer cleanup can detach the listener if the effect
+    // re-runs before the worker replies.
+    let pendingWorker: Worker | null = null;
+    let pendingHandler: ((evt: MessageEvent<CoverageWorkerResponse>) => void) | null = null;
 
     // Wait for terrain tiles to load after fitBounds, then sample DEM + dispatch worker
     const timer = setTimeout(() => {
@@ -1017,10 +1066,12 @@ export function Map() {
 
         const envExp = ENVIRONMENTS[coverageEnvIdx].pathLossExponent;
         const worker = ensureCoverageWorker();
+        pendingWorker = worker;
 
         const handler = (evt: MessageEvent<CoverageWorkerResponse>) => {
           if (evt.data.requestId !== requestId) return; // stale reply
           worker.removeEventListener("message", handler);
+          pendingHandler = null;
           if (cancelled) return;
 
           // Paint RGBA onto a canvas and push to the image source
@@ -1081,6 +1132,7 @@ export function Map() {
           setIsComputingCoverage(false);
         };
 
+        pendingHandler = handler;
         worker.addEventListener("message", handler);
 
         const msg: CoverageWorkerRequest = {
@@ -1117,6 +1169,12 @@ export function Map() {
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      // Detach any in-flight worker handler so stale callbacks can't fire
+      // (and so the listener list doesn't grow across re-runs).
+      if (pendingWorker && pendingHandler) {
+        pendingWorker.removeEventListener("message", pendingHandler);
+        pendingHandler = null;
+      }
     };
   }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageTxDbm, coverageEnvIdx, coverageSensitivityDbm, provider, terrain3D, nodes]);
 
@@ -1383,15 +1441,27 @@ export function Map() {
 
   /** Refresh the OL persistent links layer. */
   function refreshOlPersistentLinks(map: OlMap) {
-    // Remove old layer
+    const mode = linkModeRef.current;
+    if (mode === "selected") {
+      if (olPersistentLinksLayerRef.current) {
+        map.removeLayer(olPersistentLinksLayerRef.current);
+        olPersistentLinksLayerRef.current = null;
+      }
+      persistentLinksOlJsonRef.current = "";
+      return;
+    }
+
+    // Bail out if the underlying GeoJSON hasn't changed since the last rebuild
+    // — avoids full layer re-creation on every 5s poll.
+    const geojson = computePersistentLinks();
+    const json = JSON.stringify(geojson);
+    if (json === persistentLinksOlJsonRef.current && olPersistentLinksLayerRef.current) return;
+    persistentLinksOlJsonRef.current = json;
+
     if (olPersistentLinksLayerRef.current) {
       map.removeLayer(olPersistentLinksLayerRef.current);
       olPersistentLinksLayerRef.current = null;
     }
-
-    const mode = linkModeRef.current;
-    if (mode === "selected") return;
-
     const features = buildOlPersistentLinkFeatures();
     if (features.length === 0) return;
 
@@ -1407,7 +1477,12 @@ export function Map() {
     if (!map) return;
     try {
       const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
-      linksSource?.setData(computePersistentLinks());
+      if (!linksSource) return;
+      const fc = computePersistentLinks();
+      const json = JSON.stringify(fc);
+      if (json === persistentLinksMbJsonRef.current) return; // no-op when unchanged
+      persistentLinksMbJsonRef.current = json;
+      linksSource.setData(fc);
     } catch {}
   }
 
@@ -2386,7 +2461,7 @@ export function Map() {
       let longPressPoint: mapboxgl.PointLike | null = null;
 
       const canvas = map.getCanvas();
-      canvas.addEventListener("touchstart", (e) => {
+      const onTouchStart = (e: TouchEvent) => {
         if (e.touches.length !== 1) return;
         const rect = canvas.getBoundingClientRect();
         longPressPoint = [
@@ -2401,17 +2476,20 @@ export function Map() {
           setLinkMode("mynode");
           longPressPoint = null;
         }, 500);
-      }, { passive: true });
-
-      canvas.addEventListener("touchmove", () => {
+      };
+      const onTouchCancel = () => {
         if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
         longPressPoint = null;
-      }, { passive: true });
-
-      canvas.addEventListener("touchend", () => {
-        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
-        longPressPoint = null;
-      }, { passive: true });
+      };
+      canvas.addEventListener("touchstart", onTouchStart, { passive: true });
+      canvas.addEventListener("touchmove", onTouchCancel, { passive: true });
+      canvas.addEventListener("touchend", onTouchCancel, { passive: true });
+      mbTouchCleanupRef.current = () => {
+        canvas.removeEventListener("touchstart", onTouchStart);
+        canvas.removeEventListener("touchmove", onTouchCancel);
+        canvas.removeEventListener("touchend", onTouchCancel);
+        if (longPressTimer) clearTimeout(longPressTimer);
+      };
 
       // Keyboard navigation
       const handleKeydown = (e: KeyboardEvent) => {
@@ -2499,6 +2577,10 @@ export function Map() {
       if (mbKeydownHandlerRef.current) {
         document.removeEventListener("keydown", mbKeydownHandlerRef.current);
         mbKeydownHandlerRef.current = null;
+      }
+      if (mbTouchCleanupRef.current) {
+        mbTouchCleanupRef.current();
+        mbTouchCleanupRef.current = null;
       }
       if (mbMapRef.current) {
         mbMapRef.current.remove();
@@ -3034,22 +3116,24 @@ export function Map() {
       return found;
     };
 
-    map.getViewport().addEventListener("contextmenu", (e) => {
+    const viewport = map.getViewport();
+    const onOlContextMenu = (e: MouseEvent) => {
       const pixel = map.getEventPixel(e);
       const node = findOlNodeAtPixel(pixel);
       if (!node) return;
       e.preventDefault();
       setMyNodeId(node.id);
       setLinkMode("mynode");
-    });
+    };
+    viewport.addEventListener("contextmenu", onOlContextMenu);
 
     // Long-press for mobile (OL)
     let olLongPressTimer: ReturnType<typeof setTimeout> | null = null;
     let olLongPressPixel: number[] | null = null;
 
-    map.getViewport().addEventListener("touchstart", (e) => {
+    const onOlTouchStart = (e: TouchEvent) => {
       if (e.touches.length !== 1) return;
-      const rect = map.getViewport().getBoundingClientRect();
+      const rect = viewport.getBoundingClientRect();
       olLongPressPixel = [
         e.touches[0].clientX - rect.left,
         e.touches[0].clientY - rect.top,
@@ -3062,17 +3146,14 @@ export function Map() {
         setLinkMode("mynode");
         olLongPressPixel = null;
       }, 500);
-    }, { passive: true });
-
-    map.getViewport().addEventListener("touchmove", () => {
+    };
+    const onOlTouchCancel = () => {
       if (olLongPressTimer) { clearTimeout(olLongPressTimer); olLongPressTimer = null; }
       olLongPressPixel = null;
-    }, { passive: true });
-
-    map.getViewport().addEventListener("touchend", () => {
-      if (olLongPressTimer) { clearTimeout(olLongPressTimer); olLongPressTimer = null; }
-      olLongPressPixel = null;
-    }, { passive: true });
+    };
+    viewport.addEventListener("touchstart", onOlTouchStart, { passive: true });
+    viewport.addEventListener("touchmove", onOlTouchCancel, { passive: true });
+    viewport.addEventListener("touchend", onOlTouchCancel, { passive: true });
 
     map.on("singleclick", async (event) => {
       neighborLayers.forEach((layer) => map.removeLayer(layer));
@@ -3160,6 +3241,14 @@ export function Map() {
     };
     document.addEventListener("keydown", olKeydownHandler);
 
+    return () => {
+      document.removeEventListener("keydown", olKeydownHandler);
+      viewport.removeEventListener("contextmenu", onOlContextMenu);
+      viewport.removeEventListener("touchstart", onOlTouchStart);
+      viewport.removeEventListener("touchmove", onOlTouchCancel);
+      viewport.removeEventListener("touchend", onOlTouchCancel);
+      if (olLongPressTimer) clearTimeout(olLongPressTimer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider, serverNode, olMap]);
 
