@@ -1625,36 +1625,11 @@ export function Map() {
         } catch {}
 
         const computeMs = performance.now() - t0;
-        // Compute DEM elevation stats + a ground-truth reachable km². The
-        // km² lets us verify Std/High/Ultra converge on the same area
-        // (they should, since the tile-count cap keeps them at the same
-        // tile zoom — Ultra just resamples the same terrain to a finer
-        // output grid).
-        let demMin = Infinity, demMax = -Infinity, demNan = 0;
-        for (let k = 0; k < dem.data.length; k++) {
-          const v = dem.data[k];
-          if (Number.isNaN(v)) { demNan++; continue; }
-          if (v < demMin) demMin = v;
-          if (v > demMax) demMax = v;
-        }
-        const reachablePx = rendered.clearCount + rendered.fresnelCount;
-        const totalPx = rendered.demCoveredPixels;
-        const bboxAreaKm2 = (2 * radKm * 1.05) ** 2;
-        const reachableKm2 = totalPx > 0 ? bboxAreaKm2 * (reachablePx / totalPx) : 0;
-        const reachablePct = totalPx > 0 ? Math.round((reachablePx / totalPx) * 100) : 0;
-        // Single flat line so it's readable in the console without needing
-        // to expand nested objects. Order: timing · DEM · coverage · pin.
         console.info(
-          `[Map] Coverage out=${OUTPUT_SIZE}² dem=${DEM_SIZE}² ${computeMs.toFixed(0)}ms` +
-            ` · DEM elev ${demMin.toFixed(0)}→${demMax.toFixed(0)}m` +
-            ` NaN ${((demNan / dem.data.length) * 100).toFixed(1)}%` +
-            ` · reach ${reachablePct}% (${reachableKm2.toFixed(0)}km² of ${bboxAreaKm2.toFixed(0)}km²)` +
-            ` · clear ${rendered.clearCount} / fresnel ${rendered.fresnelCount} / blocked ${rendered.blockedCount}` +
-            ` · pin terr ${groundOk ? originGround.toFixed(1) : "NaN"}m` +
-            ` alt ${altValid ? (altitude as number).toFixed(1) : "—"}m` +
-            ` TX-AGL ${txAboveGroundM.toFixed(1)}m` +
-            ` MSL ${originHeightM.toFixed(1)}m` +
-            ` · r=${radKm}km`,
+          `[Map] Coverage compute: ${computeMs.toFixed(0)} ms ` +
+            `for ${OUTPUT_SIZE}² output / ${DEM_SIZE}² dem across ${ensureCoveragePool().size} workers ` +
+            `(${Math.round((rendered.demCoveredPixels / rendered.totalPx) * 100)}% terrain-covered)`,
+          timings,
         );
 
         setCoverageResult({
