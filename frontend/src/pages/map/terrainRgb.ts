@@ -46,8 +46,13 @@ const TILE_URL =
 
 // Practical safety caps — prevent a bad bbox/zoom combination from
 // dispatching thousands of tile fetches. If a request asks for more, we
-// bump the zoom down until the count fits.
-const MAX_TILES_PER_REQUEST = 64;
+// bump the zoom down until the count fits. 256 lets us climb one zoom
+// level higher than the old cap of 64 for typical radii (e.g. z=10 @
+// 200 km radius instead of z=9), nearly halving native m/px. In-session
+// `TileLRU` and the browser's HTTP cache (Mapbox serves terrain-rgb with
+// `Cache-Control: max-age=43200`) mean the extra fetches are a
+// first-view-only cost per user per ~12 hours.
+const MAX_TILES_PER_REQUEST = 256;
 const MAX_ZOOM = 14;
 const MIN_ZOOM = 0;
 

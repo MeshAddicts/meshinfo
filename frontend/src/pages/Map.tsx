@@ -465,8 +465,16 @@ export function Map() {
   /**
    * DEM/raster size radius — derived from a simple free-space budget
    * just so the analysis area scales with hardware. Not shown to users
-   * and not used for painting (ITM handles that). Capped at 500 km
-   * because DEM resolution beyond that is too coarse to be meaningful.
+   * and not used for painting (ITM handles that).
+   *
+   * Hard-capped at 200 km because beyond that the DEM resolution at the
+   * pin (tile zoom forced low by the tile-count cap) starts averaging
+   * real terrain features away — Mt. Oso's peak at 500 km bbox reads
+   * ~200 m low vs its actual elevation, which silently kills accuracy
+   * across the whole paint. 200 km still comfortably covers Meshtastic
+   * reality (world-record link is 331 km, most real traffic is <100 km);
+   * for specific long-range mountain-to-mountain experiments, the LOS
+   * tool does point-to-point without the bbox constraint.
    */
   const coverageRadiusKm = useMemo(() => {
     const CABLE = 0.5;
@@ -479,7 +487,7 @@ export function Map() {
       CABLE;
     const plConstant = 32.45 + 20 * Math.log10(915);
     const maxKm = Math.pow(10, (budget - plConstant) / 20);
-    return Math.max(5, Math.min(500, Math.round(maxKm)));
+    return Math.max(5, Math.min(200, Math.round(maxKm)));
   }, [coverageAntennaDbi, coverageTxDbm, coverageEffectiveSensitivityDbm]);
   /** Custom WebGL layer instance for the 3D LoS tube. Created once per map. */
   const losTubeLayerRef = useRef<LosTubeLayer | null>(null);
@@ -1492,7 +1500,14 @@ export function Map() {
     // areas on the same pin, because a smaller output grid was also a
     // smaller DEM grid, and the nearest-neighbor tile-resample averaged
     // obstructions away at Standard but exposed them at Ultra.
-    const DEM_SIZE = 1024;
+    //
+    // 2048² gives ~205 m/px effective resolution at the 200 km radius
+    // cap — close to matching the native tile resolution with the bumped
+    // tile-count cap (z=10, ~30 m/px native). At the old 500 km cap +
+    // 1024² DEM we were at ~1028 m/px, so Mt. Oso's peak was averaged
+    // ~200 m low. Costs 16 MB per worker copy (vs 4 MB at 1024²) and a
+    // ~90 ms one-time resample hit; per-pixel ITM cost is unchanged.
+    const DEM_SIZE = 2048;
     const OUTPUT_SIZE = COVERAGE_DETAIL_SIZE[coverageDetail];
     const envEntry = ENVIRONMENTS[coverageEnvIdx];
     const rel = reliabilityPreset(coverageReliability);

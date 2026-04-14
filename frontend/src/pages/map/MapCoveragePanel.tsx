@@ -422,7 +422,10 @@ export function MapCoveragePanel({
                 ~2 dB for SX1276-based boards (Heltec v2). ITM does not model
                 buildings or foliage; the <em>Environment</em> selector adds a
                 flat clutter loss as a rough compensation. Antenna gain is
-                applied symmetrically (same antenna at both ends).
+                applied symmetrically (same antenna at both ends). Analysis
+                area is capped at <strong>200 km radius</strong> so the DEM at
+                the pin stays fine enough to capture actual peaks — use the
+                LOS tool for specific longer-range point-to-point links.
               </div>
             </div>
           </details>
