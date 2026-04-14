@@ -71,8 +71,21 @@ export interface RasterParams {
 export interface RasterOrigin {
   /** Origin lng/lat. */
   position: [number, number];
-  /** Resolved origin MSL height in meters. */
+  /**
+   * Resolved origin MSL height in meters (terrain elev + antenna height,
+   * or GPS altitude + antenna height when a node anchor is in use).
+   * Carried for display/export only — ITM does NOT receive this.
+   */
   heightM: number;
+  /**
+   * TX antenna height **above the local terrain** in meters. This is what
+   * ITM consumes as `txHeightM`. Pass the user-controlled antenna height,
+   * NOT the MSL height — passing MSL was a long-standing bug that caused
+   * ITM to model every pin as a 100–500 m tower at base, dramatically
+   * overestimating coverage. Clamped to ITM's valid range (0.5–3000 m)
+   * inside the renderer.
+   */
+  antennaHeightAboveGroundM: number;
 }
 
 export interface RasterResult {
@@ -166,7 +179,8 @@ function profileSampleCount(distanceKm: number): number {
  * `[rowStart, rowEnd)` are computed and the returned RGBA has height
  * `rowEnd - rowStart`. Used by the worker pool to split work across
  * cores; each worker fills its own slice and the main thread stitches
- * them back together.
+ * them back together. Rows are in **output-grid** coordinates, which
+ * are decoupled from the DEM grid (see `OutputGrid`).
  */
 export interface RowRange {
   rowStart: number;
@@ -174,16 +188,36 @@ export interface RowRange {
 }
 
 /**
- * Paint a DEM slice via ITM. The `profileBuf` parameter is reused
- * across pixels to avoid per-pixel allocation (Float64Array). Its length
- * must be ≥ `profileSampleCount(maxDistance)` — we size it to the DEM
- * diagonal in km × 1.5 rounded up.
+ * Output raster dimensions — decoupled from the DEM. The caller picks the
+ * output grid size based on "Detail" (how sharp the paint is), while the
+ * DEM size is determined by tile availability / bbox (how accurate the
+ * terrain model is). Previously these were conflated — the `DEM_SIZE`
+ * constant served as both — which made Std/High/Ultra give different
+ * reachable areas on the same pin, because Ultra resampled from tile
+ * data at a finer grain than Std. Decoupling makes the RF answer
+ * invariant to the user's Detail choice; Detail only affects how
+ * pixelated the paint is.
+ */
+export interface OutputGrid {
+  width: number;
+  height: number;
+}
+
+/**
+ * Paint a slice of the output grid via ITM. The `profileBuf` parameter is
+ * reused across pixels to avoid per-pixel allocation (Float64Array). Its
+ * length must be ≥ `profileSampleCount(maxDistance)` — we size it to the
+ * DEM diagonal in km × 1.5 rounded up.
  *
- * When `rowRange` is omitted the full grid is rendered (preserves old
- * behavior for tests / non-parallel callers). When provided, only rows
- * `[rowStart, rowEnd)` are painted and the returned `rgba` has height
- * `rowEnd - rowStart` (callers stitch by writing into the full-size
- * buffer at `rowStart * width * 4`).
+ * When `rowRange` is omitted the full output grid is rendered (preserves
+ * old behavior for tests / non-parallel callers). When provided, only
+ * output rows `[rowStart, rowEnd)` are painted and the returned `rgba`
+ * has height `rowEnd - rowStart` (callers stitch by writing into the
+ * full-size buffer at `rowStart * output.width * 4`).
+ *
+ * When `output` is omitted the DEM dimensions are used as the output
+ * dimensions (back-compat default for the drag-preview path, where the
+ * DEM and output grid are both 256²).
  */
 export function renderCoverageRaster(
   dem: DEM,
@@ -191,13 +225,16 @@ export function renderCoverageRaster(
   itm: ItmContext,
   origin: RasterOrigin,
   rowRange?: RowRange,
+  output?: OutputGrid,
 ): RasterResult {
-  const { width, height, bounds } = dem;
+  const { bounds } = dem;
+  const outputWidth = output?.width ?? dem.width;
+  const outputHeight = output?.height ?? dem.height;
   const rowStart = rowRange?.rowStart ?? 0;
-  const rowEnd = rowRange?.rowEnd ?? height;
+  const rowEnd = rowRange?.rowEnd ?? outputHeight;
   const sliceHeight = rowEnd - rowStart;
-  const rgba = new Uint8ClampedArray(width * sliceHeight * 4);
-  const marginDbBuf = new Float32Array(width * sliceHeight);
+  const rgba = new Uint8ClampedArray(outputWidth * sliceHeight * 4);
+  const marginDbBuf = new Float32Array(outputWidth * sliceHeight);
   // Default to NaN so "unreachable" / "no data" pixels distinguish from
   // "0 dB margin reachable" in downstream contour work.
   marginDbBuf.fill(Number.NaN);
@@ -224,13 +261,21 @@ export function renderCoverageRaster(
   const profileBuf = new Float64Array(maxSamples);
 
   const [origLng, origLat] = origin.position;
-  const lonStep = (bounds.east - bounds.west) / (width - 1);
-  const latStep = (bounds.north - bounds.south) / (height - 1);
+  // Step over the OUTPUT grid, not the DEM grid. Each output cell's
+  // lng/lat is computed from the bbox and the output dims; terrain for
+  // that cell comes from the DEM via `sampleDEMAt` (bilinear), so the
+  // same (lng, lat) gives the same terrain value at any output density.
+  const lonStep = (bounds.east - bounds.west) / (outputWidth - 1);
+  const latStep = (bounds.north - bounds.south) / (outputHeight - 1);
 
   // Reusable input object — mutating it in-place avoids GC pressure
   // from allocating 65k+ objects per compute.
+  // ITM expects antenna heights ABOVE GROUND (valid 0.5–3000 m), not MSL.
+  // We clamp to a 0.5 m floor so a "0 m antenna" doesn't trip the bounds
+  // check inside the WASM module.
+  const txHeightAgM = Math.max(0.5, Math.min(3000, origin.antennaHeightAboveGroundM));
   const itmInput = {
-    txHeightM: origin.heightM,
+    txHeightM: txHeightAgM,
     rxHeightM: 0, // rebuilt per-pixel from terrain
     profileM: profileBuf,
     pointSpacingM: 0,
@@ -252,19 +297,20 @@ export function renderCoverageRaster(
 
   for (let j = rowStart; j < rowEnd; j++) {
     const lat = bounds.north - j * latStep;
-    const demRowOffset = j * width;
     // Output row offset is relative to the slice, not the full grid.
-    const outRowOffset = (j - rowStart) * width;
-    for (let i = 0; i < width; i++) {
-      const pxIdx = demRowOffset + i;
+    const outRowOffset = (j - rowStart) * outputWidth;
+    for (let i = 0; i < outputWidth; i++) {
       const outPxIdx = outRowOffset + i;
-      const demElev = dem.data[pxIdx];
+      const lng = bounds.west + i * lonStep;
+      // Own-pixel terrain via bilinear — continuous in (lng, lat) so it's
+      // invariant under output-grid density, which is the whole point of
+      // the DEM/output decoupling.
+      const demElev = sampleDEMAt(dem, lng, lat);
       if (Number.isNaN(demElev)) {
         // No terrain data — leave transparent.
         rgba[outPxIdx * 4 + 3] = 0;
         continue;
       }
-      const lng = bounds.west + i * lonStep;
       const distKm = haversineKm(origLng, origLat, lng, lat);
 
       // Degenerate: origin itself. Paint as dark green (max margin).
@@ -355,7 +401,7 @@ export function renderCoverageRaster(
   return {
     rgba,
     marginDb: marginDbBuf,
-    width,
+    width: outputWidth,
     height: sliceHeight,
     clearCount,
     fresnelCount,

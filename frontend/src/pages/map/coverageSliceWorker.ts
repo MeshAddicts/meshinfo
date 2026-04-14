@@ -32,7 +32,20 @@ export interface CoverageSliceRequest {
   bounds: DEMBounds;
   origin: [number, number];
   originHeightM: number;
+  /**
+   * TX antenna height above the local terrain at the origin (meters).
+   * Distinct from `originHeightM` (MSL); ITM's `txHeightM` parameter
+   * is above-ground, not MSL — passing the wrong one was a real bug.
+   */
+  originAntennaHeightAboveGroundM: number;
   params: RasterParams;
+  /**
+   * Output raster dimensions. Decoupled from the DEM so "Detail" only
+   * affects how pixelated the paint is, not the underlying RF model.
+   * `rowStart`/`rowEnd` are indices into the OUTPUT grid, not the DEM.
+   */
+  outputWidth: number;
+  outputHeight: number;
   rowStart: number;
   rowEnd: number;
 }
@@ -83,7 +96,7 @@ self.onmessage = async (evt: MessageEvent<CoverageSliceRequest>) => {
     itm = await getItmContext();
   } catch (err) {
     console.warn("[coverageSliceWorker] ITM WASM not available:", err);
-    const sliceN = msg.demWidth * (msg.rowEnd - msg.rowStart);
+    const sliceN = msg.outputWidth * (msg.rowEnd - msg.rowStart);
     const empty = new Uint8ClampedArray(sliceN * 4);
     const emptyMargin = new Float32Array(sliceN);
     emptyMargin.fill(Number.NaN);
@@ -113,8 +126,13 @@ self.onmessage = async (evt: MessageEvent<CoverageSliceRequest>) => {
       dem,
       msg.params,
       itm,
-      { position: msg.origin, heightM: msg.originHeightM },
+      {
+        position: msg.origin,
+        heightM: msg.originHeightM,
+        antennaHeightAboveGroundM: msg.originAntennaHeightAboveGroundM,
+      },
       { rowStart: msg.rowStart, rowEnd: msg.rowEnd },
+      { width: msg.outputWidth, height: msg.outputHeight },
     );
     post({
       requestId: msg.requestId,
@@ -129,7 +147,7 @@ self.onmessage = async (evt: MessageEvent<CoverageSliceRequest>) => {
     }, [rendered.rgba.buffer, rendered.marginDb.buffer]);
   } catch (err) {
     console.warn("[coverageSliceWorker] compute failed:", err);
-    const sliceN = msg.demWidth * (msg.rowEnd - msg.rowStart);
+    const sliceN = msg.outputWidth * (msg.rowEnd - msg.rowStart);
     const empty = new Uint8ClampedArray(sliceN * 4);
     const emptyMargin = new Float32Array(sliceN);
     emptyMargin.fill(Number.NaN);

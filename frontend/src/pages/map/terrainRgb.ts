@@ -229,6 +229,14 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
   const yMin = Math.floor(lat2tileY(bounds.north, zoom));
   const yMax = Math.floor(lat2tileY(bounds.south, zoom));
 
+  const tileCount = (xMax - xMin + 1) * (yMax - yMin + 1);
+  const actualTileMpp = tileMetersPerPixel(midLat, zoom);
+  console.info(
+    `[terrainRgb] DEM ${targetWidth}×${targetHeight} ` +
+      `@ z${zoom} (${actualTileMpp.toFixed(1)} m/px native, ${targetPixelSizeM.toFixed(1)} m/px target) ` +
+      `· ${tileCount} tiles · ${bboxWidthM.toFixed(0)}m bbox`,
+  );
+
   // Fetch all tiles in parallel. Individual failures become `null` tiles.
   const tileMap = new Map<string, CachedTile | null>();
   const jobs: Promise<void>[] = [];
