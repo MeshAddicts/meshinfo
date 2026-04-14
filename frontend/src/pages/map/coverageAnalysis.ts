@@ -144,6 +144,54 @@ export const COMMON_HARDWARE: HardwareEntry[] = [
 ];
 
 /**
+ * ITM reliability preset — controls the time/location/situation percentages
+ * the underlying model uses to answer "at what statistical threshold should
+ * we call a pixel 'reachable'?"
+ *
+ *   - Median (50/50/50): academic median prediction. Half the time, at half
+ *     the locations, under half the situations. This is what Radio Mobile /
+ *     SPLAT! ship by default; it's informative for comparison but misleading
+ *     for planning because users interpret the paint as "will work," when
+ *     half the time it in fact won't.
+ *   - Typical (90/50/70): normal broadcast/cellular planning default.
+ *     90% of the time, at 50% of locations, under 70% of situations.
+ *     This is what commercial RF planning suites default to.
+ *   - Conservative (95/50/90): mission-critical planning. Paint reflects
+ *     what you can count on even in unfavorable conditions.
+ *
+ * `location=50` stays fixed because higher values aren't really meaningful
+ * for a point-to-area prediction (there is only one receiver location per
+ * pixel); it's there for the model's statistical machinery.
+ */
+export type CoverageReliability = "median" | "typical" | "conservative";
+
+export interface ReliabilityPreset {
+  id: CoverageReliability;
+  label: string;
+  /** Percentage of time the received signal meets the threshold. */
+  time: number;
+  /** Percentage of locations in a receive cell meeting the threshold. */
+  location: number;
+  /** Percentage of situations (setups/weather/etc.) meeting the threshold. */
+  situation: number;
+  /** One-line UI description. */
+  desc: string;
+}
+
+export const RELIABILITY_PRESETS: ReliabilityPreset[] = [
+  { id: "median",       label: "Median",       time: 50, location: 50, situation: 50,
+    desc: "50/50/50 — median prediction. Paint shows what happens about half the time." },
+  { id: "typical",      label: "Typical",      time: 90, location: 50, situation: 70,
+    desc: "90/50/70 — normal planning default. Paint shows what you can expect most of the time." },
+  { id: "conservative", label: "Conservative", time: 95, location: 50, situation: 90,
+    desc: "95/50/90 — worst-case planning. Paint shows what works reliably in tough conditions." },
+];
+
+export function reliabilityPreset(id: CoverageReliability): ReliabilityPreset {
+  return RELIABILITY_PRESETS.find((p) => p.id === id) ?? RELIABILITY_PRESETS[1];
+}
+
+/**
  * Summary of a coverage computation — populated from the worker response.
  * The actual pixel data lives on the Mapbox image source; this struct just
  * carries the stats and link-budget context shown in the side panel.

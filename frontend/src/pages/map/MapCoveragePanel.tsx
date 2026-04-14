@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { COMMON_ANTENNAS, COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS, type CoverageResult } from "./coverageAnalysis";
+import { useEffect, useState } from "react";
+import { COMMON_ANTENNAS, COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS, RELIABILITY_PRESETS, type CoverageReliability, type CoverageResult } from "./coverageAnalysis";
 
 /**
  * Parse a free-form coord string into [lng, lat]. Accepts "lat, lng" with
@@ -78,6 +78,10 @@ export function MapCoveragePanel({
   onCustomSensitivityChange,
   detail,
   onDetailChange,
+  antennaHeightM,
+  onAntennaHeightChange,
+  reliability,
+  onReliabilityChange,
   showContours,
   onShowContoursChange,
   onExport,
@@ -103,6 +107,17 @@ export function MapCoveragePanel({
   onCustomSensitivityChange: (dbm: number) => void;
   detail: CoverageDetail;
   onDetailChange: (d: CoverageDetail) => void;
+  /**
+   * Antenna height above local terrain (meters). Drives a fresh recompute
+   * on change so the user sees the impact of mounting the radio higher
+   * (tree, roof, tower, etc.). Always overrides any GPS altitude on the
+   * pin so the slider is meaningful for both virtual and node origins.
+   */
+  antennaHeightM: number;
+  onAntennaHeightChange: (m: number) => void;
+  /** ITM reliability preset. Drives time/location/situation %. */
+  reliability: CoverageReliability;
+  onReliabilityChange: (r: CoverageReliability) => void;
   showContours: boolean;
   onShowContoursChange: (show: boolean) => void;
   onExport: (format: "geojson" | "kml") => void;
@@ -121,6 +136,33 @@ export function MapCoveragePanel({
   const [editingOrigin, setEditingOrigin] = useState(false);
   const [originDraft, setOriginDraft] = useState("");
   const [originDraftError, setOriginDraftError] = useState(false);
+
+  // Local string state for the antenna-height input so the user can fully
+  // clear the field while typing — a controlled `value={number}` would
+  // refuse to drop the leading "0" or hold an empty state. We commit on
+  // blur / Enter; a blank or invalid commit defaults back to 2 m.
+  const [heightInput, setHeightInput] = useState(String(antennaHeightM));
+  // Resync if the parent changes the value externally (e.g. preset reset).
+  useEffect(() => {
+    setHeightInput(String(antennaHeightM));
+  }, [antennaHeightM]);
+  const commitHeight = () => {
+    const trimmed = heightInput.trim();
+    if (trimmed === "") {
+      onAntennaHeightChange(2);
+      setHeightInput("2");
+      return;
+    }
+    const n = Number(trimmed);
+    if (!Number.isFinite(n)) {
+      onAntennaHeightChange(2);
+      setHeightInput("2");
+      return;
+    }
+    const clamped = Math.max(0, Math.min(300, n));
+    onAntennaHeightChange(clamped);
+    setHeightInput(String(clamped));
+  };
   if (terrainNeeded) {
     return (
       <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(520px,calc(100vw-2rem))]
@@ -185,9 +227,25 @@ export function MapCoveragePanel({
 
 
   return (
-    <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(640px,calc(100vw-2rem))]
-      rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
-      animate-[slideInUp_200ms_ease-out]">
+    <div
+      className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(640px,calc(100vw-2rem))]
+        rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
+        animate-[slideInUp_200ms_ease-out]"
+      onClick={(e) => {
+        // Close any open <details> popover (info, export, gear, origin
+        // editor) when the user clicks elsewhere in the panel. A click
+        // inside an open <details> (its summary or its panel content)
+        // leaves it open; a click on a different summary naturally closes
+        // the others via this same branch. We handle at the panel root so
+        // the behavior is consistent across all popovers without each one
+        // wiring its own outside-click listener.
+        const target = e.target as Node;
+        const openDetails = e.currentTarget.querySelectorAll<HTMLDetailsElement>("details[open]");
+        openDetails.forEach((d) => {
+          if (!d.contains(target)) d.removeAttribute("open");
+        });
+      }}
+    >
 
       {/* Recomputing overlay — small pill above the panel, doesn't hide controls */}
       {isComputing && (
@@ -324,6 +382,12 @@ export function MapCoveragePanel({
             <div className="absolute right-0 bottom-full mb-1 w-85 p-2.5 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-gray-400 leading-relaxed space-y-1">
               <div>Pixel color shows predicted <strong>link margin</strong> (RSSI minus sensitivity and fade margin). Dark green = very reliable, yellow = marginal, orange = at threshold. Unpainted terrain is below sensitivity.</div>
               <div className="pt-1 border-t border-white/5">
+                <div className="text-gray-300 font-medium">Reliability</div>
+                <div className="mt-0.5">
+                  {RELIABILITY_PRESETS.find((p) => p.id === reliability)?.desc}
+                </div>
+              </div>
+              <div className="pt-1 border-t border-white/5">
                 <div className="text-gray-300 font-medium">Propagation model</div>
                 <div className="font-mono text-[9px] text-gray-500 mt-0.5">
                   Longley-Rice v1.4 (ITS) via WASM
@@ -362,6 +426,147 @@ export function MapCoveragePanel({
               </div>
             </div>
           </details>
+
+          {/* Advanced settings gear — a second <details> popover with
+              model-tuning knobs (environment, reliability, detail, contours).
+              Living behind the gear keeps the main panel focused on the
+              high-frequency controls (hardware, modem, antenna). */}
+          <details className="text-[10px] text-gray-400 relative">
+            <summary
+              className="cursor-pointer list-none p-1 rounded-md hover:text-gray-200 hover:bg-white/5 transition-colors"
+              aria-label="Advanced settings"
+              title="Advanced settings"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </summary>
+            <div className="absolute right-0 bottom-full mb-1 w-90 p-3 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl z-50 space-y-3">
+              <div className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">
+                Advanced settings
+              </div>
+
+              {/* Environment — clutter-loss preset */}
+              <div>
+                <label htmlFor="coverage-env" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 flex items-center gap-1">
+                  <span>Environment</span>
+                  <InfoTip align="left">
+                    Flat clutter-loss offset added on top of ITM to
+                    approximate buildings and vegetation (ITM itself doesn't
+                    model them). A foliage raster is on the roadmap — it will
+                    replace this with a per-path loss based on real canopy
+                    data.
+                  </InfoTip>
+                </label>
+                <select
+                  id="coverage-env"
+                  value={envIdx}
+                  onChange={(e) => onEnvIdxChange(Number(e.target.value))}
+                  className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
+                    focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
+                    [&>option]:bg-gray-800 [&>option]:text-gray-200"
+                  title={ENVIRONMENTS[envIdx].description}
+                >
+                  {ENVIRONMENTS.map((env, i) => (
+                    <option key={i} value={i}>{env.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Reliability — ITM time/location/situation preset */}
+              <div>
+                <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 flex items-center gap-1">
+                  <span>Reliability</span>
+                  <InfoTip align="left">
+                    ITM's time / location / situation percentages. Higher =
+                    "works most of the time" instead of "works half the time."
+                    Typical (90/50/70) is the industry planning default.
+                    Median matches Radio&nbsp;Mobile / SPLAT!; Conservative is
+                    for mission-critical links.
+                  </InfoTip>
+                </label>
+                <div className="flex gap-1 rounded-lg border border-white/10 bg-white/5 p-0.5 text-[10px] font-medium">
+                  {RELIABILITY_PRESETS.map((p) => {
+                    const active = reliability === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => onReliabilityChange(p.id)}
+                        title={p.desc}
+                        className={`flex-1 rounded-md px-1.5 py-1 transition-colors ${
+                          active
+                            ? "bg-cyan-500/20 text-cyan-200"
+                            : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
+                        }`}
+                      >
+                        <div>{p.label}</div>
+                        <div className="text-[9px] text-gray-500 font-normal">
+                          {p.time}/{p.location}/{p.situation}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Detail — DEM resolution */}
+              <div>
+                <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 flex items-center gap-1">
+                  <span>Detail</span>
+                  <InfoTip align="left">
+                    Coverage grid resolution. Higher detail = crisper edges
+                    around terrain features, but slower to compute. Standard
+                    feels instant; Ultra is for a definitive one-off survey.
+                  </InfoTip>
+                </label>
+                <div className="flex gap-1 rounded-lg border border-white/10 bg-white/5 p-0.5 text-[10px] font-medium">
+                  {([
+                    { key: "standard", label: "Std",   sub: "512 px" },
+                    { key: "high",     label: "High",  sub: "768 px" },
+                    { key: "ultra",    label: "Ultra", sub: "1024 px" },
+                  ] as const).map((opt) => {
+                    const active = detail === opt.key;
+                    return (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        onClick={() => onDetailChange(opt.key)}
+                        className={`flex-1 rounded-md px-1.5 py-1 transition-colors ${
+                          active
+                            ? "bg-cyan-500/20 text-cyan-200"
+                            : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
+                        }`}
+                      >
+                        <div>{opt.label}</div>
+                        <div className="text-[9px] text-gray-500 font-normal">{opt.sub}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Contours toggle */}
+              <label className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={showContours}
+                  onChange={(e) => onShowContoursChange(e.target.checked)}
+                  className="w-3.5 h-3.5 accent-cyan-500 cursor-pointer"
+                />
+                <span className="inline-flex items-center gap-1 min-w-0">
+                  Iso-margin contours
+                  <InfoTip align="left">
+                    Overlay iso-margin lines at 0 dB (amber — edge of
+                    coverage), +10 dB (green — reliable), and +20 dB (light
+                    green — strong signal).
+                  </InfoTip>
+                </span>
+              </label>
+            </div>
+          </details>
+
           <button
             type="button"
             onClick={onClose}
@@ -447,25 +652,44 @@ export function MapCoveragePanel({
           );
         })()}
 
-        {/* Environment + Modem preset */}
+        {/* Primary controls — only the high-frequency knobs live here.
+            Environment, reliability, detail, and contours moved into the
+            gear popover so the panel stays focused on "the radio." */}
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label htmlFor="coverage-env" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
-              Environment
+            <label htmlFor="coverage-hardware" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
+              Hardware
             </label>
-            <select
-              id="coverage-env"
-              value={envIdx}
-              onChange={(e) => onEnvIdxChange(Number(e.target.value))}
-              className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
-                focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
-                [&>option]:bg-gray-800 [&>option]:text-gray-200"
-              title={ENVIRONMENTS[envIdx].description}
-            >
-              {ENVIRONMENTS.map((env, i) => (
-                <option key={i} value={i}>{env.label}</option>
-              ))}
-            </select>
+            <div className="flex gap-1">
+              <select
+                id="coverage-hardware"
+                value={hardwareIdx}
+                onChange={(e) => onHardwareIdxChange(Number(e.target.value))}
+                className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
+                  focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
+                  [&>option]:bg-gray-800 [&>option]:text-gray-200"
+              >
+                {COMMON_HARDWARE.map((h, i) => (
+                  <option key={i} value={i}>
+                    {h.label}{h.isCustom ? "" : ` (${h.txDbm} dBm)`}
+                  </option>
+                ))}
+              </select>
+              {isCustomHardware && (
+                <input
+                  type="number"
+                  value={customTxDbm}
+                  onChange={(e) => onCustomTxDbmChange(Number(e.target.value))}
+                  min={10}
+                  max={35}
+                  step={1}
+                  aria-label="Custom TX power (dBm)"
+                  title="TX power in dBm"
+                  className="w-12 rounded-lg border border-white/10 bg-white/5 px-1 py-1 text-xs text-gray-200 text-center
+                    focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50"
+                />
+              )}
+            </div>
           </div>
           <div>
             <label htmlFor="coverage-preset" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
@@ -504,117 +728,59 @@ export function MapCoveragePanel({
           </div>
         </div>
 
-        {/* Hardware / Antenna / Radius selectors */}
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2">
           <div>
-            <label htmlFor="coverage-hardware" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
-              Hardware
+            <label htmlFor="coverage-antenna" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
+              Antenna Gain
             </label>
-            <div className="flex gap-1">
-              <select
-                id="coverage-hardware"
-                value={hardwareIdx}
-                onChange={(e) => onHardwareIdxChange(Number(e.target.value))}
-                className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
-                  focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
-                  [&>option]:bg-gray-800 [&>option]:text-gray-200"
-              >
-                {COMMON_HARDWARE.map((h, i) => (
-                  <option key={i} value={i}>
-                    {h.label}{h.isCustom ? "" : ` (${h.txDbm} dBm)`}
-                  </option>
-                ))}
-              </select>
-              {isCustomHardware && (
-                <input
-                  type="number"
-                  value={customTxDbm}
-                  onChange={(e) => onCustomTxDbmChange(Number(e.target.value))}
-                  min={10}
-                  max={35}
-                  step={1}
-                  aria-label="Custom TX power (dBm)"
-                  title="TX power in dBm"
-                  className="w-12 rounded-lg border border-white/10 bg-white/5 px-1 py-1 text-xs text-gray-200 text-center
-                    focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50"
-                />
-              )}
-            </div>
+            <select
+              id="coverage-antenna"
+              value={antennaDbi}
+              onChange={(e) => onAntennaDbiChange(Number(e.target.value))}
+              className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
+                focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
+                [&>option]:bg-gray-800 [&>option]:text-gray-200"
+            >
+              {COMMON_ANTENNAS.map((a) => (
+                <option key={a.dbi} value={a.dbi}>{a.label}</option>
+              ))}
+            </select>
           </div>
-          {/* Middle column: Antenna on top, Contours toggle below. Share
-              the vertical space of a single hardware-sized cell. */}
-          <div className="flex flex-col gap-1.5 min-w-0">
-            <div>
-              <label htmlFor="coverage-antenna" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
-                Antenna
-              </label>
-              <select
-                id="coverage-antenna"
-                value={antennaDbi}
-                onChange={(e) => onAntennaDbiChange(Number(e.target.value))}
-                className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
-                  focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
-                  [&>option]:bg-gray-800 [&>option]:text-gray-200"
-              >
-                {COMMON_ANTENNAS.map((a) => (
-                  <option key={a.dbi} value={a.dbi}>{a.label}</option>
-                ))}
-              </select>
-            </div>
-            <label className="flex items-center gap-1.5 text-[11px] text-gray-300 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={showContours}
-                onChange={(e) => onShowContoursChange(e.target.checked)}
-                className="w-3.5 h-3.5 accent-cyan-500 cursor-pointer"
-              />
-              <span className="inline-flex items-center gap-1 min-w-0">
-                Contours
-                <InfoTip align="right">
-                  Overlay iso-margin lines at 0 dB (amber — edge of
-                  coverage), +10 dB (green — reliable), and +20 dB (light
-                  green — strong signal). Extracted from the same margin
-                  grid via marching squares.
-                </InfoTip>
-              </span>
-            </label>
-          </div>
-
-          {/* Third column: Detail level buttons — replaces the old
-              Analysis range slider, which is now derived from the link
-              budget automatically. */}
           <div>
-            <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 flex items-center gap-1">
-              <span>Detail</span>
-              <InfoTip align="left">
-                Coverage grid resolution. Higher detail = crisper edges around
-                terrain features, but slower to compute. Standard feels instant;
-                Ultra is best for a definitive one-off survey.
+            <label htmlFor="coverage-antenna-height" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 flex items-center gap-1">
+              <span>Antenna Height</span>
+              <InfoTip align="right">
+                Height of the antenna above the pin location. For a
+                node-anchored pin, height stacks on top of the node's GPS
+                altitude. Defaults to 2 m (handheld).
               </InfoTip>
             </label>
-            <div className="flex gap-1 rounded-lg border border-white/10 bg-white/5 p-0.5 text-[10px] font-medium">
-              {([
-                { key: "standard", label: "Std",  sub: "512 px" },
-                { key: "high",     label: "High", sub: "768 px" },
-                { key: "ultra",    label: "Ultra", sub: "1024 px" },
-              ] as const).map((opt) => {
-                const active = detail === opt.key;
-                return (
-                  <button
-                    key={opt.key}
-                    type="button"
-                    onClick={() => onDetailChange(opt.key)}
-                    className={`flex-1 rounded-md px-1.5 py-1 transition-colors ${
-                      active
-                        ? "bg-cyan-500/20 text-cyan-200"
-                        : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
-                    }`}
-                  >
-                    <div>{opt.label}</div>
-                    <div className="text-[9px] text-gray-500 font-normal">{opt.sub}</div>
-                  </button>
-                );
-              })}
+            {/* Compact: 1–3 digits doesn't need a full half-panel-width
+                input. Hug the numeric content; leave the rest of the cell
+                as blank visual balance. */}
+            <div className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 w-20">
+              <input
+                id="coverage-antenna-height"
+                type="text"
+                inputMode="decimal"
+                value={heightInput}
+                onChange={(e) => setHeightInput(e.target.value)}
+                onBlur={commitHeight}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    (e.currentTarget as HTMLInputElement).blur();
+                  } else if (e.key === "Escape") {
+                    setHeightInput(String(antennaHeightM));
+                    (e.currentTarget as HTMLInputElement).blur();
+                  }
+                }}
+                aria-label="Antenna height above the pin (meters)"
+                title="Antenna height above the pin (m). Blank = 2 m default."
+                className="min-w-0 flex-1 bg-transparent text-xs text-gray-200 text-center
+                  focus:outline-hidden"
+              />
+              <span className="text-[10px] text-gray-500 shrink-0">m</span>
             </div>
           </div>
         </div>

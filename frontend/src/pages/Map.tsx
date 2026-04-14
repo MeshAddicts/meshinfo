@@ -26,7 +26,7 @@ import { reverseGeocode } from "../maps/geocoder";
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
-import { COMMON_HARDWARE, effectiveSensitivityDbm, ENVIRONMENTS, MESHTASTIC_PRESETS, type CoverageResult } from "./map/coverageAnalysis";
+import { COMMON_HARDWARE, effectiveSensitivityDbm, ENVIRONMENTS, MESHTASTIC_PRESETS, reliabilityPreset, type CoverageReliability, type CoverageResult } from "./map/coverageAnalysis";
 import { demBoundsAround, downsampleDEM, sampleDEMAt, type DEM, type DEMBounds } from "./map/terrainDEM";
 import { buildDemFromTerrainRgb } from "./map/terrainRgb";
 import { CoverageWorkerPool } from "./map/coverageWorkerPool";
@@ -430,6 +430,28 @@ export function Map() {
    */
   const [coverageDetail, setCoverageDetail] = useState<CoverageDetail>("standard");
   /**
+   * Antenna height above local terrain (meters). Lets the user simulate
+   * mounting scenarios — handheld, rooftop, tree, mast, tower. Origin
+   * MSL height is computed as `terrain + antennaHeightM` and replaces the
+   * old hardcoded `+ 2` fallback. Also overrides any GPS altitude on a
+   * node-anchored origin so "what if I move it up to a tower" works
+   * regardless of what the node currently reports.
+   */
+  const [coverageAntennaHeightM, setCoverageAntennaHeightM] = useState(2);
+  /**
+   * ITM reliability preset — default "typical" (90/50/70). See the comment
+   * on RELIABILITY_PRESETS for why this is the right planning default;
+   * tl;dr the old 50/50/50 paint is "median" — half the time it's wrong —
+   * and "typical" more honestly answers "will this work?".
+   */
+  const [coverageReliability, setCoverageReliability] = useState<CoverageReliability>("typical");
+  // Mirror to a ref so the drag-preview closure (which lives outside the
+  // main compute effect's deps) sees the latest value without re-binding.
+  const coverageAntennaHeightMRef = useRef(2);
+  useEffect(() => {
+    coverageAntennaHeightMRef.current = coverageAntennaHeightM;
+  }, [coverageAntennaHeightM]);
+  /**
    * Analysis radius derived purely from the link-budget math (capped at
    * 500 km beyond which the DEM resolution can't produce meaningful
    * terrain-aware results). No manual override — keeping the derived
@@ -675,8 +697,23 @@ export function Map() {
     dem: DEM;
     origin: [number, number];
     originHeightM: number;
+    /**
+     * TX antenna height above the local terrain (m). ITM's `txHeightM`
+     * is above-ground, distinct from the MSL `originHeightM` we carry
+     * for display/export. Wiring the wrong one used to model every pin
+     * as a hundred-meter tower at base.
+     */
+    originAntennaHeightAboveGroundM: number;
     params: RasterParams;
     requestId: number;
+    /**
+     * Output raster dimensions. Decoupled from the DEM so the user's
+     * "Detail" choice only affects paint sharpness, not the underlying
+     * RF answer. If omitted, defaults to the DEM dims (used by the
+     * drag-preview path where DEM == output == 256²).
+     */
+    outputWidth?: number;
+    outputHeight?: number;
   }): Promise<{
     clearCount: number;
     fresnelCount: number;
@@ -685,14 +722,19 @@ export function Map() {
     totalPx: number;
     /** Stitched full-grid margin array (dB). NaN for no-data pixels. */
     marginDb: Float32Array;
+    /** Output dimensions actually used — callers use these for contours. */
+    outputWidth: number;
+    outputHeight: number;
     itmUnavailable?: boolean;
   } | null> => {
-    const { dem, origin, originHeightM, params, requestId } = opts;
+    const { dem, origin, originHeightM, originAntennaHeightAboveGroundM, params, requestId } = opts;
+    const outputWidth = opts.outputWidth ?? dem.width;
+    const outputHeight = opts.outputHeight ?? dem.height;
     const mb = mbMapRef.current;
     if (!mb) return null;
     const pool = ensureCoveragePool();
     const poolSize = pool.size;
-    const rowsPerTask = Math.ceil(dem.height / poolSize);
+    const rowsPerTask = Math.ceil(outputHeight / poolSize);
 
     const sliceResponses: Array<{
       rgba: Uint8ClampedArray;
@@ -708,8 +750,8 @@ export function Map() {
 
     for (let i = 0; i < poolSize; i++) {
       const rowStart = i * rowsPerTask;
-      if (rowStart >= dem.height) break;
-      const rowEnd = Math.min(rowStart + rowsPerTask, dem.height);
+      if (rowStart >= outputHeight) break;
+      const rowEnd = Math.min(rowStart + rowsPerTask, outputHeight);
       const demCopy = new Float32Array(dem.data);
       const req: CoverageSliceRequest = {
         requestId,
@@ -719,7 +761,10 @@ export function Map() {
         bounds: dem.bounds,
         origin,
         originHeightM,
+        originAntennaHeightAboveGroundM,
         params,
+        outputWidth,
+        outputHeight,
         rowStart,
         rowEnd,
       };
@@ -736,24 +781,25 @@ export function Map() {
     if (requestId !== coverageRequestIdRef.current) return null;
 
     if (sliceResponses.some((r) => r.itmUnavailable)) {
-      const nanMargin = new Float32Array(dem.width * dem.height);
+      const nanMargin = new Float32Array(outputWidth * outputHeight);
       nanMargin.fill(Number.NaN);
       return {
         clearCount: 0, fresnelCount: 0, blockedCount: 0,
-        demCoveredPixels: 0, totalPx: dem.width * dem.height,
+        demCoveredPixels: 0, totalPx: outputWidth * outputHeight,
         marginDb: nanMargin,
+        outputWidth, outputHeight,
         itmUnavailable: true,
       };
     }
 
-    const fullRgba = new Uint8ClampedArray(dem.width * dem.height * 4);
-    const fullMargin = new Float32Array(dem.width * dem.height);
+    const fullRgba = new Uint8ClampedArray(outputWidth * outputHeight * 4);
+    const fullMargin = new Float32Array(outputWidth * outputHeight);
     let clearCount = 0;
     let fresnelCount = 0;
     let blockedCount = 0;
     for (const s of sliceResponses) {
-      fullRgba.set(s.rgba, s.rowStart * dem.width * 4);
-      fullMargin.set(s.marginDb, s.rowStart * dem.width);
+      fullRgba.set(s.rgba, s.rowStart * outputWidth * 4);
+      fullMargin.set(s.marginDb, s.rowStart * outputWidth);
       clearCount += s.clearCount;
       fresnelCount += s.fresnelCount;
       blockedCount += s.blockedCount;
@@ -763,14 +809,14 @@ export function Map() {
     // Encode via a data URL and push to the image source. For small
     // grids (256–1024²) toDataURL is ≈ 3–40 ms and not worth optimizing.
     const canvas = document.createElement("canvas");
-    canvas.width = dem.width;
-    canvas.height = dem.height;
+    canvas.width = outputWidth;
+    canvas.height = outputHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
     const imgData = new ImageData(
       fullRgba as Uint8ClampedArray<ArrayBuffer>,
-      dem.width,
-      dem.height,
+      outputWidth,
+      outputHeight,
     );
     ctx.putImageData(imgData, 0, 0);
     const url = canvas.toDataURL("image/png");
@@ -794,8 +840,10 @@ export function Map() {
       fresnelCount,
       blockedCount,
       demCoveredPixels,
-      totalPx: dem.width * dem.height,
+      totalPx: outputWidth * outputHeight,
       marginDb: fullMargin,
+      outputWidth,
+      outputHeight,
     };
   }, [ensureCoveragePool]);
 
@@ -1436,8 +1484,18 @@ export function Map() {
     // Coverage compute now runs across a pool of workers (Phase 10D).
     // Main thread fetches the DEM once, copies it to each worker as a
     // slice task, and stitches the RGBA responses.
-    const DEM_SIZE = COVERAGE_DETAIL_SIZE[coverageDetail];
+    //
+    // DEM resolution is fixed — it's the *terrain model* accuracy, which
+    // should NOT depend on the user's "Detail" choice. "Detail" controls
+    // OUTPUT_SIZE only, i.e. how pixelated the paint is. Before the
+    // decoupling, changing detail silently produced different reachable
+    // areas on the same pin, because a smaller output grid was also a
+    // smaller DEM grid, and the nearest-neighbor tile-resample averaged
+    // obstructions away at Standard but exposed them at Ultra.
+    const DEM_SIZE = 1024;
+    const OUTPUT_SIZE = COVERAGE_DETAIL_SIZE[coverageDetail];
     const envEntry = ENVIRONMENTS[coverageEnvIdx];
+    const rel = reliabilityPreset(coverageReliability);
     const rasterParams: RasterParams = {
       freqMhz: 915,
       txDbm: coverageTxDbm,
@@ -1453,9 +1511,9 @@ export function Map() {
       polarization: 1 /* Polarization.Vertical */,
       groundDielectric: 15,
       groundConductivity: 0.005,
-      timePct: 50,
-      locationPct: 50,
-      situationPct: 50,
+      timePct: rel.time,
+      locationPct: rel.location,
+      situationPct: rel.situation,
     };
 
     (async () => {
@@ -1479,26 +1537,50 @@ export function Map() {
         mark("demFetchMs", tFetch);
         if (cancelled || requestId !== coverageRequestIdRef.current) return;
 
-        // 2. Resolve origin height by sampling the DEM at the pin location.
+        // 2. Resolve origin height. Base elevation is the node's GPS
+        // altitude (MSL) when present and sane, else the sampled terrain
+        // elevation; the user-controlled antenna height stacks on top so
+        // they can simulate "what if I mount it 30 m up a tower" without
+        // losing the GPS truth that ties the pin to a real device.
+        // `originIsFallback` flags "terrain data missing AND no GPS
+        // altitude" — i.e. we synthesized the base from 0.
         const originGround = sampleDEMAt(dem, origin![0], origin![1]);
+        const groundOk = !Number.isNaN(originGround);
+        // Guard against junk altitudes: some Meshtastic firmware reports 0
+        // or sea level when the GPS lock is poor. If the reported altitude
+        // is below local terrain, treat it as bogus and fall back.
         const altValid =
           altitude != null &&
           Number.isFinite(altitude) &&
-          !Number.isNaN(originGround) &&
-          altitude >= originGround;
-        const originHeightM = altValid
+          (!groundOk || altitude >= originGround);
+        const baseM = altValid
           ? (altitude as number)
-          : (Number.isNaN(originGround) ? 0 : originGround) + 2;
-        const originIsFallback = !altValid;
+          : (groundOk ? originGround : 0);
+        const originHeightM = baseM + coverageAntennaHeightM;
+        const originIsFallback = !groundOk && !altValid;
+        // What ITM actually wants: TX antenna height *above local ground*.
+        // When GPS altitude is in play, the implied "device above terrain"
+        // (e.g. mounted on a 3 m post) is preserved by stacking the user's
+        // antenna height on top of (alt - groundElev). When falling back
+        // to terrain as the base, this collapses to just antennaHeight.
+        const txAboveGroundM = groundOk
+          ? originHeightM - originGround
+          : coverageAntennaHeightM;
 
-        // 3. Dispatch the pool over the full-resolution DEM.
+        // 3. Dispatch the pool over the full-resolution DEM. OUTPUT_SIZE
+        //    is independent of DEM_SIZE — Detail controls paint sharpness
+        //    only, so Std/High/Ultra all produce the same reachable area
+        //    on the same pin (modulo per-pixel grid sampling noise).
         const tDispatch = performance.now();
         const rendered = await renderCoverageToImageSource({
           dem,
           origin: origin!,
           originHeightM,
+          originAntennaHeightAboveGroundM: txAboveGroundM,
           params: rasterParams,
           requestId,
+          outputWidth: OUTPUT_SIZE,
+          outputHeight: OUTPUT_SIZE,
         });
         mark("poolComputeMs", tDispatch);
         if (cancelled || requestId !== coverageRequestIdRef.current) return;
@@ -1520,17 +1602,19 @@ export function Map() {
 
         // 5. Extract iso-contours from the margin grid and push them to
         //    the line layer. 0 dB = edge of coverage (most useful),
-        //    +10 dB = reliably reachable, +20 dB = strong signal.
+        //    +10 dB = reliably reachable, +20 dB = strong signal. The
+        //    margin grid is output-sized, not DEM-sized — contours are
+        //    painted at output resolution (crisper at Ultra).
         coverageMarginRef.current = {
           data: rendered.marginDb,
-          width: dem.width,
-          height: dem.height,
+          width: rendered.outputWidth,
+          height: rendered.outputHeight,
           bounds: dem.bounds,
         };
         const contours = extractCoverageContours({
           margin: rendered.marginDb,
-          width: dem.width,
-          height: dem.height,
+          width: rendered.outputWidth,
+          height: rendered.outputHeight,
           bounds: dem.bounds,
           thresholdsDb: [0, 10, 20],
         });
@@ -1541,11 +1625,36 @@ export function Map() {
         } catch {}
 
         const computeMs = performance.now() - t0;
+        // Compute DEM elevation stats + a ground-truth reachable km². The
+        // km² lets us verify Std/High/Ultra converge on the same area
+        // (they should, since the tile-count cap keeps them at the same
+        // tile zoom — Ultra just resamples the same terrain to a finer
+        // output grid).
+        let demMin = Infinity, demMax = -Infinity, demNan = 0;
+        for (let k = 0; k < dem.data.length; k++) {
+          const v = dem.data[k];
+          if (Number.isNaN(v)) { demNan++; continue; }
+          if (v < demMin) demMin = v;
+          if (v > demMax) demMax = v;
+        }
+        const reachablePx = rendered.clearCount + rendered.fresnelCount;
+        const totalPx = rendered.demCoveredPixels;
+        const bboxAreaKm2 = (2 * radKm * 1.05) ** 2;
+        const reachableKm2 = totalPx > 0 ? bboxAreaKm2 * (reachablePx / totalPx) : 0;
+        const reachablePct = totalPx > 0 ? Math.round((reachablePx / totalPx) * 100) : 0;
+        // Single flat line so it's readable in the console without needing
+        // to expand nested objects. Order: timing · DEM · coverage · pin.
         console.info(
-          `[Map] Coverage compute: ${computeMs.toFixed(0)} ms ` +
-            `for ${DEM_SIZE}x${DEM_SIZE} px across ${ensureCoveragePool().size} workers ` +
-            `(${Math.round((rendered.demCoveredPixels / rendered.totalPx) * 100)}% terrain-covered)`,
-          timings,
+          `[Map] Coverage out=${OUTPUT_SIZE}² dem=${DEM_SIZE}² ${computeMs.toFixed(0)}ms` +
+            ` · DEM elev ${demMin.toFixed(0)}→${demMax.toFixed(0)}m` +
+            ` NaN ${((demNan / dem.data.length) * 100).toFixed(1)}%` +
+            ` · reach ${reachablePct}% (${reachableKm2.toFixed(0)}km² of ${bboxAreaKm2.toFixed(0)}km²)` +
+            ` · clear ${rendered.clearCount} / fresnel ${rendered.fresnelCount} / blocked ${rendered.blockedCount}` +
+            ` · pin terr ${groundOk ? originGround.toFixed(1) : "NaN"}m` +
+            ` alt ${altValid ? (altitude as number).toFixed(1) : "—"}m` +
+            ` TX-AGL ${txAboveGroundM.toFixed(1)}m` +
+            ` MSL ${originHeightM.toFixed(1)}m` +
+            ` · r=${radKm}km`,
         );
 
         setCoverageResult({
@@ -1573,7 +1682,7 @@ export function Map() {
     return () => {
       cancelled = true;
     };
-  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageTxDbm, coverageEnvIdx, coverageSensitivityDbm, coverageDetail, provider, terrain3D, nodes]);
+  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageTxDbm, coverageEnvIdx, coverageSensitivityDbm, coverageDetail, coverageAntennaHeightM, coverageReliability, provider, terrain3D, nodes]);
 
   // Hide coverage raster when leaving coverage tool. We keep the source/layer
   // around so re-entering the tool reuses them without re-adding.
@@ -1665,12 +1774,16 @@ export function Map() {
           // collide with the authoritative compute's id namespace.
           const previewId = -Math.floor(performance.now());
           const ground = sampleDEMAt(dem, lngLat[0], lngLat[1]);
-          const originH = (Number.isNaN(ground) ? 0 : ground) + 2;
+          // Drag preview is always virtual (no GPS altitude available),
+          // so MSL == terrain + antenna and ITM-above-ground == antenna.
+          const antennaH = coverageAntennaHeightMRef.current;
+          const originH = (Number.isNaN(ground) ? 0 : ground) + antennaH;
           coverageRequestIdRef.current = previewId;
           await renderCoverageToImageSource({
             dem,
             origin: lngLat,
             originHeightM: originH,
+            originAntennaHeightAboveGroundM: antennaH,
             params,
             requestId: previewId,
           });
@@ -4146,6 +4259,10 @@ export function Map() {
           onCustomSensitivityChange={setCoverageCustomSensDbm}
           detail={coverageDetail}
           onDetailChange={setCoverageDetail}
+          antennaHeightM={coverageAntennaHeightM}
+          onAntennaHeightChange={setCoverageAntennaHeightM}
+          reliability={coverageReliability}
+          onReliabilityChange={setCoverageReliability}
           showContours={showCoverageContours}
           onShowContoursChange={setShowCoverageContours}
           onExport={handleCoverageExport}
