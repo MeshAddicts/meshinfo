@@ -1295,6 +1295,15 @@ export function Map() {
 
   // Push the current LoS result into the 3D tube layer + obstruction source.
   // Clears them when the LoS tool isn't showing a result.
+  //
+  // Note on terrain exaggeration: Mapbox renders terrain with an
+  // exaggeration factor (default 1.5), but its `fill-extrusion` base/
+  // height are NOT auto-scaled, and neither is our custom tube layer.
+  // To keep the tube and obstruction pylons pinned to the visually
+  // exaggerated terrain, we scale altitudes by the current exaggeration
+  // at upload time, and re-fire this effect whenever the user changes
+  // it. Without this the tube endpoint appears to sit partway down the
+  // mountain rather than at the node pin.
   useEffect(() => {
     const mb = mbMapRef.current;
     if (!mb) return;
@@ -1316,9 +1325,12 @@ export function Map() {
     const fromPos: [number, number] = [from.map_position[0], from.map_position[1]];
     const toPos: [number, number] = [to.map_position[0], to.map_position[1]];
 
+    // Tube: layer internally scales altitudes by current exaggeration.
     const tubeData = losPointsToTubeData(fromPos, toPos, losResult!.points, losResult!.totalDistanceKm);
     tube?.setData(tubeData);
 
+    // Obstruction pylons: scale base/top manually since fill-extrusion
+    // doesn't do it for us.
     const obstructions = pickObstructions(
       fromPos,
       toPos,
@@ -1326,8 +1338,15 @@ export function Map() {
       losResult!.totalDistanceKm,
       3,
     );
-    obsSrc?.setData(obstructionsToGeoJSON(obstructions, 60));
-  }, [activeTool, toolStep, losResult, toolFromId, toolToId, nodes]);
+    const exagRaw = mb.getTerrain()?.exaggeration;
+    const exag = typeof exagRaw === "number" ? exagRaw : 1;
+    const obsGeo = obstructionsToGeoJSON(obstructions, 60);
+    obsGeo.features.forEach((f) => {
+      f.properties.baseM *= exag;
+      f.properties.topM *= exag;
+    });
+    obsSrc?.setData(obsGeo);
+  }, [activeTool, toolStep, losResult, toolFromId, toolToId, nodes, terrainExaggeration]);
 
   // -------------------------------------------------------------------------
   // Scan tool (Option C) — batch LoS to every node in view from a chosen origin

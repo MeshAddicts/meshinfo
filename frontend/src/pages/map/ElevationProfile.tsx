@@ -106,7 +106,14 @@ export function ElevationProfile({
 
   const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left - MARGIN.left;
+    // The SVG is rendered at `width=100%` but has a fixed viewBox of
+    // WIDTH × HEIGHT units. Convert the screen-pixel cursor delta into
+    // viewBox units before subtracting MARGIN.left (which itself is in
+    // viewBox units). Skipping this caused a cursor→data offset that
+    // grew as the cursor moved right.
+    const vbScale = rect.width > 0 ? WIDTH / rect.width : 1;
+    const svgX = (e.clientX - rect.left) * vbScale;
+    const x = svgX - MARGIN.left;
     if (x < 0 || x > plotW) {
       setHoverIdx(null);
       return;
@@ -286,17 +293,33 @@ export function ElevationProfile({
         </g>
       </svg>
 
-      {/* Hover tooltip */}
-      {hoverPoint && (
+      {/* Hover tooltip — horizontally anchored on the cursor, vertically
+          anchored just above (or below, when chord is near the top of
+          the chart) the chord data point. Flipping avoids both covering
+          the line and getting clipped above the chart. */}
+      {hoverPoint && (() => {
+        const plotLeftPct = (MARGIN.left / WIDTH) * 100;
+        const plotRightPct = ((WIDTH - MARGIN.right) / WIDTH) * 100;
+        const rawPct =
+          plotLeftPct +
+          (hoverPoint.distanceKm / result.totalDistanceKm) * (plotRightPct - plotLeftPct);
+        const leftPct = Math.min(Math.max(rawPct, 12), 88);
+        // Vertical anchor: % from top of wrapper to the chord Y at cursor.
+        const chordPct = ((MARGIN.top + yScale(hoverPoint.chord)) / HEIGHT) * 100;
+        // If the chord is in the upper half of the chart, drop the
+        // tooltip below the point; otherwise float it above. 40% picked
+        // empirically so tooltip tops/bottoms don't clip typical charts.
+        const placeAbove = chordPct > 40;
+        const yTransform = placeAbove
+          ? "translateY(calc(-100% - 10px))"
+          : "translateY(10px)";
+        return (
         <div
           className="absolute pointer-events-none bg-gray-900/95 backdrop-blur-xl border border-white/10 rounded-lg px-2 py-1.5 text-[10px] shadow-2xl"
           style={{
-            left: Math.min(
-              Math.max((hoverPoint.distanceKm / result.totalDistanceKm) * 100, 12),
-              88,
-            ) + "%",
-            top: 4,
-            transform: "translateX(-50%)",
+            left: `${leftPct}%`,
+            top: `${chordPct}%`,
+            transform: `translateX(-50%) ${yTransform}`,
             minWidth: 100,
           }}
         >
@@ -333,7 +356,8 @@ export function ElevationProfile({
             </div>
           )}
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

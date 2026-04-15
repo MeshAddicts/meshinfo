@@ -68,6 +68,16 @@ export class LosTubeLayer implements mapboxgl.CustomLayerInterface {
   private aColor = -1;
   private uMatrix: WebGLUniformLocation | null = null;
   private vertexCount = 0;
+  /**
+   * Cached raw input (unscaled altitudes). Kept so we can re-upload with
+   * a different terrain exaggeration without the caller having to rebuild
+   * the `LosTubeData`. Mapbox renders terrain elevations multiplied by
+   * the active exaggeration; a custom 3D layer using raw MSL altitudes
+   * would sit *below* the exaggerated terrain surface. Multiplying
+   * altitudes by the same exaggeration factor keeps the tube pinned to
+   * the visual terrain.
+   */
+  private lastData: LosTubeData | null = null;
 
   onAdd(map: mapboxgl.Map, gl: WebGLRenderingContext): void {
     this.map = map;
@@ -119,16 +129,40 @@ export class LosTubeLayer implements mapboxgl.CustomLayerInterface {
 
   /**
    * Upload a new polyline. `null` or empty list clears the layer.
+   * Altitudes are expected in real MSL meters — the layer internally
+   * scales them by the map's current terrain exaggeration so the tube
+   * lines up with the visually-rendered terrain surface.
    */
   setData(data: LosTubeData | null): void {
+    this.lastData = data;
+    this.upload();
+  }
+
+  /**
+   * Re-upload from cached data using the map's current terrain
+   * exaggeration. Called externally (Map.tsx effect) when the user
+   * changes terrain exaggeration while a LoS result is on screen.
+   */
+  refresh(): void {
+    this.upload();
+  }
+
+  private upload(): void {
     const gl = this.gl;
     if (!gl || !this.buffer) return;
 
+    const data = this.lastData;
     if (!data || data.points.length < 2) {
       this.vertexCount = 0;
       this.map?.triggerRepaint();
       return;
     }
+
+    // Mapbox types `exaggeration` as DataDrivenPropertyValueSpecification;
+    // coerce to number since we only ever set it to a plain number in
+    // Map.tsx's applyTerrainState.
+    const exagRaw = this.map?.getTerrain()?.exaggeration;
+    const exaggeration = typeof exagRaw === "number" ? exagRaw : 1;
 
     // Pack interleaved: [x, y, z, r, g, b] per vertex, in Mercator world units.
     const verts = new Float32Array(data.points.length * 6);
@@ -136,7 +170,7 @@ export class LosTubeLayer implements mapboxgl.CustomLayerInterface {
     for (const p of data.points) {
       const mc = mapboxgl.MercatorCoordinate.fromLngLat(
         { lng: p.lng, lat: p.lat },
-        p.altitude,
+        p.altitude * exaggeration,
       );
       const [r, g, b] = colorFor(p.color);
       verts[i++] = mc.x;
