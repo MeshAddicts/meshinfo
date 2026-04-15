@@ -1176,8 +1176,53 @@ export function Map() {
     const fromAltitude = fromLive.position?.altitude ?? null;
     const toAltitude = toLive.position?.altitude ?? null;
 
-    // Give terrain DEM tiles a moment to load before sampling
     const run = async () => {
+      // Build our own DEM for the LoS span instead of relying on
+      // `mb.queryTerrainElevation`. That API only sees whatever terrain
+      // tiles Mapbox has cached for the current viewport, so if the user
+      // computed LoS while zoomed out, endpoints on mountain peaks get
+      // averaged elevations from coarse tiles (silent ~400 m undershoot
+      // was what triggered this). By fetching a terrain-rgb DEM directly
+      // sized to the link bbox, LoS terrain is deterministic and
+      // viewport-independent — the exact trade-off coverage already made.
+      const midLng = (fromPos[0] + toPos[0]) / 2;
+      const midLat = (fromPos[1] + toPos[1]) / 2;
+      // Rough haversine for bbox sizing (close enough at human scales).
+      const dLat = (toPos[1] - fromPos[1]) * Math.PI / 180;
+      const dLng = (toPos[0] - fromPos[0]) * Math.PI / 180;
+      const midLatRad = midLat * Math.PI / 180;
+      const linkKm = 6371 * Math.sqrt(
+        dLat * dLat + (dLng * Math.cos(midLatRad)) ** 2,
+      );
+      // Square bbox with enough padding that near-perpendicular features
+      // aren't clipped. Minimum 15 km keeps very short links from having
+      // a useless bbox.
+      const halfSpanKm = Math.max(15, linkKm / 2 + Math.max(15, linkKm * 0.15));
+      const demBounds = demBoundsAround([midLng, midLat], halfSpanKm, 1.0);
+
+      const mapboxToken = env.MAPBOX_TOKEN;
+      if (!mapboxToken) {
+        console.warn("[Map] LoS aborted — Mapbox token missing.");
+        setLosResult(null);
+        return;
+      }
+
+      let dem: DEM;
+      try {
+        // 2048² matches the coverage tool's DEM; sizes the same peaks to
+        // similar accuracy. For a 200 km link bbox that's ~115 m/px.
+        dem = await buildDemFromTerrainRgb({
+          bounds: demBounds,
+          targetWidth: 2048,
+          targetHeight: 2048,
+          token: mapboxToken,
+        });
+      } catch (err) {
+        console.warn("[Map] LoS DEM fetch failed:", err);
+        setLosResult(null);
+        return;
+      }
+
       let result: LoSResult;
       try {
         result = analyzeLineOfSight({
@@ -1189,8 +1234,8 @@ export function Map() {
           freqGHz: 0.915,
           samples: 150,
           queryTerrainM: (lng, lat) => {
-            const elev = mb.queryTerrainElevation([lng, lat]);
-            return typeof elev === "number" ? elev : null;
+            const elev = sampleDEMAt(dem, lng, lat);
+            return Number.isNaN(elev) ? null : elev;
           },
         });
       } catch (err) {
@@ -1235,13 +1280,17 @@ export function Map() {
       }
     };
 
-    // Fit the viewport to include both points so terrain tiles load for sampling
+    // Fit the viewport to include both points for context (purely UX
+    // now — previously we also relied on this to force terrain tiles to
+    // load before sampling, but LoS now fetches its own DEM).
     const bounds = new mapboxgl.LngLatBounds(fromPos, toPos);
     mb.fitBounds(bounds, { padding: 120, duration: 600, maxZoom: 11 });
 
-    // Wait for terrain tiles to settle, then sample
-    const timer = setTimeout(run, 1200);
-    return () => clearTimeout(timer);
+    let cancelled = false;
+    run().catch((err) => {
+      if (!cancelled) console.warn("[Map] LoS run failed:", err);
+    });
+    return () => { cancelled = true; };
   }, [activeTool, toolStep, toolFromId, toolToId, provider, terrain3D, nodes]);
 
   // Push the current LoS result into the 3D tube layer + obstruction source.
@@ -1561,13 +1610,19 @@ export function Map() {
         // altitude" — i.e. we synthesized the base from 0.
         const originGround = sampleDEMAt(dem, origin![0], origin![1]);
         const groundOk = !Number.isNaN(originGround);
-        // Guard against junk altitudes: some Meshtastic firmware reports 0
-        // or sea level when the GPS lock is poor. If the reported altitude
-        // is below local terrain, treat it as bogus and fall back.
+        // Guard against junk altitudes: some Meshtastic firmware reports
+        // 0 or sea level when the GPS lock is poor (alt < ground), and
+        // some report unit-scaled values like 10000 when the real unit
+        // is 100 m (alt >> ground). 1 km above local ground is the
+        // generous upper bound for any realistic Meshtastic mount; see
+        // losAnalysis.ts for the matching guard.
+        const MAX_HEIGHT_ABOVE_TERRAIN_M = 1000;
         const altValid =
           altitude != null &&
           Number.isFinite(altitude) &&
-          (!groundOk || altitude >= originGround);
+          (!groundOk ||
+            (altitude >= originGround &&
+              altitude <= originGround + MAX_HEIGHT_ABOVE_TERRAIN_M));
         const baseM = altValid
           ? (altitude as number)
           : (groundOk ? originGround : 0);

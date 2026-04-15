@@ -170,20 +170,39 @@ export function analyzeLineOfSight(input: LoSInput): LoSResult {
   /**
    * Resolve final node height:
    * - If altitude is missing/invalid → use terrain + antenna (fallback)
-   * - If altitude is below terrain (bogus GPS data — nodes can't be underground)
-   *   → also fall back to terrain + antenna
+   * - If altitude is below terrain (bogus GPS data — nodes can't be
+   *   underground) → also fall back to terrain + antenna.
+   * - If altitude is unreasonably above terrain (> 1 km AGL — almost
+   *   certainly a firmware unit bug or GPS glitch rather than a real
+   *   balloon/aircraft node) → fall back too, and log a warning so the
+   *   node can be investigated. 1 km covers any realistic ground-based
+   *   Meshtastic mount (the tallest building on earth is ~828 m, and
+   *   regulatory drone altitude limit is 122 m).
    * - Otherwise use the reported altitude.
    */
-  const resolveHeight = (altitude: number | null | undefined, ground: number) => {
+  const MAX_HEIGHT_ABOVE_TERRAIN_M = 1000;
+  const resolveHeight = (altitude: number | null | undefined, ground: number, label: string) => {
     const valid = altitude != null && Number.isFinite(altitude);
-    if (!valid || (altitude as number) < ground) {
+    if (!valid) {
       return { height: ground + antennaHeightM, isFallback: true };
     }
-    return { height: altitude as number, isFallback: false };
+    const alt = altitude as number;
+    if (alt < ground) {
+      return { height: ground + antennaHeightM, isFallback: true };
+    }
+    if (alt > ground + MAX_HEIGHT_ABOVE_TERRAIN_M) {
+      console.warn(
+        `[losAnalysis] ${label} reports altitude ${alt.toFixed(0)} m at terrain ${ground.toFixed(0)} m ` +
+          `(${(alt - ground).toFixed(0)} m above local ground — likely bad data). ` +
+          `Falling back to terrain + ${antennaHeightM} m.`,
+      );
+      return { height: ground + antennaHeightM, isFallback: true };
+    }
+    return { height: alt, isFallback: false };
   };
 
-  const fromResolved = resolveHeight(fromAltitudeM, fromGround);
-  const toResolved = resolveHeight(toAltitudeM, toGround);
+  const fromResolved = resolveHeight(fromAltitudeM, fromGround, "from");
+  const toResolved = resolveHeight(toAltitudeM, toGround, "to");
   const fromHeightM = fromResolved.height;
   const toHeightM = toResolved.height;
   const fromIsFallback = fromResolved.isFallback;
