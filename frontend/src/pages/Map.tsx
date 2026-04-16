@@ -28,7 +28,7 @@ import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
 import { COMMON_HARDWARE, effectiveSensitivityDbm, ENVIRONMENTS, MESHTASTIC_PRESETS, reliabilityPreset, type CoverageReliability, type CoverageResult } from "./map/coverageAnalysis";
 import { demBoundsAround, downsampleDEM, sampleDEMAt, type DEM, type DEMBounds } from "./map/terrainDEM";
-import { buildDemFromTerrainRgb } from "./map/terrainRgb";
+import { buildDemFromTerrainRgb, fetchElevationAt } from "./map/terrainRgb";
 import { CoverageWorkerPool } from "./map/coverageWorkerPool";
 import type { CoverageSliceRequest } from "./map/coverageSliceWorker";
 import type { RasterParams } from "./map/coverageRaster";
@@ -1627,8 +1627,29 @@ export function Map() {
         // losing the GPS truth that ties the pin to a real device.
         // `originIsFallback` flags "terrain data missing AND no GPS
         // altitude" — i.e. we synthesized the base from 0.
-        const originGround = sampleDEMAt(dem, origin![0], origin![1]);
-        const groundOk = !Number.isNaN(originGround);
+        //
+        // Prefer a z=14 fetch at the pin over the bbox DEM. The bbox DEM
+        // is forced to z≤10 at 200 km radius by MAX_TILES_PER_REQUEST,
+        // which can undersample narrow peaks by 400+ m. A single extra
+        // tile fetch gives us an accurate summit elevation without
+        // blowing up tile costs on the whole bbox.
+        // Best origin-ground reading: try Mapbox's in-viewport terrain
+        // first (the map easeTo'd to the pin before the DEM fetch, so
+        // by now high-zoom tiles should be loaded). Fall back to our own
+        // z=15 tile fetch, then to the bbox DEM. Log what we got so we
+        // can diagnose if peaks are still averaging away.
+        const mbElev = mb.queryTerrainElevation(origin!);
+        const mbElevOk = typeof mbElev === "number" && Number.isFinite(mbElev);
+        const fetchElev = mbElevOk ? null : await fetchElevationAt(origin![0], origin![1], mapboxToken);
+        const originGroundHighZoom = mbElevOk ? mbElev : fetchElev;
+        const originGroundFromDem = sampleDEMAt(dem, origin![0], origin![1]);
+        const groundOkDem = !Number.isNaN(originGroundFromDem);
+        const groundOkHz = originGroundHighZoom != null;
+        // Use the high-zoom value for display / altValid / origin MSL.
+        const originGround = groundOkHz
+          ? originGroundHighZoom
+          : originGroundFromDem;
+        const groundOk = groundOkHz || groundOkDem;
         // Guard against junk altitudes: some Meshtastic firmware reports
         // 0 or sea level when the GPS lock is poor (alt < ground), and
         // some report unit-scaled values like 10000 when the real unit
@@ -1647,13 +1668,18 @@ export function Map() {
           : (groundOk ? originGround : 0);
         const originHeightM = baseM + coverageAntennaHeightM;
         const originIsFallback = !groundOk && !altValid;
-        // What ITM actually wants: TX antenna height *above local ground*.
-        // When GPS altitude is in play, the implied "device above terrain"
-        // (e.g. mounted on a 3 m post) is preserved by stacking the user's
-        // antenna height on top of (alt - groundElev). When falling back
-        // to terrain as the base, this collapses to just antennaHeight.
-        const txAboveGroundM = groundOk
-          ? originHeightM - originGround
+        // What ITM actually wants: TX antenna height *above the value it
+        // reads from profile[0]*. The worker's profile[0] comes from our
+        // bbox DEM (the same `dem` we sampled with `originGroundFromDem`
+        // above), which is z≤10 and can undersample sharp peaks by
+        // hundreds of meters. Compensate by computing txHeight against
+        // the DEM value — this preserves the TX's correct MSL inside
+        // ITM (originHeightM), since ITM places TX at
+        // profile[0] + txHeightM = originGroundFromDem + (originHeightM - originGroundFromDem) = originHeightM.
+        // When the DEM and high-zoom elevations agree (flat terrain),
+        // this collapses to just antennaHeight as before.
+        const txAboveGroundM = groundOkDem
+          ? originHeightM - originGroundFromDem
           : coverageAntennaHeightM;
 
         // 3. Dispatch the pool over the full-resolution DEM. OUTPUT_SIZE

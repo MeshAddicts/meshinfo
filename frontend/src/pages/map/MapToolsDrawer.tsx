@@ -13,6 +13,19 @@ export interface ToolDef {
 
 const TOOLS: ToolDef[] = [
   {
+    id: "coverage",
+    label: "Coverage",
+    description: "Paint reachable area from a node (or anywhere)",
+    requiresTerrain: true,
+    icon: (
+      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9" strokeWidth={2} strokeDasharray="3 3" />
+        <circle cx="12" cy="12" r="5" strokeWidth={2} strokeDasharray="2 2" />
+        <circle cx="12" cy="12" r="1.5" strokeWidth={2} fill="currentColor" />
+      </svg>
+    ),
+  },
+  {
     id: "los",
     label: "LOS",
     description: "Line-of-sight + Fresnel zone between two nodes",
@@ -30,19 +43,6 @@ const TOOLS: ToolDef[] = [
     icon: (
       <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-      </svg>
-    ),
-  },
-  {
-    id: "coverage",
-    label: "Coverage",
-    description: "Paint reachable area from a node (or anywhere)",
-    requiresTerrain: true,
-    icon: (
-      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <circle cx="12" cy="12" r="9" strokeWidth={2} strokeDasharray="3 3" />
-        <circle cx="12" cy="12" r="5" strokeWidth={2} strokeDasharray="2 2" />
-        <circle cx="12" cy="12" r="1.5" strokeWidth={2} fill="currentColor" />
       </svg>
     ),
   },

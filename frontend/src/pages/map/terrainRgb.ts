@@ -201,6 +201,55 @@ async function fetchTile(
 // Build a DEM over the requested bounds by resampling fetched tiles
 // ---------------------------------------------------------------------------
 
+/**
+ * Fetch a single high-zoom tile and bilinear-sample its elevation at a
+ * specific lng/lat. Use this to override the origin ground elevation in
+ * the coverage / LOS tools — the main bbox DEM is forced to a coarser
+ * zoom by `MAX_TILES_PER_REQUEST`, which can undersample narrow peaks
+ * by hundreds of meters. A single tile at z=14 (~7.6 m/px native in the
+ * US — backed by USGS 3DEP in Mapbox's blend) captures summits
+ * faithfully.
+ *
+ * Returns `null` if the fetch fails.
+ */
+export async function fetchElevationAt(
+  lng: number,
+  lat: number,
+  token: string,
+  zoom = 15,
+): Promise<number | null> {
+  // Don't clamp to MAX_ZOOM (which caps the *bbox* DEM fetch to keep
+  // tile counts sane). For a single pin tile, z=15 is fine — Mapbox
+  // terrain-rgb is published through zoom 15, and that's where USGS
+  // 3DEP high-resolution data lives in the US. z=14 often still uses
+  // a coarser source blend that can undersample peaks by 500+ m.
+  const clampedZoom = Math.max(0, Math.min(15, zoom));
+  const tileX = Math.floor(lng2tileX(lng, clampedZoom));
+  const tileY = Math.floor(lat2tileY(lat, clampedZoom));
+  try {
+    const tile = await fetchTile(clampedZoom, tileX, tileY, token);
+    const pxFloat = (lng2tileX(lng, clampedZoom) - tileX) * tile.size;
+    const pyFloat = (lat2tileY(lat, clampedZoom) - tileY) * tile.size;
+    const x0 = Math.max(0, Math.min(tile.size - 1, Math.floor(pxFloat)));
+    const y0 = Math.max(0, Math.min(tile.size - 1, Math.floor(pyFloat)));
+    const x1 = Math.min(tile.size - 1, x0 + 1);
+    const y1 = Math.min(tile.size - 1, y0 + 1);
+    const fx = pxFloat - x0;
+    const fy = pyFloat - y0;
+    const v00 = tile.data[y0 * tile.size + x0];
+    const v10 = tile.data[y0 * tile.size + x1];
+    const v01 = tile.data[y1 * tile.size + x0];
+    const v11 = tile.data[y1 * tile.size + x1];
+    if (Number.isNaN(v00) || Number.isNaN(v10) || Number.isNaN(v01) || Number.isNaN(v11)) return null;
+    const top = v00 + (v10 - v00) * fx;
+    const bot = v01 + (v11 - v01) * fx;
+    return top + (bot - top) * fy;
+  } catch (err) {
+    console.warn("[terrainRgb] fetchElevationAt failed:", err);
+    return null;
+  }
+}
+
 export interface BuildDemOptions {
   bounds: DEMBounds;
   /** Output grid resolution. */
@@ -253,40 +302,71 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
   }
   await Promise.all(jobs);
 
-  // Resample into the output grid. For each output pixel, compute its
-  // fractional tile x/y, locate the owning tile, and read the nearest pixel.
+  // Resample into the output grid using BILINEAR interpolation across
+  // native tile pixels. Previously we did nearest-neighbor, which meant
+  // narrow terrain peaks (1–2 tile pixels wide) could fall between DEM
+  // cells and be completely dropped from the output — we saw ~500 m
+  // undershoot on small California buttes. Bilinear guarantees every
+  // input pixel contributes to at least one DEM cell, so peaks survive
+  // the resample.
   const data = new Float32Array(targetWidth * targetHeight);
   const scale = Math.pow(2, zoom);
+
+  // All fetched tiles at a given zoom should share the same pixel size;
+  // pick it from any non-null tile. Fallback to 256 if somehow all null.
+  let tileSize = 256;
+  for (const t of tileMap.values()) {
+    if (t) { tileSize = t.size; break; }
+  }
+
+  /**
+   * Look up a single elevation by absolute tile-pixel coordinates (i.e.
+   * treat the fetched tiles as one contiguous image). Handles cross-tile
+   * reads: a pixel near the eastern edge of one tile whose right
+   * neighbor lies in the tile to the east resolves correctly.
+   */
+  const lookup = (absX: number, absY: number): number => {
+    const tileX = Math.floor(absX / tileSize);
+    const tileY = Math.floor(absY / tileSize);
+    const px = absX - tileX * tileSize;
+    const py = absY - tileY * tileSize;
+    const xWrapped = ((tileX % scale) + scale) % scale;
+    const t = tileMap.get(`${zoom}/${xWrapped}/${tileY}`);
+    if (!t) return NaN;
+    return t.data[py * t.size + px];
+  };
 
   for (let j = 0; j < targetHeight; j++) {
     // Latitude of this output row (row 0 = north edge).
     const lat =
       bounds.north - ((bounds.north - bounds.south) * j) / (targetHeight - 1);
-    const tyFloat = lat2tileY(lat, zoom);
-    const tyInt = Math.floor(tyFloat);
-    const tyFrac = tyFloat - tyInt;
+    const absY = lat2tileY(lat, zoom) * tileSize;
+    const y0 = Math.floor(absY);
+    const fy = absY - y0;
 
     for (let i = 0; i < targetWidth; i++) {
       const lng =
         bounds.west + ((bounds.east - bounds.west) * i) / (targetWidth - 1);
-      const txFloat = lng2tileX(lng, zoom);
-      const txInt = Math.floor(txFloat);
-      const txFrac = txFloat - txInt;
+      const absX = lng2tileX(lng, zoom) * tileSize;
+      const x0 = Math.floor(absX);
+      const fx = absX - x0;
 
-      // Wrap X across the world seam just in case (terrain-rgb uses standard
-      // spherical Mercator with X wrapping at 2^zoom).
-      const xWrapped = ((txInt % scale) + scale) % scale;
-      const key = `${zoom}/${xWrapped}/${tyInt}`;
-      const tile = tileMap.get(key);
-      if (!tile) {
+      const v00 = lookup(x0, y0);
+      const v10 = lookup(x0 + 1, y0);
+      const v01 = lookup(x0, y0 + 1);
+      const v11 = lookup(x0 + 1, y0 + 1);
+
+      // If ANY corner is missing (tile not fetched — typically bbox
+      // edges), mark NaN so downstream treats it as no-data rather than
+      // bleeding in a bogus interpolation.
+      if (Number.isNaN(v00) || Number.isNaN(v10) || Number.isNaN(v01) || Number.isNaN(v11)) {
         data[j * targetWidth + i] = NaN;
         continue;
       }
-      // Use each tile's actual pixel size — might be 256 or 512.
-      const tileSize = tile.size;
-      const pxInt = Math.min(tileSize - 1, Math.floor(txFrac * tileSize));
-      const pyInt = Math.min(tileSize - 1, Math.floor(tyFrac * tileSize));
-      data[j * targetWidth + i] = tile.data[pyInt * tileSize + pxInt];
+
+      const top = v00 + (v10 - v00) * fx;
+      const bot = v01 + (v11 - v01) * fx;
+      data[j * targetWidth + i] = top + (bot - top) * fy;
     }
   }
 
