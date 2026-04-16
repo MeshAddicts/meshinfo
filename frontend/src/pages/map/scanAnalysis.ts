@@ -9,6 +9,26 @@
  */
 import { analyzeLineOfSight, haversineKm, type TerrainSampler } from "./losAnalysis";
 import { pathLossDb } from "./coverageAnalysis";
+import { computeP2PLossFast, ModeOfVariability, type ItmContext } from "./itm";
+
+/**
+ * Pre-configured ITM context + climate/ground parameters. When provided
+ * to `runScan`, terrain-aware Longley-Rice replaces the old free-space +
+ * knife-edge path loss, dramatically improving accuracy in mountainous
+ * or hilly terrain. Without it, scan falls back to the legacy FSPL model
+ * for backward compatibility.
+ */
+export interface ScanItmConfig {
+  context: ItmContext;
+  climate: number;
+  surfaceRefractivityN: number;
+  polarization: number;
+  groundDielectric: number;
+  groundConductivity: number;
+  timePct?: number;
+  locationPct?: number;
+  situationPct?: number;
+}
 
 export type ScanClass = "clear" | "fresnel" | "diffracted" | "blocked";
 
@@ -57,6 +77,13 @@ export interface ScanInput {
    * (expensive) LoS call. Speeds up big scans. Default Infinity.
    */
   maxDistanceKm?: number;
+  /**
+   * If provided, use Longley-Rice (ITM) for terrain-aware path loss
+   * instead of free-space + knife-edge. Geometric LoS/Fresnel
+   * classification is kept from `analyzeLineOfSight`; only the loss
+   * calculation changes.
+   */
+  itm?: ScanItmConfig;
 }
 
 export interface ScanSummary {
@@ -123,8 +150,36 @@ export function runScan(input: ScanInput): ScanSummary {
       queryTerrainM,
     });
 
-    const pl = pathLossDb(d, freqMhz);
-    const totalLossDb = pl + los.diffractionLossDb + cableLossDb;
+    // Path loss: use ITM (terrain-aware) when available, else FSPL + knife-edge.
+    let totalLossDb: number;
+    if (input.itm && los.points.length >= 2) {
+      const profileM = new Float64Array(los.points.map((p) => p.ground));
+      const spacingM = (d * 1000) / (profileM.length - 1);
+      const itmLoss = computeP2PLossFast(input.itm.context, {
+        txHeightM: Math.max(0.5, los.fromHeightM - los.points[0].ground),
+        rxHeightM: Math.max(0.5, los.toHeightM - los.points[los.points.length - 1].ground),
+        profileM,
+        pointSpacingM: spacingM,
+        climate: input.itm.climate,
+        surfaceRefractivityN: input.itm.surfaceRefractivityN,
+        freqMhz: freqGHz * 1000,
+        polarization: input.itm.polarization,
+        groundDielectric: input.itm.groundDielectric,
+        groundConductivity: input.itm.groundConductivity,
+        mdvar: ModeOfVariability.SingleMessage,
+        time: input.itm.timePct ?? 50,
+        location: input.itm.locationPct ?? 50,
+        situation: input.itm.situationPct ?? 50,
+      });
+      // Fallback to FSPL if ITM returns garbage (shouldn't happen for
+      // valid profiles, but safety).
+      totalLossDb =
+        Number.isFinite(itmLoss) && itmLoss > 0
+          ? itmLoss + cableLossDb
+          : pathLossDb(d, freqMhz) + los.diffractionLossDb + cableLossDb;
+    } else {
+      totalLossDb = pathLossDb(d, freqMhz) + los.diffractionLossDb + cableLossDb;
+    }
     const rssiDbm = txDbm + 2 * antennaDbi - totalLossDb;
     const marginDb = rssiDbm - rxSensitivityDbm - fadeMarginDb;
 

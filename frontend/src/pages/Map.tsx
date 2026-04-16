@@ -34,7 +34,7 @@ import type { CoverageSliceRequest } from "./map/coverageSliceWorker";
 import type { RasterParams } from "./map/coverageRaster";
 import { extractCoverageContours, type ContourFeatureCollection } from "./map/coverageContours";
 import { analyzeLineOfSight, type LoSResult } from "./map/losAnalysis";
-import { Climate, computeP2PLoss, Polarization } from "./map/itm";
+import { Climate, computeP2PLoss, type ItmContext, loadItmContext, Polarization } from "./map/itm";
 import { LosTubeLayer, losPointsToTubeData, obstructionsToGeoJSON, pickObstructions } from "./map/losTubeLayer";
 import { runScan, scanToGeoJSON, type ScanSummary, type ScanTarget } from "./map/scanAnalysis";
 import { MapScanPanel } from "./map/MapScanPanel";
@@ -465,7 +465,7 @@ export function Map() {
   /** Chipset-corrected RX sensitivity actually used in calcs. */
   const coverageEffectiveSensitivityDbm = useMemo(() => {
     const hw = COMMON_HARDWARE[coverageHardwareIdx];
-    return effectiveSensitivityDbm(coverageSensitivityDbm, hw.chipset);
+    return effectiveSensitivityDbm(coverageSensitivityDbm, hw.chipset, hw.sensitivityOffsetDb ?? 0);
   }, [coverageSensitivityDbm, coverageHardwareIdx]);
   /**
    * DEM/raster size radius — derived from a simple free-space budget
@@ -554,6 +554,10 @@ export function Map() {
    */
   const dragPreviewBusyRef = useRef(false);
   const dragPreviewPendingRef = useRef<[number, number] | null>(null);
+  // Cached ITM context for the scan tool — loaded lazily on first scan,
+  // reused across subsequent scans within the session. Same WASM module
+  // the coverage workers load, just on the main thread.
+  const scanItmContextRef = useRef<ItmContext | null>(null);
 
   /**
    * Cached GeoJSON of the latest contour extraction. Kept so the panel
@@ -1391,27 +1395,20 @@ export function Map() {
     setIsScanning(true);
     let cancelled = false;
 
-    // Give terrain tiles time to settle, then scan every node in the current
-    // viewport. We deliberately don't fitBounds — it'd fight the user's view.
-    const timer = setTimeout(() => {
-      if (cancelled) return;
-      try {
-        const bounds = mb.getBounds();
-        if (!bounds) {
-          setIsScanning(false);
-          return;
-        }
-        const w = bounds.getWest();
-        const e = bounds.getEast();
-        const s = bounds.getSouth();
-        const n = bounds.getNorth();
+    const SCAN_RADIUS_KM = 200;
 
+    const runAsync = async () => {
+      try {
+        // Collect ALL known nodes — runScan's `maxDistanceKm` filter
+        // handles the radius cutoff via haversine so the user doesn't
+        // have to keep the viewport zoomed out to include targets.
+        // Previously scan only included viewport-visible nodes, which
+        // broke when users zoomed in to place the pin precisely.
         const targets: ScanTarget[] = [];
         const seen = new Set<string>();
         for (const [rawId, node] of Object.entries(nodes)) {
           if (!node?.map_position) continue;
           const [lng, lat] = node.map_position;
-          if (lng < w || lng > e || lat < s || lat > n) continue;
           const norm = rawId.startsWith("!") ? rawId.slice(1) : rawId;
           if (toolFromId && (norm === toolFromId || rawId === toolFromId)) continue;
           if (seen.has(norm)) continue;
@@ -1438,17 +1435,56 @@ export function Map() {
           return;
         }
 
+        // Fetch a DEM covering a 200 km radius around the origin (same
+        // cap as coverage). This is viewport-independent so the scan
+        // result doesn't depend on the user's current zoom level.
+        const mapboxToken = env.MAPBOX_TOKEN;
+        if (!mapboxToken) {
+          console.warn("[Map] Scan aborted — Mapbox token missing.");
+          setIsScanning(false);
+          return;
+        }
+        const scanBounds = demBoundsAround(origin!, SCAN_RADIUS_KM, 1.05);
+        const dem = await buildDemFromTerrainRgb({
+          bounds: scanBounds,
+          targetWidth: 1024,
+          targetHeight: 1024,
+          token: mapboxToken,
+        });
+        if (cancelled) return;
+
+        // Load ITM context (cached across scans within the session).
+        if (!scanItmContextRef.current) {
+          try {
+            scanItmContextRef.current = await loadItmContext(128);
+          } catch (err) {
+            console.warn("[Map] Scan ITM WASM unavailable — falling back to FSPL:", err);
+          }
+        }
+        if (cancelled) return;
+
         const summary = runScan({
           origin: origin!,
           originAltitudeM: originAltitude,
           originShortname,
           targets,
+          maxDistanceKm: SCAN_RADIUS_KM,
           raySamples: 60,
           freqGHz: 0.915,
           queryTerrainM: (lng, lat) => {
-            const elev = mb.queryTerrainElevation([lng, lat]);
-            return typeof elev === "number" ? elev : null;
+            const elev = sampleDEMAt(dem, lng, lat);
+            return Number.isNaN(elev) ? null : elev;
           },
+          itm: scanItmContextRef.current
+            ? {
+                context: scanItmContextRef.current,
+                climate: 5 /* ContinentalTemperate */,
+                surfaceRefractivityN: 301,
+                polarization: 1 /* Vertical */,
+                groundDielectric: 15,
+                groundConductivity: 0.005,
+              }
+            : undefined,
         });
 
         if (cancelled) return;
@@ -1461,12 +1497,10 @@ export function Map() {
       } finally {
         if (!cancelled) setIsScanning(false);
       }
-    }, 1200);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
     };
+
+    runAsync();
+    return () => { cancelled = true; };
   }, [activeTool, toolStep, toolFromId, toolVirtualPos, provider, terrain3D, nodes]);
 
   // Clear scan-links source when leaving scan tool

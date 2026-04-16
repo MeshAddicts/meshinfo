@@ -82,8 +82,9 @@ export type LoraChipset = "SX1262" | "SX1276";
 export function effectiveSensitivityDbm(
   presetSensitivityDbm: number,
   chipset: LoraChipset,
+  boardOffsetDb = 0,
 ): number {
-  return presetSensitivityDbm + (chipset === "SX1276" ? SX1276_SENSITIVITY_OFFSET_DB : 0);
+  return presetSensitivityDbm + (chipset === "SX1276" ? SX1276_SENSITIVITY_OFFSET_DB : 0) + boardOffsetDb;
 }
 
 /**
@@ -133,6 +134,15 @@ export interface HardwareEntry {
   label: string;
   txDbm: number;
   chipset: LoraChipset;
+  /**
+   * Board-specific sensitivity adjustment in dB, applied on top of the
+   * modem preset's real-world sensitivity + chipset correction. Negative
+   * values mean the board is noisier than the baseline (common for
+   * compact / budget designs); positive means better (rare). All boards
+   * are 0 dB until per-board measurements are available — the field is
+   * wired through so plugging in real data later is a one-line change.
+   */
+  sensitivityOffsetDb?: number;
   isCustom?: boolean;
 }
 

@@ -2,7 +2,8 @@
  * Scan-results panel — ranked LoS from a chosen origin to every node in
  * view, with per-result class pills and a quick "fly to" action.
  */
-import type { ScanSummary, ScanClass } from "./scanAnalysis";
+import { useMemo, useState } from "react";
+import type { ScanSummary, ScanClass, ScanResult } from "./scanAnalysis";
 
 const CLASS_STYLES: Record<ScanClass, { bg: string; text: string; border: string; label: string }> = {
   clear:      { bg: "bg-emerald-500/15", text: "text-emerald-300", border: "border-emerald-500/30", label: "Clear" },
@@ -56,14 +57,30 @@ export function MapScanPanel({
     );
   }
 
+  // Filter by classification — null means "show all". Clicking an active
+  // filter toggles it off (back to all).
+  const [filter, setFilter] = useState<ScanClass | null>(null);
+  const toggleFilter = (cls: ScanClass) =>
+    setFilter((prev) => (prev === cls ? null : cls));
+
   const total = summary ? summary.results.length : 0;
   const reachable = summary
     ? summary.clearCount + summary.fresnelCount + summary.diffractedCount
     : 0;
 
+  // Filtered + sorted: when a filter is active, show only that class.
+  // Always sort by margin descending (highest dB first).
+  const displayResults: ScanResult[] = useMemo(() => {
+    if (!summary) return [];
+    const filtered = filter
+      ? summary.results.filter((r) => r.cls === filter)
+      : summary.results;
+    return [...filtered].sort((a, b) => b.marginDb - a.marginDb);
+  }, [summary, filter]);
+
   return (
     <div className="fixed left-3 top-1/2 -translate-y-1/2 z-1050 w-85 max-w-[calc(100vw-1.5rem)]
-      max-h-[calc(100vh-8rem)] overflow-hidden
+      h-[calc(100vh-8rem)] overflow-hidden
       rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
       animate-[slideInLeft_220ms_ease-out] flex flex-col">
 
@@ -112,23 +129,23 @@ export function MapScanPanel({
 
         {!isScanning && summary && summary.results.length === 0 && (
           <div className="px-3 py-6 text-center text-[11px] text-gray-400">
-            No target nodes in the current view. Zoom or pan to include more nodes, then re-open the tool.
+            No target nodes within 200 km of the origin. Try a different location.
           </div>
         )}
 
         {!isScanning && summary && summary.results.length > 0 && (
           <>
-            {/* Summary counts */}
+            {/* Summary counts — clickable filters */}
             <div className="grid grid-cols-4 gap-1.5 px-3 py-2 text-[10px] text-gray-400 border-b border-white/5">
-              <StatPill label="Clear" count={summary.clearCount} cls="clear" />
-              <StatPill label="Fresnel" count={summary.fresnelCount} cls="fresnel" />
-              <StatPill label="Diffracted" count={summary.diffractedCount} cls="diffracted" />
-              <StatPill label="Blocked" count={summary.blockedCount} cls="blocked" />
+              <StatPill label="Clear" count={summary.clearCount} cls="clear" active={filter === "clear"} onClick={() => toggleFilter("clear")} />
+              <StatPill label="Fresnel" count={summary.fresnelCount} cls="fresnel" active={filter === "fresnel"} onClick={() => toggleFilter("fresnel")} />
+              <StatPill label="Diffracted" count={summary.diffractedCount} cls="diffracted" active={filter === "diffracted"} onClick={() => toggleFilter("diffracted")} />
+              <StatPill label="Blocked" count={summary.blockedCount} cls="blocked" active={filter === "blocked"} onClick={() => toggleFilter("blocked")} />
             </div>
 
-            {/* Results list */}
+            {/* Results list — sorted by margin (highest first) */}
             <ul className="divide-y divide-white/5">
-              {summary.results.map((r) => {
+              {displayResults.map((r) => {
                 const s = CLASS_STYLES[r.cls];
                 return (
                   <li
@@ -178,16 +195,29 @@ function StatPill({
   label,
   count,
   cls,
+  active,
+  onClick,
 }: {
   label: string;
   count: number;
   cls: ScanClass;
+  active?: boolean;
+  onClick?: () => void;
 }) {
   const s = CLASS_STYLES[cls];
   return (
-    <div className={`rounded border ${s.bg} ${s.text} ${s.border} px-1.5 py-0.5 text-center`}>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded border px-1.5 py-0.5 text-center transition-all cursor-pointer ${
+        active
+          ? `${s.bg} ${s.text} ${s.border} ring-1 ring-offset-1 ring-offset-gray-900 ${s.border}`
+          : `${s.bg} ${s.text} ${s.border} opacity-80 hover:opacity-100`
+      }`}
+      title={active ? `Showing ${label.toLowerCase()} only — click to show all` : `Filter to ${label.toLowerCase()} only`}
+    >
       <div className="text-[9px] opacity-80">{label}</div>
       <div className="text-[11px] font-semibold tabular-nums">{count}</div>
-    </div>
+    </button>
   );
 }
