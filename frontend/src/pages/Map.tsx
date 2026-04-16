@@ -1863,17 +1863,29 @@ export function Map() {
           // Use negative request IDs for drag previews so they never
           // collide with the authoritative compute's id namespace.
           const previewId = -Math.floor(performance.now());
-          const ground = sampleDEMAt(dem, lngLat[0], lngLat[1]);
-          // Drag preview is always virtual (no GPS altitude available),
-          // so MSL == terrain + antenna and ITM-above-ground == antenna.
+          // Use the same three-tier elevation strategy as the main
+          // compute so the drag preview doesn't jump on release.
+          // queryTerrainElevation is synchronous (~0.1 ms) so no drag
+          // jank; it reads the high-zoom tiles Mapbox has loaded in the
+          // viewport (which follows the pin during drag).
+          const demGround = sampleDEMAt(dem, lngLat[0], lngLat[1]);
+          const demGroundOk = !Number.isNaN(demGround);
+          const mbGround = mb.queryTerrainElevation(lngLat);
+          const mbGroundOk = typeof mbGround === "number" && Number.isFinite(mbGround);
+          const accurateGround = mbGroundOk ? mbGround : (demGroundOk ? demGround : 0);
           const antennaH = coverageAntennaHeightMRef.current;
-          const originH = (Number.isNaN(ground) ? 0 : ground) + antennaH;
+          const originH = accurateGround + antennaH;
+          // Compensate ITM TX height for DEM peak-averaging, same as
+          // the authoritative compute path.
+          const txAboveGroundM = demGroundOk
+            ? originH - demGround
+            : antennaH;
           coverageRequestIdRef.current = previewId;
           await renderCoverageToImageSource({
             dem,
             origin: lngLat,
             originHeightM: originH,
-            originAntennaHeightAboveGroundM: antennaH,
+            originAntennaHeightAboveGroundM: txAboveGroundM,
             params,
             requestId: previewId,
           });
