@@ -64,8 +64,8 @@ export function MapCoveragePanel({
   onEnableTerrain,
   onClose,
   isComputing,
-  antennaDbi,
-  onAntennaDbiChange,
+  antennaIdx,
+  onAntennaIdxChange,
   hardwareIdx,
   onHardwareIdxChange,
   customTxDbm,
@@ -93,8 +93,9 @@ export function MapCoveragePanel({
   onEnableTerrain?: () => void;
   onClose: () => void;
   isComputing: boolean;
-  antennaDbi: number;
-  onAntennaDbiChange: (dbi: number) => void;
+  /** Index into COMMON_ANTENNAS — drives antenna gain in the link budget. */
+  antennaIdx: number;
+  onAntennaIdxChange: (idx: number) => void;
   hardwareIdx: number;
   onHardwareIdxChange: (idx: number) => void;
   customTxDbm: number;
@@ -738,14 +739,14 @@ export function MapCoveragePanel({
             </label>
             <select
               id="coverage-antenna"
-              value={antennaDbi}
-              onChange={(e) => onAntennaDbiChange(Number(e.target.value))}
+              value={antennaIdx}
+              onChange={(e) => onAntennaIdxChange(Number(e.target.value))}
               className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
                 focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
                 [&>option]:bg-gray-800 [&>option]:text-gray-200"
             >
-              {COMMON_ANTENNAS.map((a) => (
-                <option key={a.dbi} value={a.dbi}>{a.label}</option>
+              {COMMON_ANTENNAS.map((a, i) => (
+                <option key={i} value={i}>{a.label}</option>
               ))}
             </select>
           </div>

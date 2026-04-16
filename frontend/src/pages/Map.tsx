@@ -26,7 +26,7 @@ import { reverseGeocode } from "../maps/geocoder";
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
-import { COMMON_HARDWARE, effectiveSensitivityDbm, ENVIRONMENTS, MESHTASTIC_PRESETS, reliabilityPreset, type CoverageReliability, type CoverageResult } from "./map/coverageAnalysis";
+import { COMMON_ANTENNAS, COMMON_HARDWARE, effectiveSensitivityDbm, ENVIRONMENTS, MESHTASTIC_PRESETS, reliabilityPreset, type CoverageReliability, type CoverageResult } from "./map/coverageAnalysis";
 import { demBoundsAround, downsampleDEM, sampleDEMAt, type DEM, type DEMBounds } from "./map/terrainDEM";
 import { buildDemFromTerrainRgb, fetchElevationAt } from "./map/terrainRgb";
 import { CoverageWorkerPool } from "./map/coverageWorkerPool";
@@ -411,14 +411,19 @@ export function Map() {
   const [losResult, setLosResult] = useState<LoSResult | null>(null);
   const [coverageResult, setCoverageResult] = useState<CoverageResult | null>(null);
   const [isComputingCoverage, setIsComputingCoverage] = useState(false);
-  const [coverageAntennaDbi, setCoverageAntennaDbi] = useState(3);
+  // Index into COMMON_ANTENNAS — default to Rokland N-Male Omni 5.8 dBi (idx 3).
+  // Uses an index (not raw dBi) because multiple antennas can share the
+  // same dBi value (e.g. two different 3 dBi models) and a value-based
+  // <select> can't distinguish them.
+  const [coverageAntennaIdx, setCoverageAntennaIdx] = useState(3);
+  const coverageAntennaDbi = COMMON_ANTENNAS[coverageAntennaIdx]?.dbi ?? 3;
   const [coverageHardwareIdx, setCoverageHardwareIdx] = useState(0);
   const [coverageCustomTxDbm, setCoverageCustomTxDbm] = useState(22);
   const coverageTxDbm = COMMON_HARDWARE[coverageHardwareIdx].isCustom
     ? coverageCustomTxDbm
     : COMMON_HARDWARE[coverageHardwareIdx].txDbm;
   const [coverageEnvIdx, setCoverageEnvIdx] = useState(0);
-  const [coveragePresetIdx, setCoveragePresetIdx] = useState(1); // LongFast default
+  const [coveragePresetIdx, setCoveragePresetIdx] = useState(0); // MediumFast default
   const [coverageCustomSensDbm, setCoverageCustomSensDbm] = useState(-133);
   const coverageSensitivityDbm = MESHTASTIC_PRESETS[coveragePresetIdx].isCustom
     ? coverageCustomSensDbm
@@ -4347,8 +4352,8 @@ export function Map() {
           onEnableTerrain={provider === "mapbox" ? () => setTerrain3D(true) : undefined}
           onClose={resetTool}
           isComputing={isComputingCoverage}
-          antennaDbi={coverageAntennaDbi}
-          onAntennaDbiChange={setCoverageAntennaDbi}
+          antennaIdx={coverageAntennaIdx}
+          onAntennaIdxChange={setCoverageAntennaIdx}
           hardwareIdx={coverageHardwareIdx}
           onHardwareIdxChange={setCoverageHardwareIdx}
           customTxDbm={coverageCustomTxDbm}

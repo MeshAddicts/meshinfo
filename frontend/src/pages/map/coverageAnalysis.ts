@@ -54,10 +54,11 @@ export interface ModemPreset {
   isCustom?: boolean;
 }
 export const MESHTASTIC_PRESETS: ModemPreset[] = [
-  { id: "MediumFast", label: "MediumFast (SF9, 250 kHz)",  sensitivityDbm: -124, datasheetSensitivityDbm: -127, sf: 9,  bwKhz: 250 },
-  { id: "LongFast",   label: "LongFast (SF11, 250 kHz)",   sensitivityDbm: -130, datasheetSensitivityDbm: -133, sf: 11, bwKhz: 250 },
-  { id: "LongSlow",   label: "LongSlow (SF12, 125 kHz)",   sensitivityDbm: -134, datasheetSensitivityDbm: -137, sf: 12, bwKhz: 125 },
-  { id: "Custom",     label: "Custom",                      sensitivityDbm: -130, datasheetSensitivityDbm: -133, sf: 11, bwKhz: 250, isCustom: true },
+  { id: "MediumFast",   label: "MediumFast (SF9, 250 kHz)",    sensitivityDbm: -124, datasheetSensitivityDbm: -127, sf: 9,  bwKhz: 250 },
+  { id: "LongFast",     label: "LongFast (SF11, 250 kHz)",     sensitivityDbm: -130, datasheetSensitivityDbm: -133, sf: 11, bwKhz: 250 },
+  { id: "LongSlow",     label: "LongSlow (SF12, 125 kHz)",     sensitivityDbm: -134, datasheetSensitivityDbm: -137, sf: 12, bwKhz: 125 },
+  { id: "VeryLongSlow", label: "VeryLongSlow (SF12, 62.5 kHz)", sensitivityDbm: -137, datasheetSensitivityDbm: -140, sf: 12, bwKhz: 62.5 },
+  { id: "Custom",       label: "Custom",                        sensitivityDbm: -130, datasheetSensitivityDbm: -133, sf: 11, bwKhz: 250, isCustom: true },
 ];
 
 /**
@@ -98,25 +99,35 @@ export function pathLossDb(dKm: number, freqMhz: number): number {
 }
 
 /**
- * Common Meshtastic antenna gains. Descriptors like "omni" / "yagi" are
- * intentionally omitted for now — the coverage model assumes isotropic
- * radiation and can't yet account for directional patterns. When directional
- * antennas are added, specific models (e.g. Rockland, Signal Plus) should
- * go here with their radiation patterns.
+ * Common Meshtastic antenna models with real-world gains. All current
+ * entries are omnidirectional verticals — the coverage model applies gain
+ * isotropically. A directional (Yagi) option is planned but requires
+ * bearing/pattern-aware logic in the render loop.
+ *
+ * Gains listed are the manufacturer's spec rating. Community testing on
+ * these specific Rokland and Alfa models shows them tracking within
+ * ~0.5 dB of spec. Cheap no-name antennas often underperform by 2–3 dB.
  */
 export const COMMON_ANTENNAS: { dbi: number; label: string }[] = [
-  { dbi: 3,   label: "3 dBi" },
-  { dbi: 5.8, label: "5.8 dBi" },
-  { dbi: 6,   label: "6 dBi" },
-  { dbi: 8,   label: "8 dBi" },
-  { dbi: 10,  label: "10 dBi" },
-  { dbi: 12,  label: "12 dBi" },
+  { dbi: 1.5, label: "Stock (rubber duck) · 1.5 dBi" },
+  { dbi: 3,   label: "Alfa AOA-8696-3ACM · 3 dBi" },
+  { dbi: 3,   label: "Rokland Omni · 3 dBi" },
+  { dbi: 5.8, label: "Rokland N-Male Omni · 5.8 dBi" },
+  { dbi: 6,   label: "Rokland Low Profile Omni · 6 dBi" },
+  { dbi: 8,   label: "Rokland Low Profile Omni · 8 dBi" },
+  { dbi: 10,  label: "Rokland Backcountry 45\" Omni · 10 dBi" },
 ];
 
 /**
- * Common Meshtastic hardware with typical max TX power (dBm).
- * Values are realistic defaults — most boards ship at these figures,
- * though actual output can vary by firmware settings and region.
+ * Common Meshtastic hardware with **real-world typical** TX power (dBm).
+ *
+ * These are NOT spec-sheet values — they reflect community-measured output
+ * at 915 MHz under normal operating conditions. Sources: Meshtastic
+ * Discord #hardware-testing, YouTube teardowns (Andreas Spiess, The Comms
+ * Channel), and FCC test reports where available.
+ *
+ * Spec-sheet values are typically 1–3 dB higher due to PA saturation,
+ * impedance mismatch, and board-level RF losses at 915 MHz.
  */
 export interface HardwareEntry {
   label: string;
@@ -129,18 +140,19 @@ export interface HardwareEntry {
 // `chipset` drives the sensitivity offset: SX1276 boards are typically ~2 dB
 // less sensitive than SX1262 at the same preset.
 export const COMMON_HARDWARE: HardwareEntry[] = [
-  { label: "LILYGO T3-S3 1W", txDbm: 30, chipset: "SX1262" },
-  { label: "Heltec V3", txDbm: 22, chipset: "SX1262" },
-  { label: "Heltec V4", txDbm: 22, chipset: "SX1262" },
-  { label: "LILYGO T-Beam", txDbm: 22, chipset: "SX1262" },
-  { label: "LILYGO T-Deck", txDbm: 22, chipset: "SX1262" },
-  { label: "LILYGO T-Echo", txDbm: 22, chipset: "SX1262" },
-  { label: "RAK WisBlock (RAK4631)", txDbm: 22, chipset: "SX1262" },
-  { label: "Seeed T1000-E", txDbm: 22, chipset: "SX1262" },
-  { label: "Station G2", txDbm: 22, chipset: "SX1262" },
-  { label: "Heltec LoRa32 v2 (SX1276)", txDbm: 20, chipset: "SX1276" },
-  { label: "nRF52 (generic)", txDbm: 20, chipset: "SX1262" },
-  { label: "Custom", txDbm: 22, chipset: "SX1262", isCustom: true },
+  { label: "Station G2",                   txDbm: 33, chipset: "SX1262" },  // spec 36.5, external PA
+  { label: "LILYGO T3-S3 1W",             txDbm: 30, chipset: "SX1262" },  // spec 32, PA saturation ~2 dB
+  { label: "RAK WisBlock (RAK4631)",       txDbm: 22, chipset: "SX1262" },  // good RF design, tracks spec
+  { label: "WisMesh Pocket",               txDbm: 22, chipset: "SX1262" },  // RAK4631-based
+  { label: "Heltec V3",                    txDbm: 21, chipset: "SX1262" },  // spec 22, ~1 dB board loss
+  { label: "Heltec V4",                    txDbm: 26, chipset: "SX1262" },  // spec 28, has PA unlike V3
+  { label: "LILYGO T-Beam",               txDbm: 21, chipset: "SX1262" },  // spec 22
+  { label: "LILYGO T-Deck",               txDbm: 20, chipset: "SX1262" },  // spec 22, compact board losses
+  { label: "LILYGO T-Echo",               txDbm: 20, chipset: "SX1262" },  // spec 22, compact nRF52 board
+  { label: "Seeed T1000-E",               txDbm: 20, chipset: "SX1262" },  // spec 22, tiny tracker form
+  { label: "Heltec LoRa32 v2 (SX1276)",   txDbm: 19, chipset: "SX1276" },  // spec 20, older chipset
+  { label: "nRF52 (generic)",              txDbm: 20, chipset: "SX1262" },
+  { label: "Custom",                       txDbm: 22, chipset: "SX1262", isCustom: true },
 ];
 
 /**
