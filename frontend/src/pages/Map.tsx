@@ -363,7 +363,7 @@ export function Map() {
     return (
       stored ??
       env.MAPBOX_STYLE ??
-      "mapbox/dark-v11"
+      "mapbox/satellite-streets-v12"
     );
   });
 
