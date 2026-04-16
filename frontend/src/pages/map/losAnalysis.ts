@@ -46,8 +46,16 @@ export interface LoSInput {
   fromAltitudeM?: number | null;
   /** MSL altitude of receiver (meters). Falls back to terrain + antennaHeightM. */
   toAltitudeM?: number | null;
-  /** Added to ground when node has no altitude data. Default 2m (rover/handheld). */
+  /**
+   * Antenna height above ground when a node has no altitude data.
+   * Default 2 m. Overridden by the per-endpoint `fromAntennaHeightM` /
+   * `toAntennaHeightM` if provided (asymmetric LOS endpoints).
+   */
   antennaHeightM?: number;
+  /** Per-endpoint antenna height overrides — when provided, take
+   * precedence over the shared `antennaHeightM` for the respective end. */
+  fromAntennaHeightM?: number;
+  toAntennaHeightM?: number;
   /** Frequency in GHz. Default 0.915 (US LoRa). */
   freqGHz?: number;
   /** Number of terrain samples along the path. Default 100. */
@@ -160,6 +168,9 @@ export function analyzeLineOfSight(input: LoSInput): LoSResult {
     samples = 100,
     queryTerrainM,
   } = input;
+  // Per-endpoint heights override the shared antennaHeightM when provided.
+  const fromAntH = input.fromAntennaHeightM ?? antennaHeightM;
+  const toAntH = input.toAntennaHeightM ?? antennaHeightM;
 
   const totalDistanceKm = haversineKm(from, to);
 
@@ -181,14 +192,14 @@ export function analyzeLineOfSight(input: LoSInput): LoSResult {
    * - Otherwise use the reported altitude.
    */
   const MAX_HEIGHT_ABOVE_TERRAIN_M = 1000;
-  const resolveHeight = (altitude: number | null | undefined, ground: number, label: string) => {
+  const resolveHeight = (altitude: number | null | undefined, ground: number, antH: number, label: string) => {
     const valid = altitude != null && Number.isFinite(altitude);
     if (!valid) {
-      return { height: ground + antennaHeightM, isFallback: true };
+      return { height: ground + antH, isFallback: true };
     }
     const alt = altitude as number;
     if (alt < ground) {
-      return { height: ground + antennaHeightM, isFallback: true };
+      return { height: ground + antH, isFallback: true };
     }
     if (alt > ground + MAX_HEIGHT_ABOVE_TERRAIN_M) {
       console.warn(
@@ -196,13 +207,13 @@ export function analyzeLineOfSight(input: LoSInput): LoSResult {
           `(${(alt - ground).toFixed(0)} m above local ground — likely bad data). ` +
           `Falling back to terrain + ${antennaHeightM} m.`,
       );
-      return { height: ground + antennaHeightM, isFallback: true };
+      return { height: ground + antH, isFallback: true };
     }
     return { height: alt, isFallback: false };
   };
 
-  const fromResolved = resolveHeight(fromAltitudeM, fromGround, "from");
-  const toResolved = resolveHeight(toAltitudeM, toGround, "to");
+  const fromResolved = resolveHeight(fromAltitudeM, fromGround, fromAntH, "from");
+  const toResolved = resolveHeight(toAltitudeM, toGround, toAntH, "to");
   const fromHeightM = fromResolved.height;
   const toHeightM = toResolved.height;
   const fromIsFallback = fromResolved.isFallback;

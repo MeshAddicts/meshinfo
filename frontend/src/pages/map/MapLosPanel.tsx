@@ -1,5 +1,96 @@
+import { useEffect, useState } from "react";
 import { ElevationProfile } from "./ElevationProfile";
+import { COMMON_ANTENNAS, COMMON_HARDWARE } from "./coverageAnalysis";
 import type { LoSResult } from "./losAnalysis";
+
+/**
+ * Compact endpoint config column — hardware, antenna, and height
+ * selectors for one end of the LOS link.
+ */
+function EndpointConfig({
+  label,
+  color,
+  hwIdx, onHwIdxChange,
+  antIdx, onAntIdxChange,
+  heightM, onHeightChange,
+}: {
+  label: string;
+  color: string;
+  hwIdx: number;
+  onHwIdxChange: (idx: number) => void;
+  antIdx: number;
+  onAntIdxChange: (idx: number) => void;
+  heightM: number;
+  onHeightChange: (m: number) => void;
+}) {
+  const [heightInput, setHeightInput] = useState(String(heightM));
+  useEffect(() => { setHeightInput(String(heightM)); }, [heightM]);
+  const commitHeight = () => {
+    const n = Number(heightInput.trim());
+    if (!Number.isFinite(n) || heightInput.trim() === "") {
+      onHeightChange(2);
+      setHeightInput("2");
+      return;
+    }
+    const clamped = Math.max(0, Math.min(300, n));
+    onHeightChange(clamped);
+    setHeightInput(String(clamped));
+  };
+
+  return (
+    <div className="w-36 shrink-0 p-2 space-y-1.5 text-[10px]">
+      <div className="font-medium truncate" style={{ color }}>{label}</div>
+      <div>
+        <div className="text-gray-500 uppercase tracking-wider mb-0.5">Hardware</div>
+        <select
+          value={hwIdx}
+          onChange={(e) => onHwIdxChange(Number(e.target.value))}
+          className="w-full rounded border border-white/10 bg-white/5 px-1 py-0.5 text-[10px] text-gray-200
+            focus:border-cyan-500/50 focus:outline-hidden [&>option]:bg-gray-800 [&>option]:text-gray-200"
+        >
+          {COMMON_HARDWARE.map((h, i) => (
+            <option key={i} value={i}>{h.label} ({h.txDbm})</option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <div className="text-gray-500 uppercase tracking-wider mb-0.5">Antenna</div>
+        <select
+          value={antIdx}
+          onChange={(e) => onAntIdxChange(Number(e.target.value))}
+          className="w-full rounded border border-white/10 bg-white/5 px-1 py-0.5 text-[10px] text-gray-200
+            focus:border-cyan-500/50 focus:outline-hidden [&>option]:bg-gray-800 [&>option]:text-gray-200"
+        >
+          {COMMON_ANTENNAS.map((a, i) => (
+            <option key={i} value={i}>{a.label}</option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <div className="text-gray-500 uppercase tracking-wider mb-0.5">Height</div>
+        <div className="flex items-center gap-1 rounded border border-white/10 bg-white/5 px-1 py-0.5">
+          <input
+            type="text"
+            inputMode="decimal"
+            value={heightInput}
+            onChange={(e) => setHeightInput(e.target.value)}
+            onBlur={commitHeight}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur();
+              else if (e.key === "Escape") {
+                setHeightInput(String(heightM));
+                (e.currentTarget as HTMLInputElement).blur();
+              }
+            }}
+            className="min-w-0 flex-1 bg-transparent text-[10px] text-gray-200 text-center focus:outline-hidden"
+            title="Antenna height above ground (m). Blank = 2 m."
+          />
+          <span className="text-gray-500 shrink-0">m</span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function MapLosPanel({
   result,
@@ -11,6 +102,12 @@ export function MapLosPanel({
   onEnableTerrain,
   onClose,
   isComputing,
+  fromHwIdx, onFromHwIdxChange,
+  fromAntIdx, onFromAntIdxChange,
+  fromHeightM, onFromHeightChange,
+  toHwIdx, onToHwIdxChange,
+  toAntIdx, onToAntIdxChange,
+  toHeightM, onToHeightChange,
 }: {
   result: LoSResult | null;
   fromLabel: string;
@@ -21,6 +118,12 @@ export function MapLosPanel({
   onEnableTerrain?: () => void;
   onClose: () => void;
   isComputing: boolean;
+  fromHwIdx: number; onFromHwIdxChange: (idx: number) => void;
+  fromAntIdx: number; onFromAntIdxChange: (idx: number) => void;
+  fromHeightM: number; onFromHeightChange: (m: number) => void;
+  toHwIdx: number; onToHwIdxChange: (idx: number) => void;
+  toAntIdx: number; onToAntIdxChange: (idx: number) => void;
+  toHeightM: number; onToHeightChange: (m: number) => void;
 }) {
   // Terrain-needed banner
   if (terrainNeeded) {
@@ -121,7 +224,7 @@ export function MapLosPanel({
   }[statusColor];
 
   return (
-    <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(960px,calc(100vw-2rem))]
+    <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(1200px,calc(100vw-2rem))]
       rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
       animate-[slideInUp_200ms_ease-out]">
 
@@ -220,14 +323,35 @@ export function MapLosPanel({
         </div>
       </div>
 
-      {/* Chart */}
-      <div className="px-2 py-1.5">
-        <ElevationProfile
-          result={los}
-          fromLabel={fromLabel}
-          toLabel={toLabel}
-          fromColor={fromColor}
-          toColor={toColor}
+      {/* Body: side columns + chart */}
+      <div className="flex">
+        {/* FROM endpoint config */}
+        <EndpointConfig
+          label={fromLabel}
+          color={fromColor}
+          hwIdx={fromHwIdx} onHwIdxChange={onFromHwIdxChange}
+          antIdx={fromAntIdx} onAntIdxChange={onFromAntIdxChange}
+          heightM={fromHeightM} onHeightChange={onFromHeightChange}
+        />
+
+        {/* Chart */}
+        <div className="flex-1 min-w-0 px-2 py-1.5 border-x border-white/5">
+          <ElevationProfile
+            result={los}
+            fromLabel={fromLabel}
+            toLabel={toLabel}
+            fromColor={fromColor}
+            toColor={toColor}
+          />
+        </div>
+
+        {/* TO endpoint config */}
+        <EndpointConfig
+          label={toLabel}
+          color={toColor}
+          hwIdx={toHwIdx} onHwIdxChange={onToHwIdxChange}
+          antIdx={toAntIdx} onAntIdxChange={onToAntIdxChange}
+          heightM={toHeightM} onHeightChange={onToHeightChange}
         />
       </div>
     </div>

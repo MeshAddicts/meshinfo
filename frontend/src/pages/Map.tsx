@@ -409,6 +409,17 @@ export function Map() {
     () => readJson<number>(LS_KEYS.terrainExaggeration, 1.5)
   );
   const [losResult, setLosResult] = useState<LoSResult | null>(null);
+  // LOS virtual pin positions — allow placing arbitrary endpoints by
+  // clicking empty map, not just selecting existing nodes.
+  const [losVirtualFrom, setLosVirtualFrom] = useState<[number, number] | null>(null);
+  const [losVirtualTo, setLosVirtualTo] = useState<[number, number] | null>(null);
+  // Per-endpoint hardware/antenna/height for asymmetric LOS analysis.
+  const [losFromHwIdx, setLosFromHwIdx] = useState(0);
+  const [losFromAntIdx, setLosFromAntIdx] = useState(3); // Rokland 5.8 dBi
+  const [losFromHeightM, setLosFromHeightM] = useState(2);
+  const [losToHwIdx, setLosToHwIdx] = useState(0);
+  const [losToAntIdx, setLosToAntIdx] = useState(3);
+  const [losToHeightM, setLosToHeightM] = useState(2);
   const [coverageResult, setCoverageResult] = useState<CoverageResult | null>(null);
   const [isComputingCoverage, setIsComputingCoverage] = useState(false);
   // Index into COMMON_ANTENNAS — default to Rokland N-Male Omni 5.8 dBi (idx 3).
@@ -554,6 +565,10 @@ export function Map() {
    */
   const dragPreviewBusyRef = useRef(false);
   const dragPreviewPendingRef = useRef<[number, number] | null>(null);
+  // Tracks the last LOS endpoint pair we fitBounds'd to — prevents
+  // re-zooming when the user changes config (height/antenna) without
+  // moving the endpoints.
+  const losFitKeyRef = useRef<string | null>(null);
   // Cached ITM context for the scan tool — loaded lazily on first scan,
   // reused across subsequent scans within the session. Same WASM module
   // the coverage workers load, just on the main thread.
@@ -1060,6 +1075,9 @@ export function Map() {
     setToolFromId(null);
     setToolToId(null);
     setToolVirtualPos(null);
+    setLosVirtualFrom(null);
+    setLosVirtualTo(null);
+    losFitKeyRef.current = null;
     setLosResult(null);
     setCoverageResult(null);
     setScanSummary(null);
@@ -1160,30 +1178,35 @@ export function Map() {
       setLosResult(null);
       return;
     }
-    if (!toolFromId || !toolToId) {
-      setLosResult(null);
-      return;
-    }
-    if (provider !== "mapbox" || !terrain3D) {
-      setLosResult(null);
-      return;
-    }
+    // Resolve each endpoint from either a node ID or a virtual pin.
+    const hasFrom = toolFromId || losVirtualFrom;
+    const hasTo = toolToId || losVirtualTo;
+    if (!hasFrom || !hasTo) { setLosResult(null); return; }
+    if (provider !== "mapbox" || !terrain3D) { setLosResult(null); return; }
     const mb = mbMapRef.current;
-    if (!mb) {
-      setLosResult(null);
-      return;
-    }
-    const fromLive = nodes[toolFromId] ?? nodes[`!${toolFromId}`];
-    const toLive = nodes[toolToId] ?? nodes[`!${toolToId}`];
-    if (!fromLive?.map_position || !toLive?.map_position) {
-      setLosResult(null);
-      return;
+    if (!mb) { setLosResult(null); return; }
+
+    let fromPos: [number, number];
+    let fromAltitude: number | null = null;
+    if (toolFromId) {
+      const n = nodes[toolFromId] ?? nodes[`!${toolFromId}`];
+      if (!n?.map_position) { setLosResult(null); return; }
+      fromPos = [n.map_position[0], n.map_position[1]];
+      fromAltitude = n.position?.altitude ?? null;
+    } else {
+      fromPos = losVirtualFrom!;
     }
 
-    const fromPos: [number, number] = [fromLive.map_position[0], fromLive.map_position[1]];
-    const toPos: [number, number] = [toLive.map_position[0], toLive.map_position[1]];
-    const fromAltitude = fromLive.position?.altitude ?? null;
-    const toAltitude = toLive.position?.altitude ?? null;
+    let toPos: [number, number];
+    let toAltitude: number | null = null;
+    if (toolToId) {
+      const n = nodes[toolToId] ?? nodes[`!${toolToId}`];
+      if (!n?.map_position) { setLosResult(null); return; }
+      toPos = [n.map_position[0], n.map_position[1]];
+      toAltitude = n.position?.altitude ?? null;
+    } else {
+      toPos = losVirtualTo!;
+    }
 
     const run = async () => {
       // Build our own DEM for the LoS span instead of relying on
@@ -1239,7 +1262,8 @@ export function Map() {
           to: toPos,
           fromAltitudeM: fromAltitude,
           toAltitudeM: toAltitude,
-          antennaHeightM: 2,
+          fromAntennaHeightM: losFromHeightM,
+          toAntennaHeightM: losToHeightM,
           freqGHz: 0.915,
           samples: 150,
           queryTerrainM: (lng, lat) => {
@@ -1289,18 +1313,22 @@ export function Map() {
       }
     };
 
-    // Fit the viewport to include both points for context (purely UX
-    // now — previously we also relied on this to force terrain tiles to
-    // load before sampling, but LoS now fetches its own DEM).
-    const bounds = new mapboxgl.LngLatBounds(fromPos, toPos);
-    mb.fitBounds(bounds, { padding: 120, duration: 600, maxZoom: 11 });
+    // Fit the viewport to include both points — but only when the
+    // endpoints themselves change, not when config (height/antenna)
+    // changes. Otherwise tweaking a slider re-zooms the map annoyingly.
+    const fitKey = `${fromPos[0]},${fromPos[1]}-${toPos[0]},${toPos[1]}`;
+    if (losFitKeyRef.current !== fitKey) {
+      losFitKeyRef.current = fitKey;
+      const bounds = new mapboxgl.LngLatBounds(fromPos, toPos);
+      mb.fitBounds(bounds, { padding: 120, duration: 600, maxZoom: 11 });
+    }
 
     let cancelled = false;
     run().catch((err) => {
       if (!cancelled) console.warn("[Map] LoS run failed:", err);
     });
     return () => { cancelled = true; };
-  }, [activeTool, toolStep, toolFromId, toolToId, provider, terrain3D, nodes]);
+  }, [activeTool, toolStep, toolFromId, toolToId, losVirtualFrom, losVirtualTo, losFromHeightM, losToHeightM, provider, terrain3D, nodes]);
 
   // Push the current LoS result into the 3D tube layer + obstruction source.
   // Clears them when the LoS tool isn't showing a result.
@@ -1317,8 +1345,10 @@ export function Map() {
     const mb = mbMapRef.current;
     if (!mb) return;
 
+    const hasFrom = toolFromId || losVirtualFrom;
+    const hasTo = toolToId || losVirtualTo;
     const showing =
-      activeTool === "los" && toolStep === "result" && losResult && toolFromId && toolToId;
+      activeTool === "los" && toolStep === "result" && losResult && hasFrom && hasTo;
     const obsSrc = mb.getSource("los-obstructions") as MbGeoJSONSource | undefined;
     const tube = losTubeLayerRef.current;
 
@@ -1328,11 +1358,22 @@ export function Map() {
       return;
     }
 
-    const from = nodes[toolFromId!] ?? nodes[`!${toolFromId!}`];
-    const to = nodes[toolToId!] ?? nodes[`!${toolToId!}`];
-    if (!from?.map_position || !to?.map_position) return;
-    const fromPos: [number, number] = [from.map_position[0], from.map_position[1]];
-    const toPos: [number, number] = [to.map_position[0], to.map_position[1]];
+    let fromPos: [number, number];
+    let toPos: [number, number];
+    if (toolFromId) {
+      const n = nodes[toolFromId] ?? nodes[`!${toolFromId}`];
+      if (!n?.map_position) return;
+      fromPos = [n.map_position[0], n.map_position[1]];
+    } else {
+      fromPos = losVirtualFrom!;
+    }
+    if (toolToId) {
+      const n = nodes[toolToId] ?? nodes[`!${toolToId}`];
+      if (!n?.map_position) return;
+      toPos = [n.map_position[0], n.map_position[1]];
+    } else {
+      toPos = losVirtualTo!;
+    }
 
     // Tube: layer internally scales altitudes by current exaggeration.
     const tubeData = losPointsToTubeData(fromPos, toPos, losResult!.points, losResult!.totalDistanceKm);
@@ -1355,7 +1396,7 @@ export function Map() {
       f.properties.topM *= exag;
     });
     obsSrc?.setData(obsGeo);
-  }, [activeTool, toolStep, losResult, toolFromId, toolToId, nodes, terrainExaggeration]);
+  }, [activeTool, toolStep, losResult, toolFromId, toolToId, losVirtualFrom, losVirtualTo, nodes, terrainExaggeration]);
 
   // -------------------------------------------------------------------------
   // Scan tool (Option C) — batch LoS to every node in view from a chosen origin
@@ -3196,19 +3237,32 @@ export function Map() {
       map.on("click", "plain-nodes", onNodeLayerClick);
       map.on("click", SPIDERFY_LAYER_NODES, onNodeLayerClick);
 
-      // Virtual-origin click (coverage + scan tools). Fires when the user clicks
-      // empty map in pickFrom mode — drops a synthetic origin at that lng/lat.
+      // Virtual-origin click (coverage, scan, LOS tools). Fires when the
+      // user clicks empty map during pick mode — drops a synthetic pin at
+      // that lng/lat instead of requiring an existing node.
       map.on("click", (e) => {
         const t = activeToolRef.current;
-        if ((t !== "coverage" && t !== "scan") || toolStepRef.current !== "pickFrom") return;
+        const step = toolStepRef.current;
         // Ignore if clicking on a node layer (handled by onNodeLayerClick)
         const features = map.queryRenderedFeatures(e.point, {
           layers: ["unclustered-nodes", "plain-nodes", "clusters", SPIDERFY_LAYER_NODES].filter((id) => map.getLayer(id)),
         });
         if (features.length > 0) return;
-        setToolVirtualPos([e.lngLat.lng, e.lngLat.lat]);
-        setToolStep("result");
-        map.getCanvas().style.cursor = "";
+
+        if ((t === "coverage" || t === "scan") && step === "pickFrom") {
+          setToolVirtualPos([e.lngLat.lng, e.lngLat.lat]);
+          setToolStep("result");
+          map.getCanvas().style.cursor = "";
+        } else if (t === "los" && step === "pickFrom") {
+          setToolFromId(null);
+          setLosVirtualFrom([e.lngLat.lng, e.lngLat.lat]);
+          setToolStep("pickTo");
+        } else if (t === "los" && step === "pickTo") {
+          setToolToId(null);
+          setLosVirtualTo([e.lngLat.lng, e.lngLat.lat]);
+          setToolStep("result");
+          map.getCanvas().style.cursor = "";
+        }
       });
 
       bindHover(SPIDERFY_LAYER_NODES);
@@ -4357,17 +4411,35 @@ export function Map() {
       )}
 
       {/* Floating LoS panel when LOS tool reached result step */}
-      {activeTool === "los" && toolStep === "result" && toolFromId && toolToId && (
+      {activeTool === "los" && toolStep === "result" && (toolFromId || losVirtualFrom) && (toolToId || losVirtualTo) && (
         <MapLosPanel
           result={losResult}
-          fromLabel={(nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.shortname ?? toolFromId.slice(0, 8)}
-          toLabel={(nodes[toolToId] ?? nodes[`!${toolToId}`])?.shortname ?? toolToId.slice(0, 8)}
+          fromLabel={
+            toolFromId
+              ? ((nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.shortname ?? toolFromId.slice(0, 8))
+              : losVirtualFrom
+                ? `${losVirtualFrom[1].toFixed(5)}, ${losVirtualFrom[0].toFixed(5)}`
+                : ""
+          }
+          toLabel={
+            toolToId
+              ? ((nodes[toolToId] ?? nodes[`!${toolToId}`])?.shortname ?? toolToId.slice(0, 8))
+              : losVirtualTo
+                ? `${losVirtualTo[1].toFixed(5)}, ${losVirtualTo[0].toFixed(5)}`
+                : ""
+          }
           fromColor="#22c55e"
           toColor="#06b6d4"
           terrainNeeded={provider === "mapbox" && !terrain3D}
           onEnableTerrain={provider === "mapbox" ? () => setTerrain3D(true) : undefined}
           onClose={resetTool}
           isComputing={provider === "mapbox" && terrain3D && !losResult}
+          fromHwIdx={losFromHwIdx} onFromHwIdxChange={setLosFromHwIdx}
+          fromAntIdx={losFromAntIdx} onFromAntIdxChange={setLosFromAntIdx}
+          fromHeightM={losFromHeightM} onFromHeightChange={setLosFromHeightM}
+          toHwIdx={losToHwIdx} onToHwIdxChange={setLosToHwIdx}
+          toAntIdx={losToAntIdx} onToAntIdxChange={setLosToAntIdx}
+          toHeightM={losToHeightM} onToHeightChange={setLosToHeightM}
         />
       )}
 
