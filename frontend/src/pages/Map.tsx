@@ -2617,7 +2617,11 @@ export function Map() {
           type: "geojson",
           data: buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()),
           cluster: true,
-          clusterRadius: 50,
+          // 80 (up from the default 50) keeps cluster centroids spaced far
+          // enough apart that the larger donut visuals (up to 52px radius)
+          // don't overlap at awkward zoom levels. Minor side effect: dense
+          // regions merge slightly earlier — usually a readability win.
+          clusterRadius: 80,
           // Align source zoom range with the map's (default maxZoom = 22).
           // Mapbox's GeoJSONSource defaults maxzoom=18 and clusterMaxZoom=17 —
           // at which point co-located clusters' getClusterExpansionZoom returns 18,
@@ -2953,8 +2957,9 @@ export function Map() {
           source: "nodes_clustered",
           filter: ["has", "point_count"],
           paint: {
+            // Kept ~2px larger than the donut for a forgiving click target.
             "circle-radius": ["interpolate", ["linear"], ["get", "point_count"],
-              2, 18, 10, 22, 50, 28, 200, 32],
+              2, 20, 10, 26, 25, 34, 100, 48, 200, 56],
             "circle-color": "#000000",
             "circle-opacity": 0.005,
             "circle-stroke-width": 0,
@@ -2978,7 +2983,7 @@ export function Map() {
           layout: {
             "text-field": ["get", "point_count_abbreviated"],
             "text-size": ["interpolate", ["linear"], ["get", "point_count"],
-              2, 11, 10, 12, 50, 13, 200, 14],
+              2, 12, 10, 15, 25, 18, 100, 21, 200, 24],
             "text-font": ["DIN Pro Medium", "Arial Unicode MS Bold"],
             "text-allow-overlap": true,
             "text-ignore-placement": true,
@@ -2989,7 +2994,7 @@ export function Map() {
         });
       }
 
-      // online node pulse (behind unclustered nodes)
+      // online node pulse (behind unclustered nodes) — bigger, softer halo
       if (!map.getLayer("unclustered-pulse")) {
         map.addLayer({
           id: "unclustered-pulse",
@@ -2997,9 +3002,9 @@ export function Map() {
           source: "nodes_clustered",
           filter: ["all", ["!", ["has", "point_count"]], ["==", ["get", "online"], true]],
           paint: {
-            "circle-radius": 12,
+            "circle-radius": 16,
             "circle-color": mbRoleColorExpr,
-            "circle-opacity": 0.3,
+            "circle-opacity": 0.28,
             "circle-stroke-width": 0,
           },
         });
@@ -3013,9 +3018,9 @@ export function Map() {
           source: "nodes_clustered",
           filter: ["!", ["has", "point_count"]],
           paint: {
-            "circle-radius": ["case", ["boolean", ["feature-state", "selected"], false], 10, 6],
+            "circle-radius": ["case", ["boolean", ["feature-state", "selected"], false], 12, 8],
             "circle-color": mbRoleColorExpr,
-            "circle-stroke-width": 2,
+            "circle-stroke-width": 2.5,
             "circle-stroke-color": [
               "case",
               ["boolean", ["feature-state", "selected"], false],
@@ -3056,9 +3061,9 @@ export function Map() {
           source: "nodes_plain",
           filter: ["==", ["get", "online"], true],
           paint: {
-            "circle-radius": 12,
+            "circle-radius": 16,
             "circle-color": mbRoleColorExpr,
-            "circle-opacity": 0.3,
+            "circle-opacity": 0.28,
             "circle-stroke-width": 0,
           },
         });
@@ -3071,9 +3076,9 @@ export function Map() {
           type: "circle",
           source: "nodes_plain",
           paint: {
-            "circle-radius": ["case", ["boolean", ["feature-state", "selected"], false], 10, 6],
+            "circle-radius": ["case", ["boolean", ["feature-state", "selected"], false], 12, 8],
             "circle-color": mbRoleColorExpr,
-            "circle-stroke-width": 2,
+            "circle-stroke-width": 2.5,
             "circle-stroke-color": [
               "case",
               ["boolean", ["feature-state", "selected"], false],

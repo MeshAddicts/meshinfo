@@ -138,10 +138,11 @@ function compile(gl: WebGLRenderingContext, type: number, src: string): WebGLSha
 
 function pixelRadiusForCount(count: number): number {
   const c = Math.max(count, 2);
-  if (c <= 10)  return 14 + (18 - 14) * ((c - 2)  / (10 - 2));
-  if (c <= 50)  return 18 + (24 - 18) * ((c - 10) / (50 - 10));
-  if (c <= 200) return 24 + (28 - 24) * ((c - 50) / (200 - 50));
-  return 28;
+  if (c <= 10)  return 16 + (22 - 16) * ((c - 2)   / (10 - 2));
+  if (c <= 25)  return 22 + (30 - 22) * ((c - 10)  / (25 - 10));
+  if (c <= 100) return 30 + (44 - 30) * ((c - 25)  / (100 - 25));
+  if (c <= 200) return 44 + (52 - 44) * ((c - 100) / (200 - 100));
+  return 52;
 }
 
 // ---------------------------------------------------------------------------

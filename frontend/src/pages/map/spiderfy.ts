@@ -24,6 +24,7 @@ export const SPIDERFY_SOURCE_LEGS = "spiderfy-legs";
 export const SPIDERFY_LAYER_NODES = "spiderfy-node-circles";
 export const SPIDERFY_LAYER_LABELS = "spiderfy-node-labels";
 export const SPIDERFY_LAYER_LEGS = "spiderfy-legs-line";
+export const SPIDERFY_LAYER_LEGS_SHADOW = "spiderfy-legs-shadow";
 
 const ANIMATE_MS = 320;
 const GOLDEN_ANGLE = 2.399963229728653; // 137.508°
@@ -206,7 +207,7 @@ export function isSpiderfied(map: MbMap): boolean {
 
 export function removeSpiderfyLayers(map: MbMap): void {
   activeState = null;
-  for (const id of [SPIDERFY_LAYER_LABELS, SPIDERFY_LAYER_NODES, SPIDERFY_LAYER_LEGS]) {
+  for (const id of [SPIDERFY_LAYER_LABELS, SPIDERFY_LAYER_NODES, SPIDERFY_LAYER_LEGS, SPIDERFY_LAYER_LEGS_SHADOW]) {
     if (map.getLayer(id)) map.removeLayer(id);
   }
   for (const id of [SPIDERFY_SOURCE_NODES, SPIDERFY_SOURCE_LEGS]) {
@@ -224,13 +225,27 @@ function addSpiderfyLayers(map: MbMap): void {
     data: { type: "FeatureCollection", features: [] },
   });
 
+  // Dark shadow beneath the bright dashed line. Gives the legs a visible
+  // outline on light satellite terrain (white concrete, buildings) where
+  // a plain white dash would otherwise disappear.
+  map.addLayer({
+    id: SPIDERFY_LAYER_LEGS_SHADOW,
+    type: "line",
+    source: SPIDERFY_SOURCE_LEGS,
+    paint: {
+      "line-width": 3.5,
+      "line-color": "rgba(0, 0, 0, 0.55)",
+      "line-blur": 0.5,
+    },
+  });
+
   map.addLayer({
     id: SPIDERFY_LAYER_LEGS,
     type: "line",
     source: SPIDERFY_SOURCE_LEGS,
     paint: {
-      "line-width": 1.5,
-      "line-color": "rgba(255, 255, 255, 0.55)",
+      "line-width": 1.75,
+      "line-color": "rgba(255, 255, 255, 0.9)",
       "line-dasharray": [2, 3],
     },
   });
@@ -243,8 +258,8 @@ function addSpiderfyLayers(map: MbMap): void {
       "circle-radius": [
         "case",
         ["boolean", ["feature-state", "selected"], false],
-        10,
-        6,
+        12,
+        8,
       ],
       "circle-color": [
         "case",
@@ -252,7 +267,7 @@ function addSpiderfyLayers(map: MbMap): void {
         "#32f032",
         "rgba(0,0,0,0.50)",
       ],
-      "circle-stroke-width": 2,
+      "circle-stroke-width": 2.5,
       "circle-stroke-color": [
         "case",
         ["boolean", ["feature-state", "selected"], false],
