@@ -178,6 +178,7 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
   private onMoveend: (() => void) | null = null;
   private onIdle: (() => void) | null = null;
   private onSourceData: ((e: mapboxgl.MapSourceDataEvent) => void) | null = null;
+  private moveendTimer: ReturnType<typeof setTimeout> | null = null;
 
   onAdd(map: mapboxgl.Map, gl: WebGLRenderingContext): void {
     this.map = map;
@@ -210,7 +211,20 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
       this.dirty = true;
       map.triggerRepaint();
     };
-    this.onMoveend = markDirty;
+    // `moveend` can fire several times during zoom+pan sequences, each one
+    // triggering a `queryRenderedFeatures` + vertex rebuild. `idle` fires
+    // shortly after the map settles and catches the same state, so trailing-
+    // debouncing `moveend` skips the interim rebuilds without losing
+    // correctness. `idle` and `sourcedata` stay immediate — `idle` is the
+    // cheap settled-state rebuild, and `sourcedata` hides stale donuts
+    // while cluster tiles re-render.
+    this.onMoveend = () => {
+      if (this.moveendTimer != null) clearTimeout(this.moveendTimer);
+      this.moveendTimer = setTimeout(() => {
+        this.moveendTimer = null;
+        markDirty();
+      }, 120);
+    };
     this.onIdle = markDirty;
     this.onSourceData = (e) => {
       if (e.sourceId !== "nodes_clustered") return;
@@ -226,6 +240,10 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
   }
 
   onRemove(map: mapboxgl.Map, gl: WebGLRenderingContext): void {
+    if (this.moveendTimer != null) {
+      clearTimeout(this.moveendTimer);
+      this.moveendTimer = null;
+    }
     if (this.onMoveend) map.off("moveend", this.onMoveend);
     if (this.onIdle) map.off("idle", this.onIdle);
     if (this.onSourceData) map.off("sourcedata", this.onSourceData);

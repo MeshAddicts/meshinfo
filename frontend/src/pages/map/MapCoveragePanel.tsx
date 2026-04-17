@@ -64,6 +64,9 @@ export function MapCoveragePanel({
   onEnableTerrain,
   onClose,
   isComputing,
+  isFetchingTerrain,
+  errorMessage,
+  onRetry,
   antennaIdx,
   onAntennaIdxChange,
   hardwareIdx,
@@ -93,6 +96,12 @@ export function MapCoveragePanel({
   onEnableTerrain?: () => void;
   onClose: () => void;
   isComputing: boolean;
+  /** True during the terrain-tile fetch phase (before per-pixel compute starts). */
+  isFetchingTerrain: boolean;
+  /** User-facing error string. Null when nothing went wrong. */
+  errorMessage: string | null;
+  /** Invoked when the user clicks Retry on the error banner. */
+  onRetry: () => void;
   /** Index into COMMON_ANTENNAS — drives antenna gain in the link budget. */
   antennaIdx: number;
   onAntennaIdxChange: (idx: number) => void;
@@ -202,15 +211,51 @@ export function MapCoveragePanel({
     );
   }
 
-  // No result yet (first compute) — show just a loading banner
+  // No result yet (first compute) — show a loading banner, or an error
+  // banner if the initial compute failed before producing anything.
   if (!result) {
+    if (errorMessage) {
+      return (
+        <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(520px,calc(100vw-2rem))]
+          rounded-xl shadow-2xl border border-red-500/40 bg-gray-900/90 backdrop-blur-xl p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex-1 min-w-0">
+              <div className="text-xs font-semibold text-red-300 mb-1">
+                Coverage failed
+              </div>
+              <p className="text-[11px] text-gray-400 leading-relaxed">{errorMessage}</p>
+              <button
+                type="button"
+                onClick={onRetry}
+                className="mt-2 text-[11px] px-2.5 py-1 rounded-md bg-cyan-500/15 border border-cyan-500/40 text-cyan-200 hover:bg-cyan-500/25 transition-colors font-medium"
+              >
+                Retry
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors shrink-0"
+              aria-label="Close"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      );
+    }
+    const stageLabel = isFetchingTerrain
+      ? `Fetching terrain for ${originLabel}…`
+      : `Computing coverage from ${originLabel}…`;
     return (
       <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(520px,calc(100vw-2rem))]
         rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl p-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-xs text-gray-400">
             <div className="w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-            Computing coverage from {originLabel}…
+            {stageLabel}
           </div>
           <button
             type="button"
@@ -248,13 +293,33 @@ export function MapCoveragePanel({
       }}
     >
 
-      {/* Recomputing overlay — small pill above the panel, doesn't hide controls */}
+      {/* Recomputing overlay — small pill above the panel, doesn't hide controls.
+          Splits "Fetching terrain…" from "Recomputing coverage…" so the user
+          knows which phase is taking time (terrain fetch is network-bound,
+          compute is CPU-bound). Error pill preempts either spinner state. */}
+      {errorMessage && !isComputing && (
+        <div className="absolute -top-9 left-1/2 -translate-x-1/2 max-w-[calc(100%-1rem)] px-3 py-1.5 rounded-full
+          bg-gray-900/95 backdrop-blur-xl border border-red-500/50 shadow-2xl
+          text-[10px] text-red-200 flex items-center gap-2 whitespace-nowrap">
+          <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M4.93 19h14.14a2 2 0 001.74-3L13.74 4a2 2 0 00-3.48 0L3.19 16a2 2 0 001.74 3z" />
+          </svg>
+          <span className="truncate">{errorMessage}</span>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="shrink-0 px-1.5 py-0.5 rounded bg-red-500/20 hover:bg-red-500/30 text-red-100 font-medium transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      )}
       {isComputing && (
         <div className="absolute -top-8 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full
           bg-gray-900/95 backdrop-blur-xl border border-cyan-500/40 shadow-2xl
           text-[10px] text-cyan-200 flex items-center gap-1.5 whitespace-nowrap">
           <div className="w-2.5 h-2.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-          Recomputing coverage…
+          {isFetchingTerrain ? "Fetching terrain…" : "Recomputing coverage…"}
         </div>
       )}
 

@@ -423,6 +423,11 @@ export function Map() {
   const [losToHeightM, setLosToHeightM] = useState(2);
   const [coverageResult, setCoverageResult] = useState<CoverageResult | null>(null);
   const [isComputingCoverage, setIsComputingCoverage] = useState(false);
+  const [isFetchingCoverageTerrain, setIsFetchingCoverageTerrain] = useState(false);
+  const [coverageError, setCoverageError] = useState<string | null>(null);
+  // Nonce to force a recompute on user-requested retry when nothing else
+  // changed. Bumped by the panel's retry button.
+  const [coverageRetryNonce, setCoverageRetryNonce] = useState(0);
   // Index into COMMON_ANTENNAS — default to Rokland N-Male Omni 5.8 dBi (idx 3).
   // Uses an index (not raw dBi) because multiple antennas can share the
   // same dBi value (e.g. two different 3 dBi models) and a value-based
@@ -1121,6 +1126,8 @@ export function Map() {
     setCoverageResult(null);
     setScanSummary(null);
     setIsComputingCoverage(false);
+    setIsFetchingCoverageTerrain(false);
+    setCoverageError(null);
     setIsScanning(false);
 
     const mb = mbMapRef.current;
@@ -1631,11 +1638,14 @@ export function Map() {
     if (activeTool !== "coverage" || toolStep !== "result") {
       setCoverageResult(null);
       setIsComputingCoverage(false);
+      setIsFetchingCoverageTerrain(false);
+      setCoverageError(null);
       return;
     }
     if (provider !== "mapbox" || !terrain3D) {
       setCoverageResult(null);
       setIsComputingCoverage(false);
+      setIsFetchingCoverageTerrain(false);
       return;
     }
     const mb = mbMapRef.current;
@@ -1664,6 +1674,7 @@ export function Map() {
 
     // Mark as computing but keep the previous result visible so controls stay up
     setIsComputingCoverage(true);
+    setCoverageError(null);
 
     const radKm = coverageRadiusKm;
     const demBounds = demBoundsAround(origin, radKm, 1.05);
@@ -1735,6 +1746,7 @@ export function Map() {
         // 1. Fetch terrain-rgb tiles and build the full DEM on the main
         //    thread. Uses the same `terrainRgb` module the old worker did.
         const tFetch = performance.now();
+        setIsFetchingCoverageTerrain(true);
         const dem = await buildDemFromTerrainRgb({
           bounds: demBounds,
           targetWidth: DEM_SIZE,
@@ -1742,7 +1754,11 @@ export function Map() {
           token: mapboxToken,
         });
         mark("demFetchMs", tFetch);
-        if (cancelled || requestId !== coverageRequestIdRef.current) return;
+        if (cancelled || requestId !== coverageRequestIdRef.current) {
+          setIsFetchingCoverageTerrain(false);
+          return;
+        }
+        setIsFetchingCoverageTerrain(false);
 
         // 2. Resolve origin height. Base elevation is the node's GPS
         // altitude (MSL) when present and sane, else the sampled terrain
@@ -1830,6 +1846,10 @@ export function Map() {
           );
           setCoverageResult(null);
           setIsComputingCoverage(false);
+          setCoverageError(
+            "Coverage model unavailable — the ITM WebAssembly bundle failed to load. " +
+              "Check the developer console for details.",
+          );
           return;
         }
 
@@ -1890,13 +1910,24 @@ export function Map() {
         console.warn("[Map] Coverage computation failed:", err);
         setCoverageResult(null);
         setIsComputingCoverage(false);
+        setIsFetchingCoverageTerrain(false);
+        // Classify the most common failure mode (terrain tile fetch) so
+        // users get an actionable message. Anything else falls through
+        // to a generic retry hint.
+        const msg = err instanceof Error ? err.message : String(err);
+        const isTerrain = /terrain|tile|fetch|network|cors|http/i.test(msg);
+        setCoverageError(
+          isTerrain
+            ? "Couldn't fetch terrain tiles. Check your connection and try again."
+            : "Coverage compute failed. See the developer console and try again.",
+        );
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageTxDbm, coverageEnvIdx, coverageSensitivityDbm, coverageDetail, coverageAntennaHeightM, coverageReliability, provider, terrain3D, nodes]);
+  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageTxDbm, coverageEnvIdx, coverageSensitivityDbm, coverageDetail, coverageAntennaHeightM, coverageReliability, provider, terrain3D, nodes, coverageRetryNonce]);
 
   // Hide coverage raster when leaving coverage tool. We keep the source/layer
   // around so re-entering the tool reuses them without re-adding.
@@ -4610,6 +4641,12 @@ export function Map() {
           onEnableTerrain={provider === "mapbox" ? () => setTerrain3D(true) : undefined}
           onClose={resetTool}
           isComputing={isComputingCoverage}
+          isFetchingTerrain={isFetchingCoverageTerrain}
+          errorMessage={coverageError}
+          onRetry={() => {
+            setCoverageError(null);
+            setCoverageRetryNonce((n) => n + 1);
+          }}
           antennaIdx={coverageAntennaIdx}
           onAntennaIdxChange={setCoverageAntennaIdx}
           hardwareIdx={coverageHardwareIdx}
