@@ -36,6 +36,7 @@ import { extractCoverageContours, type ContourFeatureCollection } from "./map/co
 import { analyzeLineOfSight, type LoSResult } from "./map/losAnalysis";
 import { Climate, computeP2PLoss, type ItmContext, loadItmContext, Polarization } from "./map/itm";
 import { LosTubeLayer, losPointsToTubeData, obstructionsToGeoJSON, pickObstructions } from "./map/losTubeLayer";
+import { ClusterDonutLayer } from "./map/clusterDonutLayer";
 import { runScan, scanToGeoJSON, type ScanSummary, type ScanTarget } from "./map/scanAnalysis";
 import { MapScanPanel } from "./map/MapScanPanel";
 import { findPathsBetween } from "./map/pathAnalysis";
@@ -2617,7 +2618,18 @@ export function Map() {
           data: buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()),
           cluster: true,
           clusterRadius: 50,
-          clusterMaxZoom: 24,
+          // Align source zoom range with the map's (default maxZoom = 22).
+          // Mapbox's GeoJSONSource defaults maxzoom=18 and clusterMaxZoom=17 —
+          // at which point co-located clusters' getClusterExpansionZoom returns 18,
+          // and any check against map.getMaxZoom() (22) would never match.
+          // That breaks auto-spiderfy for stacked nodes. Setting clusterMaxZoom=21
+          // makes getClusterExpansionZoom return 22 for never-splitting clusters,
+          // so auto-spiderfy fires reliably.
+          maxzoom: 22,
+          clusterMaxZoom: 21,
+          clusterProperties: {
+            onlineCount: ["+", ["case", ["get", "online"], 1, 0]],
+          },
         });
       }
 
@@ -2931,7 +2943,9 @@ export function Map() {
         });
       }
 
-      // cluster circles
+      // Invisible circle hit-test layer — reliable click detection.
+      // The custom donut layer above is visual-only; clicks flow through
+      // this layer via the standard Mapbox event system.
       if (!map.getLayer("clusters")) {
         map.addLayer({
           id: "clusters",
@@ -2939,24 +2953,39 @@ export function Map() {
           source: "nodes_clustered",
           filter: ["has", "point_count"],
           paint: {
-            "circle-stroke-width": 2,
-            "circle-stroke-color": "#ffffff",
-            "circle-radius": ["step", ["get", "point_count"], 14, 10, 18, 25, 24, 50, 30],
-            "circle-color": "#3b82f6",
-            "circle-opacity": 0.85,
+            "circle-radius": ["interpolate", ["linear"], ["get", "point_count"],
+              2, 18, 10, 22, 50, 28, 200, 32],
+            "circle-color": "#000000",
+            "circle-opacity": 0.005,
+            "circle-stroke-width": 0,
+            "circle-pitch-alignment": "viewport",
           },
         });
       }
 
-      // cluster count
-      if (!map.getLayer("cluster-count")) {
+      // Custom WebGL donut layer — proportional online/offline arcs, billboarded.
+      if (!map.getLayer("clusters-donuts")) {
+        map.addLayer(new ClusterDonutLayer());
+      }
+
+      // Cluster count text — lightweight symbol layer on top.
+      if (!map.getLayer("clusters-count")) {
         map.addLayer({
-          id: "cluster-count",
+          id: "clusters-count",
           type: "symbol",
           source: "nodes_clustered",
           filter: ["has", "point_count"],
-          layout: { "text-field": ["get", "point_count_abbreviated"], "text-size": 12 },
-          paint: { "text-color": "#ffffff" },
+          layout: {
+            "text-field": ["get", "point_count_abbreviated"],
+            "text-size": ["interpolate", ["linear"], ["get", "point_count"],
+              2, 11, 10, 12, 50, 13, 200, 14],
+            "text-font": ["DIN Pro Medium", "Arial Unicode MS Bold"],
+            "text-allow-overlap": true,
+            "text-ignore-placement": true,
+          },
+          paint: {
+            "text-color": "#ffffff",
+          },
         });
       }
 
@@ -3230,37 +3259,82 @@ export function Map() {
       };
 
       bindHover("unclustered-nodes");
-      bindHover("clusters");
       bindHover("plain-nodes");
 
-      // Clicking a cluster: zoom in, or spiderfy if can't expand further
+      // Cluster click — handler is on the invisible circle hit-test layer
+      // ("clusters"), NOT the symbol donut layer. Circle hit-testing is reliable
+      // geometry; symbol hit-testing is flaky with dynamic icon-size expressions.
       map.on("click", "clusters", (e) => {
-        const features = map.queryRenderedFeatures(e.point, { layers: ["clusters"] });
-        const cluster = features[0];
+        const cluster = e.features?.[0];
         if (!cluster) return;
 
         const clusterId = cluster.properties?.cluster_id;
         const source = map.getSource("nodes_clustered") as MbGeoJSONSource;
         if (!source || clusterId == null) return;
 
-        source.getClusterExpansionZoom(clusterId, (err, zoom) => {
-          if (err) return;
-          if (zoom == null) return;
+        const [lng, lat] = (cluster.geometry as any).coordinates as [number, number];
+        const currentZoom = map.getZoom();
+        const maxZoom = map.getMaxZoom();
 
-          const [lng, lat] = (cluster.geometry as any).coordinates as [number, number];
-          const maxZoom = map.getMaxZoom();
+        // DIAGNOSTIC: dump the actual cluster membership so you can verify
+        // whether the count reflects real data or a bug.
+        const pointCount = cluster.properties?.point_count;
+        const onlineCount = cluster.properties?.onlineCount;
+        console.log(`[cluster] click at zoom=${currentZoom.toFixed(2)} center=[${lng.toFixed(5)}, ${lat.toFixed(5)}] point_count=${pointCount} online=${onlineCount}`);
+        source.getClusterLeaves(clusterId, 1000, 0, (err, leaves) => {
+          if (err) { console.warn("[cluster] getClusterLeaves error:", err); return; }
+          const rows = (leaves ?? []).map((l: any) => {
+            const c = l.geometry?.coordinates ?? [];
+            return {
+              id: l.properties?.id,
+              shortname: l.properties?.shortname,
+              online: l.properties?.online,
+              lng: c[0]?.toFixed(5),
+              lat: c[1]?.toFixed(5),
+            };
+          });
+          console.log(`[cluster] leaves (${rows.length}):`);
+          console.table(rows);
+        });
+
+        let handled = false;
+        const zoomFallback = () => {
+          if (handled) return;
+          handled = true;
+          removeSpiderfyLayers(map);
+          map.easeTo({ center: [lng, lat], zoom: Math.min(currentZoom + 2, maxZoom) });
+        };
+        const timer = setTimeout(zoomFallback, 300);
+
+        source.getClusterExpansionZoom(clusterId, (err, zoom) => {
+          if (handled) return;
+          handled = true;
+          clearTimeout(timer);
+
+          if (err || zoom == null) { zoomFallback(); return; }
 
           if (zoom >= maxZoom) {
-            // Can't expand further — spiderfy the nodes
             clearMapboxSelectionAndOverlays();
-            void spiderfy(map, clusterId, [lng, lat], map.getZoom());
+            // Pass raw node features as fallback — getClusterLeaves can fail
+            // silently on stale cluster_ids, and querySourceFeatures can't
+            // see nodes hidden inside their cluster aggregate.
+            const pool = buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()).features
+              .filter((f) => f.geometry?.type === "Point") as any;
+            const count = (cluster.properties?.point_count as number) ?? 0;
+            void spiderfy(map, clusterId, [lng, lat], currentZoom, true, pool, count);
           } else {
-            // Zoom in, collapsing any existing spiderfy
+            // Ensure the zoom change is always perceptible. getClusterExpansionZoom
+            // can return values only a tiny delta above current zoom, making the
+            // easeTo feel like "nothing happened".
+            const targetZoom = Math.min(Math.max(zoom, currentZoom + 1), maxZoom);
             removeSpiderfyLayers(map);
-            map.easeTo({ center: [lng, lat], zoom });
+            map.easeTo({ center: [lng, lat], zoom: targetZoom });
           }
         });
       });
+
+      // Cluster hover cursor (donut icons are GL-native, no HTML to highlight)
+      bindHover("clusters");
 
       const onNodeLayerClick = (e: mapboxgl.MapMouseEvent & { features?: mapboxgl.MapboxGeoJSONFeature[] }) => {
         const feature = e.features?.[0];
@@ -3347,12 +3421,24 @@ export function Map() {
         updateSpiderfyPositions(map);
       });
 
-      // Auto-spiderfy clusters that can't expand further
-      map.on("idle", () => {
-        if (clusterEnabledRef.current) {
-          void autoSpiderfyVisibleClusters(map);
-        }
-      });
+      // Auto-spiderfy clusters whose children can't be separated by further zoom.
+      // Driven by moveend (reliable, independent of GL render state) with `idle`
+      // as a backup and a one-shot on `load` for the initial view. Debounced so
+      // a single gesture doesn't run multiple passes.
+      let spiderfyDebounce: number | null = null;
+      const triggerAutoSpiderfy = () => {
+        if (!clusterEnabledRef.current) return;
+        if (spiderfyDebounce != null) window.clearTimeout(spiderfyDebounce);
+        spiderfyDebounce = window.setTimeout(() => {
+          spiderfyDebounce = null;
+          const pool = buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()).features
+            .filter((f) => f.geometry?.type === "Point") as any;
+          void autoSpiderfyVisibleClusters(map, pool);
+        }, 150);
+      };
+      map.on("moveend", triggerAutoSpiderfy);
+      map.on("idle", triggerAutoSpiderfy);
+      map.once("load", triggerAutoSpiderfy);
 
       // Right-click / long-press: "Set as My Node"
       const findNodeIdAtPoint = (point: mapboxgl.PointLike): string | null => {

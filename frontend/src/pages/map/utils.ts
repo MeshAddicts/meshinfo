@@ -141,7 +141,8 @@ export function applyMapboxClusterVisibility(map: MbMap, enabled: boolean): void
 
   // clustered set
   set("clusters", enabled);
-  set("cluster-count", enabled);
+  set("clusters-donuts", enabled);
+  set("clusters-count", enabled);
   set("unclustered-pulse", enabled);
   set("unclustered-nodes", enabled);
   set("unclustered-labels", enabled);

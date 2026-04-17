@@ -25,18 +25,15 @@ export const SPIDERFY_LAYER_NODES = "spiderfy-node-circles";
 export const SPIDERFY_LAYER_LABELS = "spiderfy-node-labels";
 export const SPIDERFY_LAYER_LEGS = "spiderfy-legs-line";
 
-/** Animation duration in ms */
 const ANIMATE_MS = 320;
-
-/** Golden angle in radians — produces optimal spacing in Fermat spirals */
 const GOLDEN_ANGLE = 2.399963229728653; // 137.508°
+const AUTO_SPIDERFY_MIN_ZOOM = 14;
 
 // ---------------------------------------------------------------------------
-// Active spiderfy state — tracks what's currently fanned out
+// State
 // ---------------------------------------------------------------------------
 
 interface SpiderfyState {
-  clusterId: number;
   center: [number, number];
   leaves: GeoFeature<GeoPoint, GeoJsonProperties>[];
   lastZoom: number;
@@ -44,172 +41,169 @@ interface SpiderfyState {
 
 let activeState: SpiderfyState | null = null;
 
-/** Get the currently active spiderfy state (for external inspection). */
 export function getActiveSpiderfyState(): SpiderfyState | null {
   return activeState;
 }
 
 // ---------------------------------------------------------------------------
-// Position calculation
+// Position math
 // ---------------------------------------------------------------------------
 
-/**
- * Convert a pixel offset to geographic degrees at a given zoom level.
- * At zoom z, one degree of longitude ≈ 256 * 2^z / 360 pixels.
- */
 function pixelsToDegrees(pixels: number, zoom: number): number {
-  const worldSize = 256 * Math.pow(2, zoom);
-  return (pixels / worldSize) * 360;
+  return (pixels / (256 * Math.pow(2, zoom))) * 360;
 }
 
-/** Arrange `count` points evenly around a circle of `radiusPx` pixels. */
 function circlePositions(
   center: [number, number],
   count: number,
   zoom: number,
-  radiusPx: number = 40,
+  radiusPx = 40,
 ): [number, number][] {
-  const radius = pixelsToDegrees(radiusPx, zoom);
-  const positions: [number, number][] = [];
-
-  for (let i = 0; i < count; i++) {
-    const angle = (2 * Math.PI * i) / count - Math.PI / 2; // start at top
-    positions.push([
-      center[0] + radius * Math.cos(angle),
-      center[1] + radius * Math.sin(angle),
-    ]);
-  }
-
-  return positions;
+  const r = pixelsToDegrees(radiusPx, zoom);
+  return Array.from({ length: count }, (_, i) => {
+    const a = (2 * Math.PI * i) / count - Math.PI / 2;
+    return [center[0] + r * Math.cos(a), center[1] + r * Math.sin(a)] as [number, number];
+  });
 }
 
-/** Arrange `count` points in a Fermat spiral of increasing radius. */
 function spiralPositions(
   center: [number, number],
   count: number,
   zoom: number,
-  baseRadiusPx: number = 30,
+  basePx = 30,
 ): [number, number][] {
-  const positions: [number, number][] = [];
-
-  for (let i = 0; i < count; i++) {
-    const angle = i * GOLDEN_ANGLE;
-    const r = pixelsToDegrees(baseRadiusPx * Math.sqrt(i + 1), zoom);
-    positions.push([
-      center[0] + r * Math.cos(angle),
-      center[1] + r * Math.sin(angle),
-    ]);
-  }
-
-  return positions;
+  return Array.from({ length: count }, (_, i) => {
+    const a = i * GOLDEN_ANGLE;
+    const r = pixelsToDegrees(basePx * Math.sqrt(i + 1), zoom);
+    return [center[0] + r * Math.cos(a), center[1] + r * Math.sin(a)] as [number, number];
+  });
 }
 
-/** Pick circle (≤8) or spiral (>8) layout. */
-function computeSpiderfiedPositions(
+function fanPositions(center: [number, number], count: number, zoom: number): [number, number][] {
+  return count <= 8 ? circlePositions(center, count, zoom) : spiralPositions(center, count, zoom);
+}
+
+function interpolatePositions(
   center: [number, number],
-  count: number,
-  zoom: number,
+  targets: [number, number][],
+  t: number,
 ): [number, number][] {
-  if (count <= 8) {
-    return circlePositions(center, count, zoom);
-  }
-  return spiralPositions(center, count, zoom);
+  const e = 1 - Math.pow(1 - t, 3); // ease-out cubic
+  return targets.map(([lng, lat]) => [
+    center[0] + (lng - center[0]) * e,
+    center[1] + (lat - center[1]) * e,
+  ]);
 }
 
 // ---------------------------------------------------------------------------
 // GeoJSON builders
 // ---------------------------------------------------------------------------
 
-function buildSpiderfiedNodesGeoJSON(
+function nodesGeoJSON(
   leaves: GeoFeature<GeoPoint, GeoJsonProperties>[],
   positions: [number, number][],
 ): FeatureCollection<GeoPoint, GeoJsonProperties> {
-  const features: GeoFeature<GeoPoint, GeoJsonProperties>[] = leaves.map((leaf, i) => ({
-    type: "Feature",
-    id: leaf.properties?.id ?? `spider-${i}`,
-    properties: {
-      ...leaf.properties,
-      _spiderfied: true,
-    },
-    geometry: {
-      type: "Point",
-      coordinates: positions[i],
-    },
-  }));
+  return {
+    type: "FeatureCollection",
+    features: leaves.map((leaf, i) => ({
+      type: "Feature" as const,
+      id: leaf.properties?.id ?? `spider-${i}`,
+      properties: { ...leaf.properties, _spiderfied: true },
+      geometry: { type: "Point" as const, coordinates: positions[i] },
+    })),
+  };
+}
 
-  return { type: "FeatureCollection", features };
+function legsGeoJSON(
+  center: [number, number],
+  positions: [number, number][],
+): FeatureCollection<GeoLineString, GeoJsonProperties> {
+  return {
+    type: "FeatureCollection",
+    features: positions.map((pos, i) => ({
+      type: "Feature" as const,
+      properties: { index: i, centerLng: center[0], centerLat: center[1] },
+      geometry: { type: "LineString" as const, coordinates: [center, pos] },
+    })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Leaf extraction — resilient to stale cluster IDs
+// ---------------------------------------------------------------------------
+
+/**
+ * Try getClusterLeaves with a timeout. If the cluster_id is stale
+ * (source was updated via setData concurrently), the callback may
+ * error or never fire. Returns [] on any failure.
+ */
+function tryGetLeaves(
+  source: MbGeoJSONSource,
+  clusterId: number,
+  timeoutMs = 500,
+): Promise<GeoFeature<GeoPoint, GeoJsonProperties>[]> {
+  return new Promise((resolve) => {
+    let done = false;
+    const timer = setTimeout(() => {
+      if (!done) { done = true; resolve([]); }
+    }, timeoutMs);
+
+    try {
+      source.getClusterLeaves(clusterId, Infinity, 0, (err, features) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        if (err || !features) return resolve([]);
+        resolve(features as GeoFeature<GeoPoint, GeoJsonProperties>[]);
+      });
+    } catch {
+      if (!done) { done = true; clearTimeout(timer); resolve([]); }
+    }
+  });
 }
 
 /**
- * Compute the cluster circle radius in pixels for a given point count.
- * Mirrors the Mapbox layer paint: step(point_count, 14, 10→18, 25→24, 50→30)
- * Plus 2px for the stroke width.
+ * Fallback: find nearby features from a pre-built pool (typically the raw
+ * node GeoJSON built by the caller). This pool contains ALL nodes,
+ * including those currently aggregated inside clusters — unlike
+ * querySourceFeatures which hides clustered nodes behind their cluster
+ * aggregate.  That's why this fallback needs external data: Mapbox will
+ * not reveal what's inside a cluster via source queries.
  */
-function clusterRadiusPx(pointCount: number): number {
-  let r = 14;
-  if (pointCount >= 50) r = 30;
-  else if (pointCount >= 25) r = 24;
-  else if (pointCount >= 10) r = 18;
-  return r + 2; // account for stroke
-}
-
-function buildSpiderLegsGeoJSON(
+function findLeavesNearCenter(
+  pool: GeoFeature<GeoPoint, GeoJsonProperties>[] | undefined,
   center: [number, number],
-  positions: [number, number][],
-  zoom: number,
   pointCount: number,
-): FeatureCollection<GeoLineString, GeoJsonProperties> {
-  // Offset leg start from center to the edge of the cluster circle
-  const edgeOffsetDeg = pixelsToDegrees(clusterRadiusPx(pointCount), zoom);
-
-  const features: GeoFeature<GeoLineString, GeoJsonProperties>[] = positions.map((pos, i) => {
-    // Direction from center to this node
-    const dx = pos[0] - center[0];
-    const dy = pos[1] - center[1];
-    const dist = Math.sqrt(dx * dx + dy * dy);
-
-    // Start at the circle edge along the direction toward this node
-    const legStart: [number, number] = dist > 0
-      ? [center[0] + (dx / dist) * edgeOffsetDeg, center[1] + (dy / dist) * edgeOffsetDeg]
-      : center;
-
-    return {
-      type: "Feature",
-      properties: { index: i, centerLng: center[0], centerLat: center[1] },
-      geometry: {
-        type: "LineString",
-        coordinates: [legStart, pos],
-      },
-    };
-  });
-
-  return { type: "FeatureCollection", features };
-}
-
-/** Interpolate positions between center and target for animation frames. */
-function interpolatePositions(
-  center: [number, number],
-  targets: [number, number][],
-  t: number,
-): [number, number][] {
-  // ease-out cubic for a snappy, decelerating feel
-  const eased = 1 - Math.pow(1 - t, 3);
-  return targets.map(([lng, lat]) => [
-    center[0] + (lng - center[0]) * eased,
-    center[1] + (lat - center[1]) * eased,
-  ]);
+): GeoFeature<GeoPoint, GeoJsonProperties>[] {
+  if (!pool || pool.length === 0) return [];
+  // Take the N nearest nodes to the cluster center. N = point_count, so we
+  // don't over- or under-spiderfy.
+  const withDist = pool
+    .map((f) => {
+      const c = (f.geometry as GeoPoint).coordinates;
+      const dx = c[0] - center[0];
+      const dy = c[1] - center[1];
+      return { f, d2: dx * dx + dy * dy };
+    })
+    .sort((a, b) => a.d2 - b.d2);
+  const n = Math.max(1, Math.min(pointCount || withDist.length, withDist.length));
+  // Guard: cap at a reasonable distance so we don't grab distant nodes if
+  // the cluster is actually empty/invalid. ~2km in degrees at equator.
+  const maxD2 = 0.02 * 0.02;
+  return withDist
+    .slice(0, n)
+    .filter((x) => x.d2 < maxD2)
+    .map((x) => x.f);
 }
 
 // ---------------------------------------------------------------------------
 // Layer management
 // ---------------------------------------------------------------------------
 
-/** Check whether spiderfy layers are currently on the map. */
 export function isSpiderfied(map: MbMap): boolean {
   return !!map.getSource(SPIDERFY_SOURCE_NODES);
 }
 
-/** Remove all spiderfy layers and sources (safe to call when none exist). */
 export function removeSpiderfyLayers(map: MbMap): void {
   activeState = null;
   for (const id of [SPIDERFY_LAYER_LABELS, SPIDERFY_LAYER_NODES, SPIDERFY_LAYER_LEGS]) {
@@ -220,20 +214,16 @@ export function removeSpiderfyLayers(map: MbMap): void {
   }
 }
 
-/** Create spiderfy sources and layers (empty data initially). */
 function addSpiderfyLayers(map: MbMap): void {
-  // Sources
   map.addSource(SPIDERFY_SOURCE_LEGS, {
     type: "geojson",
     data: { type: "FeatureCollection", features: [] },
   });
-
   map.addSource(SPIDERFY_SOURCE_NODES, {
     type: "geojson",
     data: { type: "FeatureCollection", features: [] },
   });
 
-  // Spider legs — thin dashed lines from cluster center to fanned-out node
   map.addLayer({
     id: SPIDERFY_LAYER_LEGS,
     type: "line",
@@ -245,7 +235,6 @@ function addSpiderfyLayers(map: MbMap): void {
     },
   });
 
-  // Spiderfied node circles — mirrors unclustered-nodes styling
   map.addLayer({
     id: SPIDERFY_LAYER_NODES,
     type: "circle",
@@ -273,7 +262,6 @@ function addSpiderfyLayers(map: MbMap): void {
     },
   });
 
-  // Spiderfied node labels — mirrors unclustered-labels styling
   map.addLayer({
     id: SPIDERFY_LAYER_LABELS,
     type: "symbol",
@@ -297,183 +285,118 @@ function addSpiderfyLayers(map: MbMap): void {
 // Main orchestrator
 // ---------------------------------------------------------------------------
 
-/**
- * Fan out the leaves of a cluster in a circle/spiral with animated transition.
- *
- * Resolves once the final position is set (animation complete).
- */
 export async function spiderfy(
   map: MbMap,
   clusterId: number,
   center: [number, number],
   zoom: number,
-  animate: boolean = true,
+  animate = true,
+  /** Raw node features for fallback when the cluster API fails. */
+  fallbackPool?: GeoFeature<GeoPoint, GeoJsonProperties>[],
+  /** Expected member count — used to size the fallback result. */
+  pointCount?: number,
 ): Promise<void> {
-  // Remove any prior spiderfy state
   removeSpiderfyLayers(map);
 
-  // Fetch cluster leaves
   const source = map.getSource("nodes_clustered") as MbGeoJSONSource | undefined;
   if (!source) return;
 
-  const leaves = await new Promise<GeoFeature<GeoPoint, GeoJsonProperties>[]>((resolve, reject) => {
-    source.getClusterLeaves(clusterId, Infinity, 0, (err, features) => {
-      if (err) return reject(err);
-      resolve((features ?? []) as GeoFeature<GeoPoint, GeoJsonProperties>[]);
-    });
-  });
+  // Primary: try the cluster API (fast when cluster_id is valid).
+  let leaves = await tryGetLeaves(source, clusterId);
+  let source_used = "getClusterLeaves";
+
+  // Fallback: proximity search in caller-supplied raw node features.
+  if (leaves.length === 0) {
+    leaves = findLeavesNearCenter(fallbackPool, center, pointCount ?? 0);
+    source_used = "proximity fallback";
+  }
+
+  console.log(`[spiderfy] cluster_id=${clusterId} center=[${center[0].toFixed(5)},${center[1].toFixed(5)}] zoom=${zoom.toFixed(2)} leaves=${leaves.length} via=${source_used}`);
 
   if (leaves.length === 0) return;
 
-  // Store active state so we can update positions on zoom
-  activeState = { clusterId, center, leaves, lastZoom: zoom };
+  activeState = { center, leaves, lastZoom: zoom };
+  const finalPositions = fanPositions(center, leaves.length, zoom);
 
-  // Compute final fanned-out positions
-  const finalPositions = computeSpiderfiedPositions(center, leaves.length, zoom);
-
-  // Create layers
   addSpiderfyLayers(map);
 
-  const nodeSource = map.getSource(SPIDERFY_SOURCE_NODES) as MbGeoJSONSource;
-  const legSource = map.getSource(SPIDERFY_SOURCE_LEGS) as MbGeoJSONSource;
+  const nodeSrc = map.getSource(SPIDERFY_SOURCE_NODES) as MbGeoJSONSource;
+  const legSrc = map.getSource(SPIDERFY_SOURCE_LEGS) as MbGeoJSONSource;
 
   if (!animate) {
-    // Instant placement (used for zoom updates)
-    nodeSource.setData(buildSpiderfiedNodesGeoJSON(leaves, finalPositions));
-    legSource.setData(buildSpiderLegsGeoJSON(center, finalPositions, zoom, leaves.length));
+    nodeSrc.setData(nodesGeoJSON(leaves, finalPositions));
+    legSrc.setData(legsGeoJSON(center, finalPositions));
     return;
   }
-
-  // Animate the fan-out
-  return new Promise<void>((resolve) => {
-    const start = performance.now();
-
-    function frame(now: number) {
-      const elapsed = now - start;
-      const t = Math.min(elapsed / ANIMATE_MS, 1);
-
-      const currentPositions = interpolatePositions(center, finalPositions, t);
-
-      nodeSource.setData(buildSpiderfiedNodesGeoJSON(leaves, currentPositions));
-      legSource.setData(buildSpiderLegsGeoJSON(center, currentPositions, zoom, leaves.length));
-
-      if (t < 1) {
-        requestAnimationFrame(frame);
-      } else {
-        resolve();
-      }
-    }
-
-    requestAnimationFrame(frame);
-  });
-}
-
-/**
- * Animate the collapse of spiderfied nodes back to center, then remove layers.
- */
-export async function unspiderfy(map: MbMap): Promise<void> {
-  if (!isSpiderfied(map)) return;
-
-  const state = activeState;
-  const nodeSource = map.getSource(SPIDERFY_SOURCE_NODES) as MbGeoJSONSource | undefined;
-  const legSource = map.getSource(SPIDERFY_SOURCE_LEGS) as MbGeoJSONSource | undefined;
-
-  if (!nodeSource || !legSource) {
-    removeSpiderfyLayers(map);
-    return;
-  }
-
-  // Read current spiderfied feature positions to animate back
-  const renderedNodes = map.queryRenderedFeatures(undefined as any, {
-    layers: [SPIDERFY_LAYER_NODES],
-  });
-
-  if (renderedNodes.length === 0) {
-    removeSpiderfyLayers(map);
-    return;
-  }
-
-  // Get the true center from state or from leg properties
-  let center: [number, number];
-  if (state) {
-    center = state.center;
-  } else {
-    const renderedLegs = map.queryRenderedFeatures(undefined as any, {
-      layers: [SPIDERFY_LAYER_LEGS],
-    });
-    if (renderedLegs.length > 0 && renderedLegs[0].properties?.centerLng != null) {
-      center = [renderedLegs[0].properties.centerLng, renderedLegs[0].properties.centerLat];
-    } else {
-      removeSpiderfyLayers(map);
-      return;
-    }
-  }
-
-  const currentPositions: [number, number][] = renderedNodes.map((f) => {
-    const coords = (f.geometry as GeoPoint).coordinates;
-    return [coords[0], coords[1]];
-  });
-
-  // Build leaf-like features for the collapse animation
-  // Clear state immediately so idle handler doesn't re-spiderfy during collapse
-  activeState = null;
-
-  const collapseFeatures: GeoFeature<GeoPoint, GeoJsonProperties>[] = renderedNodes.map((f) => ({
-    type: "Feature",
-    id: f.properties?.id ?? f.id,
-    properties: f.properties,
-    geometry: f.geometry as GeoPoint,
-  }));
 
   return new Promise<void>((resolve) => {
     const start = performance.now();
-    const collapseDuration = ANIMATE_MS * 0.7; // slightly faster collapse
-
     function frame(now: number) {
-      const elapsed = now - start;
-      const t = Math.min(elapsed / collapseDuration, 1);
-
-      // Reverse: interpolate from current positions toward center
-      const positions = interpolatePositions(center, currentPositions, 1 - t);
-
+      const t = Math.min((now - start) / ANIMATE_MS, 1);
+      const pos = interpolatePositions(center, finalPositions, t);
       try {
-        nodeSource!.setData(buildSpiderfiedNodesGeoJSON(collapseFeatures, positions));
-        legSource!.setData(buildSpiderLegsGeoJSON(center, positions, map.getZoom(), collapseFeatures.length));
+        nodeSrc.setData(nodesGeoJSON(leaves, pos));
+        legSrc.setData(legsGeoJSON(center, pos));
       } catch {
-        // Source may have been removed during animation (e.g. style change)
         removeSpiderfyLayers(map);
         resolve();
         return;
       }
-
-      if (t < 1) {
-        requestAnimationFrame(frame);
-      } else {
-        removeSpiderfyLayers(map);
-        resolve();
-      }
+      if (t < 1) requestAnimationFrame(frame);
+      else resolve();
     }
-
     requestAnimationFrame(frame);
   });
 }
 
 // ---------------------------------------------------------------------------
-// Update positions on zoom (no remove/re-add, just recompute coordinates)
+// Unspiderfy
 // ---------------------------------------------------------------------------
 
-/**
- * Recompute spiderfied node positions for the current zoom level.
- * Call on `zoomend` to keep the fan-out visually consistent.
- * Does nothing if no spiderfy is active.
- */
-export function updateSpiderfyPositions(map: MbMap): void {
-  if (!activeState) return;
+export async function unspiderfy(map: MbMap): Promise<void> {
   if (!isSpiderfied(map)) return;
 
-  const zoom = map.getZoom();
+  const state = activeState;
+  const nodeSrc = map.getSource(SPIDERFY_SOURCE_NODES) as MbGeoJSONSource | undefined;
+  const legSrc = map.getSource(SPIDERFY_SOURCE_LEGS) as MbGeoJSONSource | undefined;
 
-  // Collapse if user zoomed out past the auto-spiderfy threshold
+  if (!nodeSrc || !legSrc || !state) {
+    removeSpiderfyLayers(map);
+    return;
+  }
+
+  const positions = fanPositions(state.center, state.leaves.length, map.getZoom());
+  activeState = null;
+
+  return new Promise<void>((resolve) => {
+    const start = performance.now();
+    const duration = ANIMATE_MS * 0.7;
+    function frame(now: number) {
+      const t = Math.min((now - start) / duration, 1);
+      const pos = interpolatePositions(state.center, positions, 1 - t);
+      try {
+        nodeSrc!.setData(nodesGeoJSON(state.leaves, pos));
+        legSrc!.setData(legsGeoJSON(state.center, pos));
+      } catch {
+        removeSpiderfyLayers(map);
+        resolve();
+        return;
+      }
+      if (t < 1) requestAnimationFrame(frame);
+      else { removeSpiderfyLayers(map); resolve(); }
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Zoom update
+// ---------------------------------------------------------------------------
+
+export function updateSpiderfyPositions(map: MbMap): void {
+  if (!activeState || !isSpiderfied(map)) return;
+
+  const zoom = map.getZoom();
   if (zoom < AUTO_SPIDERFY_MIN_ZOOM) {
     removeSpiderfyLayers(map);
     return;
@@ -481,72 +404,63 @@ export function updateSpiderfyPositions(map: MbMap): void {
 
   const { center, leaves } = activeState;
   activeState.lastZoom = zoom;
-
-  const positions = computeSpiderfiedPositions(center, leaves.length, zoom);
+  const positions = fanPositions(center, leaves.length, zoom);
 
   try {
-    const nodeSource = map.getSource(SPIDERFY_SOURCE_NODES) as MbGeoJSONSource | undefined;
-    const legSource = map.getSource(SPIDERFY_SOURCE_LEGS) as MbGeoJSONSource | undefined;
-    if (!nodeSource || !legSource) return;
-
-    nodeSource.setData(buildSpiderfiedNodesGeoJSON(leaves, positions));
-    legSource.setData(buildSpiderLegsGeoJSON(center, positions, zoom, leaves.length));
-  } catch {
-    // Sources may have been removed
-  }
+    const nodeSrc = map.getSource(SPIDERFY_SOURCE_NODES) as MbGeoJSONSource | undefined;
+    const legSrc = map.getSource(SPIDERFY_SOURCE_LEGS) as MbGeoJSONSource | undefined;
+    if (!nodeSrc || !legSrc) return;
+    nodeSrc.setData(nodesGeoJSON(leaves, positions));
+    legSrc.setData(legsGeoJSON(center, positions));
+  } catch { /* sources may have been removed */ }
 }
 
 // ---------------------------------------------------------------------------
 // Auto-spiderfy
 // ---------------------------------------------------------------------------
 
-/**
- * Automatically spiderfy visible clusters that can't expand further.
- * Call on `idle`. Checks all visible clusters regardless of zoom level —
- * if a cluster's expansion zoom >= maxZoom, it gets spiderfied.
- */
-/** Zoom level at which individual nodes would normally appear (pre-spiderfy). */
-const AUTO_SPIDERFY_MIN_ZOOM = 14;
-
-export async function autoSpiderfyVisibleClusters(map: MbMap): Promise<void> {
-  // Don't re-spiderfy if already active (prevents idle → spiderfy → idle loop)
+export async function autoSpiderfyVisibleClusters(
+  map: MbMap,
+  fallbackPool?: GeoFeature<GeoPoint, GeoJsonProperties>[],
+): Promise<void> {
   if (activeState) return;
   if (!map.getLayer("clusters")) return;
 
   const maxZoom = map.getMaxZoom();
   const currentZoom = map.getZoom();
-
-  // Only auto-spiderfy when zoomed in to street/neighborhood level
   if (currentZoom < AUTO_SPIDERFY_MIN_ZOOM) return;
 
-  // Query visible cluster features
-  const clusterFeatures = map.queryRenderedFeatures(undefined as any, {
-    layers: ["clusters"],
-  });
-
+  const clusterFeatures = map.queryRenderedFeatures({ layers: ["clusters"] });
   if (clusterFeatures.length === 0) return;
 
   const source = map.getSource("nodes_clustered") as MbGeoJSONSource | undefined;
   if (!source) return;
 
-  // Find clusters that can't expand and spiderfy them
   for (const cluster of clusterFeatures) {
     const clusterId = cluster.properties?.cluster_id;
     if (clusterId == null) continue;
 
+    // Timeout guards against stale cluster_ids (setData reassigns them)
     const expansionZoom = await new Promise<number | null>((resolve) => {
-      source.getClusterExpansionZoom(clusterId, (err, zoom) => {
-        if (err) return resolve(null);
-        resolve(zoom ?? null);
-      });
+      let done = false;
+      const timer = setTimeout(() => { if (!done) { done = true; resolve(null); } }, 500);
+      try {
+        source.getClusterExpansionZoom(clusterId, (err, zoom) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(err ? null : zoom ?? null);
+        });
+      } catch { if (!done) { done = true; clearTimeout(timer); resolve(null); } }
     });
 
     if (expansionZoom == null) continue;
 
     if (expansionZoom >= maxZoom) {
       const [lng, lat] = (cluster.geometry as any).coordinates as [number, number];
-      await spiderfy(map, clusterId, [lng, lat], map.getZoom());
-      return; // one cluster at a time to avoid visual clutter
+      const count = (cluster.properties?.point_count as number) ?? 0;
+      await spiderfy(map, clusterId, [lng, lat], currentZoom, true, fallbackPool, count);
+      return;
     }
   }
 }
