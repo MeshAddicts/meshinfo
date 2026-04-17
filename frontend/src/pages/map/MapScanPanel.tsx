@@ -6,9 +6,9 @@ import { useMemo, useState } from "react";
 import type { ScanSummary, ScanClass, ScanResult } from "./scanAnalysis";
 
 const CLASS_STYLES: Record<ScanClass, { bg: string; text: string; border: string; label: string }> = {
-  clear:      { bg: "bg-emerald-500/15", text: "text-emerald-300", border: "border-emerald-500/30", label: "Clear" },
-  fresnel:    { bg: "bg-amber-500/15",   text: "text-amber-300",   border: "border-amber-500/30",   label: "Fresnel" },
-  diffracted: { bg: "bg-orange-500/15",  text: "text-orange-300",  border: "border-orange-500/30",  label: "Diffracted" },
+  clear:      { bg: "bg-cyan-500/15",    text: "text-cyan-300",    border: "border-cyan-500/30",    label: "Clear" },
+  fresnel:    { bg: "bg-orange-500/15",  text: "text-orange-300",  border: "border-orange-500/30",  label: "Fresnel" },
+  diffracted: { bg: "bg-fuchsia-500/15", text: "text-fuchsia-300", border: "border-fuchsia-500/30", label: "Diffracted" },
   blocked:    { bg: "bg-red-500/15",     text: "text-red-300",     border: "border-red-500/30",     label: "Blocked" },
 };
 

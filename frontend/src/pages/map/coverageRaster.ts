@@ -122,21 +122,33 @@ function lerp(a: number, b: number, t: number): number {
 }
 
 function gradient(marginDb: number): [number, number, number, number] {
-  // orange #f97316 → yellow #eab308 → green #22c55e → dark green #16a34a
+  // Magenta → orange → cyan → deep cyan. Chosen for high contrast on
+  // satellite imagery — green-on-green was unreadable. These hues are
+  // absent from natural terrain so coverage paint pops regardless of
+  // basemap.
+  //
+  // Stops: 0 dB (edge) = magenta #d946ef
+  //        5 dB         = orange  #f97316
+  //       15 dB         = cyan    #06b6d4
+  //       25 dB+        = deep    #0891b2
   let r: number, g: number, b: number;
   if (marginDb <= 0) {
-    r = 249; g = 115; b = 22;
+    // magenta — at-threshold / edge of coverage
+    r = 217; g = 70; b = 239;
   } else if (marginDb < 5) {
+    // magenta → orange
     const t = marginDb / 5;
-    r = lerp(249, 234, t); g = lerp(115, 179, t); b = lerp(22, 8, t);
+    r = lerp(217, 249, t); g = lerp(70, 115, t); b = lerp(239, 22, t);
   } else if (marginDb < 15) {
+    // orange → cyan
     const t = (marginDb - 5) / 10;
-    r = lerp(234, 34, t); g = lerp(179, 197, t); b = lerp(8, 94, t);
+    r = lerp(249, 6, t); g = lerp(115, 182, t); b = lerp(22, 212, t);
   } else if (marginDb < 25) {
+    // cyan → deep cyan
     const t = (marginDb - 15) / 10;
-    r = lerp(34, 22, t); g = lerp(197, 163, t); b = lerp(94, 74, t);
+    r = lerp(6, 8, t); g = lerp(182, 145, t); b = lerp(212, 178, t);
   } else {
-    r = 22; g = 163; b = 74;
+    r = 8; g = 145; b = 178;
   }
   const aT = Math.min(1, Math.max(0, marginDb / 25));
   const a = Math.round(255 * (0.35 + 0.35 * aT));

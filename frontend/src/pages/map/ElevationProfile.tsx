@@ -13,14 +13,17 @@ export function ElevationProfile({
   result,
   fromLabel,
   toLabel,
-  fromColor = "#22c55e",
-  toColor = "#ef4444",
+  fromColor = "#06b6d4",
+  toColor = "#d946ef",
+  onHoverFraction,
 }: {
   result: LoSResult;
   fromLabel: string;
   toLabel: string;
   fromColor?: string;
   toColor?: string;
+  /** Fires with 0–1 distance fraction on hover, null on leave. */
+  onHoverFraction?: (t: number | null) => void;
 }) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
 
@@ -99,7 +102,7 @@ export function ElevationProfile({
     `L ${xScale(result.totalDistanceKm)},${yScale(result.toHeightM)}`;
 
   const losColor = result.losClear
-    ? (result.fresnelClear ? "#22c55e" : "#eab308")
+    ? (result.fresnelClear ? "#06b6d4" : "#f97316")
     : "#ef4444";
 
   const hoverPoint = hoverIdx != null ? result.points[hoverIdx] : null;
@@ -116,6 +119,7 @@ export function ElevationProfile({
     const x = svgX - MARGIN.left;
     if (x < 0 || x > plotW) {
       setHoverIdx(null);
+      onHoverFraction?.(null);
       return;
     }
     const distKm = (x / plotW) * result.totalDistanceKm;
@@ -130,6 +134,7 @@ export function ElevationProfile({
       }
     }
     setHoverIdx(bestIdx);
+    onHoverFraction?.(result.totalDistanceKm > 0 ? result.points[bestIdx].distanceKm / result.totalDistanceKm : 0);
   };
 
   return (
@@ -139,7 +144,7 @@ export function ElevationProfile({
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         className="block"
         onPointerMove={handlePointerMove}
-        onPointerLeave={() => setHoverIdx(null)}
+        onPointerLeave={() => { setHoverIdx(null); onHoverFraction?.(null); }}
       >
         <defs>
           <linearGradient id="terrainGradient" x1="0" y1="0" x2="0" y2="1">
@@ -189,13 +194,13 @@ export function ElevationProfile({
           ))}
 
           {/* Full Fresnel zone (translucent) */}
-          <path d={fresnelPath} fill="rgba(250,204,21,0.08)" />
+          <path d={fresnelPath} fill="rgba(249,115,22,0.08)" />
 
           {/* 60% Fresnel zone (more opaque — the "usable" threshold) */}
           <path
             d={fresnel60Path}
-            fill={result.fresnelClear ? "rgba(34,197,94,0.12)" : "rgba(250,204,21,0.22)"}
-            stroke={result.fresnelClear ? "rgba(34,197,94,0.35)" : "rgba(250,204,21,0.5)"}
+            fill={result.fresnelClear ? "rgba(6,182,212,0.12)" : "rgba(249,115,22,0.22)"}
+            stroke={result.fresnelClear ? "rgba(6,182,212,0.35)" : "rgba(249,115,22,0.5)"}
             strokeWidth={0.5}
             strokeDasharray="2 2"
           />
@@ -277,7 +282,7 @@ export function ElevationProfile({
               <circle
                 cy={yScale(hoverPoint.ground)}
                 r={2.5}
-                fill="#fbbf24"
+                fill="#f97316"
                 stroke="white"
                 strokeWidth={1}
               />

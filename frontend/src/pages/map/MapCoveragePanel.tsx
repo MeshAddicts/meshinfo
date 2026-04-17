@@ -381,7 +381,7 @@ export function MapCoveragePanel({
               </svg>
             </summary>
             <div className="absolute right-0 bottom-full mb-1 w-85 p-2.5 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-gray-400 leading-relaxed space-y-1">
-              <div>Pixel color shows predicted <strong>link margin</strong> (RSSI minus sensitivity and fade margin). Dark green = very reliable, yellow = marginal, orange = at threshold. Unpainted terrain is below sensitivity.</div>
+              <div>Pixel color shows predicted <strong>link margin</strong> (RSSI minus sensitivity and fade margin). Cyan = very reliable, orange = marginal, magenta = at threshold. Unpainted terrain is below sensitivity.</div>
               <div className="pt-1 border-t border-white/5">
                 <div className="text-gray-300 font-medium">Reliability</div>
                 <div className="mt-0.5">
@@ -562,9 +562,9 @@ export function MapCoveragePanel({
                 <span className="inline-flex items-center gap-1 min-w-0">
                   Iso-margin contours
                   <InfoTip align="left">
-                    Overlay iso-margin lines at 0 dB (amber — edge of
-                    coverage), +10 dB (green — reliable), and +20 dB (light
-                    green — strong signal).
+                    Overlay iso-margin lines at 0 dB (magenta — edge of
+                    coverage), +10 dB (cyan — reliable), and +20 dB (deep
+                    cyan — strong signal).
                   </InfoTip>
                 </span>
               </label>
@@ -626,7 +626,7 @@ export function MapCoveragePanel({
                   </span>
                 </div>
                 <div className="mt-1 h-2 rounded-full overflow-hidden" style={{
-                  background: "linear-gradient(to right, #f97316 0%, #eab308 20%, #22c55e 55%, #16a34a 100%)",
+                  background: "linear-gradient(to right, #d946ef 0%, #f97316 20%, #06b6d4 55%, #0891b2 100%)",
                 }} />
                 <div className="flex items-center justify-between text-[9px] text-gray-500 mt-0.5 font-mono">
                   <span>0 dB</span>

@@ -108,6 +108,7 @@ export function MapLosPanel({
   toHwIdx, onToHwIdxChange,
   toAntIdx, onToAntIdxChange,
   toHeightM, onToHeightChange,
+  onProfileHover,
 }: {
   result: LoSResult | null;
   fromLabel: string;
@@ -124,6 +125,8 @@ export function MapLosPanel({
   toHwIdx: number; onToHwIdxChange: (idx: number) => void;
   toAntIdx: number; onToAntIdxChange: (idx: number) => void;
   toHeightM: number; onToHeightChange: (m: number) => void;
+  /** Fires with 0–1 distance fraction as user hovers the elevation chart. */
+  onProfileHover?: (fraction: number | null) => void;
 }) {
   // Terrain-needed banner
   if (terrainNeeded) {
@@ -193,33 +196,32 @@ export function MapLosPanel({
   // physically authoritative answer. Geometric Fresnel/obstruction info
   // stays as secondary indicators below.
   let statusLabel: string;
-  let statusColor: "emerald" | "yellow" | "orange" | "red";
+  let statusColor: "cyan" | "orange" | "fuchsia" | "red";
   if (los.itmMode === "troposcatter") {
     statusLabel = "Beyond radio horizon";
     statusColor = "red";
   } else if (los.itmMode === "diffraction") {
     statusLabel = "Diffraction path";
-    statusColor = "orange";
+    statusColor = "fuchsia";
   } else if (los.itmMode === "line_of_sight") {
     statusLabel = los.fresnelClear ? "Clear Line of Sight" : "LoS · Fresnel Intrusion";
-    statusColor = los.fresnelClear ? "emerald" : "yellow";
+    statusColor = los.fresnelClear ? "cyan" : "orange";
   } else {
-    // Fallback: ITM not loaded yet — use geometric read.
     statusLabel = los.losClear
       ? (los.fresnelClear ? "Clear Line of Sight" : "LoS · Fresnel Intrusion")
       : "Obstructed";
-    statusColor = los.losClear ? (los.fresnelClear ? "emerald" : "yellow") : "red";
+    statusColor = los.losClear ? (los.fresnelClear ? "cyan" : "orange") : "red";
   }
   const statusClasses = {
-    emerald: "bg-emerald-500/15 border-emerald-500/30 text-emerald-300",
-    yellow: "bg-yellow-500/15 border-yellow-500/30 text-yellow-300",
+    cyan: "bg-cyan-500/15 border-cyan-500/30 text-cyan-300",
     orange: "bg-orange-500/15 border-orange-500/30 text-orange-300",
+    fuchsia: "bg-fuchsia-500/15 border-fuchsia-500/30 text-fuchsia-300",
     red: "bg-red-500/15 border-red-500/30 text-red-300",
   }[statusColor];
   const dotColor = {
-    emerald: "bg-emerald-400",
-    yellow: "bg-yellow-400",
+    cyan: "bg-cyan-400",
     orange: "bg-orange-400",
+    fuchsia: "bg-fuchsia-400",
     red: "bg-red-400",
   }[statusColor];
 
@@ -342,6 +344,7 @@ export function MapLosPanel({
             toLabel={toLabel}
             fromColor={fromColor}
             toColor={toColor}
+            onHoverFraction={onProfileHover}
           />
         </div>
 

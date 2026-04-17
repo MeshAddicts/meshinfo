@@ -565,6 +565,40 @@ export function Map() {
    */
   const dragPreviewBusyRef = useRef(false);
   const dragPreviewPendingRef = useRef<[number, number] | null>(null);
+  // LOS endpoint positions resolved in the compute effect — stored in
+  // refs so the hover-marker callback can read them without deps churn.
+  const losFromPosRef = useRef<[number, number] | null>(null);
+  const losToPosRef = useRef<[number, number] | null>(null);
+  // Ephemeral marker on the map showing where the user is hovering on
+  // the LOS elevation profile chart.
+  const losHoverMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  const handleLosProfileHover = useCallback((fraction: number | null) => {
+    const mb = mbMapRef.current;
+    if (!mb) return;
+    if (fraction == null) {
+      losHoverMarkerRef.current?.remove();
+      losHoverMarkerRef.current = null;
+      return;
+    }
+    const from = losFromPosRef.current;
+    const to = losToPosRef.current;
+    if (!from || !to) return;
+    const lng = from[0] + (to[0] - from[0]) * fraction;
+    const lat = from[1] + (to[1] - from[1]) * fraction;
+    if (!losHoverMarkerRef.current) {
+      const el = document.createElement("div");
+      el.style.cssText =
+        "width:14px;height:14px;border-radius:50%;background:#f97316;" +
+        "border:2px solid white;box-shadow:0 0 8px rgba(0,0,0,0.5);" +
+        "pointer-events:none;";
+      losHoverMarkerRef.current = new mapboxgl.Marker({ element: el })
+        .setLngLat([lng, lat])
+        .addTo(mb);
+    } else {
+      losHoverMarkerRef.current.setLngLat([lng, lat]);
+    }
+  }, []);
+
   // Tracks the last LOS endpoint pair we fitBounds'd to — prevents
   // re-zooming when the user changes config (height/antenna) without
   // moving the endpoints.
@@ -1078,6 +1112,10 @@ export function Map() {
     setLosVirtualFrom(null);
     setLosVirtualTo(null);
     losFitKeyRef.current = null;
+    losFromPosRef.current = null;
+    losToPosRef.current = null;
+    losHoverMarkerRef.current?.remove();
+    losHoverMarkerRef.current = null;
     setLosResult(null);
     setCoverageResult(null);
     setScanSummary(null);
@@ -1207,6 +1245,11 @@ export function Map() {
     } else {
       toPos = losVirtualTo!;
     }
+
+    // Stash positions for the hover-marker callback (reads from refs,
+    // no dependency churn).
+    losFromPosRef.current = fromPos;
+    losToPosRef.current = toPos;
 
     const run = async () => {
       // Build our own DEM for the LoS span instead of relying on
@@ -2476,14 +2519,28 @@ export function Map() {
       mapboxgl.accessToken = mapboxToken!;
     }
 
+    // Restore saved pitch/bearing so the camera orientation persists
+    // across page loads (we already persist center + zoom).
+    let initialPitch = 0;
+    let initialBearing = 0;
+    try {
+      const p = parseFloat(localStorage.getItem("savedPitch") ?? "0");
+      if (Number.isFinite(p)) initialPitch = p;
+      const b = parseFloat(localStorage.getItem("savedBearing") ?? "0");
+      if (Number.isFinite(b)) initialBearing = b;
+    } catch {}
+
     const map = new mapboxgl.Map({
       container: mapRef.current,
       style: styleUrl,
       center: initialCenter,
       zoom: initialZoom,
+      pitch: initialPitch,
+      bearing: initialBearing,
       attributionControl: false,
       logoPosition: "top-right",
       preserveDrawingBuffer: true, // required for canvas.toDataURL() export
+      projection: "mercator",
     });
 
     map.addControl(new mapboxgl.AttributionControl({ compact: true }), "top-right");
@@ -2548,6 +2605,8 @@ export function Map() {
       const c = map.getCenter();
       localStorage.setItem("savedCenter", JSON.stringify([c.lng, c.lat]));
       localStorage.setItem("savedZoom", map.getZoom().toString());
+      localStorage.setItem("savedPitch", map.getPitch().toString());
+      localStorage.setItem("savedBearing", map.getBearing().toString());
     });
 
     const ensureSourcesAndLayers = () => {
@@ -2705,12 +2764,12 @@ export function Map() {
           },
           paint: {
             // Color by threshold: 0 dB (edge) = amber, 10 dB = green,
-            // 20 dB = bright green ("strongly reliable").
+            // 20 dB = deep cyan ("strongly reliable").
             "line-color": [
               "match", ["get", "thresholdDb"],
-              0,  "#f59e0b",
-              10, "#22c55e",
-              20, "#86efac",
+              0,  "#d946ef",
+              10, "#06b6d4",
+              20, "#0891b2",
               "#a1a1aa",
             ],
             "line-width": [
@@ -2782,9 +2841,9 @@ export function Map() {
           paint: {
             "line-color": [
               "match", ["get", "cls"],
-              "clear",      "#22c55e",
-              "fresnel",    "#eab308",
-              "diffracted", "#f97316",
+              "clear",      "#06b6d4",
+              "fresnel",    "#f97316",
+              "diffracted", "#d946ef",
               "blocked",    "#ef4444",
               "#9ca3af",
             ],
@@ -3556,12 +3615,13 @@ export function Map() {
         console.warn("[Map] Terrain apply failed:", err);
       }
 
-      // When disabling 3D, reset pitch + bearing to 0 for a clean 2D view
+      // When disabling 3D, reset pitch + bearing to 0 for a clean 2D view.
+      // When enabling, DON'T auto-nudge — the saved pitch from localStorage
+      // (or the user's manual tilt) is the right answer. Previously we
+      // nudged to 45° on enable, which fought with the saved camera state
+      // on page load and caused a "tilts then snaps flat" flash.
       if (!terrain3D) {
         map.easeTo({ pitch: 0, bearing: 0, duration: 400 });
-      } else if (map.getPitch() < 5) {
-        // Turning on terrain: nudge pitch to 45° so the 3D effect is visible
-        map.easeTo({ pitch: 45, duration: 500 });
       }
     };
 
@@ -4428,8 +4488,8 @@ export function Map() {
                 ? `${losVirtualTo[1].toFixed(5)}, ${losVirtualTo[0].toFixed(5)}`
                 : ""
           }
-          fromColor="#22c55e"
-          toColor="#06b6d4"
+          fromColor="#06b6d4"
+          toColor="#d946ef"
           terrainNeeded={provider === "mapbox" && !terrain3D}
           onEnableTerrain={provider === "mapbox" ? () => setTerrain3D(true) : undefined}
           onClose={resetTool}
@@ -4440,6 +4500,7 @@ export function Map() {
           toHwIdx={losToHwIdx} onToHwIdxChange={setLosToHwIdx}
           toAntIdx={losToAntIdx} onToAntIdxChange={setLosToAntIdx}
           toHeightM={losToHeightM} onToHeightChange={setLosToHeightM}
+          onProfileHover={handleLosProfileHover}
         />
       )}
 
@@ -4497,8 +4558,8 @@ export function Map() {
           toId={toolToId}
           fromLabel={(nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.shortname ?? toolFromId.slice(0, 8)}
           toLabel={(nodes[toolToId] ?? nodes[`!${toolToId}`])?.shortname ?? toolToId.slice(0, 8)}
-          fromColor="#22c55e"
-          toColor="#06b6d4"
+          fromColor="#06b6d4"
+          toColor="#d946ef"
           traceroutes={rawTraceroutes}
           liveNodes={nodes}
           onNodeSelect={(id) => handleNodeSelectRef.current(id)}

@@ -29,9 +29,9 @@ export interface LosTubeData {
 }
 
 // RGB 0-1 for each classification — mirrors the old LoS panel palette.
-const COLOR_CLEAR: [number, number, number] = [0.13, 0.77, 0.37]; // #22c55e
-const COLOR_FRESNEL: [number, number, number] = [0.92, 0.70, 0.03]; // #eab308
-const COLOR_BLOCKED: [number, number, number] = [0.94, 0.27, 0.27]; // #ef4444
+const COLOR_CLEAR: [number, number, number] = [0.024, 0.714, 0.831]; // #06b6d4 cyan
+const COLOR_FRESNEL: [number, number, number] = [0.976, 0.451, 0.086]; // #f97316 orange
+const COLOR_BLOCKED: [number, number, number] = [0.94, 0.27, 0.27]; // #ef4444 red
 
 function colorFor(cls: LosSegmentColor): [number, number, number] {
   switch (cls) {
