@@ -428,6 +428,9 @@ export function Map() {
   // Nonce to force a recompute on user-requested retry when nothing else
   // changed. Bumped by the panel's retry button.
   const [coverageRetryNonce, setCoverageRetryNonce] = useState(0);
+  // Per-slice progress for long Ultra/Survey computes. `total === 0`
+  // means "no progress applicable" (idle / drag preview / terrain fetch).
+  const [coverageProgress, setCoverageProgress] = useState<{ completed: number; total: number }>({ completed: 0, total: 0 });
   // Index into COMMON_ANTENNAS — default to Rokland N-Male Omni 5.8 dBi (idx 3).
   // Uses an index (not raw dBi) because multiple antennas can share the
   // same dBi value (e.g. two different 3 dBi models) and a value-based
@@ -786,6 +789,12 @@ export function Map() {
      */
     outputWidth?: number;
     outputHeight?: number;
+    /**
+     * Invoked after each worker-pool slice returns so the UI can show
+     * per-slice progress during long Survey/Ultra computes. Fires with
+     * (completed, total). Optional — the drag-preview path omits it.
+     */
+    onSliceProgress?: (completed: number, total: number) => void;
   }): Promise<{
     clearCount: number;
     fresnelCount: number;
@@ -799,7 +808,7 @@ export function Map() {
     outputHeight: number;
     itmUnavailable?: boolean;
   } | null> => {
-    const { dem, origin, originHeightM, originAntennaHeightAboveGroundM, params, requestId } = opts;
+    const { dem, origin, originHeightM, originAntennaHeightAboveGroundM, params, requestId, onSliceProgress } = opts;
     const outputWidth = opts.outputWidth ?? dem.width;
     const outputHeight = opts.outputHeight ?? dem.height;
     const mb = mbMapRef.current;
@@ -819,6 +828,12 @@ export function Map() {
       itmUnavailable?: boolean;
     }> = [];
     const tasks: Promise<unknown>[] = [];
+    const totalSlices = Math.min(
+      poolSize,
+      Math.ceil(outputHeight / rowsPerTask),
+    );
+    let completedSlices = 0;
+    onSliceProgress?.(0, totalSlices);
 
     for (let i = 0; i < poolSize; i++) {
       const rowStart = i * rowsPerTask;
@@ -843,6 +858,13 @@ export function Map() {
       tasks.push(
         pool.dispatch(req, [demCopy.buffer]).then((resp) => {
           sliceResponses.push(resp);
+          completedSlices += 1;
+          // Only report progress if this request is still the latest —
+          // otherwise a cancelled/superseded dispatch would emit stray
+          // progress ticks into an already-cleared UI.
+          if (requestId === coverageRequestIdRef.current) {
+            onSliceProgress?.(completedSlices, totalSlices);
+          }
         }),
       );
     }
@@ -1128,6 +1150,7 @@ export function Map() {
     setIsComputingCoverage(false);
     setIsFetchingCoverageTerrain(false);
     setCoverageError(null);
+    setCoverageProgress({ completed: 0, total: 0 });
     setIsScanning(false);
 
     const mb = mbMapRef.current;
@@ -1640,12 +1663,14 @@ export function Map() {
       setIsComputingCoverage(false);
       setIsFetchingCoverageTerrain(false);
       setCoverageError(null);
+      setCoverageProgress({ completed: 0, total: 0 });
       return;
     }
     if (provider !== "mapbox" || !terrain3D) {
       setCoverageResult(null);
       setIsComputingCoverage(false);
       setIsFetchingCoverageTerrain(false);
+      setCoverageProgress({ completed: 0, total: 0 });
       return;
     }
     const mb = mbMapRef.current;
@@ -1675,6 +1700,7 @@ export function Map() {
     // Mark as computing but keep the previous result visible so controls stay up
     setIsComputingCoverage(true);
     setCoverageError(null);
+    setCoverageProgress({ completed: 0, total: 0 });
 
     const radKm = coverageRadiusKm;
     const demBounds = demBoundsAround(origin, radKm, 1.05);
@@ -1836,6 +1862,9 @@ export function Map() {
           requestId,
           outputWidth: OUTPUT_SIZE,
           outputHeight: OUTPUT_SIZE,
+          onSliceProgress: (completed, total) => {
+            setCoverageProgress({ completed, total });
+          },
         });
         mark("poolComputeMs", tDispatch);
         if (cancelled || requestId !== coverageRequestIdRef.current) return;
@@ -1846,6 +1875,7 @@ export function Map() {
           );
           setCoverageResult(null);
           setIsComputingCoverage(false);
+          setCoverageProgress({ completed: 0, total: 0 });
           setCoverageError(
             "Coverage model unavailable — the ITM WebAssembly bundle failed to load. " +
               "Check the developer console for details.",
@@ -1905,16 +1935,26 @@ export function Map() {
           rxSensitivityDbm: coverageEffectiveSensitivityDbm,
         });
         setIsComputingCoverage(false);
+        setCoverageProgress({ completed: 0, total: 0 });
       } catch (err) {
         if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        // User-initiated cancel rejects every in-flight worker task with
+        // "pool terminated" — that's expected flow, not an error.
+        if (/pool terminated/i.test(msg)) {
+          setIsComputingCoverage(false);
+          setIsFetchingCoverageTerrain(false);
+          setCoverageProgress({ completed: 0, total: 0 });
+          return;
+        }
         console.warn("[Map] Coverage computation failed:", err);
         setCoverageResult(null);
         setIsComputingCoverage(false);
         setIsFetchingCoverageTerrain(false);
+        setCoverageProgress({ completed: 0, total: 0 });
         // Classify the most common failure mode (terrain tile fetch) so
         // users get an actionable message. Anything else falls through
         // to a generic retry hint.
-        const msg = err instanceof Error ? err.message : String(err);
         const isTerrain = /terrain|tile|fetch|network|cors|http/i.test(msg);
         setCoverageError(
           isTerrain
@@ -4642,10 +4682,24 @@ export function Map() {
           onClose={resetTool}
           isComputing={isComputingCoverage}
           isFetchingTerrain={isFetchingCoverageTerrain}
+          progressCompleted={coverageProgress.completed}
+          progressTotal={coverageProgress.total}
           errorMessage={coverageError}
           onRetry={() => {
             setCoverageError(null);
             setCoverageRetryNonce((n) => n + 1);
+          }}
+          onCancel={() => {
+            // Kill the live pool so any in-flight ITM ray-marches stop
+            // burning CPU. Bump the requestId so anything that already
+            // completed gets filtered as stale. Next compute recreates
+            // the pool via ensureCoveragePool() on demand.
+            coveragePoolRef.current?.terminate();
+            coveragePoolRef.current = null;
+            coverageRequestIdRef.current += 1;
+            setIsComputingCoverage(false);
+            setIsFetchingCoverageTerrain(false);
+            setCoverageProgress({ completed: 0, total: 0 });
           }}
           antennaIdx={coverageAntennaIdx}
           onAntennaIdxChange={setCoverageAntennaIdx}

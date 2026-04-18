@@ -32,6 +32,10 @@ export class CoverageWorkerPool {
   private readonly workers: Worker[];
   private readonly busy: Set<Worker> = new Set();
   private readonly queue: PendingTask[] = [];
+  /** In-flight tasks — tracked so `terminate()` can reject them instead
+   * of letting their promises hang forever (the worker is dead, so the
+   * response message will never arrive). */
+  private readonly inFlight: Set<PendingTask> = new Set();
 
   constructor(size?: number) {
     const concurrency = navigator.hardwareConcurrency || 4;
@@ -69,6 +73,7 @@ export class CoverageWorkerPool {
 
   private run(worker: Worker, task: PendingTask): void {
     this.busy.add(worker);
+    this.inFlight.add(task);
     const onMessage = (evt: MessageEvent<CoverageSliceResponse>) => {
       if (evt.data.requestId !== task.req.requestId) return;
       cleanup();
@@ -82,6 +87,7 @@ export class CoverageWorkerPool {
       worker.removeEventListener("message", onMessage);
       worker.removeEventListener("error", onError);
       this.busy.delete(worker);
+      this.inFlight.delete(task);
       const next = this.queue.shift();
       if (next) this.run(worker, next);
     };
@@ -91,14 +97,20 @@ export class CoverageWorkerPool {
   }
 
   /**
-   * Terminate all workers and fail any queued tasks. Call when the
-   * coverage tool is no longer needed (e.g. on page unmount).
+   * Terminate all workers and fail any queued OR in-flight tasks. Call
+   * when the coverage tool is no longer needed (e.g. on page unmount)
+   * or when the user hits Cancel. In-flight tasks must be rejected too
+   * — once a worker is terminated its response message never arrives,
+   * so the caller's promise would hang forever otherwise.
    */
   terminate(): void {
     for (const w of this.workers) w.terminate();
     this.workers.length = 0;
     this.busy.clear();
-    for (const t of this.queue) t.reject(new Error("pool terminated"));
+    const err = new Error("pool terminated");
+    for (const t of this.inFlight) t.reject(err);
+    this.inFlight.clear();
+    for (const t of this.queue) t.reject(err);
     this.queue.length = 0;
   }
 }

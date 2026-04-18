@@ -21,16 +21,20 @@ function parseLatLng(input: string): [number, number] | null {
 }
 
 /**
- * Detail-level presets for the coverage DEM resolution. Standard (512²)
- * is the default and feels instant on the worker pool; Ultra (1024²)
- * quadruples the pixel count and is for "definitive survey" use.
+ * Detail-level presets for the coverage paint resolution. Standard (512²)
+ * is instant on the worker pool; Ultra (1024²) quadruples pixels; Survey
+ * (2048²) matches the underlying DEM 1:1 — every painted pixel corresponds
+ * to one terrain sample, so narrow ridges/valleys stop getting bilinear-
+ * averaged with neighbors. Survey costs ~4× the ITM ray-marches of Ultra;
+ * worth it when zoomed into the coverage, less useful at zoomed-out view.
  */
-export type CoverageDetail = "standard" | "high" | "ultra";
+export type CoverageDetail = "standard" | "high" | "ultra" | "survey";
 
 export const COVERAGE_DETAIL_SIZE: Record<CoverageDetail, number> = {
   standard: 512,
   high: 768,
   ultra: 1024,
+  survey: 2048,
 };
 
 /**
@@ -65,8 +69,11 @@ export function MapCoveragePanel({
   onClose,
   isComputing,
   isFetchingTerrain,
+  progressCompleted,
+  progressTotal,
   errorMessage,
   onRetry,
+  onCancel,
   antennaIdx,
   onAntennaIdxChange,
   hardwareIdx,
@@ -98,10 +105,16 @@ export function MapCoveragePanel({
   isComputing: boolean;
   /** True during the terrain-tile fetch phase (before per-pixel compute starts). */
   isFetchingTerrain: boolean;
+  /** Number of worker-pool slices that have returned. Zero when idle. */
+  progressCompleted: number;
+  /** Total slices dispatched in the current compute. Zero when idle. */
+  progressTotal: number;
   /** User-facing error string. Null when nothing went wrong. */
   errorMessage: string | null;
   /** Invoked when the user clicks Retry on the error banner. */
   onRetry: () => void;
+  /** Invoked when the user aborts a running compute. */
+  onCancel: () => void;
   /** Index into COMMON_ANTENNAS — drives antenna gain in the link budget. */
   antennaIdx: number;
   onAntennaIdxChange: (idx: number) => void;
@@ -246,27 +259,52 @@ export function MapCoveragePanel({
         </div>
       );
     }
+    const progressPct = progressTotal > 0
+      ? Math.round((progressCompleted / progressTotal) * 100)
+      : 0;
     const stageLabel = isFetchingTerrain
       ? `Fetching terrain for ${originLabel}…`
-      : `Computing coverage from ${originLabel}…`;
+      : progressTotal > 0
+        ? `Computing coverage from ${originLabel} · ${progressCompleted}/${progressTotal} slices (${progressPct}%)`
+        : `Computing coverage from ${originLabel}…`;
     return (
       <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(520px,calc(100vw-2rem))]
         rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl p-3">
         <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-xs text-gray-400">
-            <div className="w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-            {stageLabel}
+          <div className="flex items-center gap-2 text-xs text-gray-400 min-w-0">
+            <div className="w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin shrink-0" />
+            <span className="truncate">{stageLabel}</span>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors shrink-0"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          <div className="flex items-center gap-1 shrink-0">
+            {!isFetchingTerrain && (
+              <button
+                type="button"
+                onClick={onCancel}
+                className="text-[10px] px-2 py-0.5 rounded-md bg-red-500/15 border border-red-500/40 text-red-200 hover:bg-red-500/25 transition-colors font-medium"
+              >
+                Cancel
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors"
+              aria-label="Close"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
+        {progressTotal > 0 && !isFetchingTerrain && (
+          <div className="mt-1.5 h-1 rounded-full bg-white/5 overflow-hidden">
+            <div
+              className="h-full bg-cyan-400/80 transition-[width]"
+              style={{ width: `${progressPct}%` }}
+            />
+          </div>
+        )}
       </div>
     );
   }
@@ -314,14 +352,33 @@ export function MapCoveragePanel({
           </button>
         </div>
       )}
-      {isComputing && (
-        <div className="absolute -top-8 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full
-          bg-gray-900/95 backdrop-blur-xl border border-cyan-500/40 shadow-2xl
-          text-[10px] text-cyan-200 flex items-center gap-1.5 whitespace-nowrap">
-          <div className="w-2.5 h-2.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-          {isFetchingTerrain ? "Fetching terrain…" : "Recomputing coverage…"}
-        </div>
-      )}
+      {isComputing && (() => {
+        const pct = progressTotal > 0
+          ? Math.round((progressCompleted / progressTotal) * 100)
+          : 0;
+        const label = isFetchingTerrain
+          ? "Fetching terrain…"
+          : progressTotal > 0
+            ? `Recomputing · ${progressCompleted}/${progressTotal} slices (${pct}%)`
+            : "Recomputing coverage…";
+        return (
+          <div className="absolute -top-8 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full
+            bg-gray-900/95 backdrop-blur-xl border border-cyan-500/40 shadow-2xl
+            text-[10px] text-cyan-200 flex items-center gap-2 whitespace-nowrap">
+            <div className="w-2.5 h-2.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+            <span>{label}</span>
+            {!isFetchingTerrain && (
+              <button
+                type="button"
+                onClick={onCancel}
+                className="px-1.5 py-0 rounded bg-red-500/15 hover:bg-red-500/25 border border-red-500/40 text-red-200 font-medium transition-colors"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Header */}
       <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-white/5">
@@ -511,7 +568,16 @@ export function MapCoveragePanel({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
             </summary>
-            <div className="absolute right-0 bottom-full mb-1 w-90 p-3 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl z-50 space-y-3">
+            {/* On wide viewports (xl+, 1280px+) the panel is 640px centered
+                with plenty of room on either side — anchor the advanced
+                settings popover fixed to the right of the panel so it
+                doesn't block the status pill that hovers above. Below xl
+                it falls back to opening upward (above-gear) like before.
+                `left` math: 50% (panel center) + 320px (half panel width)
+                + 12px gap = right edge of panel + gap. */}
+            <div className="absolute right-0 bottom-full mb-1 w-90 p-3 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl z-50 space-y-3
+              xl:fixed xl:bottom-3 xl:top-auto xl:right-auto xl:mb-0 xl:w-96
+              xl:left-[calc(50%+332px)]">
               <div className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">
                 Advanced settings
               </div>
@@ -585,16 +651,19 @@ export function MapCoveragePanel({
                 <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 flex items-center gap-1">
                   <span>Detail</span>
                   <InfoTip align="left">
-                    Coverage grid resolution. Higher detail = crisper edges
-                    around terrain features, but slower to compute. Standard
-                    feels instant; Ultra is for a definitive one-off survey.
+                    Output raster resolution (painted pixels). Higher detail
+                    = crisper edges around terrain features when zoomed in,
+                    but slower to compute. Standard feels instant; Ultra is
+                    a one-off survey. Survey matches the 2048² DEM 1:1 — the
+                    sharpest possible output, 4× the compute of Ultra.
                   </InfoTip>
                 </label>
                 <div className="flex gap-1 rounded-lg border border-white/10 bg-white/5 p-0.5 text-[10px] font-medium">
                   {([
-                    { key: "standard", label: "Std",   sub: "512 px" },
-                    { key: "high",     label: "High",  sub: "768 px" },
-                    { key: "ultra",    label: "Ultra", sub: "1024 px" },
+                    { key: "standard", label: "Std",    sub: "512 px" },
+                    { key: "high",     label: "High",   sub: "768 px" },
+                    { key: "ultra",    label: "Ultra",  sub: "1024 px" },
+                    { key: "survey",   label: "Survey", sub: "2048 px" },
                   ] as const).map((opt) => {
                     const active = detail === opt.key;
                     return (
