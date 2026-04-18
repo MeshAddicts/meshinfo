@@ -1799,15 +1799,46 @@ export function Map() {
         // which can undersample narrow peaks by 400+ m. A single extra
         // tile fetch gives us an accurate summit elevation without
         // blowing up tile costs on the whole bbox.
-        // Best origin-ground reading: try Mapbox's in-viewport terrain
-        // first (the map easeTo'd to the pin before the DEM fetch, so
-        // by now high-zoom tiles should be loaded). Fall back to our own
-        // z=15 tile fetch, then to the bbox DEM. Log what we got so we
-        // can diagnose if peaks are still averaging away.
-        const mbElev = mb.queryTerrainElevation(origin!);
+        // Best origin-ground reading. Combines two independent sources
+        // so the displayed pin elevation is accurate regardless of the
+        // user's current viewport zoom:
+        //
+        //   1. `queryTerrainElevation` reads whichever `mapbox-terrain-
+        //      dem-v1` tiles Mapbox GL has currently loaded. Fast and
+        //      accurate when the user is zoomed in (z=13-14 tiles give
+        //      ~5-30 m pixels). At low zoom the returned value is
+        //      averaged over coarse pixels and can under-read a peak by
+        //      ~180 m — that's the bug we're guarding against.
+        //   2. `fetchElevationAt` fetches a dedicated z=15 tile for the
+        //      pin lat/lng via Tilezen (AWS Open Data, USGS 3DEP-backed
+        //      in the US — same data source Mapbox GL reads internally).
+        //      Always high-resolution regardless of viewport state; one
+        //      HTTP round-trip, LRU-cached for subsequent reads at the
+        //      same pin.
+        //
+        // We take the MAX of the two — a low-zoom-averaged reading can
+        // only under-report the peak, never over-report it, so max()
+        // robustly picks the accurate value. When both are valid at high
+        // zoom they agree to within a couple of meters.
+        //
+        // CRITICAL: `queryTerrainElevation` defaults to returning
+        // *exaggerated* elevation (real × terrain exaggeration factor),
+        // matching the visually rendered 3D terrain. We want real MSL
+        // meters for RF math and for the displayed pin height, so we
+        // pass `{ exaggerated: false }`. Without this, a 1.5× default
+        // exaggeration silently inflated every elevation read by ~50%.
+        const mbElev = mb.queryTerrainElevation(origin!, { exaggerated: false });
         const mbElevOk = typeof mbElev === "number" && Number.isFinite(mbElev);
-        const fetchElev = mbElevOk ? null : await fetchElevationAt(origin![0], origin![1], mapboxToken);
-        const originGroundHighZoom = mbElevOk ? mbElev : fetchElev;
+        const fetchElev = await fetchElevationAt(origin![0], origin![1], mapboxToken);
+        const fetchOk = fetchElev != null && Number.isFinite(fetchElev);
+        let originGroundHighZoom: number | null = null;
+        if (mbElevOk && fetchOk) {
+          originGroundHighZoom = Math.max(mbElev, fetchElev);
+        } else if (mbElevOk) {
+          originGroundHighZoom = mbElev;
+        } else if (fetchOk) {
+          originGroundHighZoom = fetchElev;
+        }
         const originGroundFromDem = sampleDEMAt(dem, origin![0], origin![1]);
         const groundOkDem = !Number.isNaN(originGroundFromDem);
         const groundOkHz = originGroundHighZoom != null;
@@ -2065,7 +2096,10 @@ export function Map() {
           // viewport (which follows the pin during drag).
           const demGround = sampleDEMAt(dem, lngLat[0], lngLat[1]);
           const demGroundOk = !Number.isNaN(demGround);
-          const mbGround = mb.queryTerrainElevation(lngLat);
+          // Pass `{ exaggerated: false }` — we want real MSL meters for
+          // ITM math, not the visually inflated render value. See the
+          // matching note in the authoritative-compute path.
+          const mbGround = mb.queryTerrainElevation(lngLat, { exaggerated: false });
           const mbGroundOk = typeof mbGround === "number" && Number.isFinite(mbGround);
           const accurateGround = mbGroundOk ? mbGround : (demGroundOk ? demGround : 0);
           const antennaH = coverageAntennaHeightMRef.current;
@@ -3625,7 +3659,15 @@ export function Map() {
           elevRafQueued = false;
           if (!pendingElevE || !mbMapRef.current) return;
           try {
-            const elev = mbMapRef.current.queryTerrainElevation([pendingElevE.lng, pendingElevE.lat]);
+            // Real MSL meters, not exaggerated — users expect the
+            // elevation pill to match what a topo map would show, not
+            // the 3D render's inflated value. Without
+            // `{ exaggerated: false }` this was displaying ~1.5× the
+            // real elevation at default 1.5× exaggeration.
+            const elev = mbMapRef.current.queryTerrainElevation(
+              [pendingElevE.lng, pendingElevE.lat],
+              { exaggerated: false },
+            );
             setHoverElevationM(typeof elev === "number" && Number.isFinite(elev) ? elev : null);
           } catch {
             setHoverElevationM(null);

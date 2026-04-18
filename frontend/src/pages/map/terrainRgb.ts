@@ -44,6 +44,26 @@ const DEFAULT_TILE_SIZE = 512;
 const TILE_URL =
   "https://api.mapbox.com/v4/mapbox.terrain-rgb";
 
+/**
+ * Tilezen (AWS Open Data Registry) elevation tiles. Public S3 bucket,
+ * no access token, no quota. Used for *single-point* pin elevation in
+ * the coverage tool so the reading is accurate regardless of viewport
+ * zoom — Mapbox's `queryTerrainElevation` only samples whichever tiles
+ * GL JS has currently loaded, which at low zoom can under-read mountain
+ * peaks by ~180 m. In the US, Tilezen is sourced from USGS 3DEP (up to
+ * 10 m native resolution through z=15), matching the accuracy Mapbox GL
+ * reads internally from the SDK-only `mapbox-terrain-dem-v1` dataset.
+ *
+ * Encoding is "terrarium", different from Mapbox terrain-rgb:
+ *   elev_m = (R × 256 + G + B / 256) − 32768
+ *
+ * Tile size is 256 × 256 (vs. 512 for the Mapbox v4 path); max zoom 15.
+ *
+ * Spec: https://github.com/tilezen/joerd/tree/master/docs
+ */
+const TILEZEN_URL =
+  "https://s3.amazonaws.com/elevation-tiles-prod/terrarium";
+
 // Practical safety caps — prevent a bad bbox/zoom combination from
 // dispatching thousands of tile fetches. If a request asks for more, we
 // bump the zoom down until the count fits. 256 lets us climb one zoom
@@ -149,6 +169,13 @@ class TileLRU {
 // ~64 tiles × 512² × 4 bytes = ~64 MB worst case — reasonable for a worker.
 const tileCache = new TileLRU(64);
 
+// Separate, smaller LRU for Tilezen tiles. Pin-elevation queries only
+// touch the one tile covering the pin, so a small cache suffices. Keeping
+// them separate avoids collision with Mapbox tiles at identical z/x/y
+// (same coords, different tilesets/encodings).
+// ~16 tiles × 256² × 4 bytes ≈ 4 MB.
+const tilezenCache = new TileLRU(16);
+
 // ---------------------------------------------------------------------------
 // Tile fetch + decode
 // ---------------------------------------------------------------------------
@@ -197,20 +224,115 @@ async function fetchTile(
   }
 }
 
+/**
+ * Fetch + decode a single Tilezen terrarium-encoded tile. Different
+ * endpoint (AWS S3 public bucket, no token), different decode formula
+ * from Mapbox terrain-rgb. Cached separately from the Mapbox tile cache
+ * so identical z/x/y coords don't alias across tilesets.
+ */
+async function fetchTilezenTile(
+  z: number,
+  x: number,
+  y: number,
+): Promise<CachedTile> {
+  const key = `${z}/${x}/${y}`;
+  const hit = tilezenCache.get(key);
+  if (hit) return hit;
+
+  const url = `${TILEZEN_URL}/${z}/${x}/${y}.png`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`tilezen tile fetch failed ${z}/${x}/${y}: HTTP ${res.status}`);
+  }
+  const blob = await res.blob();
+  const bitmap = await createImageBitmap(blob);
+  try {
+    const w = bitmap.width;
+    const h = bitmap.height;
+    if (w !== h) {
+      throw new Error(`tilezen tile ${key} has non-square dimensions ${w}x${h}`);
+    }
+    const canvas = new OffscreenCanvas(w, h);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("OffscreenCanvas 2d context unavailable");
+    ctx.drawImage(bitmap, 0, 0);
+    const img = ctx.getImageData(0, 0, w, h);
+    const px = img.data;
+    const elev = new Float32Array(w * h);
+    // Terrarium decode: (R × 256 + G + B / 256) − 32768.
+    // Different from Mapbox's terrain-rgb; precision is 1/256 m via the
+    // blue channel (~3.9 mm vertical) vs. Mapbox's flat 0.1 m spacing.
+    for (let i = 0; i < elev.length; i++) {
+      const r = px[i * 4];
+      const g = px[i * 4 + 1];
+      const b = px[i * 4 + 2];
+      elev[i] = (r * 256 + g + b / 256) - 32768;
+    }
+    const tile: CachedTile = { data: elev, size: w };
+    tilezenCache.set(key, tile);
+    return tile;
+  } finally {
+    bitmap.close();
+  }
+}
+
+/**
+ * Bilinear sample a decoded elevation tile at a specific lng/lat. Shared
+ * by both the Tilezen and Mapbox paths in `fetchElevationAt`. Returns
+ * null if any corner of the interpolation quad is NaN, or if the
+ * resulting elevation is outside the plausible terrestrial range (−500
+ * to 9000 m — comfortably brackets Dead Sea and Everest) which indicates
+ * a nodata sentinel leaked into the sample.
+ */
+function sampleTileBilinear(
+  tile: CachedTile,
+  tileX: number,
+  tileY: number,
+  lng: number,
+  lat: number,
+  zoom: number,
+): number | null {
+  const pxFloat = (lng2tileX(lng, zoom) - tileX) * tile.size;
+  const pyFloat = (lat2tileY(lat, zoom) - tileY) * tile.size;
+  const x0 = Math.max(0, Math.min(tile.size - 1, Math.floor(pxFloat)));
+  const y0 = Math.max(0, Math.min(tile.size - 1, Math.floor(pyFloat)));
+  const x1 = Math.min(tile.size - 1, x0 + 1);
+  const y1 = Math.min(tile.size - 1, y0 + 1);
+  const fx = pxFloat - x0;
+  const fy = pyFloat - y0;
+  const v00 = tile.data[y0 * tile.size + x0];
+  const v10 = tile.data[y0 * tile.size + x1];
+  const v01 = tile.data[y1 * tile.size + x0];
+  const v11 = tile.data[y1 * tile.size + x1];
+  if (Number.isNaN(v00) || Number.isNaN(v10) || Number.isNaN(v01) || Number.isNaN(v11)) return null;
+  const top = v00 + (v10 - v00) * fx;
+  const bot = v01 + (v11 - v01) * fx;
+  const elev = top + (bot - top) * fy;
+  if (elev < -500 || elev > 9000) return null;
+  return elev;
+}
+
 // ---------------------------------------------------------------------------
 // Build a DEM over the requested bounds by resampling fetched tiles
 // ---------------------------------------------------------------------------
 
 /**
  * Fetch a single high-zoom tile and bilinear-sample its elevation at a
- * specific lng/lat. Use this to override the origin ground elevation in
- * the coverage / LOS tools — the main bbox DEM is forced to a coarser
- * zoom by `MAX_TILES_PER_REQUEST`, which can undersample narrow peaks
- * by hundreds of meters. A single tile at z=14 (~7.6 m/px native in the
- * US — backed by USGS 3DEP in Mapbox's blend) captures summits
- * faithfully.
+ * specific lng/lat. Used to resolve the coverage pin's ground elevation
+ * independently of the viewport — Mapbox's in-viewport
+ * `queryTerrainElevation` samples whichever (possibly low-zoom, coarse)
+ * tiles GL JS has loaded, which under-reads mountain peaks at zoomed-out
+ * views. This path is zoom-invariant.
  *
- * Returns `null` if the fetch fails.
+ * Tries two sources in order:
+ *   1. Tilezen (AWS Open Data, USGS 3DEP-backed in the US at ~10 m
+ *      resolution through z=15). Matches the accuracy of Mapbox GL's
+ *      internal dem-v1 dataset. Public S3 bucket, no token.
+ *   2. Mapbox `terrain-rgb` v1 via the v4 Tiles API — fallback only.
+ *      Globally available, known-working, but can under-read mountain
+ *      peaks by 100–200 m vs. 3DEP.
+ *
+ * Returns `null` if both sources fail.
  */
 export async function fetchElevationAt(
   lng: number,
@@ -218,34 +340,31 @@ export async function fetchElevationAt(
   token: string,
   zoom = 15,
 ): Promise<number | null> {
-  // Don't clamp to MAX_ZOOM (which caps the *bbox* DEM fetch to keep
-  // tile counts sane). For a single pin tile, z=15 is fine — Mapbox
-  // terrain-rgb is published through zoom 15, and that's where USGS
-  // 3DEP high-resolution data lives in the US. z=14 often still uses
-  // a coarser source blend that can undersample peaks by 500+ m.
+  // Both Tilezen and Mapbox terrain-rgb are published through z=15.
+  // For a single-point pin query we always want the finest zoom we can
+  // get; the bbox-DEM tile cap doesn't apply here (it's one tile).
   const clampedZoom = Math.max(0, Math.min(15, zoom));
   const tileX = Math.floor(lng2tileX(lng, clampedZoom));
   const tileY = Math.floor(lat2tileY(lat, clampedZoom));
+
+  // Primary: Tilezen.
+  try {
+    const tile = await fetchTilezenTile(clampedZoom, tileX, tileY);
+    const elev = sampleTileBilinear(tile, tileX, tileY, lng, lat, clampedZoom);
+    if (elev != null) return elev;
+  } catch (err) {
+    console.warn(
+      "[terrainRgb] Tilezen tile fetch failed, falling back to Mapbox terrain-rgb:",
+      err,
+    );
+  }
+
+  // Fallback: Mapbox terrain-rgb v1.
   try {
     const tile = await fetchTile(clampedZoom, tileX, tileY, token);
-    const pxFloat = (lng2tileX(lng, clampedZoom) - tileX) * tile.size;
-    const pyFloat = (lat2tileY(lat, clampedZoom) - tileY) * tile.size;
-    const x0 = Math.max(0, Math.min(tile.size - 1, Math.floor(pxFloat)));
-    const y0 = Math.max(0, Math.min(tile.size - 1, Math.floor(pyFloat)));
-    const x1 = Math.min(tile.size - 1, x0 + 1);
-    const y1 = Math.min(tile.size - 1, y0 + 1);
-    const fx = pxFloat - x0;
-    const fy = pyFloat - y0;
-    const v00 = tile.data[y0 * tile.size + x0];
-    const v10 = tile.data[y0 * tile.size + x1];
-    const v01 = tile.data[y1 * tile.size + x0];
-    const v11 = tile.data[y1 * tile.size + x1];
-    if (Number.isNaN(v00) || Number.isNaN(v10) || Number.isNaN(v01) || Number.isNaN(v11)) return null;
-    const top = v00 + (v10 - v00) * fx;
-    const bot = v01 + (v11 - v01) * fx;
-    return top + (bot - top) * fy;
+    return sampleTileBilinear(tile, tileX, tileY, lng, lat, clampedZoom);
   } catch (err) {
-    console.warn("[terrainRgb] fetchElevationAt failed:", err);
+    console.warn("[terrainRgb] Mapbox terrain-rgb fallback also failed:", err);
     return null;
   }
 }
