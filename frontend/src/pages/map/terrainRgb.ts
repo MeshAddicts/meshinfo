@@ -72,8 +72,14 @@ const TILEZEN_URL =
 // `TileLRU` and the browser's HTTP cache (Mapbox serves terrain-rgb with
 // `Cache-Control: max-age=43200`) mean the extra fetches are a
 // first-view-only cost per user per ~12 hours.
-const MAX_TILES_PER_REQUEST = 256;
+//
+// Callers can override per-request via `BuildDemOptions.maxTiles` — e.g.
+// the coverage tool bumps this for higher-Detail settings so Tilezen
+// can reach finer native zooms at small-to-medium radii.
+const DEFAULT_MAX_TILES_PER_REQUEST = 256;
 const MAX_ZOOM = 14;
+/** Tilezen publishes terrarium tiles through z=15 (vs. Mapbox v4 z=14). */
+const TILEZEN_MAX_ZOOM = 15;
 const MIN_ZOOM = 0;
 
 // ---------------------------------------------------------------------------
@@ -92,28 +98,40 @@ function lat2tileY(lat: number, zoom: number): number {
   );
 }
 
-/** Approx ground resolution (meters per pixel) for a tile at `zoom`, at `lat`. */
-function tileMetersPerPixel(lat: number, zoom: number): number {
+/**
+ * Approx ground resolution (meters per pixel) for a tile at `zoom`, at `lat`.
+ * `tileSize` must match the source's native tile dimension (512 for Mapbox
+ * v4 terrain-rgb, 256 for Tilezen terrarium).
+ */
+function tileMetersPerPixel(lat: number, zoom: number, tileSize: number): number {
   const equatorCircumferenceM = 40_075_017;
-  return (equatorCircumferenceM * Math.cos((lat * Math.PI) / 180)) / (DEFAULT_TILE_SIZE * Math.pow(2, zoom));
+  return (equatorCircumferenceM * Math.cos((lat * Math.PI) / 180)) / (tileSize * Math.pow(2, zoom));
 }
 
 /**
  * Pick the highest zoom where (a) tile resolution is finer than the caller's
- * target pixel size, AND (b) the total number of tiles stays under
- * `MAX_TILES_PER_REQUEST`. Falls back to lower zooms on either constraint.
+ * target pixel size, AND (b) the total number of tiles stays under `maxTiles`.
+ * Falls back to lower zooms on either constraint. Parametrized on tile size
+ * and max zoom so the same function works for both Mapbox terrain-rgb (512
+ * px, z ≤ 14) and Tilezen terrarium (256 px, z ≤ 15).
  */
-function selectZoom(bounds: DEMBounds, targetPixelSizeM: number): number {
+function selectZoom(
+  bounds: DEMBounds,
+  targetPixelSizeM: number,
+  tileSize: number,
+  maxZoom: number,
+  maxTiles: number,
+): number {
   const midLat = (bounds.north + bounds.south) / 2;
-  for (let z = MAX_ZOOM; z >= MIN_ZOOM; z--) {
-    const res = tileMetersPerPixel(midLat, z);
+  for (let z = maxZoom; z >= MIN_ZOOM; z--) {
+    const res = tileMetersPerPixel(midLat, z, tileSize);
     if (res > targetPixelSizeM) continue; // tile resolution too coarse
     const tiles = tileCountForBounds(bounds, z);
-    if (tiles <= MAX_TILES_PER_REQUEST) return z;
+    if (tiles <= maxTiles) return z;
   }
   // Fall back: largest zoom where tile count is tolerable, even if coarse.
-  for (let z = MAX_ZOOM; z >= MIN_ZOOM; z--) {
-    if (tileCountForBounds(bounds, z) <= MAX_TILES_PER_REQUEST) return z;
+  for (let z = maxZoom; z >= MIN_ZOOM; z--) {
+    if (tileCountForBounds(bounds, z) <= maxTiles) return z;
   }
   return MIN_ZOOM;
 }
@@ -374,20 +392,52 @@ export interface BuildDemOptions {
   /** Output grid resolution. */
   targetWidth: number;
   targetHeight: number;
-  /** Mapbox access token (passed through to worker via postMessage). */
+  /** Mapbox access token. Only consumed by the Mapbox terrain-rgb path. */
   token: string;
+  /**
+   * Per-request cap on total tiles. Overrides `DEFAULT_MAX_TILES_PER_REQUEST`.
+   * Coverage Detail tiers use this to trade network/memory cost for finer
+   * terrain resolution at small-to-medium radii (Survey bumps it to reach
+   * the native-resolution zoom Tilezen publishes).
+   */
+  maxTiles?: number;
+}
+
+/** Which tile source produced a DEM — callers use this for attribution. */
+export type DemSource = "tilezen" | "mapbox-terrain-rgb";
+
+/**
+ * Try Tilezen (USGS 3DEP in US, ~10 m through z=15) for bulk DEM. Fall
+ * back to Mapbox `terrain-rgb` v1 on failure. Callers get the DEM plus
+ * a source tag so the coverage panel can show accurate attribution and
+ * users know which dataset underpins the RF numbers.
+ */
+export async function buildDem(opts: BuildDemOptions): Promise<{ dem: DEM; source: DemSource }> {
+  try {
+    const dem = await buildDemFromTilezen(opts);
+    return { dem, source: "tilezen" };
+  } catch (err) {
+    console.warn(
+      "[terrainRgb] Bulk DEM from Tilezen failed, falling back to Mapbox terrain-rgb:",
+      err,
+    );
+    const dem = await buildDemFromTerrainRgb(opts);
+    return { dem, source: "mapbox-terrain-rgb" };
+  }
 }
 
 /**
- * Fetch + stitch terrain tiles for `bounds`, then sample to a `targetWidth × targetHeight`
- * DEM using nearest-neighbor. Good enough for viewshed work; if we want
- * bilinear later we can add it without changing the interface.
+ * Fetch + stitch terrain tiles for `bounds`, then sample to a
+ * `targetWidth × targetHeight` DEM using bilinear interpolation.
  *
- * Any individual tile failure is tolerated — its pixels come out as NaN and
- * the viewshed treats them as unreachable. The overall promise still resolves.
+ * Any individual tile failure is tolerated — its pixels come out as NaN
+ * and the downstream ITM/viewshed treats them as unreachable. The overall
+ * promise still resolves. If ALL tiles fail, the returned DEM is all-NaN
+ * and coverage renders an empty "no terrain" state (not a silent fail).
  */
 export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM> {
   const { bounds, targetWidth, targetHeight, token } = opts;
+  const maxTiles = opts.maxTiles ?? DEFAULT_MAX_TILES_PER_REQUEST;
 
   // Pick a zoom that gives tile pixels roughly as fine as output pixels,
   // then clamp by the tile-count cap. Ground-meters-per-output-pixel:
@@ -395,7 +445,7 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
   const bboxWidthM =
     ((bounds.east - bounds.west) * 111_320 * Math.cos((midLat * Math.PI) / 180));
   const targetPixelSizeM = Math.max(1, bboxWidthM / targetWidth);
-  const zoom = selectZoom(bounds, targetPixelSizeM);
+  const zoom = selectZoom(bounds, targetPixelSizeM, DEFAULT_TILE_SIZE, MAX_ZOOM, maxTiles);
 
   const xMin = Math.floor(lng2tileX(bounds.west, zoom));
   const xMax = Math.floor(lng2tileX(bounds.east, zoom));
@@ -478,6 +528,127 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
       // If ANY corner is missing (tile not fetched — typically bbox
       // edges), mark NaN so downstream treats it as no-data rather than
       // bleeding in a bogus interpolation.
+      if (Number.isNaN(v00) || Number.isNaN(v10) || Number.isNaN(v01) || Number.isNaN(v11)) {
+        data[j * targetWidth + i] = NaN;
+        continue;
+      }
+
+      const top = v00 + (v10 - v00) * fx;
+      const bot = v01 + (v11 - v01) * fx;
+      data[j * targetWidth + i] = top + (bot - top) * fy;
+    }
+  }
+
+  return { data, width: targetWidth, height: targetHeight, bounds };
+}
+
+/**
+ * Tilezen twin of `buildDemFromTerrainRgb`. Fetches terrarium-encoded
+ * tiles from AWS Open Data (no token, no quota, USGS 3DEP-backed at
+ * ~10 m native through z=15 in the US). Same bilinear stitching; NaN
+ * for individual tile failures.
+ *
+ * Tile-count math differs from the Mapbox path: Tilezen tiles are 256 px
+ * native (vs. Mapbox v4 terrain-rgb's 512 px), so `selectZoom` picks a
+ * different zoom level for the same bbox + max-tiles budget. Max zoom
+ * is 15 (one more than Mapbox), which in 3DEP-covered areas gives ~4 m
+ * native pixels at small radii.
+ */
+export async function buildDemFromTilezen(opts: BuildDemOptions): Promise<DEM> {
+  const { bounds, targetWidth, targetHeight } = opts;
+  const maxTiles = opts.maxTiles ?? DEFAULT_MAX_TILES_PER_REQUEST;
+
+  // Same "pick a zoom fine enough for the output grid" strategy, but
+  // using Tilezen's native 256 px tile size. Because one tile covers
+  // half the ground a Mapbox tile does at the same zoom, Tilezen's
+  // zoom selection typically lands 1 step higher — which aligns with
+  // Tilezen's higher maxZoom (15 vs. Mapbox's 14).
+  const midLat = (bounds.north + bounds.south) / 2;
+  const bboxWidthM =
+    ((bounds.east - bounds.west) * 111_320 * Math.cos((midLat * Math.PI) / 180));
+  const targetPixelSizeM = Math.max(1, bboxWidthM / targetWidth);
+  const TILEZEN_TILE_SIZE = 256;
+  const zoom = selectZoom(bounds, targetPixelSizeM, TILEZEN_TILE_SIZE, TILEZEN_MAX_ZOOM, maxTiles);
+
+  const xMin = Math.floor(lng2tileX(bounds.west, zoom));
+  const xMax = Math.floor(lng2tileX(bounds.east, zoom));
+  const yMin = Math.floor(lat2tileY(bounds.north, zoom));
+  const yMax = Math.floor(lat2tileY(bounds.south, zoom));
+
+  // `buildDem` uses the throw path to decide fallback, so we DON'T
+  // silently null-out every tile if they all fail — if every fetch
+  // throws, let the Promise.all reject and let `buildDem` fall back
+  // to Mapbox. Individual tile failures at the edge of coverage are
+  // still tolerated as NaN cells (so a partial fetch still produces a
+  // usable DEM).
+  const tileMap = new Map<string, CachedTile | null>();
+  let failureCount = 0;
+  const jobs: Promise<void>[] = [];
+  for (let x = xMin; x <= xMax; x++) {
+    for (let y = yMin; y <= yMax; y++) {
+      const key = `${zoom}/${x}/${y}`;
+      jobs.push(
+        fetchTilezenTile(zoom, x, y)
+          .then((t) => void tileMap.set(key, t))
+          .catch((err) => {
+            failureCount += 1;
+            console.warn("[terrainRgb/tilezen]", err);
+            tileMap.set(key, null);
+          }),
+      );
+    }
+  }
+  await Promise.all(jobs);
+
+  const totalTiles = (xMax - xMin + 1) * (yMax - yMin + 1);
+  // If MORE THAN HALF the tiles failed, treat the whole fetch as a
+  // failure and throw so `buildDem` falls through to Mapbox. This
+  // catches bucket-wide outages and CORS regressions cleanly. A few
+  // stragglers at the edge are still fine.
+  if (failureCount > totalTiles / 2) {
+    throw new Error(
+      `tilezen bulk DEM failed: ${failureCount}/${totalTiles} tiles errored`,
+    );
+  }
+
+  const data = new Float32Array(targetWidth * targetHeight);
+  const scale = Math.pow(2, zoom);
+
+  let tileSize = TILEZEN_TILE_SIZE;
+  for (const t of tileMap.values()) {
+    if (t) { tileSize = t.size; break; }
+  }
+
+  const lookup = (absX: number, absY: number): number => {
+    const tileX = Math.floor(absX / tileSize);
+    const tileY = Math.floor(absY / tileSize);
+    const px = absX - tileX * tileSize;
+    const py = absY - tileY * tileSize;
+    const xWrapped = ((tileX % scale) + scale) % scale;
+    const t = tileMap.get(`${zoom}/${xWrapped}/${tileY}`);
+    if (!t) return NaN;
+    return t.data[py * t.size + px];
+  };
+
+  for (let j = 0; j < targetHeight; j++) {
+    const lat =
+      bounds.north - ((bounds.north - bounds.south) * j) / (targetHeight - 1);
+    const absY = lat2tileY(lat, zoom) * tileSize;
+    const y0 = Math.floor(absY);
+    const fy = absY - y0;
+
+    for (let i = 0; i < targetWidth; i++) {
+      const lng =
+        bounds.west + ((bounds.east - bounds.west) * i) / (targetWidth - 1);
+      const absX = lng2tileX(lng, zoom) * tileSize;
+      const x0 = Math.floor(absX);
+      const fx = absX - x0;
+
+      const v00 = lookup(x0, y0);
+      const v10 = lookup(x0 + 1, y0);
+      const v01 = lookup(x0, y0 + 1);
+      const v11 = lookup(x0 + 1, y0 + 1);
+
       if (Number.isNaN(v00) || Number.isNaN(v10) || Number.isNaN(v01) || Number.isNaN(v11)) {
         data[j * targetWidth + i] = NaN;
         continue;

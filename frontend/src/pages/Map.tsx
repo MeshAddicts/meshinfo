@@ -28,11 +28,12 @@ import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, effectiveSensitivityDbm, ENVIRONMENTS, MESHTASTIC_PRESETS, reliabilityPreset, type CoverageReliability, type CoverageResult } from "./map/coverageAnalysis";
 import { demBoundsAround, downsampleDEM, sampleDEMAt, type DEM, type DEMBounds } from "./map/terrainDEM";
-import { buildDemFromTerrainRgb, fetchElevationAt } from "./map/terrainRgb";
+import { buildDem, fetchElevationAt, type DemSource } from "./map/terrainRgb";
 import { CoverageWorkerPool } from "./map/coverageWorkerPool";
 import type { CoverageSliceRequest } from "./map/coverageSliceWorker";
 import type { RasterParams } from "./map/coverageRaster";
 import { extractCoverageContours, type ContourFeatureCollection } from "./map/coverageContours";
+import { extractCoverageRays, type VisibilityRayFeatureCollection } from "./map/coverageRays";
 import { analyzeLineOfSight, type LoSResult } from "./map/losAnalysis";
 import { Climate, computeP2PLoss, type ItmContext, loadItmContext, Polarization } from "./map/itm";
 import { LosTubeLayer, losPointsToTubeData, obstructionsToGeoJSON, pickObstructions } from "./map/losTubeLayer";
@@ -45,7 +46,7 @@ import { MapHealthWidget } from "./map/MapHealthWidget";
 import { MapLosPanel } from "./map/MapLosPanel";
 import { MapToolPrompt, MapToolsDrawer } from "./map/MapToolsDrawer";
 import { MapTraceroutePanel } from "./map/MapTraceroutePanel";
-import { COVERAGE_DETAIL_SIZE, type CoverageDetail, MapCoveragePanel } from "./map/MapCoveragePanel";
+import { COVERAGE_DETAIL_MAX_TILES, COVERAGE_DETAIL_SIZE, type CoverageDetail, MapCoveragePanel } from "./map/MapCoveragePanel";
 import { MapQuickControls } from "./map/MapQuickControls";
 import { MapSearchBar } from "./map/MapSearchBar";
 import { MapSettingsPanel } from "./map/MapSettingsPanel";
@@ -431,6 +432,11 @@ export function Map() {
   // Per-slice progress for long Ultra/Survey computes. `total === 0`
   // means "no progress applicable" (idle / drag preview / terrain fetch).
   const [coverageProgress, setCoverageProgress] = useState<{ completed: number; total: number }>({ completed: 0, total: 0 });
+  // Which tile source produced the most recent authoritative DEM —
+  // drives the panel's attribution tooltip so users can see whether the
+  // coverage was computed from Tilezen (3DEP in US) or fell back to
+  // Mapbox terrain-rgb v1.
+  const [coverageDemSource, setCoverageDemSource] = useState<DemSource | null>(null);
   // Index into COMMON_ANTENNAS — default to Rokland N-Male Omni 5.8 dBi (idx 3).
   // Uses an index (not raw dBi) because multiple antennas can share the
   // same dBi value (e.g. two different 3 dBi models) and a value-based
@@ -622,6 +628,8 @@ export function Map() {
    * can hand it off directly to the Export button without recomputing.
    */
   const coverageContoursRef = useRef<ContourFeatureCollection | null>(null);
+  /** Cached visibility-ray fan from the last full compute. */
+  const coverageRaysRef = useRef<VisibilityRayFeatureCollection | null>(null);
   /** Cached margin grid from the last full compute — for ad-hoc export. */
   const coverageMarginRef = useRef<{
     data: Float32Array;
@@ -631,6 +639,8 @@ export function Map() {
   } | null>(null);
   /** Whether contours are visible on the map. Session-scoped toggle. */
   const [showCoverageContours, setShowCoverageContours] = useState(false);
+  /** Whether visibility rays (HWT-style fan of LoS sightlines) are shown. */
+  const [showCoverageRays, setShowCoverageRays] = useState(false);
 
   /**
    * Export the most recent coverage compute as either GeoJSON or KML.
@@ -1151,6 +1161,7 @@ export function Map() {
     setIsFetchingCoverageTerrain(false);
     setCoverageError(null);
     setCoverageProgress({ completed: 0, total: 0 });
+    setCoverageDemSource(null);
     setIsScanning(false);
 
     const mb = mbMapRef.current;
@@ -1176,10 +1187,15 @@ export function Map() {
         if (mb.getLayer("coverage-contours-line")) {
           mb.setLayoutProperty("coverage-contours-line", "visibility", "none");
         }
+        if (mb.getLayer("coverage-rays-line")) {
+          mb.setLayoutProperty("coverage-rays-line", "visibility", "none");
+        }
         (mb.getSource("coverage-contours") as MbGeoJSONSource | undefined)?.setData(empty);
+        (mb.getSource("coverage-rays") as MbGeoJSONSource | undefined)?.setData(empty);
       } catch {}
       losTubeLayerRef.current?.setData(null);
       coverageContoursRef.current = null;
+      coverageRaysRef.current = null;
       coverageMarginRef.current = null;
     }
 
@@ -1317,12 +1333,15 @@ export function Map() {
       try {
         // 2048² matches the coverage tool's DEM; sizes the same peaks to
         // similar accuracy. For a 200 km link bbox that's ~115 m/px.
-        dem = await buildDemFromTerrainRgb({
+        // `buildDem` tries Tilezen (3DEP in US) first, falls back to
+        // Mapbox terrain-rgb. We discard the source tag here — LOS
+        // attribution is shown inline in the panel, not a separate pill.
+        ({ dem } = await buildDem({
           bounds: demBounds,
           targetWidth: 2048,
           targetHeight: 2048,
           token: mapboxToken,
-        });
+        }));
       } catch (err) {
         console.warn("[Map] LoS DEM fetch failed:", err);
         setLosResult(null);
@@ -1560,7 +1579,7 @@ export function Map() {
           return;
         }
         const scanBounds = demBoundsAround(origin!, SCAN_RADIUS_KM, 1.05);
-        const dem = await buildDemFromTerrainRgb({
+        const { dem } = await buildDem({
           bounds: scanBounds,
           targetWidth: 1024,
           targetHeight: 1024,
@@ -1769,16 +1788,22 @@ export function Map() {
         timings[name] = performance.now() - fromMs;
       };
       try {
-        // 1. Fetch terrain-rgb tiles and build the full DEM on the main
-        //    thread. Uses the same `terrainRgb` module the old worker did.
+        // 1. Fetch terrain tiles and build the full DEM on the main
+        //    thread. `buildDem` tries Tilezen (USGS 3DEP in US, ~10 m)
+        //    first and falls back to Mapbox terrain-rgb v1 on failure.
+        //    Higher Detail tiers raise the tile cap so Tilezen can reach
+        //    finer native zoom levels at small-to-medium radii (Survey
+        //    needs ~768 tiles to hit z=12 Tilezen at 200 km).
         const tFetch = performance.now();
         setIsFetchingCoverageTerrain(true);
-        const dem = await buildDemFromTerrainRgb({
+        const { dem, source: demSourceUsed } = await buildDem({
           bounds: demBounds,
           targetWidth: DEM_SIZE,
           targetHeight: DEM_SIZE,
           token: mapboxToken,
+          maxTiles: COVERAGE_DETAIL_MAX_TILES[coverageDetail],
         });
+        setCoverageDemSource(demSourceUsed);
         mark("demFetchMs", tFetch);
         if (cancelled || requestId !== coverageRequestIdRef.current) {
           setIsFetchingCoverageTerrain(false);
@@ -1944,6 +1969,27 @@ export function Map() {
           src?.setData(contours);
         } catch {}
 
+        // 6. Extract visibility rays (HeyWhatsThat-style fan of radial
+        //    sightlines). Combines R2 viewshed over the DEM with the
+        //    ITM link-margin grid: rays only draw where terrain is
+        //    geometrically visible from the TX AND the signal reaches.
+        //    Costs ~50-100 ms on top of the compute.
+        const rays = extractCoverageRays({
+          dem,
+          margin: rendered.marginDb,
+          width: rendered.outputWidth,
+          height: rendered.outputHeight,
+          bounds: dem.bounds,
+          origin: origin!,
+          originHeightM,
+          azimuthStepDeg: 1,
+        });
+        coverageRaysRef.current = rays;
+        try {
+          const src = mb.getSource("coverage-rays") as MbGeoJSONSource | undefined;
+          src?.setData(rays);
+        } catch {}
+
         const computeMs = performance.now() - t0;
         console.info(
           `[Map] Coverage compute: ${computeMs.toFixed(0)} ms ` +
@@ -2013,6 +2059,9 @@ export function Map() {
         if (mb.getLayer("coverage-contours-line")) {
           mb.setLayoutProperty("coverage-contours-line", "visibility", "none");
         }
+        if (mb.getLayer("coverage-rays-line")) {
+          mb.setLayoutProperty("coverage-rays-line", "visibility", "none");
+        }
       } catch {}
     }
   }, [activeTool]);
@@ -2031,6 +2080,20 @@ export function Map() {
       );
     } catch {}
   }, [activeTool, showCoverageContours, coverageResult]);
+
+  // Toggle visibility-ray layer visibility in step with the panel checkbox.
+  useEffect(() => {
+    const mb = mbMapRef.current;
+    if (!mb) return;
+    if (!mb.getLayer("coverage-rays-line")) return;
+    try {
+      mb.setLayoutProperty(
+        "coverage-rays-line",
+        "visibility",
+        activeTool === "coverage" && showCoverageRays ? "visible" : "none",
+      );
+    } catch {}
+  }, [activeTool, showCoverageRays, coverageResult]);
 
   // Sync the coverage origin pin to the current origin (node pick or
   // virtual placement). A DOM-based mapboxgl.Marker so it stays at a
@@ -2903,6 +2966,58 @@ export function Map() {
             "line-opacity": 0.92,
           },
         });
+      }
+
+      // Visibility rays — HeyWhatsThat-style fan of per-azimuth
+      // sightlines. Rendered under the contours so iso-margin lines
+      // remain clearly readable on top of the ray fan.
+      if (!map.getSource("coverage-rays")) {
+        map.addSource("coverage-rays", {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
+      }
+      if (!map.getLayer("coverage-rays-line")) {
+        map.addLayer(
+          {
+            id: "coverage-rays-line",
+            type: "line",
+            source: "coverage-rays",
+            layout: {
+              "line-cap": "butt",
+              visibility: "none",
+            },
+            paint: {
+              // Color + opacity interpolate on the segment's peak
+              // `marginDb`, matching the raster gradient stops: magenta
+              // at 0 dB (edge), orange at 5, cyan at 15, deep cyan at
+              // 25+. Without this, uniform-color rays visually over-
+              // represent marginal-coverage areas versus the alpha-
+              // faded raster.
+              "line-color": [
+                "interpolate",
+                ["linear"],
+                ["get", "marginDb"],
+                0,  "#d946ef",
+                5,  "#f97316",
+                15, "#06b6d4",
+                25, "#0891b2",
+              ],
+              "line-width": 1,
+              "line-opacity": [
+                "interpolate",
+                ["linear"],
+                ["get", "marginDb"],
+                0,  0.2,
+                5,  0.35,
+                15, 0.55,
+                25, 0.65,
+              ],
+            },
+          },
+          // Insert below the contour layer so contours draw on top.
+          "coverage-contours-line",
+        );
       }
 
       // Note: the coverage origin pin uses mapboxgl.Marker (DOM-based) instead
@@ -4726,6 +4841,7 @@ export function Map() {
           isFetchingTerrain={isFetchingCoverageTerrain}
           progressCompleted={coverageProgress.completed}
           progressTotal={coverageProgress.total}
+          demSource={coverageDemSource}
           errorMessage={coverageError}
           onRetry={() => {
             setCoverageError(null);
@@ -4763,6 +4879,8 @@ export function Map() {
           onReliabilityChange={setCoverageReliability}
           showContours={showCoverageContours}
           onShowContoursChange={setShowCoverageContours}
+          showRays={showCoverageRays}
+          onShowRaysChange={setShowCoverageRays}
           onExport={handleCoverageExport}
           onOriginChange={(lngLat) => {
             // Typing a custom coord always detaches from any node anchor

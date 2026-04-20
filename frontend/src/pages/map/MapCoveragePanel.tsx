@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS, RELIABILITY_PRESETS, type CoverageReliability, type CoverageResult } from "./coverageAnalysis";
+import type { DemSource } from "./terrainRgb";
 
 /**
  * Parse a free-form coord string into [lng, lat]. Accepts "lat, lng" with
@@ -38,6 +39,26 @@ export const COVERAGE_DETAIL_SIZE: Record<CoverageDetail, number> = {
 };
 
 /**
+ * Per-Detail cap on DEM tile fetches. Higher caps let `selectZoom` in
+ * `terrainRgb.ts` pick a finer native zoom level at a given bbox size,
+ * so Survey mode actually reaches Tilezen's z=12-15 (3DEP 10-30 m) at
+ * small-to-medium radii. At 200 km max radius, Std still caps at z=10
+ * Mapbox / z=11 Tilezen regardless — the cap only helps when the bbox
+ * is small enough that finer zoom is even feasible.
+ *
+ * Network + memory scaling: each Tilezen tile is ~256² × 4 B ≈ 256 KB
+ * decoded, each Mapbox tile ~512² × 4 B = 1 MB. 768 Tilezen tiles = 192 MB
+ * worst case. 768 Mapbox tiles = 768 MB (too much). Since `buildDem`
+ * prefers Tilezen (smaller tiles), the tiered caps are comfortable.
+ */
+export const COVERAGE_DETAIL_MAX_TILES: Record<CoverageDetail, number> = {
+  standard: 256,
+  high: 384,
+  ultra: 512,
+  survey: 768,
+};
+
+/**
  * Tiny info icon with a styled hover tooltip. More discoverable than a
  * browser-native `title=` attribute (which requires a long hover delay and
  * renders in OS-styled gray). `align` controls whether the tooltip anchors
@@ -71,6 +92,7 @@ export function MapCoveragePanel({
   isFetchingTerrain,
   progressCompleted,
   progressTotal,
+  demSource,
   errorMessage,
   onRetry,
   onCancel,
@@ -94,6 +116,8 @@ export function MapCoveragePanel({
   onReliabilityChange,
   showContours,
   onShowContoursChange,
+  showRays,
+  onShowRaysChange,
   onExport,
   onOriginChange,
 }: {
@@ -109,6 +133,8 @@ export function MapCoveragePanel({
   progressCompleted: number;
   /** Total slices dispatched in the current compute. Zero when idle. */
   progressTotal: number;
+  /** Which tile source produced the current DEM (null until first compute completes). */
+  demSource: DemSource | null;
   /** User-facing error string. Null when nothing went wrong. */
   errorMessage: string | null;
   /** Invoked when the user clicks Retry on the error banner. */
@@ -143,6 +169,9 @@ export function MapCoveragePanel({
   onReliabilityChange: (r: CoverageReliability) => void;
   showContours: boolean;
   onShowContoursChange: (show: boolean) => void;
+  /** Toggle the HWT-style visibility-ray fan overlay. */
+  showRays: boolean;
+  onShowRaysChange: (show: boolean) => void;
   onExport: (format: "geojson" | "kml") => void;
   /**
    * Called when the user types a custom coord into the origin label.
@@ -528,6 +557,49 @@ export function MapCoveragePanel({
                   refraction.
                 </div>
               </div>
+
+              <div className="pt-1 border-t border-white/5">
+                <div className="text-gray-300 font-medium">Terrain data</div>
+                <div className="font-mono text-[9px] text-gray-500 mt-0.5">
+                  {demSource === "tilezen"
+                    ? "Tilezen terrarium · USGS 3DEP (US) / SRTM (global)"
+                    : demSource === "mapbox-terrain-rgb"
+                      ? "Mapbox terrain-rgb v1 · global ~30 m"
+                      : "awaiting first compute…"}
+                </div>
+                <div className="mt-1">
+                  {demSource === "tilezen" ? (
+                    <>
+                      DEM fetched from{" "}
+                      <a
+                        href="https://registry.opendata.aws/terrain-tiles/"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-cyan-300/80 hover:text-cyan-200 underline decoration-dotted"
+                      >AWS Open Data Registry</a>{" "}
+                      (Tilezen). In the US this is USGS 3DEP at ~10 m native
+                      through z=15 — the same dataset professional RF tools
+                      like SPLAT! and Radio Mobile use. Outside the US it
+                      falls back to SRTM 30 m.
+                    </>
+                  ) : demSource === "mapbox-terrain-rgb" ? (
+                    <>
+                      DEM fetched from Mapbox's legacy{" "}
+                      <code className="bg-white/10 px-1 rounded-sm">terrain-rgb</code>{" "}
+                      tileset via the v4 Tiles API. Fallback path — the
+                      preferred Tilezen source wasn't reachable for this
+                      compute. Can under-read mountain peaks by 100-200 m
+                      vs. 3DEP data.
+                    </>
+                  ) : (
+                    <>
+                      Once the first compute completes this will show which
+                      tile source was used (Tilezen 3DEP preferred, Mapbox
+                      terrain-rgb fallback).
+                    </>
+                  )}
+                </div>
+              </div>
               <div className="pt-1 border-t border-white/5">
                 <div className="text-gray-300 font-medium">Link budget</div>
                 <div className="mt-0.5">
@@ -685,23 +757,49 @@ export function MapCoveragePanel({
                 </div>
               </div>
 
-              {/* Contours toggle */}
-              <label className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={showContours}
-                  onChange={(e) => onShowContoursChange(e.target.checked)}
-                  className="w-3.5 h-3.5 accent-cyan-500 cursor-pointer"
-                />
-                <span className="inline-flex items-center gap-1 min-w-0">
-                  Iso-margin contours
-                  <InfoTip align="left">
-                    Overlay iso-margin lines at 0 dB (magenta — edge of
-                    coverage), +10 dB (cyan — reliable), and +20 dB (deep
-                    cyan — strong signal).
-                  </InfoTip>
-                </span>
-              </label>
+              {/* Overlay toggles — contours + visibility rays. Both are
+                  extracted from the same margin grid as the raster, so
+                  toggling them on/off is instant (no recompute). Laid
+                  out inline so they read as a pair of peers rather than
+                  a stacked list. */}
+              <div className="flex items-center justify-between gap-3">
+                <label className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={showContours}
+                    onChange={(e) => onShowContoursChange(e.target.checked)}
+                    className="w-3.5 h-3.5 accent-cyan-500 cursor-pointer"
+                  />
+                  <span className="inline-flex items-center gap-1 min-w-0">
+                    Iso-margin contours
+                    <InfoTip align="left">
+                      Overlay iso-margin lines at 0 dB (magenta — edge of
+                      coverage), +10 dB (cyan — reliable), and +20 dB (deep
+                      cyan — strong signal).
+                    </InfoTip>
+                  </span>
+                </label>
+
+                <label className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer select-none shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={showRays}
+                    onChange={(e) => onShowRaysChange(e.target.checked)}
+                    className="w-3.5 h-3.5 accent-cyan-500 cursor-pointer"
+                  />
+                  <span className="inline-flex items-center gap-1 min-w-0">
+                    Visibility rays
+                    <InfoTip align="left">
+                      Draws a fan of per-azimuth sightlines from the origin
+                      — the HeyWhatsThat-style view. Each ray shows where
+                      the link budget stays above threshold along that
+                      bearing. Useful for spotting specific paths that
+                      punch through to distant ridges (which the smooth
+                      coverage raster averages away).
+                    </InfoTip>
+                  </span>
+                </label>
+              </div>
             </div>
           </details>
 
