@@ -326,8 +326,6 @@ export async function spiderfy(
     source_used = "proximity fallback";
   }
 
-  console.log(`[spiderfy] cluster_id=${clusterId} center=[${center[0].toFixed(5)},${center[1].toFixed(5)}] zoom=${zoom.toFixed(2)} leaves=${leaves.length} via=${source_used}`);
-
   if (leaves.length === 0) return;
 
   activeState = { center, leaves, lastZoom: zoom };

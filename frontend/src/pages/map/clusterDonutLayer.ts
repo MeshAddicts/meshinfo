@@ -273,7 +273,10 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
     const terrainEnabled = !!(map as any).getTerrain?.();
     const elevationAt = (lng: number, lat: number): number => {
       if (!terrainEnabled) return 0;
-      const e = map.queryTerrainElevation?.({ lng, lat } as any);
+      // `exaggerated: false` reads real MSL metres. Default `true` multiplies
+      // by the terrain-exaggeration factor (1.5× by default) and would float
+      // the donuts high above the ground on 3D terrain.
+      const e = map.queryTerrainElevation?.({ lng, lat } as any, { exaggerated: false });
       return Number.isFinite(e) ? (e as number) : 0;
     };
 

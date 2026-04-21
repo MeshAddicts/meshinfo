@@ -111,42 +111,52 @@ function edgePoint(
 }
 
 /**
- * Extract raw line segments at `threshold` from the margin grid. Each
- * segment is a pair of (x,y) grid-space points.
+ * Extract raw line segments at each threshold in a single pass over the
+ * margin grid. Returns one segment list per threshold in the same order
+ * as the input. Walking the grid once (instead of once-per-threshold)
+ * saves most of the read + NaN-check cost at Survey detail (~2048²).
  */
-function extractSegments(
+function extractSegmentsMulti(
   margin: Float32Array,
   width: number,
   height: number,
-  threshold: number,
-): Array<[[number, number], [number, number]]> {
-  const segs: Array<[[number, number], [number, number]]> = [];
+  thresholds: readonly number[],
+): Array<Array<[[number, number], [number, number]]>> {
+  const buckets: Array<Array<[[number, number], [number, number]]>> =
+    thresholds.map(() => []);
   for (let j = 0; j < height - 1; j++) {
+    const row0 = j * width;
+    const row1 = (j + 1) * width;
     for (let i = 0; i < width - 1; i++) {
-      const tl = margin[j * width + i];
-      const tr = margin[j * width + (i + 1)];
-      const bl = margin[(j + 1) * width + i];
-      const br = margin[(j + 1) * width + (i + 1)];
+      const tl = margin[row0 + i];
+      const tr = margin[row0 + i + 1];
+      const bl = margin[row1 + i];
+      const br = margin[row1 + i + 1];
       // Skip cells touching any no-data corner.
       if (
         Number.isNaN(tl) || Number.isNaN(tr) ||
         Number.isNaN(bl) || Number.isNaN(br)
       ) continue;
-      const bits =
-        (tl > threshold ? 1 : 0) |
-        (tr > threshold ? 2 : 0) |
-        (br > threshold ? 4 : 0) |
-        (bl > threshold ? 8 : 0);
-      const edges = MARCHING_SQUARES_CASES[bits];
-      for (const [a, b] of edges) {
-        segs.push([
-          edgePoint(a, i, j, tl, tr, br, bl, threshold),
-          edgePoint(b, i, j, tl, tr, br, bl, threshold),
-        ]);
+      for (let ti = 0; ti < thresholds.length; ti++) {
+        const threshold = thresholds[ti];
+        const bits =
+          (tl > threshold ? 1 : 0) |
+          (tr > threshold ? 2 : 0) |
+          (br > threshold ? 4 : 0) |
+          (bl > threshold ? 8 : 0);
+        const edges = MARCHING_SQUARES_CASES[bits];
+        if (edges.length === 0) continue;
+        const bucket = buckets[ti];
+        for (const [a, b] of edges) {
+          bucket.push([
+            edgePoint(a, i, j, tl, tr, br, bl, threshold),
+            edgePoint(b, i, j, tl, tr, br, bl, threshold),
+          ]);
+        }
       }
     }
   }
-  return segs;
+  return buckets;
 }
 
 /**
@@ -237,9 +247,10 @@ export function extractCoverageContours(opts: {
 }): ContourFeatureCollection {
   const { margin, width, height, bounds, thresholdsDb, minPolylinePoints = 4 } = opts;
   const features: ContourFeature[] = [];
-  for (const threshold of thresholdsDb) {
-    const segs = extractSegments(margin, width, height, threshold);
-    const polylines = stitchSegments(segs);
+  const segsByThreshold = extractSegmentsMulti(margin, width, height, thresholdsDb);
+  for (let ti = 0; ti < thresholdsDb.length; ti++) {
+    const threshold = thresholdsDb[ti];
+    const polylines = stitchSegments(segsByThreshold[ti]);
     for (const line of polylines) {
       if (line.length < minPolylinePoints) continue;
       features.push({

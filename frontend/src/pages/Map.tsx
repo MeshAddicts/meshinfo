@@ -659,6 +659,13 @@ export function Map() {
     height: number;
     bounds: DEMBounds;
   } | null>(null);
+  /**
+   * Blob URL currently bound to the `coverage-raster` image source. Tracked so
+   * we can `URL.revokeObjectURL` it on next update / tool close — without
+   * revocation the underlying Blobs are pinned in memory until page reload,
+   * which leaks ~5 MB per compute at Survey detail.
+   */
+  const coverageRasterUrlRef = useRef<string | null>(null);
   /** Whether contours are visible on the map. Session-scoped toggle. */
   const [showCoverageContours, setShowCoverageContours] = useState(false);
   /** Whether visibility rays (HWT-style fan of LoS sightlines) are shown. */
@@ -932,8 +939,6 @@ export function Map() {
     }
     const demCoveredPixels = clearCount + fresnelCount + blockedCount;
 
-    // Encode via a data URL and push to the image source. For small
-    // grids (256–1024²) toDataURL is ≈ 3–40 ms and not worth optimizing.
     const canvas = document.createElement("canvas");
     canvas.width = outputWidth;
     canvas.height = outputHeight;
@@ -945,7 +950,16 @@ export function Map() {
       outputHeight,
     );
     ctx.putImageData(imgData, 0, 0);
-    const url = canvas.toDataURL("image/png");
+
+    // Encode via Blob URL (not data URL). At Survey detail (2048²) the raw
+    // RGBA is ~16 MB; a data URL would be ~22 MB of base64 string with
+    // ~100–200 ms of encoding CPU cost. Blobs skip the base64 step entirely.
+    const url = await new Promise<string>((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (!blob) { reject(new Error("canvas.toBlob returned null")); return; }
+        resolve(URL.createObjectURL(blob));
+      }, "image/png");
+    });
 
     const src = mb.getSource("coverage-raster") as mapboxgl.ImageSource | undefined;
     const coords: [[number, number], [number, number], [number, number], [number, number]] = [
@@ -956,6 +970,15 @@ export function Map() {
     ];
     if (src && typeof (src as unknown as { updateImage?: Function }).updateImage === "function") {
       (src as unknown as { updateImage: (o: { url: string; coordinates: typeof coords }) => void }).updateImage({ url, coordinates: coords });
+      // Revoke the PREVIOUS blob URL now that Mapbox has the new one queued.
+      // Safe because the old texture is already on the GPU — Mapbox doesn't
+      // need the old blob after updateImage().
+      const previous = coverageRasterUrlRef.current;
+      coverageRasterUrlRef.current = url;
+      if (previous) URL.revokeObjectURL(previous);
+    } else {
+      // Image source missing entirely — don't leak the blob we just made.
+      URL.revokeObjectURL(url);
     }
     if (mb.getLayer("coverage-raster")) {
       mb.setLayoutProperty("coverage-raster", "visibility", "visible");
@@ -1215,6 +1238,20 @@ export function Map() {
         }
         (mb.getSource("coverage-contours") as MbGeoJSONSource | undefined)?.setData(empty);
         (mb.getSource("coverage-rays") as MbGeoJSONSource | undefined)?.setData(empty);
+        // Swap the raster image to a 1×1 transparent PNG so Mapbox releases
+        // the 16 MB Survey-resolution GPU texture. `visibility: none` alone
+        // keeps the texture resident in VRAM until the next compute overwrites it.
+        const rasterSrc = mb.getSource("coverage-raster") as mapboxgl.ImageSource | undefined;
+        if (rasterSrc && typeof (rasterSrc as unknown as { updateImage?: Function }).updateImage === "function") {
+          (rasterSrc as unknown as { updateImage: (o: { url: string; coordinates: [[number, number], [number, number], [number, number], [number, number]] }) => void }).updateImage({
+            url: TRANSPARENT_1PX_PNG,
+            coordinates: [[-180, 85], [180, 85], [180, -85], [-180, -85]],
+          });
+        }
+        if (coverageRasterUrlRef.current) {
+          URL.revokeObjectURL(coverageRasterUrlRef.current);
+          coverageRasterUrlRef.current = null;
+        }
       } catch {}
       losTubeLayerRef.current?.setData(null);
       coverageContoursRef.current = null;
@@ -1959,8 +1996,8 @@ export function Map() {
           setIsComputingCoverage(false);
           setCoverageProgress({ completed: 0, total: 0 });
           setCoverageError(
-            "Coverage model unavailable — the ITM WebAssembly bundle failed to load. " +
-              "Check the developer console for details.",
+            "Coverage model unavailable — the ITM WebAssembly module failed to load. " +
+              "Try refreshing the page; if the problem persists, check the developer console.",
           );
           return;
         }
@@ -2017,12 +2054,14 @@ export function Map() {
         } catch {}
 
         const computeMs = performance.now() - t0;
-        console.info(
-          `[Map] Coverage compute: ${computeMs.toFixed(0)} ms ` +
-            `for ${OUTPUT_SIZE}² output / ${DEM_SIZE}² dem across ${ensureCoveragePool().size} workers ` +
-            `(${Math.round((rendered.demCoveredPixels / rendered.totalPx) * 100)}% terrain-covered)`,
-          timings,
-        );
+        if (import.meta.env.DEV) {
+          console.info(
+            `[Map] Coverage compute: ${computeMs.toFixed(0)} ms ` +
+              `for ${OUTPUT_SIZE}² output / ${DEM_SIZE}² dem across ${ensureCoveragePool().size} workers ` +
+              `(${Math.round((rendered.demCoveredPixels / rendered.totalPx) * 100)}% terrain-covered)`,
+            timings,
+          );
+        }
 
         setCoverageResult({
           origin: origin!,
@@ -3529,27 +3568,6 @@ export function Map() {
         const currentZoom = map.getZoom();
         const maxZoom = map.getMaxZoom();
 
-        // DIAGNOSTIC: dump the actual cluster membership so you can verify
-        // whether the count reflects real data or a bug.
-        const pointCount = cluster.properties?.point_count;
-        const onlineCount = cluster.properties?.onlineCount;
-        console.log(`[cluster] click at zoom=${currentZoom.toFixed(2)} center=[${lng.toFixed(5)}, ${lat.toFixed(5)}] point_count=${pointCount} online=${onlineCount}`);
-        source.getClusterLeaves(clusterId, 1000, 0, (err, leaves) => {
-          if (err) { console.warn("[cluster] getClusterLeaves error:", err); return; }
-          const rows = (leaves ?? []).map((l: any) => {
-            const c = l.geometry?.coordinates ?? [];
-            return {
-              id: l.properties?.id,
-              shortname: l.properties?.shortname,
-              online: l.properties?.online,
-              lng: c[0]?.toFixed(5),
-              lat: c[1]?.toFixed(5),
-            };
-          });
-          console.log(`[cluster] leaves (${rows.length}):`);
-          console.table(rows);
-        });
-
         let handled = false;
         const zoomFallback = () => {
           if (handled) return;
@@ -3873,6 +3891,10 @@ export function Map() {
         mbSelectedIdRef.current = null;
         mbHandlersBoundRef.current = false;
         mbCurrentStyleUrlRef.current = null;
+      }
+      if (coverageRasterUrlRef.current) {
+        URL.revokeObjectURL(coverageRasterUrlRef.current);
+        coverageRasterUrlRef.current = null;
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
