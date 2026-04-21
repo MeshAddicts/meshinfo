@@ -229,6 +229,13 @@ export interface CoverageResult {
   fresnelCount: number;
   /** Pixels below the link-budget threshold (un-paintable). */
   blockedCount: number;
+  /**
+   * Total pixels the output raster tried to paint (= outputWidth × outputHeight).
+   * Ratio of (clear + fresnel + blocked) / scannedPixels tells the UI whether
+   * the DEM actually delivered data over the analysis bbox — a low ratio means
+   * most pixels got a NaN elevation and were skipped.
+   */
+  scannedPixels: number;
   frequencyGHz: number;
   /** TX antenna gain (dBi). */
   txAntennaDbi: number;

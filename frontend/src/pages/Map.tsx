@@ -2071,6 +2071,7 @@ export function Map() {
           clearCount: rendered.clearCount,
           fresnelCount: rendered.fresnelCount,
           blockedCount: rendered.blockedCount,
+          scannedPixels: rendered.totalPx,
           frequencyGHz: 0.915,
           txAntennaDbi: coverageAntennaDbi,
           rxAntennaDbi: coverageRxAntennaDbi,
@@ -3014,8 +3015,9 @@ export function Map() {
             visibility: "none",
           },
           paint: {
-            // Color by threshold: 0 dB (edge) = amber, 10 dB = green,
-            // 20 dB = deep cyan ("strongly reliable").
+            // Color by threshold: 0 dB (edge) = magenta, 10 dB = cyan,
+            // 20 dB = deep cyan ("strongly reliable"). Matches the paint
+            // gradient and the info-popover legend copy.
             "line-color": [
               "match", ["get", "thresholdDb"],
               0,  "#d946ef",

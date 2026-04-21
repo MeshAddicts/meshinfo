@@ -661,7 +661,7 @@ export function MapCoveragePanel({
                         className="text-cyan-300/80 hover:text-cyan-200 underline decoration-dotted"
                       >AWS Open Data Registry</a>{" "}
                       (Tilezen). In the US this is USGS 3DEP at ~10 m native
-                      through z=15 — the same dataset professional RF tools
+                      through z=15 — the same dataset RF tools
                       like SPLAT! and Radio Mobile use. Outside the US it
                       falls back to SRTM 30 m.
                     </>
@@ -686,15 +686,22 @@ export function MapCoveragePanel({
               <div className="pt-1 border-t border-white/5">
                 <div className="text-gray-300 font-medium">Link budget</div>
                 <div className="mt-0.5">
-                  Climate: <strong>Continental Temperate</strong> ·
-                  Reliability: <strong>50 / 50 / 50 %</strong> (time / location
-                  / situation) · Cable loss: <strong>0.5 dB</strong> ·
-                  Fade margin: <strong>15 dB</strong> ·
-                  TX antenna: <strong>{result.txAntennaDbi} dBi</strong> ·
-                  RX antenna: <strong>{result.rxAntennaDbi} dBi</strong> @
-                  <strong> {Math.round(result.rxAntennaHeightAboveGroundM)} m</strong> AGL ·
-                  RX sensitivity: <strong>{result.rxSensitivityDbm} dBm</strong>{" "}
-                  (real-world; SX1262 datasheet is ~3 dB more sensitive).
+                  {(() => {
+                    const rp = RELIABILITY_PRESETS.find((p) => p.id === reliability) ?? RELIABILITY_PRESETS[1];
+                    return (
+                      <>
+                        Climate: <strong>Continental Temperate</strong> ·
+                        Reliability: <strong>{rp.time} / {rp.location} / {rp.situation} %</strong>{" "}
+                        (time / location / situation) · Cable loss: <strong>0.5 dB</strong> ·
+                        Fade margin: <strong>15 dB</strong> ·
+                        TX antenna: <strong>{result.txAntennaDbi} dBi</strong> ·
+                        RX antenna: <strong>{result.rxAntennaDbi} dBi</strong> @
+                        <strong> {Math.round(result.rxAntennaHeightAboveGroundM)} m</strong> AGL ·
+                        RX sensitivity: <strong>{result.rxSensitivityDbm} dBm</strong>{" "}
+                        (real-world; SX1262 datasheet is ~3 dB more sensitive).
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
               <div className="text-amber-300/80 pt-1 border-t border-white/5 mt-1">
@@ -704,10 +711,11 @@ export function MapCoveragePanel({
                 buildings or foliage; the <em>Environment</em> selector adds a
                 flat clutter loss as a rough compensation. TX and RX antennas
                 and the RX height are independently configurable in the gear
-                popover; defaults mirror the TX for symmetric-handheld
-                scenarios. Analysis area is capped at <strong>200 km
-                radius</strong> so the DEM at the pin stays fine enough to
-                capture actual peaks — use the LOS tool for specific
+                popover; the default RX models a stock Heltec V3 with the
+                rubber-duck antenna at 2 m, so out-of-box results show what a
+                typical handheld would hear. Analysis area is capped at{" "}
+                <strong>200 km radius</strong> so the DEM at the pin stays fine
+                enough to capture actual peaks — use the LOS tool for specific
                 longer-range point-to-point links.
               </div>
             </div>
@@ -1041,12 +1049,17 @@ export function MapCoveragePanel({
           const fmt = (n: number) => n >= 100 ? Math.round(n).toLocaleString() : n.toFixed(1);
 
           // Diagnostics for when the map paints nothing:
-          //   - If virtually all pixels were NaN, the DEM didn't sample — tiles
-          //     weren't loaded for the area. Tell the user to zoom/pan out.
+          //   - If virtually all pixels were NaN, the DEM didn't deliver data
+          //     over the analysis bbox — network issue on the tile source,
+          //     or a pin in a region with no 3DEP/SRTM coverage.
           //   - If the DEM sampled but no pixels closed the budget, tell the
           //     user the link budget itself is failing (try more power / range).
-          const TOTAL_PIXELS = 65536; // 256×256 grid
-          const terrainCoverage = totalPx / TOTAL_PIXELS;
+          // `scannedPixels` is the actual output raster size (varies by Detail
+          // setting: 512²/768²/1024²/2048²) — ratioing against it means the
+          // threshold is correct regardless of Detail.
+          const terrainCoverage = result.scannedPixels > 0
+            ? totalPx / result.scannedPixels
+            : 0;
           const noTerrainData = terrainCoverage < 0.05; // <5% of grid had terrain
           const noLinkBudget = !noTerrainData && reachablePx === 0;
           return (
@@ -1082,15 +1095,17 @@ export function MapCoveragePanel({
                   <div className="mt-1.5 px-2 py-1 rounded bg-amber-500/10 border border-amber-500/30 text-[10px] text-amber-300 leading-snug">
                     {noTerrainData ? (
                       <>
-                        <strong>No terrain data loaded</strong> for the pin area.
-                        Try zooming / panning around so Mapbox fetches terrain
-                        tiles first, then re-drop the pin.
+                        <strong>No terrain data</strong> delivered for the pin
+                        area. Usually a transient network issue with the
+                        terrain tile source — click Retry, or try a different
+                        location.
                       </>
                     ) : (
                       <>
                         <strong>Link budget fails everywhere</strong> within range.
-                        Try a lower-sensitivity preset, more TX power, higher-gain
-                        antenna, or a smaller analysis range.
+                        Try a slower modem preset (LongFast or LongSlow),
+                        more TX power, a higher-gain antenna, or a smaller
+                        analysis range.
                       </>
                     )}
                   </div>
