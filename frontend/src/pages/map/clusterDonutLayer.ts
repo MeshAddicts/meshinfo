@@ -63,7 +63,10 @@ const float PI  = 3.14159265359;
 const float TAU = 6.28318530718;
 
 const float OUTER_R = 0.96;
-const float INNER_R = 0.60;
+// Inner edge of the online/offline ring. OUTER_R - INNER_R is the visible
+// ring thickness — raising INNER_R slims the ring without changing the
+// cluster footprint (count text + hit-test radius stay the same).
+const float INNER_R = 0.78;
 const float EDGE_AA = 0.035;
 
 const vec4 COL_BG      = vec4(0.059, 0.090, 0.164, 0.88);
