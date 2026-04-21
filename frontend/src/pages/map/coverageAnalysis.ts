@@ -230,7 +230,13 @@ export interface CoverageResult {
   /** Pixels below the link-budget threshold (un-paintable). */
   blockedCount: number;
   frequencyGHz: number;
-  antennaDbi: number;
+  /** TX antenna gain (dBi). */
+  txAntennaDbi: number;
+  /** RX antenna gain (dBi). May differ from TX when the user configures
+   *  an asymmetric receiver (rooftop station, vehicle mount, etc.). */
+  rxAntennaDbi: number;
+  /** RX antenna height above the sampled terrain (m). */
+  rxAntennaHeightAboveGroundM: number;
   txDbm: number;
   /** Effective RX sensitivity (dBm) used — includes chipset correction. */
   rxSensitivityDbm: number;

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ElevationProfile } from "./ElevationProfile";
 import { COMMON_ANTENNAS, COMMON_HARDWARE } from "./coverageAnalysis";
 import type { LoSResult } from "./losAnalysis";
+import type { DemSource } from "./terrainRgb";
 
 /**
  * Compact endpoint config column — hardware, antenna, and height
@@ -108,6 +109,7 @@ export function MapLosPanel({
   toHwIdx, onToHwIdxChange,
   toAntIdx, onToAntIdxChange,
   toHeightM, onToHeightChange,
+  demSource,
   onProfileHover,
 }: {
   result: LoSResult | null;
@@ -125,6 +127,8 @@ export function MapLosPanel({
   toHwIdx: number; onToHwIdxChange: (idx: number) => void;
   toAntIdx: number; onToAntIdxChange: (idx: number) => void;
   toHeightM: number; onToHeightChange: (m: number) => void;
+  /** Which tile source produced the current DEM (null before first compute). */
+  demSource: DemSource | null;
   /** Fires with 0–1 distance fraction as user hovers the elevation chart. */
   onProfileHover?: (fraction: number | null) => void;
 }) {
@@ -305,6 +309,14 @@ export function MapLosPanel({
                   50 % reliability.
                 </div>
               )}
+              <div className="pt-1 border-t border-white/5">
+                <strong>Terrain data:</strong>{" "}
+                {demSource === "tilezen"
+                  ? "Tilezen terrarium (USGS 3DEP / SRTM) via AWS Open Data"
+                  : demSource === "mapbox-terrain-rgb"
+                    ? "Mapbox terrain-rgb v1 (~30 m global, Tilezen fallback)"
+                    : "awaiting first compute…"}
+              </div>
               <div className="pt-1 border-t border-white/5">
                 Frequency: <strong>{(los.frequencyGHz * 1000).toFixed(0)} MHz</strong>.
                 "~" means node had no GPS altitude (or reported below terrain) —

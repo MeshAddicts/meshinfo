@@ -100,6 +100,12 @@ export function MapCoveragePanel({
   onAntennaIdxChange,
   hardwareIdx,
   onHardwareIdxChange,
+  rxHardwareIdx,
+  onRxHardwareIdxChange,
+  rxAntennaIdx,
+  onRxAntennaIdxChange,
+  rxHeightM,
+  onRxHeightChange,
   customTxDbm,
   onCustomTxDbmChange,
   envIdx,
@@ -146,6 +152,15 @@ export function MapCoveragePanel({
   onAntennaIdxChange: (idx: number) => void;
   hardwareIdx: number;
   onHardwareIdxChange: (idx: number) => void;
+  /** RX-side config (asymmetric link support). Defaults match TX on first
+   *  open; users can change these in the gear popover to model e.g. a
+   *  handheld TX reaching a rooftop RX. */
+  rxHardwareIdx: number;
+  onRxHardwareIdxChange: (idx: number) => void;
+  rxAntennaIdx: number;
+  onRxAntennaIdxChange: (idx: number) => void;
+  rxHeightM: number;
+  onRxHeightChange: (m: number) => void;
   customTxDbm: number;
   onCustomTxDbmChange: (dbm: number) => void;
   envIdx: number;
@@ -483,6 +498,25 @@ export function MapCoveragePanel({
             <span className="text-gray-500 shrink-0">
               {Math.round(result.originHeightM)}m{result.originIsFallback ? "~" : ""}
             </span>
+            {(() => {
+              // Surface asymmetric RX as a header pill so users can see
+              // at a glance that they're not looking at the default
+              // handheld-reach view. Default config = hw idx 0 + ant
+              // idx 3 + 2 m height.
+              const rxIsDefault =
+                rxHardwareIdx === 0 && rxAntennaIdx === 3 && rxHeightM === 2;
+              if (rxIsDefault) return null;
+              const hwLabel = COMMON_HARDWARE[rxHardwareIdx]?.label ?? "custom";
+              const antDbi = COMMON_ANTENNAS[rxAntennaIdx]?.dbi ?? 3;
+              return (
+                <span
+                  className="ml-1 shrink-0 px-1.5 py-0 rounded bg-cyan-500/15 border border-cyan-500/30 text-[9px] text-cyan-200 font-medium whitespace-nowrap"
+                  title={`Custom RX: ${hwLabel} with ${antDbi} dBi antenna at ${rxHeightM} m`}
+                >
+                  RX {antDbi} dBi @ {rxHeightM}m
+                </span>
+              );
+            })()}
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
@@ -607,6 +641,9 @@ export function MapCoveragePanel({
                   Reliability: <strong>50 / 50 / 50 %</strong> (time / location
                   / situation) · Cable loss: <strong>0.5 dB</strong> ·
                   Fade margin: <strong>15 dB</strong> ·
+                  TX antenna: <strong>{result.txAntennaDbi} dBi</strong> ·
+                  RX antenna: <strong>{result.rxAntennaDbi} dBi</strong> @
+                  <strong> {Math.round(result.rxAntennaHeightAboveGroundM)} m</strong> AGL ·
                   RX sensitivity: <strong>{result.rxSensitivityDbm} dBm</strong>{" "}
                   (real-world; SX1262 datasheet is ~3 dB more sensitive).
                 </div>
@@ -616,11 +653,13 @@ export function MapCoveragePanel({
                 values (~3 dB worse than datasheet) and adjusts down another
                 ~2 dB for SX1276-based boards (Heltec v2). ITM does not model
                 buildings or foliage; the <em>Environment</em> selector adds a
-                flat clutter loss as a rough compensation. Antenna gain is
-                applied symmetrically (same antenna at both ends). Analysis
-                area is capped at <strong>200 km radius</strong> so the DEM at
-                the pin stays fine enough to capture actual peaks — use the
-                LOS tool for specific longer-range point-to-point links.
+                flat clutter loss as a rough compensation. TX and RX antennas
+                and the RX height are independently configurable in the gear
+                popover; defaults mirror the TX for symmetric-handheld
+                scenarios. Analysis area is capped at <strong>200 km
+                radius</strong> so the DEM at the pin stays fine enough to
+                capture actual peaks — use the LOS tool for specific
+                longer-range point-to-point links.
               </div>
             </div>
           </details>
@@ -652,6 +691,103 @@ export function MapCoveragePanel({
               xl:left-[calc(50%+332px)]">
               <div className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">
                 Advanced settings
+              </div>
+
+              {/* Receiver — asymmetric RX config. TX is configured in
+                  the main panel; these knobs model the other end of the
+                  link. Defaults match TX for zero-surprise behavior; any
+                  non-default value surfaces as a "custom RX" pill in the
+                  header so users can see at a glance they're looking at
+                  an asymmetric compute. */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">
+                    <span>Receiver</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onRxHardwareIdxChange(0);
+                      onRxAntennaIdxChange(0);
+                      onRxHeightChange(2);
+                    }}
+                    className="text-[9px] text-cyan-400/70 hover:text-cyan-300 transition-colors"
+                    title="Reset RX to stock handheld (rubber duck, 2 m)"
+                  >
+                    Reset to handheld
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label htmlFor="coverage-rx-hw" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 flex items-center gap-1">
+                      <span>Hardware</span>
+                      <InfoTip align="left">
+                        RX hardware drives the chipset-aware sensitivity
+                        correction (SX1276 boards get an additional ~2 dB
+                        penalty over SX1262). TX power is unused on this
+                        side — ITM treats RX as a passive receiver.
+                      </InfoTip>
+                    </label>
+                    <select
+                      id="coverage-rx-hw"
+                      value={rxHardwareIdx}
+                      onChange={(e) => onRxHardwareIdxChange(Number(e.target.value))}
+                      className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
+                        focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
+                        [&>option]:bg-gray-800 [&>option]:text-gray-200"
+                    >
+                      {COMMON_HARDWARE.map((h, i) => (
+                        <option key={i} value={i}>{h.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="coverage-rx-ant" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
+                      Antenna
+                    </label>
+                    <select
+                      id="coverage-rx-ant"
+                      value={rxAntennaIdx}
+                      onChange={(e) => onRxAntennaIdxChange(Number(e.target.value))}
+                      className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
+                        focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
+                        [&>option]:bg-gray-800 [&>option]:text-gray-200"
+                    >
+                      {COMMON_ANTENNAS.map((a, i) => (
+                        <option key={i} value={i}>{a.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label htmlFor="coverage-rx-height" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 flex items-center gap-1">
+                    <span>Height above ground</span>
+                    <InfoTip align="left">
+                      RX antenna height over local terrain (m). 2 m =
+                      handheld default. Use 6-10 m for a typical rooftop
+                      station, 30 m+ for tower-mounted receivers. Fed to
+                      ITM as `rxHeightM` per pixel.
+                    </InfoTip>
+                  </label>
+                  <div className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 w-24">
+                    <input
+                      id="coverage-rx-height"
+                      type="number"
+                      min={0}
+                      max={300}
+                      step={1}
+                      value={rxHeightM}
+                      onChange={(e) => {
+                        const n = Number(e.target.value);
+                        if (Number.isFinite(n)) {
+                          onRxHeightChange(Math.max(0, Math.min(300, n)));
+                        }
+                      }}
+                      className="min-w-0 flex-1 bg-transparent text-xs text-gray-200 text-center focus:outline-hidden"
+                    />
+                    <span className="text-[10px] text-gray-500 shrink-0">m</span>
+                  </div>
+                </div>
               </div>
 
               {/* Environment — clutter-loss preset */}

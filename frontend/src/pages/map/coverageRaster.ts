@@ -37,8 +37,19 @@ export interface RasterParams {
   freqMhz: number;
   /** TX power in dBm. */
   txDbm: number;
-  /** Symmetric antenna gain (applied at both TX and RX). */
-  antennaDbi: number;
+  /** TX antenna gain in dBi (added to the link budget at the transmitting end). */
+  txAntennaDbi: number;
+  /** RX antenna gain in dBi (added to the link budget at the receiving end).
+   *  Split from the TX value so users can model a hand-held handheld TX
+   *  reaching a high-gain rooftop RX (or any other asymmetric scenario). */
+  rxAntennaDbi: number;
+  /**
+   * RX antenna height **above the terrain** at the sampled pixel (m).
+   * Fed into ITM as `rxHeightM`. Default 2 m (handheld); editable by the
+   * user when modelling a rooftop / tower / vehicle RX. Clamped to ITM's
+   * valid range (0.5–3000 m) inside the renderer.
+   */
+  rxAntennaHeightAboveGroundM: number;
   /** Receiver sensitivity floor (dBm). */
   rxSensitivityDbm: number;
   /** Fade margin (dB) added to the sensitivity threshold. */
@@ -251,7 +262,7 @@ export function renderCoverageRaster(
   // "0 dB margin reachable" in downstream contour work.
   marginDbBuf.fill(Number.NaN);
   const {
-    freqMhz, txDbm, antennaDbi,
+    freqMhz, txDbm, txAntennaDbi, rxAntennaDbi, rxAntennaHeightAboveGroundM,
     rxSensitivityDbm, fadeMarginDb, cableLossDb, clutterLossDb,
     climate, surfaceRefractivityN, polarization,
     groundDielectric, groundConductivity,
@@ -303,9 +314,12 @@ export function renderCoverageRaster(
     situation: situationPct,
   };
 
-  const receiverAntennaAboveGroundM = 2; // mirrors previous pipeline
-  const txGain = antennaDbi;
-  const rxGain = antennaDbi;
+  // RX antenna height is now per-request (user-editable). ITM expects a
+  // value in [0.5, 3000] m; clamp for safety in case a future caller
+  // passes something out of range.
+  const receiverAntennaAboveGroundM = Math.max(0.5, Math.min(3000, rxAntennaHeightAboveGroundM));
+  const txGain = txAntennaDbi;
+  const rxGain = rxAntennaDbi;
 
   for (let j = rowStart; j < rowEnd; j++) {
     const lat = bounds.north - j * latStep;

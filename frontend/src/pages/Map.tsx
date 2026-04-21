@@ -411,6 +411,9 @@ export function Map() {
     () => readJson<number>(LS_KEYS.terrainExaggeration, 1.5)
   );
   const [losResult, setLosResult] = useState<LoSResult | null>(null);
+  /** Which tile source produced the most recent LOS DEM — drives the
+   *  "Terrain data" line in the LoS info popover. */
+  const [losDemSource, setLosDemSource] = useState<DemSource | null>(null);
   // LOS virtual pin positions — allow placing arbitrary endpoints by
   // clicking empty map, not just selecting existing nodes.
   const [losVirtualFrom, setLosVirtualFrom] = useState<[number, number] | null>(null);
@@ -444,6 +447,17 @@ export function Map() {
   const [coverageAntennaIdx, setCoverageAntennaIdx] = useState(3);
   const coverageAntennaDbi = COMMON_ANTENNAS[coverageAntennaIdx]?.dbi ?? 3;
   const [coverageHardwareIdx, setCoverageHardwareIdx] = useState(0);
+  /**
+   * RX-side hardware / antenna / height — lets users model asymmetric
+   * links (e.g. a handheld reaching a rooftop station). Defaults mirror
+   * the TX config on panel open so the initial compute matches the
+   * pre-asymmetric symmetric behavior exactly; users opt into asymmetry
+   * by changing these knobs in the gear popover.
+   */
+  const [coverageRxHardwareIdx, setCoverageRxHardwareIdx] = useState(0);
+  const [coverageRxAntennaIdx, setCoverageRxAntennaIdx] = useState(3);
+  const coverageRxAntennaDbi = COMMON_ANTENNAS[coverageRxAntennaIdx]?.dbi ?? 3;
+  const [coverageRxHeightM, setCoverageRxHeightM] = useState(2);
   const [coverageCustomTxDbm, setCoverageCustomTxDbm] = useState(22);
   const coverageTxDbm = COMMON_HARDWARE[coverageHardwareIdx].isCustom
     ? coverageCustomTxDbm
@@ -488,11 +502,17 @@ export function Map() {
    * terrain-aware results). No manual override — keeping the derived
    * value keeps the coverage panel simpler and the behavior honest.
    */
-  /** Chipset-corrected RX sensitivity actually used in calcs. */
+  /**
+   * Chipset-corrected RX sensitivity actually used in the link budget.
+   * Keyed on RX hardware (not TX) — sensitivity is a property of the
+   * receiving end. Before the asymmetric RX refactor this was keyed on
+   * TX hardware, which produced the right number only because TX and
+   * RX were assumed identical.
+   */
   const coverageEffectiveSensitivityDbm = useMemo(() => {
-    const hw = COMMON_HARDWARE[coverageHardwareIdx];
+    const hw = COMMON_HARDWARE[coverageRxHardwareIdx];
     return effectiveSensitivityDbm(coverageSensitivityDbm, hw.chipset, hw.sensitivityOffsetDb ?? 0);
-  }, [coverageSensitivityDbm, coverageHardwareIdx]);
+  }, [coverageSensitivityDbm, coverageRxHardwareIdx]);
   /**
    * DEM/raster size radius — derived from a simple free-space budget
    * just so the analysis area scales with hardware. Not shown to users
@@ -512,14 +532,15 @@ export function Map() {
     const FADE = 15;
     const budget =
       coverageTxDbm +
-      2 * coverageAntennaDbi -
+      coverageAntennaDbi +
+      coverageRxAntennaDbi -
       coverageEffectiveSensitivityDbm -
       FADE -
       CABLE;
     const plConstant = 32.45 + 20 * Math.log10(915);
     const maxKm = Math.pow(10, (budget - plConstant) / 20);
     return Math.max(5, Math.min(200, Math.round(maxKm)));
-  }, [coverageAntennaDbi, coverageTxDbm, coverageEffectiveSensitivityDbm]);
+  }, [coverageAntennaDbi, coverageRxAntennaDbi, coverageTxDbm, coverageEffectiveSensitivityDbm]);
   /** Custom WebGL layer instance for the 3D LoS tube. Created once per map. */
   const losTubeLayerRef = useRef<LosTubeLayer | null>(null);
   /** DOM-based pin for the Coverage tool's origin (draggable-capable). */
@@ -1162,6 +1183,7 @@ export function Map() {
     setCoverageError(null);
     setCoverageProgress({ completed: 0, total: 0 });
     setCoverageDemSource(null);
+    setLosDemSource(null);
     setIsScanning(false);
 
     const mb = mbMapRef.current;
@@ -1330,18 +1352,19 @@ export function Map() {
       }
 
       let dem: DEM;
+      let demSourceUsedForLos: DemSource;
       try {
         // 2048² matches the coverage tool's DEM; sizes the same peaks to
         // similar accuracy. For a 200 km link bbox that's ~115 m/px.
         // `buildDem` tries Tilezen (3DEP in US) first, falls back to
-        // Mapbox terrain-rgb. We discard the source tag here — LOS
-        // attribution is shown inline in the panel, not a separate pill.
-        ({ dem } = await buildDem({
+        // Mapbox terrain-rgb. Surface the source for panel attribution.
+        ({ dem, source: demSourceUsedForLos } = await buildDem({
           bounds: demBounds,
           targetWidth: 2048,
           targetHeight: 2048,
           token: mapboxToken,
         }));
+        setLosDemSource(demSourceUsedForLos);
       } catch (err) {
         console.warn("[Map] LoS DEM fetch failed:", err);
         setLosResult(null);
@@ -1762,7 +1785,9 @@ export function Map() {
     const rasterParams: RasterParams = {
       freqMhz: 915,
       txDbm: coverageTxDbm,
-      antennaDbi: coverageAntennaDbi,
+      txAntennaDbi: coverageAntennaDbi,
+      rxAntennaDbi: coverageRxAntennaDbi,
+      rxAntennaHeightAboveGroundM: coverageRxHeightM,
       rxSensitivityDbm: coverageEffectiveSensitivityDbm,
       fadeMarginDb: 15,
       cableLossDb: 0.5,
@@ -2007,7 +2032,9 @@ export function Map() {
           fresnelCount: rendered.fresnelCount,
           blockedCount: rendered.blockedCount,
           frequencyGHz: 0.915,
-          antennaDbi: coverageAntennaDbi,
+          txAntennaDbi: coverageAntennaDbi,
+          rxAntennaDbi: coverageRxAntennaDbi,
+          rxAntennaHeightAboveGroundM: coverageRxHeightM,
           txDbm: coverageTxDbm,
           rxSensitivityDbm: coverageEffectiveSensitivityDbm,
         });
@@ -2044,7 +2071,7 @@ export function Map() {
     return () => {
       cancelled = true;
     };
-  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageTxDbm, coverageEnvIdx, coverageSensitivityDbm, coverageDetail, coverageAntennaHeightM, coverageReliability, provider, terrain3D, nodes, coverageRetryNonce]);
+  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageRxAntennaDbi, coverageRxHeightM, coverageTxDbm, coverageEnvIdx, coverageSensitivityDbm, coverageDetail, coverageAntennaHeightM, coverageReliability, provider, terrain3D, nodes, coverageRetryNonce]);
 
   // Hide coverage raster when leaving coverage tool. We keep the source/layer
   // around so re-entering the tool reuses them without re-adding.
@@ -4819,6 +4846,7 @@ export function Map() {
           toHwIdx={losToHwIdx} onToHwIdxChange={setLosToHwIdx}
           toAntIdx={losToAntIdx} onToAntIdxChange={setLosToAntIdx}
           toHeightM={losToHeightM} onToHeightChange={setLosToHeightM}
+          demSource={losDemSource}
           onProfileHover={handleLosProfileHover}
         />
       )}
@@ -4859,6 +4887,12 @@ export function Map() {
             setIsFetchingCoverageTerrain(false);
             setCoverageProgress({ completed: 0, total: 0 });
           }}
+          rxHardwareIdx={coverageRxHardwareIdx}
+          onRxHardwareIdxChange={setCoverageRxHardwareIdx}
+          rxAntennaIdx={coverageRxAntennaIdx}
+          onRxAntennaIdxChange={setCoverageRxAntennaIdx}
+          rxHeightM={coverageRxHeightM}
+          onRxHeightChange={setCoverageRxHeightM}
           antennaIdx={coverageAntennaIdx}
           onAntennaIdxChange={setCoverageAntennaIdx}
           hardwareIdx={coverageHardwareIdx}
