@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS, RELIABILITY_PRESETS, type CoverageReliability, type CoverageResult } from "./coverageAnalysis";
 import type { DemSource } from "./terrainRgb";
 
@@ -230,6 +230,37 @@ export function MapCoveragePanel({
     onAntennaHeightChange(clamped);
     setHeightInput(String(clamped));
   };
+
+  // Same pattern for the RX antenna height input — text-based so users
+  // can temporarily clear the field while typing, commit on blur / Enter.
+  const [rxHeightInput, setRxHeightInput] = useState(String(rxHeightM));
+  useEffect(() => { setRxHeightInput(String(rxHeightM)); }, [rxHeightM]);
+  const commitRxHeight = () => {
+    const trimmed = rxHeightInput.trim();
+    if (trimmed === "") {
+      onRxHeightChange(2);
+      setRxHeightInput("2");
+      return;
+    }
+    const n = Number(trimmed);
+    if (!Number.isFinite(n)) {
+      onRxHeightChange(2);
+      setRxHeightInput("2");
+      return;
+    }
+    const clamped = Math.max(0, Math.min(300, n));
+    onRxHeightChange(clamped);
+    setRxHeightInput(String(clamped));
+  };
+
+  // Ref to the Advanced-settings <details> so the "custom RX" pill in
+  // the header can toggle it open imperatively. The native <details>
+  // element handles its own open/closed state; we only nudge it on
+  // click. The panel's click-outside handler still closes it when the
+  // user clicks elsewhere in the panel (pill clicks stop propagation so
+  // they don't trigger that handler).
+  const gearRef = useRef<HTMLDetailsElement>(null);
+
   if (terrainNeeded) {
     return (
       <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(520px,calc(100vw-2rem))]
@@ -500,21 +531,39 @@ export function MapCoveragePanel({
             </span>
             {(() => {
               // Surface asymmetric RX as a header pill so users can see
-              // at a glance that they're not looking at the default
-              // handheld-reach view. Default config = hw idx 0 + ant
-              // idx 3 + 2 m height.
-              const rxIsDefault =
-                rxHardwareIdx === 0 && rxAntennaIdx === 3 && rxHeightM === 2;
-              if (rxIsDefault) return null;
+              // at a glance that the link is being modelled with TX ≠ RX.
+              // The pill is visible whenever any RX-side config differs
+              // from the TX side — including the out-of-box default,
+              // which intentionally pairs a Station G2 TX with a
+              // Heltec V3 + rubber-duck RX (so users immediately see
+              // that it's a "from a basestation to a handheld" calc).
+              // Clicking the pill toggles the gear popover so users can
+              // jump straight to tweaking the RX config.
+              const rxMatchesTx =
+                rxHardwareIdx === hardwareIdx &&
+                rxAntennaIdx === antennaIdx &&
+                rxHeightM === antennaHeightM;
+              if (rxMatchesTx) return null;
               const hwLabel = COMMON_HARDWARE[rxHardwareIdx]?.label ?? "custom";
               const antDbi = COMMON_ANTENNAS[rxAntennaIdx]?.dbi ?? 3;
               return (
-                <span
-                  className="ml-1 shrink-0 px-1.5 py-0 rounded bg-cyan-500/15 border border-cyan-500/30 text-[9px] text-cyan-200 font-medium whitespace-nowrap"
-                  title={`Custom RX: ${hwLabel} with ${antDbi} dBi antenna at ${rxHeightM} m`}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    // Stop propagation so the panel's click-outside
+                    // handler doesn't immediately re-close the popover
+                    // we just opened. Toggle via the native `open`
+                    // attribute on the <details>.
+                    e.stopPropagation();
+                    if (gearRef.current) {
+                      gearRef.current.open = !gearRef.current.open;
+                    }
+                  }}
+                  className="ml-1 shrink-0 px-1.5 py-0 rounded bg-cyan-500/15 border border-cyan-500/30 text-[9px] text-cyan-200 font-medium whitespace-nowrap hover:bg-cyan-500/25 hover:border-cyan-500/50 transition-colors cursor-pointer"
+                  title={`Custom RX: ${hwLabel} with ${antDbi} dBi antenna at ${rxHeightM} m · click to edit`}
                 >
                   RX {antDbi} dBi @ {rxHeightM}m
-                </span>
+                </button>
               );
             })()}
           </div>
@@ -667,8 +716,10 @@ export function MapCoveragePanel({
           {/* Advanced settings gear — a second <details> popover with
               model-tuning knobs (environment, reliability, detail, contours).
               Living behind the gear keeps the main panel focused on the
-              high-frequency controls (hardware, modem, antenna). */}
-          <details className="text-[10px] text-gray-400 relative">
+              high-frequency controls (hardware, modem, antenna). The ref
+              is used by the header "custom RX" pill to open/close this
+              popover imperatively. */}
+          <details ref={gearRef} className="text-[10px] text-gray-400 relative">
             <summary
               className="cursor-pointer list-none p-1 rounded-md hover:text-gray-200 hover:bg-white/5 transition-colors"
               aria-label="Advanced settings"
@@ -707,12 +758,14 @@ export function MapCoveragePanel({
                   <button
                     type="button"
                     onClick={() => {
-                      onRxHardwareIdxChange(0);
+                      // Defaults: Heltec V3 (common entry-level hardware),
+                      // rubber-duck antenna, 2 m height.
+                      onRxHardwareIdxChange(4);
                       onRxAntennaIdxChange(0);
                       onRxHeightChange(2);
                     }}
                     className="text-[9px] text-cyan-400/70 hover:text-cyan-300 transition-colors"
-                    title="Reset RX to stock handheld (rubber duck, 2 m)"
+                    title="Reset RX to stock handheld (Heltec V3, rubber duck, 2 m)"
                   >
                     Reset to handheld
                   </button>
@@ -772,17 +825,22 @@ export function MapCoveragePanel({
                   <div className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 w-24">
                     <input
                       id="coverage-rx-height"
-                      type="number"
-                      min={0}
-                      max={300}
-                      step={1}
-                      value={rxHeightM}
-                      onChange={(e) => {
-                        const n = Number(e.target.value);
-                        if (Number.isFinite(n)) {
-                          onRxHeightChange(Math.max(0, Math.min(300, n)));
+                      type="text"
+                      inputMode="decimal"
+                      value={rxHeightInput}
+                      onChange={(e) => setRxHeightInput(e.target.value)}
+                      onBlur={commitRxHeight}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          (e.currentTarget as HTMLInputElement).blur();
+                        } else if (e.key === "Escape") {
+                          setRxHeightInput(String(rxHeightM));
+                          (e.currentTarget as HTMLInputElement).blur();
                         }
                       }}
+                      aria-label="RX antenna height above ground (meters)"
+                      title="RX height above local terrain (m). Blank = 2 m default."
                       className="min-w-0 flex-1 bg-transparent text-xs text-gray-200 text-center focus:outline-hidden"
                     />
                     <span className="text-[10px] text-gray-500 shrink-0">m</span>
@@ -790,9 +848,10 @@ export function MapCoveragePanel({
                 </div>
               </div>
 
-              {/* Environment — clutter-loss preset */}
+              {/* Environment — clutter-loss preset. Button group for
+                  visual consistency with Reliability and Detail below. */}
               <div>
-                <label htmlFor="coverage-env" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 flex items-center gap-1">
+                <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 flex items-center gap-1">
                   <span>Environment</span>
                   <InfoTip align="left">
                     Flat clutter-loss offset added on top of ITM to
@@ -802,19 +861,36 @@ export function MapCoveragePanel({
                     data.
                   </InfoTip>
                 </label>
-                <select
-                  id="coverage-env"
-                  value={envIdx}
-                  onChange={(e) => onEnvIdxChange(Number(e.target.value))}
-                  className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
-                    focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
-                    [&>option]:bg-gray-800 [&>option]:text-gray-200"
-                  title={ENVIRONMENTS[envIdx].description}
-                >
-                  {ENVIRONMENTS.map((env, i) => (
-                    <option key={i} value={i}>{env.label}</option>
-                  ))}
-                </select>
+                <div className="flex gap-1 rounded-lg border border-white/10 bg-white/5 p-0.5 text-[10px] font-medium">
+                  {ENVIRONMENTS.map((env, i) => {
+                    const active = envIdx === i;
+                    // Short labels so four buttons fit cleanly; full
+                    // descriptive label is in the hover title.
+                    const shortLabel =
+                      env.id === "open" ? "Open"
+                      : env.id === "mixed" ? "Light"
+                      : env.id === "suburban" ? "Suburb"
+                      : "Urban";
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => onEnvIdxChange(i)}
+                        title={env.description}
+                        className={`flex-1 rounded-md px-1.5 py-1 transition-colors ${
+                          active
+                            ? "bg-cyan-500/20 text-cyan-200"
+                            : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
+                        }`}
+                      >
+                        <div>{shortLabel}</div>
+                        <div className="text-[9px] text-gray-500 font-normal">
+                          {env.clutterLossDb === 0 ? "0 dB" : `+${env.clutterLossDb} dB`}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* Reliability — ITM time/location/situation preset */}

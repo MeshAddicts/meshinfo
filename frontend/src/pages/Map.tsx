@@ -449,13 +449,14 @@ export function Map() {
   const [coverageHardwareIdx, setCoverageHardwareIdx] = useState(0);
   /**
    * RX-side hardware / antenna / height — lets users model asymmetric
-   * links (e.g. a handheld reaching a rooftop station). Defaults mirror
-   * the TX config on panel open so the initial compute matches the
-   * pre-asymmetric symmetric behavior exactly; users opt into asymmetry
-   * by changing these knobs in the gear popover.
+   * links (e.g. a handheld reaching a rooftop station). Defaults to a
+   * "stock portable" configuration: Heltec V3 (idx 4) + rubber-duck
+   * antenna (idx 0) + 2 m height — the most common "small device
+   * someone carries" setup. Users opt out of this via the gear popover
+   * for rooftop / tower / vehicle scenarios.
    */
-  const [coverageRxHardwareIdx, setCoverageRxHardwareIdx] = useState(0);
-  const [coverageRxAntennaIdx, setCoverageRxAntennaIdx] = useState(3);
+  const [coverageRxHardwareIdx, setCoverageRxHardwareIdx] = useState(4);
+  const [coverageRxAntennaIdx, setCoverageRxAntennaIdx] = useState(0);
   const coverageRxAntennaDbi = COMMON_ANTENNAS[coverageRxAntennaIdx]?.dbi ?? 3;
   const [coverageRxHeightM, setCoverageRxHeightM] = useState(2);
   const [coverageCustomTxDbm, setCoverageCustomTxDbm] = useState(22);
