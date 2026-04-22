@@ -1,31 +1,13 @@
 /**
  * TypeScript wrapper around the ITM (Longley-Rice) WebAssembly module.
- *
- * The WASM module is produced by `frontend/wasm/itm/build.sh` (see that
- * directory's README for build details). This file provides a typed,
- * ergonomic interface on top of Emscripten's raw C-function bindings.
- *
- * Algorithm reference: NTIA Report 82-100 (Hufford, Longley, Kissick 1982)
- * and the 1985 Hufford algorithm memo. Source: https://github.com/NTIA/itm
- * pinned at tag v1.4 (2021-04-26).
- *
- * The module is lazy-loaded on first use — it's ~150–300 KB (SINGLE_FILE
- * embedded) and we don't want to pay that cost for users who never open
- * the coverage tool.
+ * Algorithm ref: NTIA Report 82-100 + 1985 Hufford memo. Source: github.com/NTIA/itm @ v1.4 (2021-04-26).
+ * Lazy-loaded to keep ~150-300 KB WASM out of the initial bundle.
  */
 
-// Typed import of the Emscripten factory. The actual JS+WASM are produced
-// at build time; if they're missing, the build fails with a clear error
-// pointing the user at `yarn build:wasm`.
-//
-// Using a dynamic import (not a top-level `import`) keeps the WASM out of
-// the initial bundle; Vite code-splits it into its own chunk.
+// Dynamic import keeps WASM out of the main bundle (Vite splits it).
 type ItmFactory = typeof import("../../generated/itm/itm.js").default;
 
-// ---------------------------------------------------------------------------
-// Enums (mirror the ITM C API constants from include/itm.h)
-// ---------------------------------------------------------------------------
-
+// Enums mirror include/itm.h
 export enum Climate {
   Equatorial = 1,
   ContinentalSubtropical = 2,
@@ -41,10 +23,7 @@ export enum Polarization {
   Vertical = 1,
 }
 
-/**
- * `mdvar` modifier: base mode + optional output-format bits. The NTIA C
- * API packs these together; most callers just want the base mode.
- */
+/** `mdvar` base mode (NTIA C API packs it with output-format bits). */
 export enum ModeOfVariability {
   SingleMessage = 0,
   IndividualOrAccidental = 1,
@@ -52,26 +31,18 @@ export enum ModeOfVariability {
   Broadcast = 3,
 }
 
-/**
- * High-level propagation mode reported by ITM's intermediate-values struct.
- * The underlying C enum includes a few more internal states; we collapse
- * them into three user-meaningful buckets.
- */
+/** Collapsed propagation mode from ITM's intermediate-values struct. */
 export enum PropagationMode {
   LineOfSight = "line_of_sight",
   Diffraction = "diffraction",
   Troposcatter = "troposcatter",
 }
 
-// ITM return codes. Success = 0; success-with-warnings = 1; errors are
-// 1000–1022 per `ERRORS_AND_WARNINGS.md` upstream.
+// 0 = success, 1 = success-with-warnings, 1000-1022 = errors (see upstream ERRORS_AND_WARNINGS.md).
 export const ITM_SUCCESS = 0;
 export const ITM_SUCCESS_WITH_WARNINGS = 1;
 
-/**
- * Warning bit-field decoded from the `warnings` out-parameter. Matches
- * the bit values defined in NTIA/itm's ERRORS_AND_WARNINGS.md (v1.4).
- */
+/** Warning bit-field; bit values match NTIA/itm ERRORS_AND_WARNINGS.md (v1.4). */
 export enum ItmWarningFlag {
   TxTerminalHeightLow = 0x0001,
   TxTerminalHeightHigh = 0x0002,
@@ -90,91 +61,68 @@ export enum ItmWarningFlag {
   TransHorizonLow = 0x4000,
 }
 
-// ---------------------------------------------------------------------------
-// Public input/output shapes
-// ---------------------------------------------------------------------------
-
 export interface P2PInput {
-  /** Transmitter antenna height above ground in meters. Valid 0.5–3000. */
+  /** TX antenna AGL (m), 0.5-3000. */
   txHeightM: number;
-  /** Receiver antenna height above ground in meters. Valid 0.5–3000. */
+  /** RX antenna AGL (m), 0.5-3000. */
   rxHeightM: number;
-  /**
-   * Terrain profile — elevations in meters at evenly-spaced points along
-   * the great-circle path from tx to rx. Index 0 is the tx location,
-   * last element is the rx location. Must have at least 2 samples.
-   */
+  /** Terrain profile (m) along great-circle TX→RX at even spacing; ≥2 samples, [0]=TX, last=RX. */
   profileM: ArrayLike<number>;
-  /** Horizontal spacing between consecutive profile samples, in meters. */
+  /** Profile sample spacing (m). */
   pointSpacingM: number;
-  /** Radio climate region (NTIA classification). */
   climate: Climate;
-  /**
-   * Surface refractivity at sea level in N-units. Typical values:
-   *   300–315 for continental temperate; 360 for maritime tropical.
-   * Range 250–400.
-   */
+  /** N-units at sea level; 300-315 continental temperate, 360 maritime tropical. Range 250-400. */
   surfaceRefractivityN: number;
-  /** Center frequency in MHz. Range 20–20 000. */
+  /** MHz, 20-20000. */
   freqMhz: number;
-  /** Antenna polarization. ITM only supports H or V (no circular). */
+  /** H or V only (no circular). */
   polarization: Polarization;
-  /** Ground dielectric constant (ε_r). Typical ~15 for average ground. */
+  /** ε_r (~15 for average ground). */
   groundDielectric: number;
-  /** Ground conductivity σ in siemens per meter. Typical ~0.005 S/m. */
+  /** σ in S/m (~0.005 typical). */
   groundConductivity: number;
-  /** Variability mode. Default `SingleMessage`. */
   mdvar?: ModeOfVariability;
-  /** Percent of time (0–100) — TLS only. Typically 50 for median. */
+  /** TLS % of time (0-100), typically 50. */
   time?: number;
-  /** Percent of locations (0–100) — TLS only. Typically 50 for median. */
+  /** TLS % of locations (0-100), typically 50. */
   location?: number;
-  /** Percent of situations (0–100) — TLS only. Typically 50. */
+  /** TLS % of situations (0-100), typically 50. */
   situation?: number;
 }
 
 export interface IntermediateValues {
-  /** Horizon take-off angles in radians (tx, rx). */
+  /** Horizon take-off angles (rad) [tx, rx]. */
   thetaHorizonRad: [number, number];
-  /** Horizon distances in meters (tx, rx). */
+  /** Horizon distances (m) [tx, rx]. */
   horizonDistanceM: [number, number];
-  /** Effective antenna heights in meters (tx, rx). */
+  /** Effective antenna heights (m) [tx, rx]. */
   effectiveHeightM: [number, number];
-  /** Surface refractivity used (N-units). */
   surfaceRefractivityN: number;
-  /** Terrain irregularity Δh in meters. */
+  /** Terrain irregularity Δh (m). */
   deltaHM: number;
-  /** Reference attenuation in dB (propagation loss without variability). */
+  /** Reference attenuation dB (no variability). */
   aRefDb: number;
-  /** Free-space loss in dB at the same distance. */
+  /** Free-space loss dB at same distance. */
   aFreeSpaceDb: number;
-  /** Great-circle distance in km. */
   distanceKm: number;
-  /** Internal ITM mode code — mapped to PropagationMode. */
   mode: PropagationMode;
 }
 
 export interface P2PResult {
-  /** Basic transmission loss in dB. */
+  /** Basic transmission loss (dB). */
   lossDb: number;
-  /** Return code: 0 = success, 1 = success with warnings, ≥1000 = error. */
+  /** 0 = ok, 1 = ok-with-warnings, ≥1000 = error. */
   returnCode: number;
-  /** Decoded warning flags (empty if none). */
   warnings: ItmWarningFlag[];
-  /** Intermediate values used internally — good for debug UI + attribution. */
   intermediate: IntermediateValues;
 }
-
-// ---------------------------------------------------------------------------
-// Lazy module init
-// ---------------------------------------------------------------------------
 
 let modulePromise: Promise<ItmModuleLoaded> | null = null;
 
 interface ItmModuleLoaded {
   _malloc: (size: number) => number;
   _free: (ptr: number) => void;
-  /** Fast variant — just returns loss; used by the hot per-pixel loop. */
+  /** Fast variant: loss only; used by the per-pixel hot loop. */
   _ITM_P2P_TLS: (
     h_tx_m: number, h_rx_m: number, pfl_ptr: number,
     climate: number, n0: number, f_mhz: number, pol: number,
@@ -182,7 +130,7 @@ interface ItmModuleLoaded {
     time_pct: number, location_pct: number, situation_pct: number,
     a_db_ptr: number, warnings_ptr: number,
   ) => number;
-  /** With intermediate struct; used by the diagnostic `computeP2PLoss`. */
+  /** With intermediate struct; used by `computeP2PLoss`. */
   _ITM_P2P_TLS_Ex: (
     h_tx_m: number, h_rx_m: number, pfl_ptr: number,
     climate: number, n0: number, f_mhz: number, pol: number,
@@ -195,16 +143,12 @@ interface ItmModuleLoaded {
   HEAPU32: Uint32Array;
 }
 
-/**
- * Load and cache the ITM WebAssembly module. Safe to call concurrently —
- * all callers await the same promise.
- */
+/** Load and cache the ITM WebAssembly module (concurrent-safe). */
 async function loadItm(): Promise<ItmModuleLoaded> {
   if (!modulePromise) {
     modulePromise = (async () => {
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-ignore — generated at build time; may not exist in dev until
-      // `yarn build:wasm` has been run. See wasm/itm/README.md.
+      // @ts-ignore — generated by `yarn build:wasm`; see wasm/itm/README.md
       const { default: createItm } = (await import(
         /* @vite-ignore */ "../../generated/itm/itm.js"
       )) as { default: ItmFactory };
@@ -215,18 +159,7 @@ async function loadItm(): Promise<ItmModuleLoaded> {
   return modulePromise;
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Build the PFL (terrain profile) array in the format ITM expects:
- *   pfl[0] = n_points − 1
- *   pfl[1] = point spacing in meters
- *   pfl[2..2+n] = elevations in meters
- *
- * Returns a malloc'd pointer; caller must `_free()` it.
- */
+/** Build PFL array: pfl[0]=n-1, pfl[1]=spacing_m, pfl[2..]=elevations. Caller must _free(). */
 function allocPfl(mod: ItmModuleLoaded, profileM: ArrayLike<number>, spacingM: number): number {
   const n = profileM.length;
   if (n < 2) throw new Error("profile must have ≥2 samples");
@@ -251,13 +184,7 @@ function decodeWarnings(bits: number): ItmWarningFlag[] {
   return out;
 }
 
-/**
- * NTIA ITM's internal mode codes (from the IntermediateValues struct).
- * These are not publicly documented as enum values in the header, but are
- * well-known from the upstream FORTRAN comments:
- *   0 = single-message/no-mode, 1 = LoS, 2 = diffraction, 3 = troposcatter.
- * We fall back to `LineOfSight` for unknown values rather than throwing.
- */
+/** NTIA ITM internal mode codes (upstream FORTRAN): 0=none, 1=LoS, 2=diffraction, 3=troposcatter. */
 function decodeMode(code: number): PropagationMode {
   switch (code) {
     case 1: return PropagationMode.LineOfSight;
@@ -299,15 +226,7 @@ function readIntermediate(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-/**
- * Point-to-point propagation loss via time/location/situation (TLS)
- * variability. This is the "normal" ITM call — it gives you the median
- * expected loss at typical 50/50/50 variability.
- */
+/** P2P loss via TLS variability; "normal" call returning median loss at 50/50/50. */
 export async function computeP2PLoss(input: P2PInput): Promise<P2PResult> {
   const mod = await loadItm();
   const {
@@ -322,7 +241,7 @@ export async function computeP2PLoss(input: P2PInput): Promise<P2PResult> {
   const aDbPtr = mod._malloc(8); // double
   const warnPtr = mod._malloc(4); // long (32-bit on WASM)
   const interPtr = mod._malloc(INTERMEDIATE_STRUCT_SIZE);
-  // Zero-init the intermediate struct so stale memory doesn't leak in.
+  // Zero-init to avoid stale memory
   for (let o = 0; o < INTERMEDIATE_STRUCT_SIZE; o += 8) {
     mod.HEAPF64[(interPtr + o) / 8] = 0;
   }
@@ -352,11 +271,7 @@ export async function computeP2PLoss(input: P2PInput): Promise<P2PResult> {
   }
 }
 
-/**
- * Check whether the WASM module has been built / is loadable. Useful for
- * UI guards — coverage tool can show "model unavailable — run yarn
- * build:wasm" rather than crashing.
- */
+/** Whether the WASM module is buildable/loadable (for UI guards). */
 export async function isItmAvailable(): Promise<boolean> {
   try {
     await loadItm();
@@ -366,35 +281,19 @@ export async function isItmAvailable(): Promise<boolean> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Fast-path context for tight loops (65k+ calls during a coverage render)
-// ---------------------------------------------------------------------------
-
-/**
- * Holds the loaded WASM module plus pre-allocated scratch buffers for
- * repeated ITM calls. Allocating + freeing the PFL / output pointers on
- * every pixel is the dominant overhead in a coverage pass; an
- * `ItmContext` amortizes that away.
- *
- * Build with `loadItmContext()`, tear down with `disposeItmContext()`.
- */
+/** Loaded WASM + pre-allocated scratch for repeated ITM calls (alloc-free hot loop). */
 export interface ItmContext {
   readonly mod: ItmModuleLoaded;
-  /** `_malloc`'d buffer for the PFL array. */
   readonly pflPtr: number;
-  /** Maximum PFL payload (elevations) that fits in `pflPtr`. */
+  /** Max elevation samples that fit in pflPtr. */
   readonly pflCapacity: number;
-  /** Output pointer: single double (loss in dB). */
+  /** Output: loss dB (double). */
   readonly aDbPtr: number;
-  /** Output pointer: long (warning bit-field). */
+  /** Output: warning bit-field (long). */
   readonly warnPtr: number;
 }
 
-/**
- * Load the WASM and pre-allocate scratch buffers big enough for
- * `maxProfileSamples` elevations per call. Typical coverage work uses
- * 20–80 samples; 128 gives headroom.
- */
+/** Pre-allocate scratch for up to `maxProfileSamples` elevations per call. 128 gives headroom. */
 export async function loadItmContext(
   maxProfileSamples = 128,
 ): Promise<ItmContext> {
@@ -406,18 +305,14 @@ export async function loadItmContext(
   return { mod, pflPtr, pflCapacity: maxProfileSamples, aDbPtr, warnPtr };
 }
 
-/** Free the scratch buffers. Call when the context is no longer needed. */
+/** Free scratch buffers. */
 export function disposeItmContext(ctx: ItmContext): void {
   ctx.mod._free(ctx.pflPtr);
   ctx.mod._free(ctx.aDbPtr);
   ctx.mod._free(ctx.warnPtr);
 }
 
-/**
- * Per-pixel input for `computeP2PLossFast`. Same fields as `P2PInput`
- * but treated as positional for speed; the wrapper rebuilds the PFL
- * in-place each call without reallocation.
- */
+/** Per-pixel input for `computeP2PLossFast`; same fields as P2PInput, positional for speed. */
 export interface FastP2PInput {
   txHeightM: number;
   rxHeightM: number;
@@ -435,15 +330,7 @@ export interface FastP2PInput {
   situation: number;
 }
 
-/**
- * Compute point-to-point loss using a shared context — no async, no
- * allocation. Returns just the loss in dB. Designed for hot loops.
- *
- * The upstream `ITM_P2P_TLS` variant is used (no `_Ex`) because the
- * intermediate values we'd otherwise decode per pixel aren't needed
- * inside a coverage raster loop. If you want them, use the async
- * `computeP2PLoss` instead.
- */
+/** Hot-loop P2P loss using a shared context (sync, alloc-free). Use computeP2PLoss for intermediates. */
 export function computeP2PLossFast(ctx: ItmContext, input: FastP2PInput): number {
   const { mod, pflPtr, aDbPtr, warnPtr, pflCapacity } = ctx;
   const n = input.profileM.length;

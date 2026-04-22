@@ -1,9 +1,6 @@
 /**
- * Spiderfy module for Mapbox GL JS
- *
- * When co-located nodes share coordinates and a cluster can't expand further,
- * this fans them out in a circle (≤8 nodes) or Fermat spiral (>8 nodes)
- * with animated "spider leg" lines connecting each to the true position.
+ * Spiderfy for Mapbox GL JS: fans co-located cluster members out in a circle
+ * (≤8) or Fermat spiral (>8) with animated leg lines.
  */
 
 import type {
@@ -14,10 +11,6 @@ import type {
   Point as GeoPoint,
 } from "geojson";
 import type { GeoJSONSource as MbGeoJSONSource, Map as MbMap } from "mapbox-gl";
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
 export const SPIDERFY_SOURCE_NODES = "spiderfy-nodes";
 export const SPIDERFY_SOURCE_LEGS = "spiderfy-legs";
@@ -30,10 +23,6 @@ const ANIMATE_MS = 320;
 const GOLDEN_ANGLE = 2.399963229728653; // 137.508°
 const AUTO_SPIDERFY_MIN_ZOOM = 14;
 
-// ---------------------------------------------------------------------------
-// State
-// ---------------------------------------------------------------------------
-
 interface SpiderfyState {
   center: [number, number];
   leaves: GeoFeature<GeoPoint, GeoJsonProperties>[];
@@ -45,10 +34,6 @@ let activeState: SpiderfyState | null = null;
 export function getActiveSpiderfyState(): SpiderfyState | null {
   return activeState;
 }
-
-// ---------------------------------------------------------------------------
-// Position math
-// ---------------------------------------------------------------------------
 
 function pixelsToDegrees(pixels: number, zoom: number): number {
   return (pixels / (256 * Math.pow(2, zoom))) * 360;
@@ -96,10 +81,6 @@ function interpolatePositions(
   ]);
 }
 
-// ---------------------------------------------------------------------------
-// GeoJSON builders
-// ---------------------------------------------------------------------------
-
 function nodesGeoJSON(
   leaves: GeoFeature<GeoPoint, GeoJsonProperties>[],
   positions: [number, number][],
@@ -129,15 +110,7 @@ function legsGeoJSON(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Leaf extraction — resilient to stale cluster IDs
-// ---------------------------------------------------------------------------
-
-/**
- * Try getClusterLeaves with a timeout. If the cluster_id is stale
- * (source was updated via setData concurrently), the callback may
- * error or never fire. Returns [] on any failure.
- */
+/** getClusterLeaves with a timeout; returns [] if the cluster_id is stale or the callback never fires. */
 function tryGetLeaves(
   source: MbGeoJSONSource,
   clusterId: number,
@@ -163,22 +136,14 @@ function tryGetLeaves(
   });
 }
 
-/**
- * Fallback: find nearby features from a pre-built pool (typically the raw
- * node GeoJSON built by the caller). This pool contains ALL nodes,
- * including those currently aggregated inside clusters — unlike
- * querySourceFeatures which hides clustered nodes behind their cluster
- * aggregate.  That's why this fallback needs external data: Mapbox will
- * not reveal what's inside a cluster via source queries.
- */
+/** Fallback: find N nearest nodes to `center` from a caller-supplied raw node pool
+ *  (needed because querySourceFeatures hides features inside clusters). */
 function findLeavesNearCenter(
   pool: GeoFeature<GeoPoint, GeoJsonProperties>[] | undefined,
   center: [number, number],
   pointCount: number,
 ): GeoFeature<GeoPoint, GeoJsonProperties>[] {
   if (!pool || pool.length === 0) return [];
-  // Take the N nearest nodes to the cluster center. N = point_count, so we
-  // don't over- or under-spiderfy.
   const withDist = pool
     .map((f) => {
       const c = (f.geometry as GeoPoint).coordinates;
@@ -188,18 +153,13 @@ function findLeavesNearCenter(
     })
     .sort((a, b) => a.d2 - b.d2);
   const n = Math.max(1, Math.min(pointCount || withDist.length, withDist.length));
-  // Guard: cap at a reasonable distance so we don't grab distant nodes if
-  // the cluster is actually empty/invalid. ~2km in degrees at equator.
+  // Cap at ~2km (degrees² at equator) so we don't grab distant nodes on an invalid cluster
   const maxD2 = 0.02 * 0.02;
   return withDist
     .slice(0, n)
     .filter((x) => x.d2 < maxD2)
     .map((x) => x.f);
 }
-
-// ---------------------------------------------------------------------------
-// Layer management
-// ---------------------------------------------------------------------------
 
 export function isSpiderfied(map: MbMap): boolean {
   return !!map.getSource(SPIDERFY_SOURCE_NODES);
@@ -225,9 +185,7 @@ function addSpiderfyLayers(map: MbMap): void {
     data: { type: "FeatureCollection", features: [] },
   });
 
-  // Dark shadow beneath the bright dashed line. Gives the legs a visible
-  // outline on light satellite terrain (white concrete, buildings) where
-  // a plain white dash would otherwise disappear.
+  // Shadow under the dashed line so legs stay visible on light satellite imagery
   map.addLayer({
     id: SPIDERFY_LAYER_LEGS_SHADOW,
     type: "line",
@@ -296,19 +254,15 @@ function addSpiderfyLayers(map: MbMap): void {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Main orchestrator
-// ---------------------------------------------------------------------------
-
 export async function spiderfy(
   map: MbMap,
   clusterId: number,
   center: [number, number],
   zoom: number,
   animate = true,
-  /** Raw node features for fallback when the cluster API fails. */
+  /** Raw node features used as fallback when the cluster API fails. */
   fallbackPool?: GeoFeature<GeoPoint, GeoJsonProperties>[],
-  /** Expected member count — used to size the fallback result. */
+  /** Expected member count — sizes the fallback result. */
   pointCount?: number,
 ): Promise<void> {
   removeSpiderfyLayers(map);
@@ -316,11 +270,9 @@ export async function spiderfy(
   const source = map.getSource("nodes_clustered") as MbGeoJSONSource | undefined;
   if (!source) return;
 
-  // Primary: try the cluster API (fast when cluster_id is valid).
   let leaves = await tryGetLeaves(source, clusterId);
   let source_used = "getClusterLeaves";
 
-  // Fallback: proximity search in caller-supplied raw node features.
   if (leaves.length === 0) {
     leaves = findLeavesNearCenter(fallbackPool, center, pointCount ?? 0);
     source_used = "proximity fallback";
@@ -362,10 +314,6 @@ export async function spiderfy(
   });
 }
 
-// ---------------------------------------------------------------------------
-// Unspiderfy
-// ---------------------------------------------------------------------------
-
 export async function unspiderfy(map: MbMap): Promise<void> {
   if (!isSpiderfied(map)) return;
 
@@ -402,10 +350,6 @@ export async function unspiderfy(map: MbMap): Promise<void> {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Zoom update
-// ---------------------------------------------------------------------------
-
 export function updateSpiderfyPositions(map: MbMap): void {
   if (!activeState || !isSpiderfied(map)) return;
 
@@ -428,10 +372,6 @@ export function updateSpiderfyPositions(map: MbMap): void {
   } catch { /* sources may have been removed */ }
 }
 
-// ---------------------------------------------------------------------------
-// Auto-spiderfy
-// ---------------------------------------------------------------------------
-
 export async function autoSpiderfyVisibleClusters(
   map: MbMap,
   fallbackPool?: GeoFeature<GeoPoint, GeoJsonProperties>[],
@@ -453,7 +393,7 @@ export async function autoSpiderfyVisibleClusters(
     const clusterId = cluster.properties?.cluster_id;
     if (clusterId == null) continue;
 
-    // Timeout guards against stale cluster_ids (setData reassigns them)
+    // Timeout guards against stale cluster_ids after setData
     const expansionZoom = await new Promise<number | null>((resolve) => {
       let done = false;
       const timer = setTimeout(() => { if (!done) { done = true; resolve(null); } }, 500);

@@ -75,7 +75,6 @@ export function MapSettingsPanel({
 }) {
   const [nodeSearch, setNodeSearch] = useState("");
   const [legendOpen, setLegendOpen] = useState(false);
-  // Collapsible sections state
   const [openSection, setOpenSection] = useState<string>("appearance");
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -98,7 +97,6 @@ export function MapSettingsPanel({
     return node?.shortname || node?.longname || myNodeId;
   }, [myNodeId, nodeList]);
 
-  // Click-outside to dismiss legend
   useEffect(() => {
     if (!legendOpen) return;
     const handleClick = (e: MouseEvent) => {
@@ -156,14 +154,12 @@ export function MapSettingsPanel({
 
   return (
     <div ref={containerRef} className={`fixed bottom-4 right-4 z-1100 flex flex-col items-end ${hidden ? "max-sm:hidden" : ""}`}>
-      {/* Legend popover — above buttons */}
       {legendOpen && !settingsPanelOpen && (
         <div className="mb-2">
           <MapLegend linkMode={linkMode} myNodeLabel={myNodeLabel} />
         </div>
       )}
 
-      {/* Settings panel — above buttons */}
       {settingsPanelOpen && (
         <div
           ref={settingsPanelRef}
@@ -189,7 +185,6 @@ export function MapSettingsPanel({
               Filters (last-seen, links, clustering, role, channel) are in the pills at the bottom-left.
             </p>
 
-            {/* Appearance — provider + style/basemap */}
             <Section id="appearance" title="Appearance" subtitle="Map provider and visual style">
               <div>
                 <label
@@ -262,7 +257,7 @@ export function MapSettingsPanel({
               )}
             </Section>
 
-            {/* 3D Terrain — Mapbox only */}
+            {/* 3D terrain (Mapbox only) */}
             {usingMapbox && (
               <Section id="terrain" title="3D Terrain" subtitle={terrain3D ? `On · ${terrainExaggeration.toFixed(1)}× exaggeration` : "Off"}>
                 <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5">
@@ -315,7 +310,6 @@ export function MapSettingsPanel({
               </Section>
             )}
 
-            {/* My Node */}
             <Section id="mynode" title="My Node" subtitle={myNodeLabel || "Not set"}>
               <div>
                 <div className="flex items-center justify-between mb-1.5">
@@ -374,7 +368,6 @@ export function MapSettingsPanel({
               </div>
             </Section>
 
-            {/* Export */}
             {onExport && (
               <Section id="export" title="Export" subtitle="Save current view as image">
                 <button
@@ -398,7 +391,6 @@ export function MapSettingsPanel({
         </div>
       )}
 
-      {/* Icon buttons — always visible at bottom */}
       <div className="flex items-center gap-2">
         <button
           type="button"

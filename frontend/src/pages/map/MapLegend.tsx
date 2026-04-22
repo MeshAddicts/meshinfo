@@ -23,7 +23,6 @@ export function MapLegend({
         Legend
       </div>
       <div className="space-y-1.5 text-[11px] text-gray-400">
-        {/* Node symbols */}
         <div className="flex items-center gap-2">
           <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-sm shrink-0" />
           <span>Online Node</span>
@@ -33,10 +32,8 @@ export function MapLegend({
           <span>Offline Node</span>
         </div>
 
-        {/* Divider */}
         <div className="border-t border-white/10 my-1" />
 
-        {/* Line symbols */}
         <div className="flex items-center gap-2">
           <div className="w-4 h-0.5 bg-[#66FF66] rounded-full shrink-0" />
           <span>Heard A Neighbor</span>
@@ -54,7 +51,6 @@ export function MapLegend({
           <span>Traceroute Link</span>
         </div>
 
-        {/* Info */}
         <div className="border-t border-white/10 my-1" />
         <div className="text-[10px] text-gray-500 leading-tight">
           Online = seen in last 6 hours.

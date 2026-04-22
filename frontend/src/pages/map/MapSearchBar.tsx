@@ -35,7 +35,6 @@ export function MapSearchBar({
 
   useEffect(() => setHighlightIdx(0), [results]);
 
-  // Scroll highlighted item into view
   useEffect(() => {
     const el = listRef.current?.children[highlightIdx] as HTMLElement | undefined;
     el?.scrollIntoView({ block: "nearest" });
@@ -70,7 +69,7 @@ export function MapSearchBar({
     [results, highlightIdx, selectNode],
   );
 
-  // Global "/" shortcut to focus search
+  // Global "/" focuses search
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "/" && !e.ctrlKey && !e.metaKey) {

@@ -1,14 +1,6 @@
 /**
- * Coverage-prediction slice worker.
- *
- * This is the "compute" half of the Phase 10D worker pool: it runs
- * Longley-Rice per pixel for a range of rows in a pre-built DEM. The
- * main thread owns the pool, fetches the DEM once, and hands each
- * worker its slice; workers return RGBA tiles that the main thread
- * stitches into the final image.
- *
- * Each worker loads its own copy of the ITM WASM module (one-time
- * ~10–20ms init) and keeps it warm across subsequent dispatches.
+ * Coverage slice worker: runs ITM per pixel over a row range of a shared DEM.
+ * Each worker keeps its own ITM WASM context warm across requests.
  */
 import type { DEM, DEMBounds } from "./terrainDEM";
 import {
@@ -25,25 +17,17 @@ import {
 
 export interface CoverageSliceRequest {
   requestId: number;
-  /** Transferable DEM buffer — main thread ships a copy to each worker. */
+  /** Transferable DEM buffer (main thread ships a copy per worker). */
   demBuffer: ArrayBuffer;
   demWidth: number;
   demHeight: number;
   bounds: DEMBounds;
   origin: [number, number];
   originHeightM: number;
-  /**
-   * TX antenna height above the local terrain at the origin (meters).
-   * Distinct from `originHeightM` (MSL); ITM's `txHeightM` parameter
-   * is above-ground, not MSL — passing the wrong one was a real bug.
-   */
+  /** TX antenna AGL (m); ITM txHeightM must be AGL, not MSL. */
   originAntennaHeightAboveGroundM: number;
   params: RasterParams;
-  /**
-   * Output raster dimensions. Decoupled from the DEM so "Detail" only
-   * affects how pixelated the paint is, not the underlying RF model.
-   * `rowStart`/`rowEnd` are indices into the OUTPUT grid, not the DEM.
-   */
+  /** rowStart/rowEnd are OUTPUT-grid indices (decoupled from DEM). */
   outputWidth: number;
   outputHeight: number;
   rowStart: number;
@@ -53,12 +37,7 @@ export interface CoverageSliceRequest {
 export interface CoverageSliceResponse {
   requestId: number;
   rgba: Uint8ClampedArray;
-  /**
-   * Per-pixel link margin in dB (NaN for no-data / compute-failed pixels).
-   * Size = demWidth × (rowEnd − rowStart). Main thread stitches the
-   * per-slice grids into a full-size grid, then runs marching squares to
-   * extract contour iso-lines and to drive GeoJSON export.
-   */
+  /** Per-pixel margin dB (NaN for no-data/failure). Main thread stitches for contour extraction. */
   marginDb: Float32Array;
   rowStart: number;
   rowEnd: number;
@@ -69,8 +48,7 @@ export interface CoverageSliceResponse {
   itmUnavailable?: boolean;
 }
 
-// Cache the ITM context across requests so the WASM module is loaded
-// exactly once per worker instance.
+// One ITM WASM context per worker, kept warm across requests.
 let itmContextPromise: Promise<ItmContext> | null = null;
 function getItmContext(): Promise<ItmContext> {
   if (!itmContextPromise) {
@@ -169,7 +147,6 @@ self.addEventListener("unload", () => {
   if (itmContextPromise) itmContextPromise.then(disposeItmContext).catch(() => {});
 });
 
-// Silence unused-import warnings — these are part of the public request
-// type surface so consumers can strongly type their messages.
+// Keep imports so consumers can strongly type their messages
 void Climate;
 void Polarization;

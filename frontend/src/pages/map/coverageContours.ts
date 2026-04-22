@@ -1,21 +1,7 @@
 /**
- * Marching-squares contour extraction for the coverage margin grid.
- *
- * Given a 2D grid of link-margin values (with NaN for no-data pixels)
- * and a set of dB thresholds, produces a GeoJSON FeatureCollection of
- * polyline iso-contours. Used for:
- *   - Overlaying "edge of coverage" lines on the map (0 dB line = the
- *     outer extent of reachable link budget)
- *   - GeoJSON export so users can import into SPLAT!, Google Earth, etc.
- *
- * The algorithm walks every 2×2 cell of the margin grid, decides which
- * of its 16 cases it falls into based on which corners are above the
- * threshold, and emits line segments at linearly-interpolated
- * threshold crossings. Segments are then stitched end-to-end into
- * continuous polylines.
- *
- * NaN handling: a cell is skipped if any of its 4 corners is NaN —
- * avoids spurious contours through no-data regions.
+ * Marching-squares contours over the coverage margin grid.
+ * Emits iso-line polyline FeatureCollection at the supplied dB thresholds.
+ * Cells touching any NaN corner are skipped.
  */
 import type { DEMBounds } from "./terrainDEM";
 
@@ -36,14 +22,7 @@ export interface ContourFeatureCollection {
   features: ContourFeature[];
 }
 
-/** Standard marching-squares lookup: for each of 16 corner-above-threshold
- *  cases, which edges are crossed. Corner bit layout:
- *    bit 0 = top-left, bit 1 = top-right,
- *    bit 2 = bottom-right, bit 3 = bottom-left.
- *  Edge numbering (clockwise from top):
- *    0 = top (TL-TR), 1 = right (TR-BR), 2 = bottom (BR-BL), 3 = left (BL-TL).
- *  Each case yields 0, 1, or 2 segments — each segment a pair of edges.
- */
+/** Marching-squares edge lookup. Corners: 0=TL, 1=TR, 2=BR, 3=BL. Edges CW from top: 0=top, 1=right, 2=bot, 3=left. */
 const MARCHING_SQUARES_CASES: readonly (readonly [number, number][])[] = [
   [],              // 0000: nothing above
   [[3, 0]],        // 0001: TL above
@@ -63,24 +42,14 @@ const MARCHING_SQUARES_CASES: readonly (readonly [number, number][])[] = [
   [],              // 1111: all above — no contour
 ];
 
-/**
- * Edge interpolation: given the two corner values and the threshold,
- * return t ∈ [0,1] where the threshold is crossed along that edge.
- */
+/** t ∈ [0,1] where `threshold` falls between corner values a and b. */
 function lerpT(a: number, b: number, threshold: number): number {
   if (a === b) return 0.5;
   return (threshold - a) / (b - a);
 }
 
-/**
- * Return the (x,y) grid-space coordinates of the threshold crossing on
- * the given edge of the 2×2 cell at (i, j). Edge indices match
- * MARCHING_SQUARES_CASES above.
- *   TL = (i,     j)
- *   TR = (i + 1, j)
- *   BR = (i + 1, j + 1)
- *   BL = (i,     j + 1)
- */
+/** Grid-space (x,y) of the threshold crossing on edge `edge` of cell (i,j).
+ *  TL=(i,j), TR=(i+1,j), BR=(i+1,j+1), BL=(i,j+1). */
 function edgePoint(
   edge: number,
   i: number,
@@ -110,12 +79,7 @@ function edgePoint(
   }
 }
 
-/**
- * Extract raw line segments at each threshold in a single pass over the
- * margin grid. Returns one segment list per threshold in the same order
- * as the input. Walking the grid once (instead of once-per-threshold)
- * saves most of the read + NaN-check cost at Survey detail (~2048²).
- */
+/** Single-pass segment extraction for all thresholds; cheaper than per-threshold sweeps at 2048². */
 function extractSegmentsMulti(
   margin: Float32Array,
   width: number,
@@ -132,7 +96,6 @@ function extractSegmentsMulti(
       const tr = margin[row0 + i + 1];
       const bl = margin[row1 + i];
       const br = margin[row1 + i + 1];
-      // Skip cells touching any no-data corner.
       if (
         Number.isNaN(tl) || Number.isNaN(tr) ||
         Number.isNaN(bl) || Number.isNaN(br)
@@ -159,19 +122,12 @@ function extractSegmentsMulti(
   return buckets;
 }
 
-/**
- * Stitch a bag of unordered segments into polylines by matching shared
- * endpoints. Endpoints are keyed to a small integer grid so
- * floating-point noise doesn't prevent joins.
- */
+/** Stitch segments into polylines; endpoints keyed by rounded coords to tolerate FP noise. */
 function stitchSegments(
   segs: Array<[[number, number], [number, number]]>,
 ): [number, number][][] {
-  // Key endpoints by rounded grid coordinate (two decimal digits is
-  // more than enough given the DEM is 1024² max).
   const key = (p: [number, number]): string => `${p[0].toFixed(3)},${p[1].toFixed(3)}`;
 
-  // Index: endpoint key → list of segments with that endpoint.
   const byEndpoint = new Map<string, Array<{ idx: number; end: 0 | 1 }>>();
   segs.forEach((seg, idx) => {
     for (const end of [0, 1] as const) {
@@ -190,7 +146,6 @@ function stitchSegments(
 
     const line: [number, number][] = [segs[startIdx][0], segs[startIdx][1]];
 
-    // Walk forward from the tail.
     for (;;) {
       const tail = line[line.length - 1];
       const candidates = byEndpoint.get(key(tail)) ?? [];
@@ -201,7 +156,6 @@ function stitchSegments(
       line.push(segs[next.idx][otherEnd]);
     }
 
-    // Walk backward from the head.
     for (;;) {
       const head = line[0];
       const candidates = byEndpoint.get(key(head)) ?? [];
@@ -218,10 +172,7 @@ function stitchSegments(
   return lines;
 }
 
-/**
- * Convert grid-space (x, y) coordinates to lng/lat using the DEM bounds.
- * Row 0 = north, row (height−1) = south — matches the DEM layout.
- */
+/** Grid (x,y) → lng/lat. Row 0 = north, row height-1 = south. */
 function gridToLngLat(
   x: number, y: number,
   width: number, height: number,
@@ -232,10 +183,7 @@ function gridToLngLat(
   return [lng, lat];
 }
 
-/**
- * Extract iso-contour polylines at each threshold from the margin grid.
- * Returns a GeoJSON FeatureCollection suitable for a map layer or export.
- */
+/** Extract iso-contour polylines at each threshold → GeoJSON FeatureCollection. */
 export function extractCoverageContours(opts: {
   margin: Float32Array;
   width: number;

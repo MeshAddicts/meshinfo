@@ -1,16 +1,6 @@
 /**
- * Mapbox custom layer that renders a 3D line-of-sight "tube" between two
- * nodes, color-coded by clearance (green=clear, yellow=Fresnel intrusion,
- * red=blocked). Renders in world space so altitudes match terrain.
- *
- * This uses a minimal WebGL pipeline: one GL_LINE_STRIP of vertices in
- * Mercator world coordinates with a per-vertex color attribute. Sits on top
- * of Mapbox's 3D scene and respects the depth buffer.
- *
- * Usage:
- *   const layer = new LosTubeLayer();
- *   map.addLayer(layer);
- *   layer.setData({ points: [...] });
+ * Mapbox 3D LoS "tube" layer: GL_LINE_STRIP in Mercator world space,
+ * color-coded per vertex (clear/fresnel/blocked). Sits in the depth buffer.
  */
 import mapboxgl from "mapbox-gl";
 
@@ -19,7 +9,7 @@ export type LosSegmentColor = "clear" | "fresnel" | "blocked";
 export interface LosTubePoint {
   lng: number;
   lat: number;
-  /** MSL altitude in meters — the LoS chord at this point. */
+  /** MSL chord altitude (m). */
   altitude: number;
   color: LosSegmentColor;
 }
@@ -28,7 +18,6 @@ export interface LosTubeData {
   points: LosTubePoint[];
 }
 
-// RGB 0-1 for each classification — mirrors the old LoS panel palette.
 const COLOR_CLEAR: [number, number, number] = [0.024, 0.714, 0.831]; // #06b6d4 cyan
 const COLOR_FRESNEL: [number, number, number] = [0.976, 0.451, 0.086]; // #f97316 orange
 const COLOR_BLOCKED: [number, number, number] = [0.94, 0.27, 0.27]; // #ef4444 red
@@ -41,7 +30,6 @@ function colorFor(cls: LosSegmentColor): [number, number, number] {
   }
 }
 
-/** Compile a shader; throw on failure. */
 function compile(gl: WebGLRenderingContext, type: number, source: string): WebGLShader {
   const shader = gl.createShader(type);
   if (!shader) throw new Error("Failed to create WebGL shader");
@@ -68,15 +56,7 @@ export class LosTubeLayer implements mapboxgl.CustomLayerInterface {
   private aColor = -1;
   private uMatrix: WebGLUniformLocation | null = null;
   private vertexCount = 0;
-  /**
-   * Cached raw input (unscaled altitudes). Kept so we can re-upload with
-   * a different terrain exaggeration without the caller having to rebuild
-   * the `LosTubeData`. Mapbox renders terrain elevations multiplied by
-   * the active exaggeration; a custom 3D layer using raw MSL altitudes
-   * would sit *below* the exaggerated terrain surface. Multiplying
-   * altitudes by the same exaggeration factor keeps the tube pinned to
-   * the visual terrain.
-   */
+  /** Cached raw input (unscaled); re-uploaded with current terrain exaggeration. */
   private lastData: LosTubeData | null = null;
 
   onAdd(map: mapboxgl.Map, gl: WebGLRenderingContext): void {
@@ -127,22 +107,13 @@ export class LosTubeLayer implements mapboxgl.CustomLayerInterface {
     this.vertexCount = 0;
   }
 
-  /**
-   * Upload a new polyline. `null` or empty list clears the layer.
-   * Altitudes are expected in real MSL meters — the layer internally
-   * scales them by the map's current terrain exaggeration so the tube
-   * lines up with the visually-rendered terrain surface.
-   */
+  /** Upload polyline (MSL altitudes, auto-scaled by terrain exaggeration). null clears. */
   setData(data: LosTubeData | null): void {
     this.lastData = data;
     this.upload();
   }
 
-  /**
-   * Re-upload from cached data using the map's current terrain
-   * exaggeration. Called externally (Map.tsx effect) when the user
-   * changes terrain exaggeration while a LoS result is on screen.
-   */
+  /** Re-upload cached data against current terrain exaggeration. */
   refresh(): void {
     this.upload();
   }
@@ -158,13 +129,11 @@ export class LosTubeLayer implements mapboxgl.CustomLayerInterface {
       return;
     }
 
-    // Mapbox types `exaggeration` as DataDrivenPropertyValueSpecification;
-    // coerce to number since we only ever set it to a plain number in
-    // Map.tsx's applyTerrainState.
+    // Mapbox types exaggeration as DataDrivenPropertyValueSpecification; we only set numbers
     const exagRaw = this.map?.getTerrain()?.exaggeration;
     const exaggeration = typeof exagRaw === "number" ? exagRaw : 1;
 
-    // Pack interleaved: [x, y, z, r, g, b] per vertex, in Mercator world units.
+    // [x, y, z, r, g, b] per vertex (Mercator)
     const verts = new Float32Array(data.points.length * 6);
     let i = 0;
     for (const p of data.points) {
@@ -202,8 +171,7 @@ export class LosTubeLayer implements mapboxgl.CustomLayerInterface {
 
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    // gl.lineWidth is spec'd to clamp to 1 in most browsers, but it costs
-    // nothing to try for drivers that honor it.
+    // Most browsers clamp to 1, but some drivers honor it
     gl.lineWidth(4);
     gl.drawArrays(gl.LINE_STRIP, 0, this.vertexCount);
 
@@ -212,27 +180,21 @@ export class LosTubeLayer implements mapboxgl.CustomLayerInterface {
   }
 }
 
-/**
- * A single obstruction hotspot — where terrain is above the LoS chord.
- * Rendered as a thin vertical red "pylon" in the 3D map.
- */
+/** Single obstruction hotspot; rendered as a red pylon in 3D. */
 export interface ObstructionFeature {
   lng: number;
   lat: number;
-  /** Chord altitude (m, MSL) at this point — base of the pylon. */
+  /** Chord MSL (m) = pylon base. */
   baseHeightM: number;
-  /** Terrain+bulge altitude (m, MSL) at this point — top of the pylon. */
+  /** Terrain+bulge MSL (m) = pylon top. */
   topHeightM: number;
-  /** Obstruction violation in meters (top − base). */
+  /** top − base (m). */
   violationM: number;
-  /** 0–1, normalized against the worst obstruction on this path. */
+  /** 0-1, normalized to worst obstruction on path. */
   severity: number;
 }
 
-/**
- * Pick up to `max` obstruction hotspots from an LoS path.
- * Strategy: all "blocked" points, sorted by violation; dedupe nearby picks.
- */
+/** Pick up to `max` most-severe obstructions, deduped by index gap. */
 export function pickObstructions(
   from: [number, number],
   to: [number, number],
@@ -254,8 +216,7 @@ export function pickObstructions(
   }
   if (blocked.length === 0) return [];
 
-  // Sort by severity, then greedily pick items that are at least 5 samples apart
-  // so we don't cluster three "peaks" all on the same ridge.
+  // Sort by severity, then greedy-pick with a min gap to avoid clustering on one ridge
   blocked.sort((a, b) => b.violation - a.violation);
   const picked: typeof blocked = [];
   const minGap = Math.max(3, Math.floor(points.length / 20));
@@ -281,11 +242,7 @@ export function pickObstructions(
   });
 }
 
-/**
- * Convert obstruction features to a GeoJSON FeatureCollection of small square
- * footprints suitable for a `fill-extrusion` layer with base/height pulled
- * from `baseM`/`topM` properties.
- */
+/** Obstructions → small-square FeatureCollection for a fill-extrusion layer (baseM/topM). */
 export function obstructionsToGeoJSON(
   features: ObstructionFeature[],
   footprintSideM = 40,
@@ -296,7 +253,6 @@ export function obstructionsToGeoJSON(
   severity: number;
 }> {
   const feats = features.map((f) => {
-    // Offset in degrees — approximate for small footprint sizes.
     const halfLatDeg = footprintSideM / 2 / 111_000;
     const halfLngDeg =
       footprintSideM / 2 / (111_000 * Math.max(0.05, Math.cos((f.lat * Math.PI) / 180)));
@@ -321,12 +277,7 @@ export function obstructionsToGeoJSON(
   return { type: "FeatureCollection", features: feats };
 }
 
-/**
- * Build tube data from an `LoSResult`. Classifies each point by:
- *   - blocked (terrain above chord)      → red
- *   - fresnelIntruded                    → yellow
- *   - otherwise                          → green
- */
+/** Tube data from LoSResult points; classifies blocked→red, fresnelIntruded→orange, else→cyan. */
 export function losPointsToTubeData(
   from: [number, number],
   to: [number, number],

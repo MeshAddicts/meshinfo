@@ -1,21 +1,16 @@
-/**
- * Analyze traceroute data to find paths between two nodes.
- */
 import type { ITraceroutesResponse } from "../../types";
 import { normNodeId } from "./linkFeatures";
 
 export interface AnalyzedPath {
-  hops: string[]; // normalized node IDs [from, ...intermediates, to]
+  /** Normalized IDs: [from, ...intermediates, to]. */
+  hops: string[];
   hopCount: number;
   snr?: number;
   rssi?: number;
   timestamp: number;
 }
 
-/**
- * Find all unique traceroute paths between two nodes (either direction).
- * Returns paths sorted by hop count ascending (shortest first).
- */
+/** Unique traceroute paths between two nodes (either direction), sorted by hopCount asc. */
 export function findPathsBetween(
   fromId: string,
   toId: string,
@@ -40,10 +35,9 @@ export function findPathsBetween(
     const idxB = fullPath.indexOf(b);
     if (idxA === -1 || idxB === -1) continue;
 
-    // Extract the subpath between the two nodes
     const [lo, hi] = idxA < idxB ? [idxA, idxB] : [idxB, idxA];
     const sub = fullPath.slice(lo, hi + 1);
-    // Orient so it always goes a → b
+    // Orient a → b
     const hops = idxA < idxB ? sub : sub.slice().reverse();
 
     const sig = hops.join(">");

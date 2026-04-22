@@ -2,12 +2,7 @@ import { useMemo, useState } from "react";
 
 import type { IMapNode } from "./types";
 
-/**
- * Computes basic mesh health metrics from current nodes data:
- * - total online nodes
- * - average SNR across all neighbor links
- * - mesh diameter (longest shortest-path in hops between any two reachable nodes)
- */
+/** Mesh health: online count, avg SNR, mesh diameter (hops). */
 function computeHealth(nodes: Record<string, IMapNode>) {
   const entries = Object.entries(nodes);
   const total = entries.length;
@@ -15,7 +10,6 @@ function computeHealth(nodes: Record<string, IMapNode>) {
   let snrSum = 0;
   let snrCount = 0;
 
-  // Build adjacency list from neighbor data
   const adj = new Map<string, Set<string>>();
   for (const [id, n] of entries) {
     if (n.online) online++;
@@ -31,7 +25,7 @@ function computeHealth(nodes: Record<string, IMapNode>) {
     }
   }
 
-  // Mesh diameter via BFS from each node (only sample up to 100 nodes for perf)
+  // BFS diameter, sampled to first 100 nodes
   const nodeIds = [...adj.keys()].slice(0, 100);
   let diameter = 0;
   for (const start of nodeIds) {

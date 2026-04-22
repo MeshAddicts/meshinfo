@@ -1,23 +1,7 @@
 /**
- * ITM (Longley-Rice) WASM correctness suite.
+ * ITM (Longley-Rice) WASM correctness suite. Skips all tests if WASM isn't built.
+ * See wasm/itm/README.md for build instructions.
  *
- * These tests exercise the built WebAssembly module against physical-world
- * reference cases. They run under `yarn test` alongside the rest of the
- * frontend suite. If the WASM hasn't been built yet (fresh checkout with
- * no `yarn build:wasm` run), every test skips with a clear message rather
- * than failing noisily.
- *
- * The strategy:
- *   1. Smoke test — module loads and executes.
- *   2. Physics sanity — free-space, distance scaling, frequency scaling.
- *   3. Terrain sensitivity — introducing a ridge increases path loss.
- *   4. Bit-exact regression against `cmd_examples/` (when fixtures are
- *      present — requires a clone of the NTIA/itm repo, usually run by
- *      `fetch-vendor.sh`).
- *
- * See `wasm/itm/README.md` for build + fixture instructions.
- */
-/**
  * @vitest-environment node
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

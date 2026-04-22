@@ -1,19 +1,9 @@
 /**
- * Donut-chart HTML markers for Mapbox clusters.
- *
- * Purely visual — all interaction (click, hover cursor) routes through the
- * standard Mapbox event system on the "clusters" circle layer underneath.
- * Donut elements have `pointer-events: none` so events pass to the canvas.
- *
- * Markers are matched by geographic position (not cluster_id) so they
- * survive Mapbox's cluster ID reassignment on source data refreshes.
- * A secondary cluster_id index is maintained for hover highlight lookups.
+ * Donut HTML markers for Mapbox clusters. Purely visual — interaction goes to the
+ * underlying "clusters" circle layer. Matched by position (not cluster_id) so they
+ * survive cluster-ID reassignment across setData() calls.
  */
 import mapboxgl from "mapbox-gl";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 interface MarkerEntry {
   marker: mapboxgl.Marker;
@@ -25,18 +15,10 @@ interface MarkerEntry {
   size: number;
 }
 
-// ---------------------------------------------------------------------------
-// Palette
-// ---------------------------------------------------------------------------
-
 const COLOR_ONLINE = "#22c55e";
 const COLOR_OFFLINE = "rgba(100,116,139,0.45)";
 const COLOR_BG = "rgba(15,23,42,0.82)";
 const COLOR_BORDER = "rgba(255,255,255,0.12)";
-
-// ---------------------------------------------------------------------------
-// Sizing
-// ---------------------------------------------------------------------------
 
 function markerSize(count: number): number {
   return Math.round(28 + Math.min(Math.log2(Math.max(count, 2)) * 3, 18));
@@ -47,10 +29,6 @@ function abbreviate(n: number): string {
   if (n < 10000) return `${(n / 1000).toFixed(1)}k`;
   return `${Math.round(n / 1000)}k`;
 }
-
-// ---------------------------------------------------------------------------
-// Canvas renderer
-// ---------------------------------------------------------------------------
 
 const DPR = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
 
@@ -133,20 +111,13 @@ function drawDonut(
   ctx.fillText(abbreviate(totalCount), cx, cy + 0.5 * DPR);
 }
 
-// ---------------------------------------------------------------------------
-// Storage — keyed by position to survive cluster_id reassignment
-// ---------------------------------------------------------------------------
-
-/** Position key: ~1m precision. Stable across setData() unlike cluster_id. */
+/** Position key (~1m precision); stable across setData() unlike cluster_id. */
 function posKey(lng: number, lat: number): string {
   return `${Math.round(lng * 1e5)},${Math.round(lat * 1e5)}`;
 }
 
-/** Primary store: position → marker entry */
 const byPos = new Map<string, MarkerEntry>();
-
-/** Secondary index: cluster_id → position key (for hover highlight) */
-const idToPos = new Map<number, string>();
+const idToPos = new Map<number, string>(); // for hover highlight lookup
 
 function createEntry(
   map: mapboxgl.Map,
@@ -177,16 +148,10 @@ function createEntry(
   return { marker, el, canvas, clusterId, count, online: onlineCount, size };
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
 export function updateClusterMarkers(map: mapboxgl.Map): void {
   if (!map.getLayer("clusters")) return;
 
-  // Single-argument form — do NOT pass `undefined` as geometry.
-  // Mapbox's overloaded signature treats `undefined` as the options object,
-  // silently dropping the layer filter → returns features from ALL layers.
+  // Single-arg form — passing `undefined` as geometry drops the layer filter (Mapbox overload quirk)
   const features = map.queryRenderedFeatures({ layers: ["clusters"] });
 
   // Dedupe features by position key
@@ -218,12 +183,9 @@ export function updateClusterMarkers(map: mapboxgl.Map): void {
     });
   }
 
-  // Guard: if the query returned nothing but we already have markers, the
-  // source/tiles aren't ready yet (mid-zoom, style reload, etc.).  Bail out
-  // rather than nuking all markers — they'll be synced on the next idle.
+  // If query returned nothing but markers exist, tiles aren't ready — bail to next idle
   if (incoming.size === 0 && byPos.size > 0) return;
 
-  // Reconcile: update existing, remove stale, create new
   const seen = new Set<string>();
 
   for (const [pk, data] of incoming) {
@@ -231,20 +193,17 @@ export function updateClusterMarkers(map: mapboxgl.Map): void {
     const existing = byPos.get(pk);
 
     if (existing) {
-      // Update cluster_id index (may have changed after setData())
       if (existing.clusterId !== data.id) {
         idToPos.delete(existing.clusterId);
         existing.clusterId = data.id;
       }
       idToPos.set(data.id, pk);
 
-      // Reposition if coordinates drifted slightly
       const cur = existing.marker.getLngLat();
       if (Math.abs(cur.lng - data.coords[0]) > 1e-6 || Math.abs(cur.lat - data.coords[1]) > 1e-6) {
         existing.marker.setLngLat(data.coords);
       }
 
-      // Redraw if data changed
       if (existing.count !== data.count || existing.online !== data.online) {
         const newSize = markerSize(data.count);
         if (newSize !== existing.size) {
@@ -263,7 +222,6 @@ export function updateClusterMarkers(map: mapboxgl.Map): void {
     }
   }
 
-  // Remove markers no longer visible
   for (const [pk, entry] of byPos) {
     if (!seen.has(pk)) {
       entry.marker.remove();

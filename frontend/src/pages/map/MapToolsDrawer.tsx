@@ -7,7 +7,7 @@ export interface ToolDef {
   label: string;
   description: string;
   icon: React.ReactNode;
-  /** Whether this tool needs 3D terrain (LoS-based tools). */
+  /** Needs 3D terrain. */
   requiresTerrain?: boolean;
 }
 
@@ -59,10 +59,7 @@ const TOOLS: ToolDef[] = [
   },
 ];
 
-/**
- * Tools drawer pill — sits at top-left next to the search bar.
- * Dropdown opens down listing all global map tools.
- */
+/** Tools drawer pill next to the search bar. */
 export function MapToolsDrawer({
   activeTool,
   onSelect,
@@ -178,10 +175,7 @@ export function MapToolsDrawer({
   );
 }
 
-/**
- * Small floating prompt that guides the user through tool steps.
- * E.g. "Click a node to start", "Pick the second node".
- */
+/** Floating prompt for tool step guidance. */
 export function MapToolPrompt({
   message,
   hint,

@@ -1,129 +1,96 @@
 /**
- * Line-of-Sight and Fresnel zone analysis for LoRa/RF link planning.
- *
- * References:
- * - Earth bulge with k=4/3 atmospheric refraction (standard RF planning convention)
- * - First Fresnel zone: F₁ = 17.32 × √(d₁·d₂ / (f·d)) meters
- * - 60% Fresnel clearance is the typical "usable link" threshold
+ * Line-of-Sight + Fresnel analysis.
+ * Earth bulge at k=4/3; First Fresnel F₁ = 17.32·√(d₁·d₂/(f·d)) m; 60% clearance threshold.
  */
 
 const R_EARTH_KM = 6371;
-const K_REFRACTION = 4 / 3; // 4/3 earth model for radio LoS
-const FRESNEL_CLEARANCE_THRESHOLD = 0.6; // 60% = typical usable threshold
+const K_REFRACTION = 4 / 3;
+const FRESNEL_CLEARANCE_THRESHOLD = 0.6;
 const SPEED_OF_LIGHT_MPS = 299_792_458;
 
-/**
- * ITU-R P.526 single knife-edge diffraction loss approximation.
- * Given Fresnel-Kirchhoff parameter v, returns loss in dB.
- * v < -0.7 → no meaningful loss (clear). v=0 is exactly at the edge (6 dB).
- * v grows with deeper obstruction.
- */
+/** ITU-R P.526 single knife-edge loss (dB) for Fresnel-Kirchhoff v. v<-0.7 clear, v=0 → 6 dB. */
 function knifeEdgeLossDb(v: number): number {
   if (v < -0.7) return 0;
   return 6.9 + 20 * Math.log10(Math.sqrt((v - 0.1) ** 2 + 1) + v - 0.1);
 }
 
-/**
- * Fresnel-Kirchhoff parameter for an obstruction of height `hMeters`
- * above the LoS chord, at `d1Km` from transmitter and `d2Km` from receiver.
- * Negative h = below chord (no obstruction).
- */
+/** Fresnel-Kirchhoff v for obstruction h (m) above chord. Negative h = below chord (clear). */
 function knifeEdgeV(hMeters: number, d1Km: number, d2Km: number, freqMhz: number): number {
-  const lambda = SPEED_OF_LIGHT_MPS / (freqMhz * 1e6); // wavelength in meters
+  const lambda = SPEED_OF_LIGHT_MPS / (freqMhz * 1e6);
   const d1m = d1Km * 1000;
   const d2m = d2Km * 1000;
   if (d1m <= 0 || d2m <= 0) return -Infinity;
   return hMeters * Math.sqrt((2 * (d1m + d2m)) / (lambda * d1m * d2m));
 }
 
-/** Terrain sampler — returns elevation in meters at a lng/lat, or null if unavailable. */
+/** Terrain sampler returning elevation (m), or null. */
 export type TerrainSampler = (lng: number, lat: number) => number | null;
 
 export interface LoSInput {
   from: [number, number]; // [lng, lat]
   to: [number, number]; // [lng, lat]
-  /** MSL altitude of transmitter (meters). Falls back to terrain + antennaHeightM. */
+  /** TX MSL (m); falls back to terrain + antennaHeightM. */
   fromAltitudeM?: number | null;
-  /** MSL altitude of receiver (meters). Falls back to terrain + antennaHeightM. */
+  /** RX MSL (m); falls back to terrain + antennaHeightM. */
   toAltitudeM?: number | null;
-  /**
-   * Antenna height above ground when a node has no altitude data.
-   * Default 2 m. Overridden by the per-endpoint `fromAntennaHeightM` /
-   * `toAntennaHeightM` if provided (asymmetric LOS endpoints).
-   */
+  /** Shared antenna AGL (m); default 2. Overridden by per-endpoint fields. */
   antennaHeightM?: number;
-  /** Per-endpoint antenna height overrides — when provided, take
-   * precedence over the shared `antennaHeightM` for the respective end. */
   fromAntennaHeightM?: number;
   toAntennaHeightM?: number;
-  /** Frequency in GHz. Default 0.915 (US LoRa). */
+  /** GHz; default 0.915 (US LoRa). */
   freqGHz?: number;
-  /** Number of terrain samples along the path. Default 100. */
+  /** Path samples; default 100. */
   samples?: number;
-  /** Terrain sampler — required for meaningful analysis. */
   queryTerrainM: TerrainSampler;
 }
 
 export interface LoSPoint {
   distanceKm: number;
-  /** Terrain elevation at this point (MSL, meters). */
+  /** Terrain MSL (m). */
   ground: number;
-  /** Straight-line chord height between endpoints at this distance (MSL, meters). */
+  /** Chord height at distance (MSL, m). */
   chord: number;
-  /** Earth bulge (meters) — amount ground protrudes upward relative to the chord. */
+  /** Earth bulge (m) — terrain apparent rise vs chord. */
   bulge: number;
-  /** Effective ground (terrain + bulge) used for obstruction check. */
+  /** terrain + bulge */
   effectiveGround: number;
-  /** First Fresnel zone radius at this distance (meters). */
+  /** First Fresnel radius (m). */
   fresnelRadius: number;
-  /** How far below the chord the effective ground is (negative = obstruction). */
+  /** Chord − effectiveGround (negative = obstructed). */
   clearance: number;
-  /** Clearance / Fresnel radius — 1.0 = at edge of zone, < 0.6 = intrusion. */
+  /** clearance / fresnelRadius; <0.6 → intrusion. */
   clearanceRatio: number;
-  /** True if effective ground is above the chord. */
   blocked: boolean;
-  /** True if effective ground intrudes into 60% of the Fresnel zone. */
   fresnelIntruded: boolean;
 }
 
 export interface LoSResult {
   totalDistanceKm: number;
-  /** Final MSL height of "from" endpoint (altitude if known, else terrain + antenna). */
   fromHeightM: number;
   toHeightM: number;
-  /** Did the "from" or "to" endpoint rely on an antenna-height fallback? */
+  /** Endpoint fell back to terrain + antenna (no altitude). */
   fromIsFallback: boolean;
   toIsFallback: boolean;
-  /** No point along the path has terrain above the LoS chord. */
   losClear: boolean;
-  /** No point intrudes into 60% of the first Fresnel zone. */
   fresnelClear: boolean;
-  /** Worst obstruction: max meters above the chord (0 if clear). */
+  /** Max terrain height above chord (m); 0 if clear. */
   worstObstructionM: number;
-  /** Distance (km from "from") of the worst obstruction (or worst Fresnel intrusion). */
   worstObstructionDistKm: number;
-  /** Worst Fresnel intrusion: how deep into the Fresnel zone (0 = no intrusion, 1 = fully blocked). */
+  /** Fresnel intrusion 0..1 (1 = fully blocked). */
   worstFresnelIntrusion: number;
-  /** Worst-case knife-edge diffraction loss (dB) from the single most blocking obstacle. */
   diffractionLossDb: number;
-  /** Sampled points along the path. */
   points: LoSPoint[];
   frequencyGHz: number;
-  /** Elevation delta between endpoints (meters). */
   elevationDiffM: number;
-  /**
-   * Longley-Rice (ITM) basic transmission loss in dB. Populated
-   * asynchronously by the caller after the geometric analysis returns;
-   * absent when the ITM WASM isn't available.
-   */
+  /** ITM basic transmission loss (dB); async-filled by caller; absent if WASM missing. */
   itmLossDb?: number;
-  /** Free-space loss at the same distance/frequency, for reference. */
+  /** Free-space loss at same d/f for reference. */
   itmFreeSpaceDb?: number;
-  /** ITM-reported propagation mode (LoS / diffraction / troposcatter). */
+  /** ITM mode: line_of_sight / diffraction / troposcatter. */
   itmMode?: string;
 }
 
-/** Great-circle distance (km) between two lng/lat points. */
+/** Great-circle km. */
 export function haversineKm(a: [number, number], b: [number, number]): number {
   const dLat = ((b[1] - a[1]) * Math.PI) / 180;
   const dLon = ((b[0] - a[0]) * Math.PI) / 180;
@@ -133,7 +100,6 @@ export function haversineKm(a: [number, number], b: [number, number]): number {
   return 2 * R_EARTH_KM * Math.asin(Math.sqrt(s));
 }
 
-/** Linearly interpolate between two lng/lat points. */
 function lerpLngLat(
   from: [number, number],
   to: [number, number],
@@ -142,21 +108,19 @@ function lerpLngLat(
   return [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
 }
 
-/** Earth bulge (meters) at distance d1 from A toward B (d2 = D - d1). */
+/** Earth bulge (m) at d1 from A toward B (d2 = D - d1). */
 function earthBulgeM(d1Km: number, d2Km: number): number {
   return (d1Km * d2Km * 1000) / (2 * K_REFRACTION * R_EARTH_KM);
 }
 
-/** First Fresnel zone radius (meters) at distance d1 from A. */
+/** First Fresnel radius (m) at d1 from A. */
 function fresnelRadiusM(d1Km: number, d2Km: number, freqGHz: number): number {
   const dKm = d1Km + d2Km;
   if (dKm <= 0 || d1Km <= 0 || d2Km <= 0) return 0;
   return 17.32 * Math.sqrt((d1Km * d2Km) / (freqGHz * dKm));
 }
 
-/**
- * Compute a full line-of-sight + Fresnel analysis between two nodes.
- */
+/** Full LoS + Fresnel analysis between two nodes. */
 export function analyzeLineOfSight(input: LoSInput): LoSResult {
   const {
     from,
@@ -168,29 +132,16 @@ export function analyzeLineOfSight(input: LoSInput): LoSResult {
     samples = 100,
     queryTerrainM,
   } = input;
-  // Per-endpoint heights override the shared antennaHeightM when provided.
   const fromAntH = input.fromAntennaHeightM ?? antennaHeightM;
   const toAntH = input.toAntennaHeightM ?? antennaHeightM;
 
   const totalDistanceKm = haversineKm(from, to);
 
-  // Ground elevation at each endpoint (for altitude fallback)
   const fromGround = queryTerrainM(from[0], from[1]) ?? 0;
   const toGround = queryTerrainM(to[0], to[1]) ?? 0;
 
-  /**
-   * Resolve final node height:
-   * - If altitude is missing/invalid → use terrain + antenna (fallback)
-   * - If altitude is below terrain (bogus GPS data — nodes can't be
-   *   underground) → also fall back to terrain + antenna.
-   * - If altitude is unreasonably above terrain (> 1 km AGL — almost
-   *   certainly a firmware unit bug or GPS glitch rather than a real
-   *   balloon/aircraft node) → fall back too, and log a warning so the
-   *   node can be investigated. 1 km covers any realistic ground-based
-   *   Meshtastic mount (the tallest building on earth is ~828 m, and
-   *   regulatory drone altitude limit is 122 m).
-   * - Otherwise use the reported altitude.
-   */
+  /** Resolve node height: fall back to terrain+antenna when altitude is missing,
+   *  below terrain (bad GPS), or >1 km AGL (firmware unit bug / glitch). */
   const MAX_HEIGHT_ABOVE_TERRAIN_M = 1000;
   const resolveHeight = (altitude: number | null | undefined, ground: number, antH: number, label: string) => {
     const valid = altitude != null && Number.isFinite(altitude);
@@ -223,7 +174,7 @@ export function analyzeLineOfSight(input: LoSInput): LoSResult {
   let worstObstructionM = 0;
   let worstObstructionDistKm = 0;
   let worstFresnelIntrusion = 0;
-  let worstKnifeEdgeV = -Infinity; // most blocking obstacle (highest v)
+  let worstKnifeEdgeV = -Infinity;
   let losClear = true;
   let fresnelClear = true;
 
@@ -240,7 +191,7 @@ export function analyzeLineOfSight(input: LoSInput): LoSResult {
     const effectiveGround = ground + bulge;
     const fresnelRadius = i === 0 || i === samples ? 0 : fresnelRadiusM(distanceKm, d2, freqGHz);
 
-    const clearance = chord - effectiveGround; // positive = clear
+    const clearance = chord - effectiveGround; // + = clear
     const clearanceRatio = fresnelRadius > 0 ? clearance / fresnelRadius : Infinity;
 
     const blocked = clearance < 0;
@@ -265,7 +216,7 @@ export function analyzeLineOfSight(input: LoSInput): LoSResult {
       }
     }
 
-    // Knife-edge diffraction: h = effectiveGround − chord (positive = obstructing)
+    // Knife-edge: h = effectiveGround − chord (+ = obstructing)
     if (i > 0 && i < samples && d2 > 0) {
       const h = effectiveGround - chord;
       const v = knifeEdgeV(h, distanceKm, d2, freqGHz * 1000);

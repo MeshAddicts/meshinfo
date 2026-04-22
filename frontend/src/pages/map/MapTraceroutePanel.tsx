@@ -36,7 +36,6 @@ export function MapTraceroutePanel({
       rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
       animate-[slideInUp_200ms_ease-out]">
 
-      {/* Header */}
       <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-white/5 sticky top-0 bg-gray-900/90 backdrop-blur-xl">
         <div className="flex items-center gap-2 min-w-0">
           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border border-cyan-500/30 bg-cyan-500/15 text-cyan-300 shrink-0">
@@ -63,7 +62,6 @@ export function MapTraceroutePanel({
         </button>
       </div>
 
-      {/* Body */}
       <div className="p-3">
         {paths.length === 0 ? (
           <div className="px-2 py-3 text-xs text-gray-500">

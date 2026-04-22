@@ -16,7 +16,6 @@ export type IMapNode = INode & {
   }[];
 };
 
-// OL Feature properties for click handling
 export type IFeatureNode = {
   id: string;
   shortname?: string;
@@ -32,7 +31,6 @@ export type IFeatureNode = {
   }[];
 };
 
-// Normalized shape for shared details rendering/link building
 export type NodeLike = {
   id: string;
   shortname?: string;
@@ -49,7 +47,6 @@ export type NodeLike = {
   }[];
 };
 
-// Data passed to the React details panel
 export type NodeDetailsData = {
   node: NodeLike;
   liveNodes: Record<string, IMapNode>;

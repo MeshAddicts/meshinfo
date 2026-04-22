@@ -1,7 +1,4 @@
-/**
- * Scan-results panel — ranked LoS from a chosen origin to every node in
- * view, with per-result class pills and a quick "fly to" action.
- */
+/** Scan-results panel: ranked LoS from origin to every node in view. */
 import { useMemo, useState } from "react";
 import type { ScanSummary, ScanClass, ScanResult } from "./scanAnalysis";
 
@@ -57,8 +54,7 @@ export function MapScanPanel({
     );
   }
 
-  // Filter by classification — null means "show all". Clicking an active
-  // filter toggles it off (back to all).
+  // null = show all; click active filter to toggle off
   const [filter, setFilter] = useState<ScanClass | null>(null);
   const toggleFilter = (cls: ScanClass) =>
     setFilter((prev) => (prev === cls ? null : cls));
@@ -68,8 +64,7 @@ export function MapScanPanel({
     ? summary.clearCount + summary.fresnelCount + summary.diffractedCount
     : 0;
 
-  // Filtered + sorted: when a filter is active, show only that class.
-  // Always sort by margin descending (highest dB first).
+  // Sorted by margin desc
   const displayResults: ScanResult[] = useMemo(() => {
     if (!summary) return [];
     const filtered = filter
@@ -84,7 +79,6 @@ export function MapScanPanel({
       rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
       animate-[slideInLeft_220ms_ease-out] flex flex-col">
 
-      {/* Header */}
       <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-white/5 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border border-cyan-500/30 bg-cyan-500/15 text-cyan-300 shrink-0">
@@ -116,7 +110,6 @@ export function MapScanPanel({
         </button>
       </div>
 
-      {/* Body */}
       <div className="overflow-y-auto flex-1">
         {isScanning && (
           <div className="px-3 py-6 text-center text-[11px] text-gray-400">
@@ -135,7 +128,7 @@ export function MapScanPanel({
 
         {!isScanning && summary && summary.results.length > 0 && (
           <>
-            {/* Summary counts — clickable filters */}
+            {/* Summary counts (clickable filters) */}
             <div className="grid grid-cols-4 gap-1.5 px-3 py-2 text-[10px] text-gray-400 border-b border-white/5">
               <StatPill label="Clear" count={summary.clearCount} cls="clear" active={filter === "clear"} onClick={() => toggleFilter("clear")} />
               <StatPill label="Fresnel" count={summary.fresnelCount} cls="fresnel" active={filter === "fresnel"} onClick={() => toggleFilter("fresnel")} />
@@ -143,7 +136,6 @@ export function MapScanPanel({
               <StatPill label="Blocked" count={summary.blockedCount} cls="blocked" active={filter === "blocked"} onClick={() => toggleFilter("blocked")} />
             </div>
 
-            {/* Results list — sorted by margin (highest first) */}
             <ul className="divide-y divide-white/5">
               {displayResults.map((r) => {
                 const s = CLASS_STYLES[r.cls];

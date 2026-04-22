@@ -8,11 +8,7 @@ import type {
 import type { ITraceroutesResponse } from "../../types";
 import type { IMapNode, NodeLike } from "./types";
 
-/**
- * Compute a slightly curved arc between two points.
- * Returns an array of coordinates forming the arc.
- * The offset factor controls how much the arc bows out (0 = straight line).
- */
+/** Curved arc between two points; offsetFactor 0 = straight line. */
 function arcCoordinates(
   from: [number, number],
   to: [number, number],
@@ -21,15 +17,13 @@ function arcCoordinates(
 ): [number, number][] {
   const dx = to[0] - from[0];
   const dy = to[1] - from[1];
-  // Perpendicular offset direction
   const nx = -dy * offsetFactor;
   const ny = dx * offsetFactor;
 
   const coords: [number, number][] = [];
   for (let i = 0; i <= segments; i++) {
     const t = i / segments;
-    // Quadratic bezier with control point offset perpendicular to the line
-    const ct = 4 * t * (1 - t); // peaks at 1.0 at t=0.5
+    const ct = 4 * t * (1 - t); // bezier peak at t=0.5
     coords.push([
       from[0] + dx * t + nx * ct,
       from[1] + dy * t + ny * ct,
@@ -65,7 +59,7 @@ export function buildMapboxLinkFeatureCollection(opts: {
     const isHeardBy = heardBySet.has(otherId);
     const kind = isNeighbor && isHeardBy ? "both" : isNeighbor ? "neighbor" : "heard_by";
 
-    // Get best SNR: prefer this node's report, fall back to the other side's
+    // Prefer this node's SNR; fall back to reverse
     const fwdSnr = (node.neighbors ?? []).find((n) => n.id === otherId)?.snr;
     const revSnr = (other.neighbors ?? []).find((n) => n.id === node.id)?.snr;
     const snr = fwdSnr ?? revSnr ?? null;
@@ -86,17 +80,13 @@ export function buildMapboxLinkFeatureCollection(opts: {
   return { type: "FeatureCollection", features: linkFeatures };
 }
 
-/**
- * Build link features for ALL nodes that have neighbor data.
- * Deduplicates edges so A→B and B→A become a single "both" line.
- */
+/** Link features for all nodes with neighbor data; dedupes A→B / B→A into one "both" line. */
 export function buildAllLinksFeatureCollection(
   liveNodes: Record<string, IMapNode>,
 ): FeatureCollection<GeoLineString, GeoJsonProperties> {
   const linkFeatures: GeoFeature<GeoLineString, GeoJsonProperties>[] = [];
 
-  // Track edges we've already emitted (sorted key "idA|idB")
-  const seen = new Set<string>();
+  const seen = new Set<string>(); // sorted "idA|idB"
 
   for (const [nodeId, node] of Object.entries(liveNodes)) {
     if (!node.map_position || !node.neighbors?.length) continue;
@@ -112,11 +102,9 @@ export function buildAllLinksFeatureCollection(
       if (seen.has(edgeKey)) continue;
       seen.add(edgeKey);
 
-      // Check if the reverse link also exists (mutual)
       const reverseNeighbors = other.neighbors ?? [];
       const isMutual = reverseNeighbors.some((n) => n.id === nodeId);
 
-      // Use this node's SNR report for the link; fall back to reverse
       const revEntry = reverseNeighbors.find((n) => n.id === nodeId);
       const snr = neighbor.snr ?? revEntry?.snr ?? null;
 
@@ -155,12 +143,7 @@ export function normNodeId(raw: unknown): string {
   return s.toLowerCase();
 }
 
-/**
- * Build link features inferred from traceroute hops.
- * Each consecutive pair in a traceroute path (from → hop1 → hop2 → to)
- * is treated as a link. Deduplicates and only includes edges where both
- * nodes have map positions.
- */
+/** Link features from consecutive traceroute hops; dedupes, only emits edges with both positions. */
 export function buildTracerouteLinkFeatureCollection(
   traceroutes: ITraceroutesResponse[],
   liveNodes: Record<string, IMapNode>,
@@ -185,7 +168,6 @@ export function buildTracerouteLinkFeatureCollection(
       const kb = a < b ? b : a;
       const edgeKey = `${ka}|${kb}`;
 
-      // Skip if we already emitted this edge or if a neighbor edge covers it
       if (seen.has(edgeKey)) continue;
       if (neighborEdgeKeys?.has(edgeKey)) continue;
       seen.add(edgeKey);

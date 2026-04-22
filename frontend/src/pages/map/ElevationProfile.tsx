@@ -5,10 +5,7 @@ const WIDTH = 900;
 const HEIGHT = 130;
 const MARGIN = { top: 8, right: 12, bottom: 20, left: 36 };
 
-/**
- * Render a cross-sectional elevation profile of a radio link path.
- * Shows terrain, LoS chord, Fresnel zone, and any obstructions.
- */
+/** Cross-sectional elevation profile of a radio link: terrain, LoS chord, Fresnel zone, obstructions. */
 export function ElevationProfile({
   result,
   fromLabel,
@@ -30,7 +27,6 @@ export function ElevationProfile({
   const plotW = WIDTH - MARGIN.left - MARGIN.right;
   const plotH = HEIGHT - MARGIN.top - MARGIN.bottom;
 
-  // Compute scales from points + terrain + Fresnel extent
   const { xScale, yScale, yTicks } = useMemo(() => {
     const pts = result.points;
     if (pts.length === 0) {
@@ -41,7 +37,7 @@ export function ElevationProfile({
       };
     }
 
-    // Y range: terrain min → max of (chord + fresnel radius)
+    // Y: terrain min → max(chord + fresnel)
     let minY = Infinity;
     let maxY = -Infinity;
     for (const p of pts) {
@@ -68,7 +64,6 @@ export function ElevationProfile({
 
   if (result.points.length === 0) return null;
 
-  // Terrain path — filled polygon from bottom of chart up to terrain
   const terrainPath =
     `M ${xScale(0)},${plotH} ` +
     result.points
@@ -76,7 +71,7 @@ export function ElevationProfile({
       .join(" ") +
     ` L ${xScale(result.totalDistanceKm)},${plotH} Z`;
 
-  // Fresnel zone — polygon around chord
+  // Fresnel polygon around chord
   const fresnelUpper = result.points
     .map((p) => `${xScale(p.distanceKm)},${yScale(p.chord + p.fresnelRadius)}`)
     .join(" L ");
@@ -86,7 +81,7 @@ export function ElevationProfile({
     .join(" L ");
   const fresnelPath = `M ${fresnelUpper} L ${fresnelLower} Z`;
 
-  // 60% Fresnel (the "usable" threshold)
+  // 60% Fresnel = usable threshold
   const fresnel60Upper = result.points
     .map((p) => `${xScale(p.distanceKm)},${yScale(p.chord + p.fresnelRadius * 0.6)}`)
     .join(" L ");
@@ -96,7 +91,6 @@ export function ElevationProfile({
     .join(" L ");
   const fresnel60Path = `M ${fresnel60Upper} L ${fresnel60Lower} Z`;
 
-  // Chord line
   const chordPath =
     `M ${xScale(0)},${yScale(result.fromHeightM)} ` +
     `L ${xScale(result.totalDistanceKm)},${yScale(result.toHeightM)}`;
@@ -109,11 +103,7 @@ export function ElevationProfile({
 
   const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    // The SVG is rendered at `width=100%` but has a fixed viewBox of
-    // WIDTH × HEIGHT units. Convert the screen-pixel cursor delta into
-    // viewBox units before subtracting MARGIN.left (which itself is in
-    // viewBox units). Skipping this caused a cursor→data offset that
-    // grew as the cursor moved right.
+    // SVG has width=100% but fixed viewBox — convert px to viewBox units before subtracting MARGIN.left
     const vbScale = rect.width > 0 ? WIDTH / rect.width : 1;
     const svgX = (e.clientX - rect.left) * vbScale;
     const x = svgX - MARGIN.left;
@@ -123,7 +113,6 @@ export function ElevationProfile({
       return;
     }
     const distKm = (x / plotW) * result.totalDistanceKm;
-    // Find nearest point
     let bestIdx = 0;
     let bestDiff = Infinity;
     for (let i = 0; i < result.points.length; i++) {
@@ -154,7 +143,6 @@ export function ElevationProfile({
         </defs>
 
         <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
-          {/* Y axis ticks */}
           {yTicks.map((tick, i) => (
             <g key={i} transform={`translate(0, ${yScale(tick)})`}>
               <line
@@ -178,7 +166,6 @@ export function ElevationProfile({
             </g>
           ))}
 
-          {/* X axis ticks (distance) */}
           {[0, 0.25, 0.5, 0.75, 1].map((t, i) => (
             <text
               key={i}
@@ -193,10 +180,8 @@ export function ElevationProfile({
             </text>
           ))}
 
-          {/* Full Fresnel zone (translucent) */}
           <path d={fresnelPath} fill="rgba(249,115,22,0.08)" />
 
-          {/* 60% Fresnel zone (more opaque — the "usable" threshold) */}
           <path
             d={fresnel60Path}
             fill={result.fresnelClear ? "rgba(6,182,212,0.12)" : "rgba(249,115,22,0.22)"}
@@ -205,10 +190,8 @@ export function ElevationProfile({
             strokeDasharray="2 2"
           />
 
-          {/* Terrain fill */}
           <path d={terrainPath} fill="url(#terrainGradient)" />
 
-          {/* LoS chord line */}
           <path
             d={chordPath}
             stroke={losColor}
@@ -217,7 +200,6 @@ export function ElevationProfile({
             strokeLinecap="round"
           />
 
-          {/* Endpoints */}
           <circle
             cx={xScale(0)}
             cy={yScale(result.fromHeightM)}
@@ -256,7 +238,6 @@ export function ElevationProfile({
             {toLabel.slice(0, 10)}
           </text>
 
-          {/* Worst obstruction marker */}
           {(!result.losClear || !result.fresnelClear) && result.worstObstructionDistKm > 0 && (
             <g transform={`translate(${xScale(result.worstObstructionDistKm)}, 0)`}>
               <line
@@ -270,7 +251,6 @@ export function ElevationProfile({
             </g>
           )}
 
-          {/* Hover indicator */}
           {hoverPoint && (
             <g transform={`translate(${xScale(hoverPoint.distanceKm)}, 0)`}>
               <line
@@ -298,10 +278,7 @@ export function ElevationProfile({
         </g>
       </svg>
 
-      {/* Hover tooltip — horizontally anchored on the cursor, vertically
-          anchored just above (or below, when chord is near the top of
-          the chart) the chord data point. Flipping avoids both covering
-          the line and getting clipped above the chart. */}
+      {/* Hover tooltip; flips above/below chord to avoid clipping */}
       {hoverPoint && (() => {
         const plotLeftPct = (MARGIN.left / WIDTH) * 100;
         const plotRightPct = ((WIDTH - MARGIN.right) / WIDTH) * 100;
@@ -309,11 +286,8 @@ export function ElevationProfile({
           plotLeftPct +
           (hoverPoint.distanceKm / result.totalDistanceKm) * (plotRightPct - plotLeftPct);
         const leftPct = Math.min(Math.max(rawPct, 12), 88);
-        // Vertical anchor: % from top of wrapper to the chord Y at cursor.
         const chordPct = ((MARGIN.top + yScale(hoverPoint.chord)) / HEIGHT) * 100;
-        // If the chord is in the upper half of the chart, drop the
-        // tooltip below the point; otherwise float it above. 40% picked
-        // empirically so tooltip tops/bottoms don't clip typical charts.
+        // >40% → place above to avoid clipping (empirical)
         const placeAbove = chordPct > 40;
         const yTransform = placeAbove
           ? "translateY(calc(-100% - 10px))"

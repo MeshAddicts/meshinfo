@@ -8,11 +8,7 @@ export interface DropupOption<T> {
   description?: string;
 }
 
-/**
- * Compact dropup menu anchored to a pill button.
- * Renders the menu via a portal so it escapes parent `overflow` clipping
- * (which is needed because the pill row is horizontally scrollable on mobile).
- */
+/** Dropup menu anchored to a pill button; portal-rendered to escape parent overflow. */
 export function FilterDropup<T extends string | number | null>({
   label,
   value,
@@ -33,13 +29,12 @@ export function FilterDropup<T extends string | number | null>({
   const pillRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Position the menu above the pill
   useLayoutEffect(() => {
     if (!open || !pillRef.current) return;
     const rect = pillRef.current.getBoundingClientRect();
     setMenuPos({
       left: rect.left,
-      bottom: window.innerHeight - rect.top + 8, // 8px gap above pill
+      bottom: window.innerHeight - rect.top + 8, // gap
     });
   }, [open]);
 

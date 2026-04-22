@@ -24,7 +24,6 @@ const CLUSTER_OPTIONS: DropupOption<string>[] = [
   { value: "off", label: "Clustering Off" },
 ];
 
-// Build role options with all roles + "All Roles" null option
 const ROLE_OPTIONS: DropupOption<number | null>[] = [
   { value: null, label: "All Roles" },
   ...Object.entries(roleTitles).map(([val, info]) => ({

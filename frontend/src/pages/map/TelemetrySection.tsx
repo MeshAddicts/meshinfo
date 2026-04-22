@@ -26,7 +26,7 @@ export function TelemetrySection({ nodeId }: { nodeId: string }) {
 
   const seriesByMetric = useMemo(() => {
     if (!telemetry?.length) return {};
-    // Sort ascending by timestamp, so sparklines read left→right chronologically
+    // Ascending so sparklines read left→right chronologically
     const sorted = [...telemetry].sort((a, b) => a.timestamp - b.timestamp);
 
     const series: Record<string, { values: number[]; latest: number }> = {};
@@ -41,7 +41,6 @@ export function TelemetrySection({ nodeId }: { nodeId: string }) {
         }
       }
     }
-    // Cap each series to MAX_POINTS (most recent)
     for (const k of Object.keys(series)) {
       const s = series[k];
       if (s.values.length > MAX_POINTS) s.values = s.values.slice(-MAX_POINTS);

@@ -1,50 +1,27 @@
 /**
- * Custom WebGL layer that renders proportional donut-chart cluster markers.
- *
- * Architecture:
- *   - One quad per cluster, rendered in world space at the cluster's Mercator
- *     coordinates. The quad's screen size is controlled in the vertex shader
- *     via pixel→NDC conversion so donuts stay a fixed size on screen regardless
- *     of zoom or camera pitch (billboarded).
- *   - Fragment shader draws the donut using polar math: distance from center
- *     determines if the pixel is hole / ring / outside; angle determines if
- *     a ring pixel is "online" (green) or "offline" (gray).
- *   - Hit-testing is handled by a companion circle layer ("clusters") — this
- *     layer is visual-only. Counts are drawn by a separate text symbol layer.
- *
- * The buffer rebuilds on `moveend` / `idle`. The vertex shader reads the
- * current pixel→NDC ratio from uniforms every frame, so zoom animations stay
- * smooth without buffer rebuilds.
+ * WebGL custom layer: billboarded proportional donut markers for clusters.
+ * Buffer rebuilds on moveend/idle; pixel→NDC sizing happens in the shader.
+ * Hit-testing is handled by the companion "clusters" circle layer.
  */
 import mapboxgl from "mapbox-gl";
 
-// ---------------------------------------------------------------------------
-// Shaders
-// ---------------------------------------------------------------------------
-
 const VS = `
-attribute vec3 a_pos;          // Mercator coordinates of cluster center (x, y, z);
-                               // z is altitude in Mercator units so the donut
-                               // tracks terrain elevation in 3D views.
-attribute vec2 a_uv;           // Local corner [-1, 1] in screen-space (+y = up)
+attribute vec3 a_pos;          // Mercator xyz (z = altitude → terrain-aware)
+attribute vec2 a_uv;           // Local corner [-1, 1] (+y = up)
 attribute float a_pixelRadius; // Cluster radius in CSS pixels
 attribute float a_ratio;       // Online fraction, 0..1
 
 uniform mat4 u_matrix;
-uniform vec2 u_viewport;       // Framebuffer width, height in physical pixels
-uniform float u_dpr;           // devicePixelRatio (1 on standard displays, 2+ on HiDPI)
+uniform vec2 u_viewport;       // Framebuffer px
+uniform float u_dpr;           // devicePixelRatio
 
 varying vec2 v_uv;
 varying float v_ratio;
 
 void main() {
-  // Project the center into clip space (terrain-aware via a_pos.z).
   vec4 clip = u_matrix * vec4(a_pos, 1.0);
 
-  // Convert CSS-pixel radius to physical pixels, then to NDC.  Without
-  // the u_dpr factor, donuts render at 1/DPR their intended size on
-  // HiDPI displays while Mapbox's native layers (which DPR-correct
-  // automatically) render at full size — causing misalignment.
+  // CSS-pixel → physical → NDC. u_dpr keeps donuts aligned with Mapbox native layers on HiDPI.
   vec2 ndcOffset = a_uv * (a_pixelRadius * 2.0 * u_dpr) / u_viewport;
   clip.xy += ndcOffset * clip.w;
 
@@ -78,49 +55,39 @@ void main() {
   float d = length(v_uv);
   if (d > 1.0) discard;
 
-  // Outer edge anti-aliasing (circle silhouette)
   float outerMask = 1.0 - smoothstep(OUTER_R, OUTER_R + EDGE_AA, d);
 
-  // Start with the glassy dark "hole" fill
   vec4 color = COL_BG;
 
-  // Ring area: smoothly blend from hole into the arc at INNER_R
   float ringMask = smoothstep(INNER_R - EDGE_AA, INNER_R + EDGE_AA, d);
 
-  // Compute angle measured from 12 o'clock, increasing clockwise, in [0, TAU)
-  float angle = atan(v_uv.x, v_uv.y);           // 0 at (0, +1); +PI/2 at (+1, 0); etc.
+  // Angle from 12 o'clock clockwise in [0, TAU)
+  float angle = atan(v_uv.x, v_uv.y);
   float cwa   = angle < 0.0 ? angle + TAU : angle;
 
-  // Determine arc color
   vec4 ringColor;
   if (v_ratio >= 0.999) {
     ringColor = COL_ONLINE;
   } else if (v_ratio <= 0.001) {
     ringColor = COL_OFFLINE;
   } else {
-    // Small gap between segments for visual separation
-    float gap = 0.05; // radians
+    float gap = 0.05; // radian gap between segments
     float boundary = v_ratio * TAU;
     bool inOnline  = cwa < boundary - gap * 0.5;
     bool inOffline = cwa > boundary + gap * 0.5 && cwa < TAU - gap * 0.5;
     if (inOnline)       ringColor = COL_ONLINE;
     else if (inOffline) ringColor = COL_OFFLINE;
-    else                ringColor = COL_BG; // gap (shows through to hole color)
+    else                ringColor = COL_BG;
   }
 
   color = mix(color, ringColor, ringMask);
 
-  // Subtle white outer border
   float borderMask = smoothstep(OUTER_R - 0.015, OUTER_R - 0.005, d) * (1.0 - smoothstep(OUTER_R, OUTER_R + 0.01, d));
   color = mix(color, COL_BORDER, borderMask * 0.8);
 
   gl_FragColor = color * outerMask;
 }
 `;
-
-// ---------------------------------------------------------------------------
-// Shader helpers
-// ---------------------------------------------------------------------------
 
 function compile(gl: WebGLRenderingContext, type: number, src: string): WebGLShader {
   const s = gl.createShader(type);
@@ -135,10 +102,7 @@ function compile(gl: WebGLRenderingContext, type: number, src: string): WebGLSha
   return s;
 }
 
-// ---------------------------------------------------------------------------
-// Size curve — matches the circle hit-test layer radius interpolation
-// ---------------------------------------------------------------------------
-
+// Matches the "clusters" circle hit-test layer radius curve
 function pixelRadiusForCount(count: number): number {
   const c = Math.max(count, 2);
   if (c <= 10)  return 16 + (22 - 16) * ((c - 2)   / (10 - 2));
@@ -147,10 +111,6 @@ function pixelRadiusForCount(count: number): number {
   if (c <= 200) return 44 + (52 - 44) * ((c - 100) / (200 - 100));
   return 52;
 }
-
-// ---------------------------------------------------------------------------
-// Layer implementation
-// ---------------------------------------------------------------------------
 
 export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
   readonly id = "clusters-donuts";
@@ -169,13 +129,8 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
   private uViewport: WebGLUniformLocation | null = null;
   private uDpr: WebGLUniformLocation | null = null;
   private vertexCount = 0;
-  /**
-   * When true, the next render() call will re-query features and rebuild
-   * the vertex buffer BEFORE drawing. Rebuilding inside render() guarantees
-   * queryRenderedFeatures sees the latest tile state — sourcedata / moveend
-   * can fire BEFORE tiles have actually re-rendered, causing rebuild-at-
-   * event-time to capture stale features.
-   */
+  /** Rebuild vertex buffer at the start of the next render() — rebuilding inside
+   *  render() avoids stale features since sourcedata/moveend can fire before tiles re-render. */
   private dirty = true;
 
   private onMoveend: (() => void) | null = null;
@@ -208,19 +163,11 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
 
     this.buffer = gl.createBuffer();
 
-    // Mark dirty (rebuild-on-next-render) whenever the view or data changes.
-    // Actual rebuild happens in render() where tile state is guaranteed current.
     const markDirty = () => {
       this.dirty = true;
       map.triggerRepaint();
     };
-    // `moveend` can fire several times during zoom+pan sequences, each one
-    // triggering a `queryRenderedFeatures` + vertex rebuild. `idle` fires
-    // shortly after the map settles and catches the same state, so trailing-
-    // debouncing `moveend` skips the interim rebuilds without losing
-    // correctness. `idle` and `sourcedata` stay immediate — `idle` is the
-    // cheap settled-state rebuild, and `sourcedata` hides stale donuts
-    // while cluster tiles re-render.
+    // Trailing-debounce moveend (fires many times per zoom/pan); idle catches the settled state.
     this.onMoveend = () => {
       if (this.moveendTimer != null) clearTimeout(this.moveendTimer);
       this.moveendTimer = setTimeout(() => {
@@ -231,8 +178,7 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
     this.onIdle = markDirty;
     this.onSourceData = (e) => {
       if (e.sourceId !== "nodes_clustered") return;
-      // Hide any stale donuts immediately so phantoms don't linger while
-      // tiles re-render after setData().  The next render() will rebuild.
+      // Hide stale donuts while tiles re-render after setData(); render() will rebuild.
       this.vertexCount = 0;
       this.dirty = true;
       map.triggerRepaint();
@@ -270,20 +216,15 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
 
     const features = map.queryRenderedFeatures({ layers: ["clusters"] });
 
-    // Terrain-aware elevation. queryTerrainElevation returns null when terrain
-    // is disabled — fall back to 0 (sea level) in that case, matching non-3D
-    // rendering exactly.
     const terrainEnabled = !!(map as any).getTerrain?.();
     const elevationAt = (lng: number, lat: number): number => {
       if (!terrainEnabled) return 0;
-      // `exaggerated: false` reads real MSL metres. Default `true` multiplies
-      // by the terrain-exaggeration factor (1.5× by default) and would float
-      // the donuts high above the ground on 3D terrain.
+      // exaggerated:false reads real MSL metres; default true applies terrain exaggeration and would float donuts above the ground
       const e = map.queryTerrainElevation?.({ lng, lat } as any, { exaggerated: false });
       return Number.isFinite(e) ? (e as number) : 0;
     };
 
-    // Dedupe by position — cluster_ids can flip between setData calls
+    // Dedupe by position — cluster_ids can flip across setData calls
     const seen = new Set<string>();
     type Cluster = { x: number; y: number; z: number; r: number; ratio: number };
     const clusters: Cluster[] = [];
@@ -315,15 +256,14 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
 
     if (clusters.length === 0) { this.vertexCount = 0; return; }
 
-    // 6 vertices per cluster (two triangles), 7 floats per vertex (x, y, z, ux, uy, r, ratio)
+    // 6 verts/cluster × 7 floats: x, y, z, ux, uy, r, ratio
     const floatsPerVertex = 7;
     const vertsPerCluster = 6;
     const verts = new Float32Array(clusters.length * vertsPerCluster * floatsPerVertex);
 
-    // Screen-space corner offsets (+y = up / 12 o'clock)
     const corners: [number, number][] = [
-      [-1,  1], [-1, -1], [ 1, -1],  // triangle 1: UL, LL, LR
-      [-1,  1], [ 1, -1], [ 1,  1],  // triangle 2: UL, LR, UR
+      [-1,  1], [-1, -1], [ 1, -1],  // UL, LL, LR
+      [-1,  1], [ 1, -1], [ 1,  1],  // UL, LR, UR
     ];
 
     let i = 0;
@@ -347,10 +287,7 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
   render(gl: WebGLRenderingContext, matrix: number[]): void {
     if (!this.program || !this.buffer) return;
 
-    // Rebuild INSIDE render when dirty — guarantees queryRenderedFeatures
-    // sees the latest tile state. Rebuilding from event handlers can capture
-    // stale features because sourcedata/moveend can fire BEFORE tiles have
-    // actually re-rendered.
+    // Rebuild inside render() so queryRenderedFeatures sees current tile state
     if (this.dirty) {
       this.rebuild();
       this.dirty = false;
@@ -364,7 +301,7 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
     gl.uniform1f(this.uDpr, window.devicePixelRatio || 1);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
-    // Layout per vertex: pos.xyz (12) | uv (8) | pixelRadius (4) | ratio (4) = 28 bytes
+    // per-vertex: pos.xyz (12) | uv (8) | pixelRadius (4) | ratio (4) = 28 B
     const stride = 7 * 4;
     gl.enableVertexAttribArray(this.aPos);
     gl.vertexAttribPointer(this.aPos, 3, gl.FLOAT, false, stride, 0);

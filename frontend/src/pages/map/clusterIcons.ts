@@ -1,16 +1,8 @@
 /**
- * GL-native donut cluster icons.
- *
- * Pre-renders 11 donut images (0–100% online in 10% steps) on canvas,
- * registers them as map sprite images. A `symbol` layer with expressions
- * selects the right icon based on each cluster's onlineCount / point_count
- * ratio. Fully GPU-accelerated — no HTML markers, no sync timing issues.
+ * Pre-rendered donut sprite images (0-100% online in 10% steps) registered as
+ * Mapbox sprites; a symbol layer picks the right one by onlineCount/point_count.
  */
 import type { Map as MbMap } from "mapbox-gl";
-
-// ---------------------------------------------------------------------------
-// Palette (matches the original donut design)
-// ---------------------------------------------------------------------------
 
 const COLOR_ONLINE = "#22c55e";
 const COLOR_OFFLINE = "rgba(100,116,139,0.45)";
@@ -20,10 +12,6 @@ const COLOR_BORDER = "rgba(255,255,255,0.15)";
 const IMG_DPR = 2;
 const IMG_DIAMETER = 48; // CSS px at largest size
 const IMG_PX = IMG_DIAMETER * IMG_DPR;
-
-// ---------------------------------------------------------------------------
-// Image generation
-// ---------------------------------------------------------------------------
 
 function renderDonut(onlinePercent: number): { width: number; height: number; data: Uint8Array } {
   const canvas = document.createElement("canvas");
@@ -40,13 +28,11 @@ function renderDonut(onlinePercent: number): { width: number; height: number; da
   const TAU = Math.PI * 2;
   const start = -Math.PI / 2;
 
-  // Background
   ctx.beginPath();
   ctx.arc(cx, cy, outerR, 0, TAU);
   ctx.fillStyle = COLOR_BG;
   ctx.fill();
 
-  // Donut ring
   ctx.lineWidth = ringWidth;
   ctx.lineCap = "butt";
   const ratio = onlinePercent / 100;
@@ -74,13 +60,11 @@ function renderDonut(onlinePercent: number): { width: number; height: number; da
     ctx.stroke();
   }
 
-  // Clean inner edge
   ctx.beginPath();
   ctx.arc(cx, cy, innerR - 0.5 * IMG_DPR, 0, TAU);
   ctx.fillStyle = COLOR_BG;
   ctx.fill();
 
-  // Outer border
   ctx.beginPath();
   ctx.arc(cx, cy, outerR, 0, TAU);
   ctx.strokeStyle = COLOR_BORDER;
@@ -92,15 +76,7 @@ function renderDonut(onlinePercent: number): { width: number; height: number; da
   return { width: IMG_PX, height: IMG_PX, data: new Uint8Array(imageData.data.buffer) };
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-/**
- * Register donut sprite images for each 10% online-ratio bucket.
- * Safe to call repeatedly — skips images that already exist.
- * Call in ensureSourcesAndLayers (re-registers after style reloads).
- */
+/** Register donut sprite images for each 10% online-ratio bucket. Idempotent. */
 export function registerClusterIcons(map: MbMap): void {
   for (let pct = 0; pct <= 100; pct += 10) {
     const id = `donut-${pct}`;
@@ -109,15 +85,8 @@ export function registerClusterIcons(map: MbMap): void {
   }
 }
 
-/**
- * Mapbox expression: resolves to "donut-0", "donut-10", ..., "donut-100"
- * based on the cluster's onlineCount / point_count ratio.
- *
- * Uses a `step` lookup rather than `concat`+`to-string`+`round` — string
- * allocation inside the per-feature GL expression evaluator is expensive
- * and was causing visible stutter on pan/zoom. Pure numeric step lookup
- * is essentially free.
- */
+/** Mapbox expression → "donut-0"..."donut-100" by onlineCount/point_count.
+ *  Uses numeric `step` (not concat+to-string+round) — per-feature string alloc stutters on pan/zoom. */
 export const clusterIconExpr: any = [
   "step",
   ["/", ["coalesce", ["get", "onlineCount"], 0], ["max", ["get", "point_count"], 1]],

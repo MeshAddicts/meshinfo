@@ -4,10 +4,7 @@ import { COMMON_ANTENNAS, COMMON_HARDWARE } from "./coverageAnalysis";
 import type { LoSResult } from "./losAnalysis";
 import type { DemSource } from "./terrainRgb";
 
-/**
- * Compact endpoint config column — hardware, antenna, and height
- * selectors for one end of the LOS link.
- */
+/** Endpoint config column: hardware/antenna/height for one end of the LOS link. */
 function EndpointConfig({
   label,
   color,
@@ -127,12 +124,11 @@ export function MapLosPanel({
   toHwIdx: number; onToHwIdxChange: (idx: number) => void;
   toAntIdx: number; onToAntIdxChange: (idx: number) => void;
   toHeightM: number; onToHeightChange: (m: number) => void;
-  /** Which tile source produced the current DEM (null before first compute). */
+  /** DEM tile source (null before first compute). */
   demSource: DemSource | null;
-  /** Fires with 0–1 distance fraction as user hovers the elevation chart. */
+  /** Fires with 0-1 distance fraction on chart hover. */
   onProfileHover?: (fraction: number | null) => void;
 }) {
-  // Terrain-needed banner
   if (terrainNeeded) {
     return (
       <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(900px,calc(100vw-2rem))]
@@ -196,9 +192,7 @@ export function MapLosPanel({
   }
 
   const los = result;
-  // Status pill is driven by ITM mode when available — that's the
-  // physically authoritative answer. Geometric Fresnel/obstruction info
-  // stays as secondary indicators below.
+  // Status pill driven by ITM mode when available (authoritative); geometric info is secondary
   let statusLabel: string;
   let statusColor: "cyan" | "orange" | "fuchsia" | "red";
   if (los.itmMode === "troposcatter") {
@@ -234,7 +228,6 @@ export function MapLosPanel({
       rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
       animate-[slideInUp_200ms_ease-out]">
 
-      {/* Header */}
       <div className="flex items-center justify-between gap-3 px-3 py-1.5 border-b border-white/5">
         <div className="flex items-center gap-2 min-w-0 flex-wrap">
           <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border shrink-0 ${statusClasses}`}>
@@ -337,9 +330,7 @@ export function MapLosPanel({
         </div>
       </div>
 
-      {/* Body: side columns + chart */}
       <div className="flex">
-        {/* FROM endpoint config */}
         <EndpointConfig
           label={fromLabel}
           color={fromColor}
@@ -348,7 +339,6 @@ export function MapLosPanel({
           heightM={fromHeightM} onHeightChange={onFromHeightChange}
         />
 
-        {/* Chart */}
         <div className="flex-1 min-w-0 px-2 py-1.5 border-x border-white/5">
           <ElevationProfile
             result={los}
@@ -360,7 +350,6 @@ export function MapLosPanel({
           />
         </div>
 
-        {/* TO endpoint config */}
         <EndpointConfig
           label={toLabel}
           color={toColor}

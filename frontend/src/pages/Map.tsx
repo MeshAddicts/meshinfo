@@ -83,14 +83,11 @@ import {
   ROLE_COLORS,
 } from "./map/utils";
 
-// 1×1 fully transparent PNG — used as the placeholder image for the
-// coverage-raster source before a real result is computed.
+// 1×1 transparent PNG placeholder for the coverage-raster source
 const TRANSPARENT_1PX_PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 
-// --------------------
-// SNR → color/width helpers (shared by OL link styles)
-// --------------------
+// SNR → color/width for OL link styles
 function snrToOlColor(snr: number | null | undefined, kind: string): string {
   if (kind === "traceroute") return "#F59E0B";
   if (snr == null) {
@@ -108,9 +105,6 @@ function snrToOlWidth(snr: number | null | undefined): number {
   return Math.max(1.5, Math.min(9, 3 + snr * 0.4));
 }
 
-// ---------------------
-// Tooltip helpers
-// ---------------------
 function relativeTime(iso: string | null | undefined): string {
   if (!iso) return "Unknown";
   const ms = Date.now() - new Date(iso).getTime();
@@ -125,9 +119,8 @@ function relativeTime(iso: string | null | undefined): string {
   return `${d}d ago`;
 }
 
-/** SVG signal bars (1-4) colored by best SNR. Returns inline SVG string. */
+/** SVG signal bars (1-4) colored by best SNR. */
 function signalBarsHtml(snr: number | null): string {
-  // Map SNR to 1–4 bars
   let bars: number;
   let color: string;
   if (snr == null) { bars = 0; color = "#6b7280"; }
@@ -144,7 +137,7 @@ function signalBarsHtml(snr: number | null): string {
   return `<svg width="20" height="16" viewBox="0 0 20 16" style="vertical-align:middle;margin-right:4px">${rects}</svg>`;
 }
 
-/** Get the best (max) SNR from a node's neighbors. */
+/** Best (max) SNR from a node's neighbors. */
 function bestSnr(nodeId: string, nodes: Record<string, IMapNode>): number | null {
   const node = nodes[nodeId];
   if (!node?.neighbors?.length) return null;
@@ -155,9 +148,6 @@ function bestSnr(nodeId: string, nodes: Record<string, IMapNode>): number | null
   return max === -Infinity ? null : max;
 }
 
-// ---------------------
-// Geodesic circle for coverage radius
-// ---------------------
 function geodesicCircleCoords(
   center: [number, number], // [lon, lat]
   radiusKm: number,
@@ -185,10 +175,7 @@ function geodesicCircleCoords(
   return coords;
 }
 
-/**
- * Compute max observed range (km) for a node using ALL connections:
- * neighbors, heard-by, and traceroute peers.
- */
+/** Max observed range (km) across neighbors, heard-by, and traceroute peers. */
 function computeMaxRange(
   nodeId: string,
   nodePos: [number, number], // [lon, lat]
@@ -198,11 +185,9 @@ function computeMaxRange(
 ): number | null {
   const connectedIds = new Set<string>();
 
-  // Neighbors this node reports
   const node = liveNodes[nodeId];
   for (const n of node?.neighbors ?? []) connectedIds.add(n.id);
 
-  // Nodes that hear this node
   for (const id of heardBy) connectedIds.add(id);
 
   // Traceroute peers (adjacent hops)
@@ -230,23 +215,20 @@ function computeMaxRange(
     );
     if (dist > maxDist) maxDist = dist;
   }
-  return maxDist > 0.05 ? maxDist : null; // skip tiny circles (< 50m)
+  return maxDist > 0.05 ? maxDist : null; // skip <50 m
 }
 
-// Mapbox expression: role-based node color (offline nodes stay gray)
+// Role-based node color (offline = gray)
 const mbRoleColorExpr = [
   "case",
   ["!", ["boolean", ["get", "online"], false]],
   OFFLINE_NODE_COLOR,
   ["match", ["get", "role"],
     ...Object.entries(ROLE_COLORS).flatMap(([k, v]) => [Number(k), v]),
-    DEFAULT_NODE_COLOR, // fallback
+    DEFAULT_NODE_COLOR,
   ],
 ] as any;
 
-// --------------------
-// OpenLayers styles
-// --------------------
 const defaultStyle = new Style({
   image: new Circle({
     radius: 6,
@@ -297,39 +279,32 @@ function getOlNodeStyle(online: boolean, role?: number | null): Style | Style[] 
 export function Map() {
   const mapRef = useRef<HTMLDivElement>(null);
 
-  // Settings panel refs (panel + toggle button)
   const settingsPanelRef = useRef<HTMLDivElement>(null);
   const settingsToggleRef = useRef<HTMLButtonElement>(null);
 
-  // OL map state (OSM path)
+  // OL state (OSM)
   const [olMap, setOlMap] = useState<OlMap>();
   const olBaseLayerRef = useRef<ReturnType<typeof createBaseTileLayer> | null>(null);
   const olNodesSourceRef = useRef<VectorSource<Feature<Point>> | null>(null);
   const olClusterSetupRef = useRef<OlClusterSetup | null>(null);
   const olPersistentLinksLayerRef = useRef<VectorLayer<VectorSource<Feature>, Feature> | null>(null);
-  /**
-   * JSON signature of the last persistent-links payload pushed to Mapbox / OL.
-   * We skip `setData`/layer rebuild when the computed GeoJSON is byte-identical
-   * to avoid thrashing map tiles on every 5s API poll when nothing relevant
-   * to links has actually changed. JSON.stringify is O(n) but far cheaper than
-   * Mapbox re-tiling or OL re-tessellating line features.
-   */
+  // JSON signatures skip setData/layer rebuild when the GeoJSON is byte-identical across polls
   const persistentLinksMbJsonRef = useRef<string>("");
   const persistentLinksOlJsonRef = useRef<string>("");
   const olHighlightLayerRef = useRef<VectorLayer<VectorSource<Feature>, Feature> | null>(null);
   const olCoverageLayerRef = useRef<VectorLayer<VectorSource<Feature>, Feature> | null>(null);
   const olPathLayerRef = useRef<VectorLayer<VectorSource<Feature>, Feature> | null>(null);
 
-  // Mapbox refs (Mapbox path)
+  // Mapbox refs
   const mbMapRef = useRef<MbMap | null>(null);
   const mbSelectedIdRef = useRef<string | null>(null);
   const mbHandlersBoundRef = useRef(false);
   const mbCurrentStyleUrlRef = useRef<string | null>(null);
   const mbKeydownHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
-  /** Cleanup function for the Mapbox canvas touch-listener trio. */
+  /** Cleanup for Mapbox canvas touch-listener trio. */
   const mbTouchCleanupRef = useRef<(() => void) | null>(null);
 
-  // Shared ref for panel node-select callback (set by whichever provider is active)
+  // Set by whichever provider is active
   const handleNodeSelectRef = useRef<(nodeId: string) => void>(() => {});
   const handleLinkHoverRef = useRef<(otherId: string | null) => void>(() => {});
   const selectedNodeIdRef = useRef<string | null>(null);
@@ -347,16 +322,12 @@ export function Map() {
     [config],
   );
 
-  // ----- env capabilities
   const mapboxToken = env.MAPBOX_TOKEN;
   const hasMapbox = Boolean(mapboxToken);
 
-  // ----- UI settings persistence
   const [provider, setProvider] = useState<MapProvider>(() => {
     const stored = readJson<MapProvider | null>(LS_KEYS.provider, null);
     if (stored) return stored === "mapbox" && !hasMapbox ? "osm" : stored;
-
-    // First-time visitors: always default to OSM
     return "osm";
   });
 
@@ -371,7 +342,7 @@ export function Map() {
 
   const [osmBasemap, setOsmBasemap] = useState<OsmBasemap>(() => {
     const stored = readJson<OsmBasemap | null>(LS_KEYS.osmBasemap, null);
-    return stored ?? "carto_dark"; // first-time = dark
+    return stored ?? "carto_dark";
   });
 
   const [recentDays, setRecentDays] = useState<number>(() => {
@@ -395,10 +366,7 @@ export function Map() {
 
   const [roleFilter, setRoleFilter] = useState<number | null>(null);
   const [channelFilter, setChannelFilter] = useState<string | null>(null);
-  // ---------------------
-  // Global tool state — tools are independent of the details panel.
-  // Each tool drives its own step-based workflow.
-  // ---------------------
+  // Global tool state; each drives its own step-based workflow
   const [activeTool, setActiveTool] = useState<"los" | "traceroute" | "coverage" | "scan" | null>(null);
   const [toolStep, setToolStep] = useState<"pickFrom" | "pickTo" | "result">("pickFrom");
   const [toolFromId, setToolFromId] = useState<string | null>(null);
@@ -411,14 +379,12 @@ export function Map() {
     () => readJson<number>(LS_KEYS.terrainExaggeration, 1.5)
   );
   const [losResult, setLosResult] = useState<LoSResult | null>(null);
-  /** Which tile source produced the most recent LOS DEM — drives the
-   *  "Terrain data" line in the LoS info popover. */
+  /** DEM tile source used for the last LoS compute. */
   const [losDemSource, setLosDemSource] = useState<DemSource | null>(null);
-  // LOS virtual pin positions — allow placing arbitrary endpoints by
-  // clicking empty map, not just selecting existing nodes.
+  // LOS virtual pins — endpoints can be arbitrary map points, not just nodes
   const [losVirtualFrom, setLosVirtualFrom] = useState<[number, number] | null>(null);
   const [losVirtualTo, setLosVirtualTo] = useState<[number, number] | null>(null);
-  // Per-endpoint hardware/antenna/height for asymmetric LOS analysis.
+  // Per-endpoint hardware/antenna/height for asymmetric LOS
   const [losFromHwIdx, setLosFromHwIdx] = useState(0);
   const [losFromAntIdx, setLosFromAntIdx] = useState(3); // Rokland 5.8 dBi
   const [losFromHeightM, setLosFromHeightM] = useState(2);
@@ -429,32 +395,16 @@ export function Map() {
   const [isComputingCoverage, setIsComputingCoverage] = useState(false);
   const [isFetchingCoverageTerrain, setIsFetchingCoverageTerrain] = useState(false);
   const [coverageError, setCoverageError] = useState<string | null>(null);
-  // Nonce to force a recompute on user-requested retry when nothing else
-  // changed. Bumped by the panel's retry button.
+  // Bumped by the panel's Retry button to force a recompute
   const [coverageRetryNonce, setCoverageRetryNonce] = useState(0);
-  // Per-slice progress for long Ultra/Survey computes. `total === 0`
-  // means "no progress applicable" (idle / drag preview / terrain fetch).
+  // total === 0 means idle / drag preview / terrain fetch
   const [coverageProgress, setCoverageProgress] = useState<{ completed: number; total: number }>({ completed: 0, total: 0 });
-  // Which tile source produced the most recent authoritative DEM —
-  // drives the panel's attribution tooltip so users can see whether the
-  // coverage was computed from Tilezen (3DEP in US) or fell back to
-  // Mapbox terrain-rgb v1.
   const [coverageDemSource, setCoverageDemSource] = useState<DemSource | null>(null);
-  // Index into COMMON_ANTENNAS — default to Rokland N-Male Omni 5.8 dBi (idx 3).
-  // Uses an index (not raw dBi) because multiple antennas can share the
-  // same dBi value (e.g. two different 3 dBi models) and a value-based
-  // <select> can't distinguish them.
+  // Index into COMMON_ANTENNAS (value-based <select> can't distinguish same-dBi models)
   const [coverageAntennaIdx, setCoverageAntennaIdx] = useState(3);
   const coverageAntennaDbi = COMMON_ANTENNAS[coverageAntennaIdx]?.dbi ?? 3;
   const [coverageHardwareIdx, setCoverageHardwareIdx] = useState(0);
-  /**
-   * RX-side hardware / antenna / height — lets users model asymmetric
-   * links (e.g. a handheld reaching a rooftop station). Defaults to a
-   * "stock portable" configuration: Heltec V3 (idx 4) + rubber-duck
-   * antenna (idx 0) + 2 m height — the most common "small device
-   * someone carries" setup. Users opt out of this via the gear popover
-   * for rooftop / tower / vehicle scenarios.
-   */
+  // Asymmetric RX defaults: Heltec V3 + rubber duck @ 2 m (stock portable)
   const [coverageRxHardwareIdx, setCoverageRxHardwareIdx] = useState(4);
   const [coverageRxAntennaIdx, setCoverageRxAntennaIdx] = useState(0);
   const coverageRxAntennaDbi = COMMON_ANTENNAS[coverageRxAntennaIdx]?.dbi ?? 3;
@@ -464,70 +414,28 @@ export function Map() {
     ? coverageCustomTxDbm
     : COMMON_HARDWARE[coverageHardwareIdx].txDbm;
   const [coverageEnvIdx, setCoverageEnvIdx] = useState(0);
-  const [coveragePresetIdx, setCoveragePresetIdx] = useState(0); // MediumFast default
+  const [coveragePresetIdx, setCoveragePresetIdx] = useState(0); // MediumFast
   const [coverageCustomSensDbm, setCoverageCustomSensDbm] = useState(-133);
   const coverageSensitivityDbm = MESHTASTIC_PRESETS[coveragePresetIdx].isCustom
     ? coverageCustomSensDbm
     : MESHTASTIC_PRESETS[coveragePresetIdx].sensitivityDbm;
-  /**
-   * Coverage detail level — controls DEM resolution. "standard" (512²) is the
-   * default; "high" (768²) and "ultra" (1024²) trade compute time for
-   * sharper edges. Session-scoped (not persisted to localStorage).
-   */
+  // Session-scoped (not persisted)
   const [coverageDetail, setCoverageDetail] = useState<CoverageDetail>("standard");
-  /**
-   * Antenna height above local terrain (meters). Lets the user simulate
-   * mounting scenarios — handheld, rooftop, tree, mast, tower. Origin
-   * MSL height is computed as `terrain + antennaHeightM` and replaces the
-   * old hardcoded `+ 2` fallback. Also overrides any GPS altitude on a
-   * node-anchored origin so "what if I move it up to a tower" works
-   * regardless of what the node currently reports.
-   */
+  // Antenna AGL (m); overrides GPS altitude on node-anchored origins
   const [coverageAntennaHeightM, setCoverageAntennaHeightM] = useState(2);
-  /**
-   * ITM reliability preset — default "typical" (90/50/70). See the comment
-   * on RELIABILITY_PRESETS for why this is the right planning default;
-   * tl;dr the old 50/50/50 paint is "median" — half the time it's wrong —
-   * and "typical" more honestly answers "will this work?".
-   */
   const [coverageReliability, setCoverageReliability] = useState<CoverageReliability>("typical");
-  // Mirror to a ref so the drag-preview closure (which lives outside the
-  // main compute effect's deps) sees the latest value without re-binding.
+  // Ref mirror so the drag-preview closure sees latest without re-binding
   const coverageAntennaHeightMRef = useRef(2);
   useEffect(() => {
     coverageAntennaHeightMRef.current = coverageAntennaHeightM;
   }, [coverageAntennaHeightM]);
-  /**
-   * Analysis radius derived purely from the link-budget math (capped at
-   * 500 km beyond which the DEM resolution can't produce meaningful
-   * terrain-aware results). No manual override — keeping the derived
-   * value keeps the coverage panel simpler and the behavior honest.
-   */
-  /**
-   * Chipset-corrected RX sensitivity actually used in the link budget.
-   * Keyed on RX hardware (not TX) — sensitivity is a property of the
-   * receiving end. Before the asymmetric RX refactor this was keyed on
-   * TX hardware, which produced the right number only because TX and
-   * RX were assumed identical.
-   */
+  // Chipset-corrected RX sensitivity, keyed on RX hardware (sensitivity lives on the receiver)
   const coverageEffectiveSensitivityDbm = useMemo(() => {
     const hw = COMMON_HARDWARE[coverageRxHardwareIdx];
     return effectiveSensitivityDbm(coverageSensitivityDbm, hw.chipset, hw.sensitivityOffsetDb ?? 0);
   }, [coverageSensitivityDbm, coverageRxHardwareIdx]);
-  /**
-   * DEM/raster size radius — derived from a simple free-space budget
-   * just so the analysis area scales with hardware. Not shown to users
-   * and not used for painting (ITM handles that).
-   *
-   * Hard-capped at 200 km because beyond that the DEM resolution at the
-   * pin (tile zoom forced low by the tile-count cap) starts averaging
-   * real terrain features away — Mt. Oso's peak at 500 km bbox reads
-   * ~200 m low vs its actual elevation, which silently kills accuracy
-   * across the whole paint. 200 km still comfortably covers Meshtastic
-   * reality (world-record link is 331 km, most real traffic is <100 km);
-   * for specific long-range mountain-to-mountain experiments, the LOS
-   * tool does point-to-point without the bbox constraint.
-   */
+  // DEM/raster bbox size from free-space budget. Capped at 200 km — beyond that
+  // low tile-zoom averages terrain away (Mt. Oso reads ~200 m low at 500 km bbox).
   const coverageRadiusKm = useMemo(() => {
     const CABLE = 0.5;
     const FADE = 15;
@@ -542,22 +450,18 @@ export function Map() {
     const maxKm = Math.pow(10, (budget - plConstant) / 20);
     return Math.max(5, Math.min(200, Math.round(maxKm)));
   }, [coverageAntennaDbi, coverageRxAntennaDbi, coverageTxDbm, coverageEffectiveSensitivityDbm]);
-  /** Custom WebGL layer instance for the 3D LoS tube. Created once per map. */
+  /** 3D LoS tube layer; created once per map. */
   const losTubeLayerRef = useRef<LosTubeLayer | null>(null);
-  /** DOM-based pin for the Coverage tool's origin (draggable-capable). */
+  /** DOM pin for the Coverage origin (draggable). */
   const coverageOriginMarkerRef = useRef<mapboxgl.Marker | null>(null);
-  /** Terrain elevation under the cursor (meters MSL). Null when unavailable. */
+  /** Terrain elevation (MSL m) under the cursor. */
   const [hoverElevationM, setHoverElevationM] = useState<number | null>(null);
-  // Scan tool state
   const [scanSummary, setScanSummary] = useState<ScanSummary | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [scanHoverId, setScanHoverId] = useState<string | null>(null);
-  /** Monotonic request id — ignore worker replies that aren't the latest. */
+  /** Monotonic request id — stale worker replies are dropped. */
   const coverageRequestIdRef = useRef(0);
-  /**
-   * Worker pool for parallel coverage compute. Lazily created on first
-   * use, kept warm across re-computes. Terminated on unmount.
-   */
+  /** Lazily-created coverage worker pool; terminated on unmount. */
   const coveragePoolRef = useRef<CoverageWorkerPool | null>(null);
   const ensureCoveragePool = useCallback((): CoverageWorkerPool => {
     if (!coveragePoolRef.current) {
@@ -572,42 +476,21 @@ export function Map() {
     };
   }, []);
 
-  /**
-   * Cached authoritative DEM from the most recent coverage compute.
-   * Used so the drag-preview pass can skip the tile-fetch step and reuse
-   * the already-built terrain data.
-   */
+  /** Cached authoritative DEM; drag-preview reuses it without re-fetching tiles. */
   const coverageDemRef = useRef<DEM | null>(null);
-  /**
-   * Downsampled version of the above (256×256 regardless of the main
-   * detail setting). Lets the drag preview run LR at ~8-12fps by cutting
-   * the per-frame pixel count by 4–16×.
-   */
+  /** 256² downsample of the above; lets drag preview run LR at ~8-12 fps. */
   const coverageDragDemRef = useRef<DEM | null>(null);
-  /**
-   * Most recent raster params snapshot — drag preview reuses these
-   * untouched. Updated at the end of every full compute.
-   */
+  /** Latest raster params snapshot (drag preview reuses untouched). */
   const coverageLastRasterParamsRef = useRef<RasterParams | null>(null);
-  /**
-   * Last-known origin height resolution (height + isFallback) from the
-   * most recent full compute. Drag re-samples DEM per move, but uses
-   * the last params for frequency/power/etc.
-   */
+  /** Last origin context (bounds); drag re-samples DEM per move. */
   const coverageLastOriginContextRef = useRef<{ bounds: DEMBounds } | null>(null);
-  /**
-   * "Busy" flag for drag-preview dispatches — we only allow one
-   * preview compute in flight at a time, and remember the latest
-   * position so we can re-fire once the previous completes.
-   */
+  /** Single-flight drag preview; latest pending position fires when current completes. */
   const dragPreviewBusyRef = useRef(false);
   const dragPreviewPendingRef = useRef<[number, number] | null>(null);
-  // LOS endpoint positions resolved in the compute effect — stored in
-  // refs so the hover-marker callback can read them without deps churn.
+  // LOS endpoints from the compute effect; refs so the hover-marker callback reads them without deps churn
   const losFromPosRef = useRef<[number, number] | null>(null);
   const losToPosRef = useRef<[number, number] | null>(null);
-  // Ephemeral marker on the map showing where the user is hovering on
-  // the LOS elevation profile chart.
+  // Marker for the LOS elevation-chart hover
   const losHoverMarkerRef = useRef<mapboxgl.Marker | null>(null);
   const handleLosProfileHover = useCallback((fraction: number | null) => {
     const mb = mbMapRef.current;
@@ -636,47 +519,28 @@ export function Map() {
     }
   }, []);
 
-  // Tracks the last LOS endpoint pair we fitBounds'd to — prevents
-  // re-zooming when the user changes config (height/antenna) without
-  // moving the endpoints.
+  // Skips fitBounds re-zoom when the user changes config without moving endpoints
   const losFitKeyRef = useRef<string | null>(null);
-  // Cached ITM context for the scan tool — loaded lazily on first scan,
-  // reused across subsequent scans within the session. Same WASM module
-  // the coverage workers load, just on the main thread.
+  // Lazily loaded, reused across scans; same WASM module as the coverage workers (main thread)
   const scanItmContextRef = useRef<ItmContext | null>(null);
 
-  /**
-   * Cached GeoJSON of the latest contour extraction. Kept so the panel
-   * can hand it off directly to the Export button without recomputing.
-   */
+  /** Cached contour GeoJSON for Export without recomputing. */
   const coverageContoursRef = useRef<ContourFeatureCollection | null>(null);
-  /** Cached visibility-ray fan from the last full compute. */
+  /** Cached visibility-ray fan. */
   const coverageRaysRef = useRef<VisibilityRayFeatureCollection | null>(null);
-  /** Cached margin grid from the last full compute — for ad-hoc export. */
+  /** Cached margin grid for export. */
   const coverageMarginRef = useRef<{
     data: Float32Array;
     width: number;
     height: number;
     bounds: DEMBounds;
   } | null>(null);
-  /**
-   * Blob URL currently bound to the `coverage-raster` image source. Tracked so
-   * we can `URL.revokeObjectURL` it on next update / tool close — without
-   * revocation the underlying Blobs are pinned in memory until page reload,
-   * which leaks ~5 MB per compute at Survey detail.
-   */
+  /** Blob URL for coverage-raster; tracked so we revoke on update/close (else ~5 MB leak per Survey compute). */
   const coverageRasterUrlRef = useRef<string | null>(null);
-  /** Whether contours are visible on the map. Session-scoped toggle. */
   const [showCoverageContours, setShowCoverageContours] = useState(false);
-  /** Whether visibility rays (HWT-style fan of LoS sightlines) are shown. */
   const [showCoverageRays, setShowCoverageRays] = useState(false);
 
-  /**
-   * Export the most recent coverage compute as either GeoJSON or KML.
-   * Both formats contain the iso-margin contour polylines (0 / 10 / 20 dB)
-   * plus the origin + link-budget metadata. GeoJSON for QGIS, Leaflet,
-   * geojson.io; KML for Google Earth, SPLAT!, and similar RF tools.
-   */
+  /** Export coverage as GeoJSON or KML (iso-margin 0/10/20 dB contours + metadata). */
   const handleCoverageExport = useCallback((format: "geojson" | "kml") => {
     const contours = coverageContoursRef.current;
     const result = coverageResultRef.current;
@@ -714,8 +578,7 @@ export function Map() {
       mime = "application/geo+json";
       ext = "geojson";
     } else {
-      // KML builder. Color format is aabbggrr (alpha, then B, G, R —
-      // byte-reversed from CSS hex). Amber #f59e0b → ff0b9ef5, etc.
+      // KML color format: aabbggrr (byte-reversed from CSS hex)
       const esc = (s: string) =>
         s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       const styleFor = (threshold: number) => {
@@ -792,47 +655,26 @@ export function Map() {
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   }, []);
 
-  /** Tracks the latest coverage result for export (refs can read it). */
+  /** Latest coverage result exposed via ref for export. */
   const coverageResultRef = useRef<CoverageResult | null>(null);
   useEffect(() => {
     coverageResultRef.current = coverageResult;
   }, [coverageResult]);
 
-  /**
-   * Shared helper: run the pool over a DEM, stitch the slice responses,
-   * and paint the resulting RGBA to the Mapbox `coverage-raster` image
-   * source. Used by BOTH the main (authoritative) compute and the
-   * drag-preview path; only the DEM size + request id differ.
-   *
-   * Returns null if the request was superseded by a newer one or the
-   * WASM isn't available. Returns summary counts on success.
-   */
+  /** Run pool over a DEM, stitch slices, paint RGBA to `coverage-raster`.
+   *  Shared by main compute + drag preview. Null = superseded or WASM missing. */
   const renderCoverageToImageSource = useCallback(async (opts: {
     dem: DEM;
     origin: [number, number];
     originHeightM: number;
-    /**
-     * TX antenna height above the local terrain (m). ITM's `txHeightM`
-     * is above-ground, distinct from the MSL `originHeightM` we carry
-     * for display/export. Wiring the wrong one used to model every pin
-     * as a hundred-meter tower at base.
-     */
+    /** TX antenna AGL (m); ITM wants AGL not MSL. */
     originAntennaHeightAboveGroundM: number;
     params: RasterParams;
     requestId: number;
-    /**
-     * Output raster dimensions. Decoupled from the DEM so the user's
-     * "Detail" choice only affects paint sharpness, not the underlying
-     * RF answer. If omitted, defaults to the DEM dims (used by the
-     * drag-preview path where DEM == output == 256²).
-     */
+    /** Defaults to DEM dims (drag-preview path where DEM == output == 256²). */
     outputWidth?: number;
     outputHeight?: number;
-    /**
-     * Invoked after each worker-pool slice returns so the UI can show
-     * per-slice progress during long Survey/Ultra computes. Fires with
-     * (completed, total). Optional — the drag-preview path omits it.
-     */
+    /** Per-slice progress (completed, total); drag preview omits this. */
     onSliceProgress?: (completed: number, total: number) => void;
   }): Promise<{
     clearCount: number;
@@ -840,9 +682,9 @@ export function Map() {
     blockedCount: number;
     demCoveredPixels: number;
     totalPx: number;
-    /** Stitched full-grid margin array (dB). NaN for no-data pixels. */
+    /** Stitched margin dB; NaN = no-data. */
     marginDb: Float32Array;
-    /** Output dimensions actually used — callers use these for contours. */
+    /** Actual output dims (callers use these for contours). */
     outputWidth: number;
     outputHeight: number;
     itmUnavailable?: boolean;
@@ -898,9 +740,6 @@ export function Map() {
         pool.dispatch(req, [demCopy.buffer]).then((resp) => {
           sliceResponses.push(resp);
           completedSlices += 1;
-          // Only report progress if this request is still the latest —
-          // otherwise a cancelled/superseded dispatch would emit stray
-          // progress ticks into an already-cleared UI.
           if (requestId === coverageRequestIdRef.current) {
             onSliceProgress?.(completedSlices, totalSlices);
           }
@@ -909,8 +748,7 @@ export function Map() {
     }
     await Promise.all(tasks);
 
-    // Stale-request check: if a newer request has started (or the
-    // drag-preview counter overtook us), bail without painting.
+    // Bail if superseded
     if (requestId !== coverageRequestIdRef.current) return null;
 
     if (sliceResponses.some((r) => r.itmUnavailable)) {
@@ -951,9 +789,7 @@ export function Map() {
     );
     ctx.putImageData(imgData, 0, 0);
 
-    // Encode via Blob URL (not data URL). At Survey detail (2048²) the raw
-    // RGBA is ~16 MB; a data URL would be ~22 MB of base64 string with
-    // ~100–200 ms of encoding CPU cost. Blobs skip the base64 step entirely.
+    // Blob URL (not data URL): at 2048² raw RGBA is ~16 MB, data URL would base64-encode 22 MB
     const url = await new Promise<string>((resolve, reject) => {
       canvas.toBlob((blob) => {
         if (!blob) { reject(new Error("canvas.toBlob returned null")); return; }
@@ -970,14 +806,11 @@ export function Map() {
     ];
     if (src && typeof (src as unknown as { updateImage?: Function }).updateImage === "function") {
       (src as unknown as { updateImage: (o: { url: string; coordinates: typeof coords }) => void }).updateImage({ url, coordinates: coords });
-      // Revoke the PREVIOUS blob URL now that Mapbox has the new one queued.
-      // Safe because the old texture is already on the GPU — Mapbox doesn't
-      // need the old blob after updateImage().
+      // Revoke previous blob — Mapbox already has the new texture on the GPU
       const previous = coverageRasterUrlRef.current;
       coverageRasterUrlRef.current = url;
       if (previous) URL.revokeObjectURL(previous);
     } else {
-      // Image source missing entirely — don't leak the blob we just made.
       URL.revokeObjectURL(url);
     }
     if (mb.getLayer("coverage-raster")) {
@@ -996,14 +829,12 @@ export function Map() {
     };
   }, [ensureCoveragePool]);
 
-  // Settings panel visibility
   const [settingsPanelOpen, setSettingsPanelOpen] = useState<boolean>(() => {
     const stored = readJson<boolean | null>(LS_KEYS.settingsPanelOpen, null);
-    // Default to false on mobile, true on desktop
+    // Desktop default open
     return stored ?? (typeof window !== "undefined" && window.innerWidth >= 1024);
   });
 
-  // persist settings
   useEffect(() => writeJson(LS_KEYS.provider, provider), [provider]);
   useEffect(() => writeJson(LS_KEYS.mapboxStyle, mapboxStyle), [mapboxStyle]);
   useEffect(() => writeJson(LS_KEYS.osmBasemap, osmBasemap), [osmBasemap]);
@@ -1015,18 +846,16 @@ export function Map() {
   useEffect(() => writeJson(LS_KEYS.terrain3D, terrain3D), [terrain3D]);
   useEffect(() => writeJson(LS_KEYS.terrainExaggeration, terrainExaggeration), [terrainExaggeration]);
 
-  // If token disappears / not configured, force provider to osm
+  // If token disappears, force provider to osm
   useEffect(() => {
     if (provider === "mapbox" && !hasMapbox) setProvider("osm");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasMapbox]);
 
-  // Close settings panel when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent | TouchEvent) => {
       const target = event.target as Node;
 
-      // allow clicks inside the panel OR on the toggle button
       if (settingsPanelRef.current?.contains(target)) return;
       if (settingsToggleRef.current?.contains(target)) return;
 
@@ -1044,7 +873,6 @@ export function Map() {
     };
   }, [settingsPanelOpen]);
 
-  // Close settings panel on Escape
   useEffect(() => {
     if (!settingsPanelOpen) return;
 
@@ -1056,9 +884,6 @@ export function Map() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [settingsPanelOpen]);
 
-  // ----------------------------
-  // Nodes normalization
-  // ----------------------------
   const nodes: Record<string, IMapNode> = useMemo(() => {
     const now = new Date();
     const sixHoursAgo = now.getTime() - 6 * 60 * 60 * 1000;
@@ -1095,7 +920,6 @@ export function Map() {
     [config?.server?.node_id, nodes]
   );
 
-  // Available channels for filter cycling
   const availableChannels = useMemo(() => {
     const chSet = new Set<string>();
     for (const n of Object.values(rawNodes)) {
@@ -1104,14 +928,9 @@ export function Map() {
     return [...chSet].sort();
   }, [rawNodes]);
 
-  // ----------------------------
-  // Details panel state (React-driven)
-  // ----------------------------
   const [detailsData, setDetailsData] = useState<NodeDetailsData | null>(null);
 
-  // ----------------------------
-  // Refs to avoid stale closures (Mapbox handlers)
-  // ----------------------------
+  // Refs to avoid stale closures in Mapbox handlers
   const nodesRef = useRef(nodes);
   const traceroutesRef = useRef(rawTraceroutes);
   const configRef = useRef(config);
@@ -1121,12 +940,10 @@ export function Map() {
   const myNodeIdRef = useRef(myNodeId);
   const roleFilterRef = useRef(roleFilter);
   const channelFilterRef = useRef(channelFilter);
-  // Tool state refs — used in event handler closures
   const activeToolRef = useRef(activeTool);
   const toolStepRef = useRef(toolStep);
   const toolFromIdRef = useRef(toolFromId);
 
-  // Helper: is the tool currently waiting for a node click?
   const isPickingNode = activeTool != null && toolStep !== "result";
   const terrain3DRef = useRef(terrain3D);
   const terrainExaggerationRef = useRef(terrainExaggeration);
@@ -1171,7 +988,6 @@ export function Map() {
     terrainExaggerationRef.current = terrainExaggeration;
   }, [terrainExaggeration]);
 
-  // Tool-pick cursor feedback
   useEffect(() => {
     const mb = mbMapRef.current;
     if (mb) {
@@ -1238,9 +1054,7 @@ export function Map() {
         }
         (mb.getSource("coverage-contours") as MbGeoJSONSource | undefined)?.setData(empty);
         (mb.getSource("coverage-rays") as MbGeoJSONSource | undefined)?.setData(empty);
-        // Swap the raster image to a 1×1 transparent PNG so Mapbox releases
-        // the 16 MB Survey-resolution GPU texture. `visibility: none` alone
-        // keeps the texture resident in VRAM until the next compute overwrites it.
+        // Swap to 1×1 PNG to release the 16 MB GPU texture (visibility:none keeps it resident)
         const rasterSrc = mb.getSource("coverage-raster") as mapboxgl.ImageSource | undefined;
         if (rasterSrc && typeof (rasterSrc as unknown as { updateImage?: Function }).updateImage === "function") {
           (rasterSrc as unknown as { updateImage: (o: { url: string; coordinates: [[number, number], [number, number], [number, number], [number, number]] }) => void }).updateImage({
@@ -1267,7 +1081,7 @@ export function Map() {
     }
   };
 
-  // Draw shortest traceroute path between toolFromId and toolToId (both providers)
+  // Draw shortest traceroute path on both providers
   useEffect(() => {
     const computePathCoords = (): [number, number][] | null => {
       if (activeTool !== "traceroute" || toolStep !== "result") return null;
@@ -1283,7 +1097,6 @@ export function Map() {
       return coords.length >= 2 ? coords : null;
     };
 
-    // Mapbox path-analysis source
     const mb = mbMapRef.current;
     if (mb) {
       const src = mb.getSource("path-analysis") as MbGeoJSONSource | undefined;
@@ -1297,7 +1110,6 @@ export function Map() {
       }
     }
 
-    // OpenLayers path layer
     if (olMap) {
       if (olPathLayerRef.current) {
         olMap.removeLayer(olPathLayerRef.current);
@@ -1316,14 +1128,12 @@ export function Map() {
     }
   }, [activeTool, toolStep, toolFromId, toolToId, rawTraceroutes, nodes, olMap]);
 
-  // Line-of-sight analysis between toolFromId and toolToId.
-  // Only runs when the LOS tool is active and both picks are done.
+  // LoS analysis between toolFromId and toolToId (LOS tool active + both picks done)
   useEffect(() => {
     if (activeTool !== "los" || toolStep !== "result") {
       setLosResult(null);
       return;
     }
-    // Resolve each endpoint from either a node ID or a virtual pin.
     const hasFrom = toolFromId || losVirtualFrom;
     const hasTo = toolToId || losVirtualTo;
     if (!hasFrom || !hasTo) { setLosResult(null); return; }
@@ -1353,32 +1163,21 @@ export function Map() {
       toPos = losVirtualTo!;
     }
 
-    // Stash positions for the hover-marker callback (reads from refs,
-    // no dependency churn).
+    // Stashed for the hover-marker callback (refs avoid deps churn)
     losFromPosRef.current = fromPos;
     losToPosRef.current = toPos;
 
     const run = async () => {
-      // Build our own DEM for the LoS span instead of relying on
-      // `mb.queryTerrainElevation`. That API only sees whatever terrain
-      // tiles Mapbox has cached for the current viewport, so if the user
-      // computed LoS while zoomed out, endpoints on mountain peaks get
-      // averaged elevations from coarse tiles (silent ~400 m undershoot
-      // was what triggered this). By fetching a terrain-rgb DEM directly
-      // sized to the link bbox, LoS terrain is deterministic and
-      // viewport-independent — the exact trade-off coverage already made.
+      // Fetch our own DEM sized to the link bbox; queryTerrainElevation is viewport-limited (~400 m peak underread at low zoom)
       const midLng = (fromPos[0] + toPos[0]) / 2;
       const midLat = (fromPos[1] + toPos[1]) / 2;
-      // Rough haversine for bbox sizing (close enough at human scales).
       const dLat = (toPos[1] - fromPos[1]) * Math.PI / 180;
       const dLng = (toPos[0] - fromPos[0]) * Math.PI / 180;
       const midLatRad = midLat * Math.PI / 180;
       const linkKm = 6371 * Math.sqrt(
         dLat * dLat + (dLng * Math.cos(midLatRad)) ** 2,
       );
-      // Square bbox with enough padding that near-perpendicular features
-      // aren't clipped. Minimum 15 km keeps very short links from having
-      // a useless bbox.
+      // Square bbox, 15 km minimum so short links still get a useful bbox
       const halfSpanKm = Math.max(15, linkKm / 2 + Math.max(15, linkKm * 0.15));
       const demBounds = demBoundsAround([midLng, midLat], halfSpanKm, 1.0);
 
@@ -1392,10 +1191,7 @@ export function Map() {
       let dem: DEM;
       let demSourceUsedForLos: DemSource;
       try {
-        // 2048² matches the coverage tool's DEM; sizes the same peaks to
-        // similar accuracy. For a 200 km link bbox that's ~115 m/px.
-        // `buildDem` tries Tilezen (3DEP in US) first, falls back to
-        // Mapbox terrain-rgb. Surface the source for panel attribution.
+        // 2048² → ~115 m/px at 200 km. buildDem tries Tilezen first, falls back to Mapbox.
         ({ dem, source: demSourceUsedForLos } = await buildDem({
           bounds: demBounds,
           targetWidth: 2048,
@@ -1430,14 +1226,10 @@ export function Map() {
         setLosResult(null);
         return;
       }
-      // Show the geometric result immediately — ITM enhances it
-      // asynchronously on top.
+      // Show geometric result immediately; ITM enhances async
       setLosResult(result);
 
-      // Enhance with Longley-Rice path loss. Runs in parallel with the
-      // panel first-paint so the panel stays responsive. If the WASM
-      // isn't built, we silently skip and the panel keeps the geometric
-      // view only.
+      // ITM enhancement — silently skips if WASM isn't built
       try {
         const profileM = new Float64Array(result.points.map((p) => p.ground));
         if (profileM.length < 2) return;
@@ -1467,9 +1259,7 @@ export function Map() {
       }
     };
 
-    // Fit the viewport to include both points — but only when the
-    // endpoints themselves change, not when config (height/antenna)
-    // changes. Otherwise tweaking a slider re-zooms the map annoyingly.
+    // Fit viewport only when endpoints change, not on config tweaks
     const fitKey = `${fromPos[0]},${fromPos[1]}-${toPos[0]},${toPos[1]}`;
     if (losFitKeyRef.current !== fitKey) {
       losFitKeyRef.current = fitKey;
@@ -1484,17 +1274,8 @@ export function Map() {
     return () => { cancelled = true; };
   }, [activeTool, toolStep, toolFromId, toolToId, losVirtualFrom, losVirtualTo, losFromHeightM, losToHeightM, provider, terrain3D, nodes]);
 
-  // Push the current LoS result into the 3D tube layer + obstruction source.
-  // Clears them when the LoS tool isn't showing a result.
-  //
-  // Note on terrain exaggeration: Mapbox renders terrain with an
-  // exaggeration factor (default 1.5), but its `fill-extrusion` base/
-  // height are NOT auto-scaled, and neither is our custom tube layer.
-  // To keep the tube and obstruction pylons pinned to the visually
-  // exaggerated terrain, we scale altitudes by the current exaggeration
-  // at upload time, and re-fire this effect whenever the user changes
-  // it. Without this the tube endpoint appears to sit partway down the
-  // mountain rather than at the node pin.
+  // Push LoS result → 3D tube layer + obstruction source.
+  // Altitudes are scaled by terrain exaggeration to stay pinned to the visual surface.
   useEffect(() => {
     const mb = mbMapRef.current;
     if (!mb) return;
@@ -1529,12 +1310,11 @@ export function Map() {
       toPos = losVirtualTo!;
     }
 
-    // Tube: layer internally scales altitudes by current exaggeration.
+    // Tube layer scales altitudes internally
     const tubeData = losPointsToTubeData(fromPos, toPos, losResult!.points, losResult!.totalDistanceKm);
     tube?.setData(tubeData);
 
-    // Obstruction pylons: scale base/top manually since fill-extrusion
-    // doesn't do it for us.
+    // fill-extrusion doesn't auto-scale base/top — scale manually
     const obstructions = pickObstructions(
       fromPos,
       toPos,
@@ -1552,9 +1332,7 @@ export function Map() {
     obsSrc?.setData(obsGeo);
   }, [activeTool, toolStep, losResult, toolFromId, toolToId, losVirtualFrom, losVirtualTo, nodes, terrainExaggeration]);
 
-  // -------------------------------------------------------------------------
-  // Scan tool (Option C) — batch LoS to every node in view from a chosen origin
-  // -------------------------------------------------------------------------
+  // Scan tool: batch LoS to every node in radius from a chosen origin
   useEffect(() => {
     if (activeTool !== "scan" || toolStep !== "result") {
       setScanSummary(null);
@@ -1568,7 +1346,6 @@ export function Map() {
     const mb = mbMapRef.current;
     if (!mb) return;
 
-    // Resolve origin (node pick or virtual position)
     let origin: [number, number] | null = null;
     let originAltitude: number | null = null;
     let originShortname: string | undefined;
@@ -1594,11 +1371,7 @@ export function Map() {
 
     const runAsync = async () => {
       try {
-        // Collect ALL known nodes — runScan's `maxDistanceKm` filter
-        // handles the radius cutoff via haversine so the user doesn't
-        // have to keep the viewport zoomed out to include targets.
-        // Previously scan only included viewport-visible nodes, which
-        // broke when users zoomed in to place the pin precisely.
+        // Collect ALL nodes; runScan's maxDistanceKm applies the radius cutoff
         const targets: ScanTarget[] = [];
         const seen = new Set<string>();
         for (const [rawId, node] of Object.entries(nodes)) {
@@ -1630,9 +1403,7 @@ export function Map() {
           return;
         }
 
-        // Fetch a DEM covering a 200 km radius around the origin (same
-        // cap as coverage). This is viewport-independent so the scan
-        // result doesn't depend on the user's current zoom level.
+        // Viewport-independent DEM around origin (same 200 km cap as coverage)
         const mapboxToken = env.MAPBOX_TOKEN;
         if (!mapboxToken) {
           console.warn("[Map] Scan aborted — Mapbox token missing.");
@@ -1648,7 +1419,6 @@ export function Map() {
         });
         if (cancelled) return;
 
-        // Load ITM context (cached across scans within the session).
         if (!scanItmContextRef.current) {
           try {
             scanItmContextRef.current = await loadItmContext(128);
@@ -1698,7 +1468,6 @@ export function Map() {
     return () => { cancelled = true; };
   }, [activeTool, toolStep, toolFromId, toolVirtualPos, provider, terrain3D, nodes]);
 
-  // Clear scan-links source when leaving scan tool
   useEffect(() => {
     const mb = mbMapRef.current;
     if (!mb) return;
@@ -1710,12 +1479,11 @@ export function Map() {
     }
   }, [activeTool]);
 
-  // Scan hover — highlight a single line using feature-state
+  // Scan hover via feature-state
   useEffect(() => {
     const mb = mbMapRef.current;
     if (!mb) return;
     if (!scanSummary) return;
-    // Reset all features' hover state
     for (let i = 0; i < scanSummary.results.length; i++) {
       try {
         mb.setFeatureState(
@@ -1798,24 +1566,8 @@ export function Map() {
     const requestId = ++coverageRequestIdRef.current;
     let cancelled = false;
 
-    // Coverage compute now runs across a pool of workers (Phase 10D).
-    // Main thread fetches the DEM once, copies it to each worker as a
-    // slice task, and stitches the RGBA responses.
-    //
-    // DEM resolution is fixed — it's the *terrain model* accuracy, which
-    // should NOT depend on the user's "Detail" choice. "Detail" controls
-    // OUTPUT_SIZE only, i.e. how pixelated the paint is. Before the
-    // decoupling, changing detail silently produced different reachable
-    // areas on the same pin, because a smaller output grid was also a
-    // smaller DEM grid, and the nearest-neighbor tile-resample averaged
-    // obstructions away at Standard but exposed them at Ultra.
-    //
-    // 2048² gives ~205 m/px effective resolution at the 200 km radius
-    // cap — close to matching the native tile resolution with the bumped
-    // tile-count cap (z=10, ~30 m/px native). At the old 500 km cap +
-    // 1024² DEM we were at ~1028 m/px, so Mt. Oso's peak was averaged
-    // ~200 m low. Costs 16 MB per worker copy (vs 4 MB at 1024²) and a
-    // ~90 ms one-time resample hit; per-pixel ITM cost is unchanged.
+    // Pool-based compute: fetch DEM once, slice to workers, stitch RGBA.
+    // DEM is fixed 2048²; "Detail" only changes OUTPUT_SIZE (paint pixelation, not RF accuracy).
     const DEM_SIZE = 2048;
     const OUTPUT_SIZE = COVERAGE_DETAIL_SIZE[coverageDetail];
     const envEntry = ENVIRONMENTS[coverageEnvIdx];
@@ -1830,8 +1582,7 @@ export function Map() {
       fadeMarginDb: 15,
       cableLossDb: 0.5,
       clutterLossDb: envEntry.clutterLossDb,
-      // ITM climate & ground constants. Continental Temperate + N=301 is
-      // a reasonable default for most North-American Meshtastic networks.
+      // Continental Temperate + N=301 is the NA Meshtastic default
       climate: 5 /* Climate.ContinentalTemperate */,
       surfaceRefractivityN: 301,
       polarization: 1 /* Polarization.Vertical */,
@@ -1844,19 +1595,12 @@ export function Map() {
 
     (async () => {
       const t0 = performance.now();
-      // Phase-granular timing so we can see where the ~hundreds of ms
-      // end up after the worker pool lands.
       const timings: Record<string, number> = {};
       const mark = (name: string, fromMs: number) => {
         timings[name] = performance.now() - fromMs;
       };
       try {
-        // 1. Fetch terrain tiles and build the full DEM on the main
-        //    thread. `buildDem` tries Tilezen (USGS 3DEP in US, ~10 m)
-        //    first and falls back to Mapbox terrain-rgb v1 on failure.
-        //    Higher Detail tiers raise the tile cap so Tilezen can reach
-        //    finer native zoom levels at small-to-medium radii (Survey
-        //    needs ~768 tiles to hit z=12 Tilezen at 200 km).
+        // 1. Fetch terrain tiles, build full DEM on main thread (Tilezen → Mapbox fallback)
         const tFetch = performance.now();
         setIsFetchingCoverageTerrain(true);
         const { dem, source: demSourceUsed } = await buildDem({
@@ -1874,19 +1618,9 @@ export function Map() {
         }
         setIsFetchingCoverageTerrain(false);
 
-        // 2. Resolve origin height. Base elevation is the node's GPS
-        // altitude (MSL) when present and sane, else the sampled terrain
-        // elevation; the user-controlled antenna height stacks on top so
-        // they can simulate "what if I mount it 30 m up a tower" without
-        // losing the GPS truth that ties the pin to a real device.
-        // `originIsFallback` flags "terrain data missing AND no GPS
-        // altitude" — i.e. we synthesized the base from 0.
-        //
-        // Prefer a z=14 fetch at the pin over the bbox DEM. The bbox DEM
-        // is forced to z≤10 at 200 km radius by MAX_TILES_PER_REQUEST,
-        // which can undersample narrow peaks by 400+ m. A single extra
-        // tile fetch gives us an accurate summit elevation without
-        // blowing up tile costs on the whole bbox.
+        // 2. Resolve origin height. Base = GPS altitude (if valid) or terrain; antenna stacks on top.
+        // originIsFallback flags "no terrain AND no GPS altitude" — base synthesized from 0.
+        // z=14 fetch at the pin beats the bbox DEM (forced to z≤10 by tile cap, undersamples peaks 400+ m).
         // Best origin-ground reading. Combines two independent sources
         // so the displayed pin elevation is accurate regardless of the
         // user's current viewport zoom:
@@ -1930,17 +1664,11 @@ export function Map() {
         const originGroundFromDem = sampleDEMAt(dem, origin![0], origin![1]);
         const groundOkDem = !Number.isNaN(originGroundFromDem);
         const groundOkHz = originGroundHighZoom != null;
-        // Use the high-zoom value for display / altValid / origin MSL.
         const originGround = groundOkHz
           ? originGroundHighZoom
           : originGroundFromDem;
         const groundOk = groundOkHz || groundOkDem;
-        // Guard against junk altitudes: some Meshtastic firmware reports
-        // 0 or sea level when the GPS lock is poor (alt < ground), and
-        // some report unit-scaled values like 10000 when the real unit
-        // is 100 m (alt >> ground). 1 km above local ground is the
-        // generous upper bound for any realistic Meshtastic mount; see
-        // losAnalysis.ts for the matching guard.
+        // Guards against junk altitudes (GPS glitch, unit-scaled values); matches losAnalysis.ts
         const MAX_HEIGHT_ABOVE_TERRAIN_M = 1000;
         const altValid =
           altitude != null &&
@@ -1953,24 +1681,13 @@ export function Map() {
           : (groundOk ? originGround : 0);
         const originHeightM = baseM + coverageAntennaHeightM;
         const originIsFallback = !groundOk && !altValid;
-        // What ITM actually wants: TX antenna height *above the value it
-        // reads from profile[0]*. The worker's profile[0] comes from our
-        // bbox DEM (the same `dem` we sampled with `originGroundFromDem`
-        // above), which is z≤10 and can undersample sharp peaks by
-        // hundreds of meters. Compensate by computing txHeight against
-        // the DEM value — this preserves the TX's correct MSL inside
-        // ITM (originHeightM), since ITM places TX at
-        // profile[0] + txHeightM = originGroundFromDem + (originHeightM - originGroundFromDem) = originHeightM.
-        // When the DEM and high-zoom elevations agree (flat terrain),
-        // this collapses to just antennaHeight as before.
+        // ITM wants TX height above profile[0] (bbox DEM value). Compensate so TX MSL matches
+        // originHeightM after profile[0]+txHeight. Collapses to antennaHeight on flat terrain.
         const txAboveGroundM = groundOkDem
           ? originHeightM - originGroundFromDem
           : coverageAntennaHeightM;
 
-        // 3. Dispatch the pool over the full-resolution DEM. OUTPUT_SIZE
-        //    is independent of DEM_SIZE — Detail controls paint sharpness
-        //    only, so Std/High/Ultra all produce the same reachable area
-        //    on the same pin (modulo per-pixel grid sampling noise).
+        // 3. Dispatch pool; OUTPUT_SIZE decoupled from DEM_SIZE so Detail only changes paint sharpness
         const tDispatch = performance.now();
         const rendered = await renderCoverageToImageSource({
           dem,
@@ -2008,11 +1725,7 @@ export function Map() {
         coverageLastRasterParamsRef.current = rasterParams;
         coverageLastOriginContextRef.current = { bounds: dem.bounds };
 
-        // 5. Extract iso-contours from the margin grid and push them to
-        //    the line layer. 0 dB = edge of coverage (most useful),
-        //    +10 dB = reliably reachable, +20 dB = strong signal. The
-        //    margin grid is output-sized, not DEM-sized — contours are
-        //    painted at output resolution (crisper at Ultra).
+        // 5. Iso-contours (0 dB = edge, +10 reliable, +20 strong) from output-sized margin grid
         coverageMarginRef.current = {
           data: rendered.marginDb,
           width: rendered.outputWidth,
@@ -2032,11 +1745,7 @@ export function Map() {
           src?.setData(contours);
         } catch {}
 
-        // 6. Extract visibility rays (HeyWhatsThat-style fan of radial
-        //    sightlines). Combines R2 viewshed over the DEM with the
-        //    ITM link-margin grid: rays only draw where terrain is
-        //    geometrically visible from the TX AND the signal reaches.
-        //    Costs ~50-100 ms on top of the compute.
+        // 6. Visibility rays: R2 viewshed AND margin grid; costs ~50-100 ms
         const rays = extractCoverageRays({
           dem,
           margin: rendered.marginDb,
@@ -2084,8 +1793,7 @@ export function Map() {
       } catch (err) {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : String(err);
-        // User-initiated cancel rejects every in-flight worker task with
-        // "pool terminated" — that's expected flow, not an error.
+        // User cancel rejects pool tasks with "pool terminated" — expected, not an error
         if (/pool terminated/i.test(msg)) {
           setIsComputingCoverage(false);
           setIsFetchingCoverageTerrain(false);
@@ -2097,9 +1805,6 @@ export function Map() {
         setIsComputingCoverage(false);
         setIsFetchingCoverageTerrain(false);
         setCoverageProgress({ completed: 0, total: 0 });
-        // Classify the most common failure mode (terrain tile fetch) so
-        // users get an actionable message. Anything else falls through
-        // to a generic retry hint.
         const isTerrain = /terrain|tile|fetch|network|cors|http/i.test(msg);
         setCoverageError(
           isTerrain
@@ -2114,8 +1819,7 @@ export function Map() {
     };
   }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageRxAntennaDbi, coverageRxHeightM, coverageTxDbm, coverageEnvIdx, coverageSensitivityDbm, coverageDetail, coverageAntennaHeightM, coverageReliability, provider, terrain3D, nodes, coverageRetryNonce]);
 
-  // Hide coverage raster when leaving coverage tool. We keep the source/layer
-  // around so re-entering the tool reuses them without re-adding.
+  // Hide coverage raster when leaving tool; sources/layers stay for fast re-entry
   useEffect(() => {
     const mb = mbMapRef.current;
     if (!mb) return;
@@ -2134,8 +1838,6 @@ export function Map() {
     }
   }, [activeTool]);
 
-  // Toggle contour layer visibility in step with the panel checkbox
-  // (only meaningful while the coverage tool is open).
   useEffect(() => {
     const mb = mbMapRef.current;
     if (!mb) return;
@@ -2149,7 +1851,6 @@ export function Map() {
     } catch {}
   }, [activeTool, showCoverageContours, coverageResult]);
 
-  // Toggle visibility-ray layer visibility in step with the panel checkbox.
   useEffect(() => {
     const mb = mbMapRef.current;
     if (!mb) return;
@@ -2163,9 +1864,7 @@ export function Map() {
     } catch {}
   }, [activeTool, showCoverageRays, coverageResult]);
 
-  // Sync the coverage origin pin to the current origin (node pick or
-  // virtual placement). A DOM-based mapboxgl.Marker so it stays at a
-  // consistent screen size at all zooms and is trivial to make draggable later.
+  // Sync coverage pin to origin (node pick or virtual placement)
   useEffect(() => {
     const mb = mbMapRef.current;
     if (!mb) return;
@@ -2201,12 +1900,7 @@ export function Map() {
         .setLngLat(origin)
         .addTo(mb);
 
-      // Live drag preview: re-render LR at a lower resolution (256²)
-      // using the cached downsampled DEM. Skips the tile-fetch step
-      // entirely — the full DEM was already fetched for the current
-      // pin area. At ~50-100 ms per preview pass this feels roughly
-      // like 10–15 fps of coverage tracking the pin. Backpressure:
-      // one compute in flight at a time; newest position wins.
+      // Drag preview: 256² compute off cached downsampled DEM, single-flight, newest-wins
       const runDragPreview = async (lngLat: [number, number]) => {
         if (dragPreviewBusyRef.current) {
           dragPreviewPendingRef.current = lngLat;
@@ -2217,26 +1911,16 @@ export function Map() {
         if (!dem || !params) return;
         dragPreviewBusyRef.current = true;
         try {
-          // Use negative request IDs for drag previews so they never
-          // collide with the authoritative compute's id namespace.
+          // Negative id keeps drag previews out of the authoritative id namespace
           const previewId = -Math.floor(performance.now());
-          // Use the same three-tier elevation strategy as the main
-          // compute so the drag preview doesn't jump on release.
-          // queryTerrainElevation is synchronous (~0.1 ms) so no drag
-          // jank; it reads the high-zoom tiles Mapbox has loaded in the
-          // viewport (which follows the pin during drag).
           const demGround = sampleDEMAt(dem, lngLat[0], lngLat[1]);
           const demGroundOk = !Number.isNaN(demGround);
-          // Pass `{ exaggerated: false }` — we want real MSL meters for
-          // ITM math, not the visually inflated render value. See the
-          // matching note in the authoritative-compute path.
+          // exaggerated:false for real MSL (see authoritative path)
           const mbGround = mb.queryTerrainElevation(lngLat, { exaggerated: false });
           const mbGroundOk = typeof mbGround === "number" && Number.isFinite(mbGround);
           const accurateGround = mbGroundOk ? mbGround : (demGroundOk ? demGround : 0);
           const antennaH = coverageAntennaHeightMRef.current;
           const originH = accurateGround + antennaH;
-          // Compensate ITM TX height for DEM peak-averaging, same as
-          // the authoritative compute path.
           const txAboveGroundM = demGroundOk
             ? originH - demGround
             : antennaH;
@@ -2254,7 +1938,6 @@ export function Map() {
           const pending = dragPreviewPendingRef.current;
           if (pending) {
             dragPreviewPendingRef.current = null;
-            // Re-fire with the most recent drag position we saw.
             runDragPreview(pending);
           }
         }
@@ -2265,13 +1948,9 @@ export function Map() {
         runDragPreview([ll.lng, ll.lat]);
       });
 
-      // On drag release: switch to a virtual origin at the new location and
-      // kick a fresh compute at full detail. If the origin was a node pick,
-      // we "detach" it — the pin is now in free-placement mode.
+      // On dragend: switch to a virtual origin (detach any node pick) and kick a full recompute
       marker.on("dragend", () => {
         const ll = marker.getLngLat();
-        // Drop the pending preview; the authoritative compute coming
-        // from setToolVirtualPos will replace whatever we painted.
         dragPreviewPendingRef.current = null;
         setToolFromId(null);
         setToolVirtualPos([ll.lng, ll.lat]);
@@ -2280,7 +1959,6 @@ export function Map() {
     }
   }, [activeTool, toolStep, toolFromId, toolVirtualPos, nodes]);
 
-  // Unmount cleanup for the pin marker
   useEffect(() => {
     return () => {
       if (coverageOriginMarkerRef.current) {
@@ -2296,15 +1974,12 @@ export function Map() {
     myNodeIdRef.current = myNodeId;
   }, [myNodeId]);
 
-  // ----------------------------
-  // Deep-link: ?node=<id> flies to a specific node
-  // ----------------------------
+  // Deep-link ?node=<id>
   const [searchParams, setSearchParams] = useSearchParams();
   const urlNodeId = searchParams.get("node") ?? "";
   const urlNodeIdRef = useRef(urlNodeId);
   urlNodeIdRef.current = urlNodeId;
 
-  // Resolve the target node's coords (used both by init override and fly-to)
   const flyToTarget = useMemo(() => {
     if (!urlNodeId) return null;
     const node = nodes[urlNodeId] ?? nodes[`!${urlNodeId}`];
@@ -2316,7 +1991,7 @@ export function Map() {
 
   const flyToHandledRef = useRef<string>("");
 
-  // Retry-based fly-to: waits for the map to be ready
+  // Retry until map is ready
   useEffect(() => {
     if (!urlNodeId || !flyToTarget) return;
     if (flyToHandledRef.current === urlNodeId) return;
@@ -2326,7 +2001,6 @@ export function Map() {
     const tryFlyTo = () => {
       if (flyToHandledRef.current === urlNodeId) return true;
 
-      // Mapbox path
       const mbMap = mbMapRef.current;
       if (mbMap) {
         flyToHandledRef.current = urlNodeId;
@@ -2335,7 +2009,6 @@ export function Map() {
         return true;
       }
 
-      // OpenLayers path
       if (olMap) {
         flyToHandledRef.current = urlNodeId;
         olMap.getView().animate({
@@ -2350,7 +2023,6 @@ export function Map() {
       return false;
     };
 
-    // Try immediately, then retry at increasing delays for map init
     if (tryFlyTo()) return;
 
     const timers: ReturnType<typeof setTimeout>[] = [];
@@ -2364,7 +2036,7 @@ export function Map() {
     return () => timers.forEach(clearTimeout);
   }, [urlNodeId, flyToTarget, olMap, setSearchParams]);
 
-  // Sync map center/zoom to URL params (debounced)
+  // Debounced URL sync for center/zoom
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
     const syncUrl = () => {
@@ -2414,14 +2086,13 @@ export function Map() {
     return () => clearTimeout(timer);
   }, [provider, olMap, setSearchParams]);
 
-  // Derive "My Node" label from current state
   const myNodeLabel = useMemo(() => {
     if (!myNodeId) return null;
     const n = nodes[myNodeId];
     return n?.shortname || n?.longname || myNodeId;
   }, [myNodeId, nodes]);
 
-  /** Collect neighbor edge keys (for deduplication with traceroute links). */
+  /** Neighbor edge keys for dedup vs traceroute links. */
   function collectNeighborEdgeKeys(liveNodes: Record<string, IMapNode>): Set<string> {
     const keys = new Set<string>();
     for (const [nodeId, node] of Object.entries(liveNodes)) {
@@ -2438,7 +2109,7 @@ export function Map() {
     return keys;
   }
 
-  /** Compute the persistent link GeoJSON for the current linkMode (all/mynode), including traceroute-inferred links. */
+  /** Persistent link GeoJSON for current linkMode (incl. traceroute-inferred). */
   function computePersistentLinks() {
     const mode = linkModeRef.current;
     const liveNodes = nodesRef.current;
@@ -2471,7 +2142,6 @@ export function Map() {
         };
         const heardBy = computeHeardByIds(liveNodes, id);
         const neighborFC = buildMapboxLinkFeatureCollection({ node: nodeLike, liveNodes, heardBy });
-        // For "mynode", also include traceroute links involving this node
         const tracerouteFC = buildTracerouteLinkFeatureCollection(
           traceroutes.filter((tr) => {
             const norm = normNodeId(id);
@@ -2527,8 +2197,7 @@ export function Map() {
       return;
     }
 
-    // Bail out if the underlying GeoJSON hasn't changed since the last rebuild
-    // — avoids full layer re-creation on every 5s poll.
+    // Skip layer rebuild if GeoJSON unchanged (5s poll optimization)
     const geojson = computePersistentLinks();
     const json = JSON.stringify(geojson);
     if (json === persistentLinksOlJsonRef.current && olPersistentLinksLayerRef.current) return;
@@ -2556,7 +2225,7 @@ export function Map() {
       if (!linksSource) return;
       const fc = computePersistentLinks();
       const json = JSON.stringify(fc);
-      if (json === persistentLinksMbJsonRef.current) return; // no-op when unchanged
+      if (json === persistentLinksMbJsonRef.current) return;
       persistentLinksMbJsonRef.current = json;
       linksSource.setData(fc);
     } catch {}
@@ -2575,9 +2244,8 @@ export function Map() {
 
     if (provider === "mapbox" && mbMapRef.current) {
       try {
-        // Force a synchronous render so custom layers are captured
+        // Force repaint so custom layers are captured, then wait a frame
         mbMapRef.current.triggerRepaint();
-        // Use a short delay to let the frame finish
         setTimeout(() => {
           const canvas = mbMapRef.current!.getCanvas();
           triggerDownload(canvas.toDataURL("image/png"));
@@ -2598,7 +2266,7 @@ export function Map() {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
 
-      // Composite all OL canvases (base + vector layers)
+      // Composite all OL canvases
       const olCanvases = olMap.getTargetElement().querySelectorAll<HTMLCanvasElement>(
         ".ol-layer canvas, canvas.ol-layer",
       );
@@ -2627,7 +2295,7 @@ export function Map() {
     const selectedId = mbSelectedIdRef.current;
 
     if (map && selectedId) {
-      // Clear selection ring (feature-state) for all node sources
+      // Clear feature-state across all node sources
       for (const src of ["nodes_clustered", "nodes_plain", SPIDERFY_SOURCE_NODES]) {
         try {
           if (map.getSource(src)) {
@@ -2700,7 +2368,6 @@ export function Map() {
 
     const defaultPosition = { latitude: 38.5816, longitude: -121.4944 };
 
-    // Prefer serverNode if available, otherwise fall back to any node with a position
     const fallbackNodeWithPos =
       serverNode?.map_position
         ? serverNode
@@ -2749,15 +2416,13 @@ export function Map() {
     const styleUrl = toMapboxStyleUrl(mapboxStyle);
     mbCurrentStyleUrlRef.current = styleUrl;
 
-    // fresh container
     mapRef.current.innerHTML = "";
 
     if (!mapboxgl.accessToken) {
       mapboxgl.accessToken = mapboxToken!;
     }
 
-    // Restore saved pitch/bearing so the camera orientation persists
-    // across page loads (we already persist center + zoom).
+    // Persisted pitch/bearing (center + zoom persisted separately)
     let initialPitch = 0;
     let initialBearing = 0;
     try {
@@ -2847,24 +2512,14 @@ export function Map() {
     });
 
     const ensureSourcesAndLayers = () => {
-      // clustered nodes source
       if (!map.getSource("nodes_clustered")) {
         map.addSource("nodes_clustered", {
           type: "geojson",
           data: buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()),
           cluster: true,
-          // 80 (up from the default 50) keeps cluster centroids spaced far
-          // enough apart that the larger donut visuals (up to 52px radius)
-          // don't overlap at awkward zoom levels. Minor side effect: dense
-          // regions merge slightly earlier — usually a readability win.
+          // 80 (vs default 50) spaces large donut centroids enough to avoid overlap
           clusterRadius: 80,
-          // Align source zoom range with the map's (default maxZoom = 22).
-          // Mapbox's GeoJSONSource defaults maxzoom=18 and clusterMaxZoom=17 —
-          // at which point co-located clusters' getClusterExpansionZoom returns 18,
-          // and any check against map.getMaxZoom() (22) would never match.
-          // That breaks auto-spiderfy for stacked nodes. Setting clusterMaxZoom=21
-          // makes getClusterExpansionZoom return 22 for never-splitting clusters,
-          // so auto-spiderfy fires reliably.
+          // Align zoom range with map's (default 22); source defaults (18/17) break auto-spiderfy for stacked nodes
           maxzoom: 22,
           clusterMaxZoom: 21,
           clusterProperties: {
@@ -2873,7 +2528,6 @@ export function Map() {
         });
       }
 
-      // plain nodes source
       if (!map.getSource("nodes_plain")) {
         map.addSource("nodes_plain", {
           type: "geojson",
@@ -2881,7 +2535,6 @@ export function Map() {
         });
       }
 
-      // links source
       if (!map.getSource("links")) {
         map.addSource("links", {
           type: "geojson",
@@ -2994,10 +2647,7 @@ export function Map() {
         });
       }
 
-      // Coverage contours — iso-margin lines extracted from the margin
-      // grid via marching squares. Painted as lines on top of the raster
-      // so edges of coverage and "reliable vs marginal" boundaries read
-      // clearly at a glance.
+      // Iso-margin contour lines
       if (!map.getSource("coverage-contours")) {
         map.addSource("coverage-contours", {
           type: "geojson",
@@ -3015,9 +2665,7 @@ export function Map() {
             visibility: "none",
           },
           paint: {
-            // Color by threshold: 0 dB (edge) = magenta, 10 dB = cyan,
-            // 20 dB = deep cyan ("strongly reliable"). Matches the paint
-            // gradient and the info-popover legend copy.
+            // 0 dB = magenta (edge), 10 = cyan, 20 = deep cyan
             "line-color": [
               "match", ["get", "thresholdDb"],
               0,  "#d946ef",
@@ -3037,9 +2685,7 @@ export function Map() {
         });
       }
 
-      // Visibility rays — HeyWhatsThat-style fan of per-azimuth
-      // sightlines. Rendered under the contours so iso-margin lines
-      // remain clearly readable on top of the ray fan.
+      // Visibility rays; rendered under contours for layer order
       if (!map.getSource("coverage-rays")) {
         map.addSource("coverage-rays", {
           type: "geojson",
@@ -3057,12 +2703,7 @@ export function Map() {
               visibility: "none",
             },
             paint: {
-              // Color + opacity interpolate on the segment's peak
-              // `marginDb`, matching the raster gradient stops: magenta
-              // at 0 dB (edge), orange at 5, cyan at 15, deep cyan at
-              // 25+. Without this, uniform-color rays visually over-
-              // represent marginal-coverage areas versus the alpha-
-              // faded raster.
+              // Interpolated on segment peak marginDb, matching raster gradient
               "line-color": [
                 "interpolate",
                 ["linear"],
@@ -3084,19 +2725,11 @@ export function Map() {
               ],
             },
           },
-          // Insert below the contour layer so contours draw on top.
           "coverage-contours-line",
         );
       }
 
-      // Note: the coverage origin pin uses mapboxgl.Marker (DOM-based) instead
-      // of a source/layer — it's easier to make screen-space-constant-sized
-      // and upgrade to draggable in a future pass without re-jiggering the
-      // custom layer stack.
-
-      // 3D LoS tube + obstruction pylons (Phase 9+, Option B).
-      // The tube is a custom WebGL layer that draws the chord in world space;
-      // the pylons are fill-extrusions showing where terrain spikes above it.
+      // 3D LoS tube (WebGL) + obstruction fill-extrusion pylons
       if (!map.getSource("los-obstructions")) {
         map.addSource("los-obstructions", {
           type: "geojson",
@@ -3130,7 +2763,6 @@ export function Map() {
         }
       }
 
-      // Scan tool links — color-coded lines from origin to each scanned target.
       if (!map.getSource("scan-links")) {
         map.addSource("scan-links", {
           type: "geojson",
@@ -3166,7 +2798,6 @@ export function Map() {
         });
       }
 
-      // Shared link paint properties
       const linkWidth = [
         "case",
         ["==", ["get", "snr"], null], 3,
@@ -3190,7 +2821,7 @@ export function Map() {
         ],
       ] as any;
 
-      // Neighbor + both links — solid lines (both uses curved arcs from GeoJSON)
+      // Neighbor + both links (solid; "both" uses curved arcs)
       if (!map.getLayer("links-solid")) {
         map.addLayer({
           id: "links-solid",
@@ -3202,7 +2833,6 @@ export function Map() {
         });
       }
 
-      // Heard-by links — dashed lines
       if (!map.getLayer("links-dashed")) {
         map.addLayer({
           id: "links-dashed",
@@ -3219,7 +2849,6 @@ export function Map() {
         });
       }
 
-      // Traceroute links — dotted lines
       if (!map.getLayer("links-dotted")) {
         map.addLayer({
           id: "links-dotted",
@@ -3236,9 +2865,7 @@ export function Map() {
         });
       }
 
-      // Invisible circle hit-test layer — reliable click detection.
-      // The custom donut layer above is visual-only; clicks flow through
-      // this layer via the standard Mapbox event system.
+      // Invisible hit-test layer for cluster clicks (donut layer is visual-only)
       if (!map.getLayer("clusters")) {
         map.addLayer({
           id: "clusters",
@@ -3246,7 +2873,7 @@ export function Map() {
           source: "nodes_clustered",
           filter: ["has", "point_count"],
           paint: {
-            // Kept ~2px larger than the donut for a forgiving click target.
+            // ~2 px larger than donut for forgiving click target
             "circle-radius": ["interpolate", ["linear"], ["get", "point_count"],
               2, 20, 10, 26, 25, 34, 100, 48, 200, 56],
             "circle-color": "#000000",
@@ -3257,12 +2884,10 @@ export function Map() {
         });
       }
 
-      // Custom WebGL donut layer — proportional online/offline arcs, billboarded.
       if (!map.getLayer("clusters-donuts")) {
         map.addLayer(new ClusterDonutLayer());
       }
 
-      // Cluster count text — lightweight symbol layer on top.
       if (!map.getLayer("clusters-count")) {
         map.addLayer({
           id: "clusters-count",
@@ -3283,7 +2908,7 @@ export function Map() {
         });
       }
 
-      // online node pulse (behind unclustered nodes) — bigger, softer halo
+      // Online node pulse behind unclustered nodes
       if (!map.getLayer("unclustered-pulse")) {
         map.addLayer({
           id: "unclustered-pulse",

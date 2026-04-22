@@ -30,9 +30,7 @@ export function writeJson<T>(key: string, value: T) {
 }
 
 export function toMapboxStyleUrl(stylePath: string): string {
-  // Accept:
-  // - "mapbox://styles/..."
-  // - "mapbox/streets-v12" or "user/styleid"
+  // Accepts "mapbox://styles/..." or "user/styleid"
   if (stylePath.startsWith("mapbox://")) return stylePath;
   return `mapbox://styles/${stylePath}`;
 }

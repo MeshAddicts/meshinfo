@@ -1,24 +1,13 @@
 /**
- * Promise-based worker pool for the coverage prediction slice workers.
- *
- * The pool owns N persistent Web Workers (one per logical CPU, capped
- * at a sensible max) and serves tasks on a first-come-first-served
- * basis. Each worker keeps its ITM WASM module warm across tasks, so
- * dispatch latency after the first compute is just message-passing +
- * actual compute.
- *
- * Usage:
- *   const pool = new CoverageWorkerPool(); // auto-sized
- *   const result = await pool.dispatch(request, [request.demBuffer]);
- *   // ...
- *   pool.terminate();
+ * Promise-based worker pool for coverage slice workers. Sized to
+ * navigator.hardwareConcurrency, capped at MAX_POOL_SIZE. FCFS dispatch;
+ * workers keep ITM WASM warm across tasks.
  */
 import type {
   CoverageSliceRequest,
   CoverageSliceResponse,
 } from "./coverageSliceWorker";
 
-/** Cap the pool size — more than this doesn't pay off and eats RAM. */
 const MAX_POOL_SIZE = 8;
 
 interface PendingTask {
@@ -32,9 +21,7 @@ export class CoverageWorkerPool {
   private readonly workers: Worker[];
   private readonly busy: Set<Worker> = new Set();
   private readonly queue: PendingTask[] = [];
-  /** In-flight tasks — tracked so `terminate()` can reject them instead
-   * of letting their promises hang forever (the worker is dead, so the
-   * response message will never arrive). */
+  /** Tracked so terminate() can reject them (worker death = no response). */
   private readonly inFlight: Set<PendingTask> = new Set();
 
   constructor(size?: number) {
@@ -51,11 +38,7 @@ export class CoverageWorkerPool {
     return this.workers.length;
   }
 
-  /**
-   * Dispatch a task to the first available worker. Returns a promise
-   * that resolves with the slice response. If every worker is busy the
-   * task queues and runs as soon as one frees up.
-   */
+  /** Dispatch to first free worker; queues if all busy. */
   dispatch(
     req: CoverageSliceRequest,
     transfer: Transferable[],
@@ -96,13 +79,7 @@ export class CoverageWorkerPool {
     worker.postMessage(task.req, task.transfer);
   }
 
-  /**
-   * Terminate all workers and fail any queued OR in-flight tasks. Call
-   * when the coverage tool is no longer needed (e.g. on page unmount)
-   * or when the user hits Cancel. In-flight tasks must be rejected too
-   * — once a worker is terminated its response message never arrives,
-   * so the caller's promise would hang forever otherwise.
-   */
+  /** Terminate all workers; reject queued + in-flight tasks (promises would otherwise hang). */
   terminate(): void {
     for (const w of this.workers) w.terminate();
     this.workers.length = 0;

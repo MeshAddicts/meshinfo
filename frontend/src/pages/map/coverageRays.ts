@@ -3,63 +3,29 @@ import type { Feature, FeatureCollection, LineString } from "geojson";
 import type { DEM, DEMBounds } from "./terrainDEM";
 
 /**
- * Visibility-ray extraction for the coverage tool.
- *
- * For each azimuth around the origin we trace a radial line outward
- * and emit the sub-ranges where:
- *
- *   (a) the receiver has a **geometrically clear line-of-sight** from
- *       the TX — tracked via the R2 viewshed algorithm (walk outward,
- *       keep a running max horizon-angle; a pixel is visible iff its
- *       top is above the running horizon). Uses the full DEM for
- *       terrain accuracy and includes a 4/3-earth curvature correction
- *       so long rays don't fake-over-reach the true horizon.
- *
- *   (b) the ITM link budget ALSO closes (`margin ≥ 0` in the
- *       coverage grid). This keeps the rays bounded by the same
- *       "signal reaches" envelope the raster shows, so users don't
- *       see rays punching out into areas the raster marks unreachable.
- *
- * Unlike the prior "sample margin per pixel" approach, this will NOT
- * draw a ray across terrain it can't physically see — behind a ridge,
- * the ITM margin grid often stays ≥ 0 because the signal diffracts
- * around the obstruction, but the HWT-style visibility ray should stop
- * at the ridge.
+ * Visibility-ray extraction for the coverage tool. Emits ray segments where BOTH:
+ *  (a) R2 viewshed says the RX top is above the running horizon (4/3-earth corrected), AND
+ *  (b) ITM link budget closes (margin ≥ 0). Keeps rays from punching past ridges where
+ *  diffraction kept margin positive but geometry says no LoS.
  */
 
 export interface ExtractRaysOptions {
-  /** Full terrain DEM — row-major elevations (meters, NaN = no data). */
+  /** Full DEM (m, NaN = no data). */
   dem: DEM;
-  /** Row-major ITM link-budget margin (dB), NaN = no-data. */
+  /** Row-major ITM margin (dB), NaN = no data. */
   margin: Float32Array;
-  /** Margin-grid dimensions (may differ from DEM dims at non-Survey Detail). */
+  /** Margin-grid dims (may differ from DEM at non-Survey Detail). */
   width: number;
   height: number;
-  /** Geographic bounds of both DEM and margin grids (shared). */
   bounds: DEMBounds;
-  /** TX position as `[lng, lat]`. */
   origin: [number, number];
-  /**
-   * TX elevation MSL in meters (terrain + antenna above ground). This
-   * is the "observer eye height" for the viewshed; same value ITM's
-   * per-pixel pass treats as the TX.
-   */
+  /** TX MSL height (terrain + antenna AGL); same value ITM uses. */
   originHeightM: number;
-  /**
-   * RX height above terrain at each sampled pixel (meters). Default 2
-   * (handheld). Needs to match the value ITM uses or rays and raster
-   * subtly disagree on what "reachable" means at the fringe.
-   */
+  /** RX height above terrain (m); default 2 (handheld). Must match ITM's RX height. */
   rxHeightM?: number;
-  /**
-   * Angular spacing between rays in degrees. 1° gives 360 rays (HWT-
-   * like density); 2° is lighter on render cost. Default 1°.
-   */
+  /** Degrees between rays; default 1° = 360 rays. */
   azimuthStepDeg?: number;
-  /**
-   * Minimum segment length (in DEM pixels) to keep. Filters single-
-   * pixel flicker along ridge edges where the viewshed oscillates.
-   */
+  /** Filter out segments shorter than this many DEM pixels. */
   minSegmentPx?: number;
 }
 
@@ -67,15 +33,12 @@ export type VisibilityRayFeatureCollection = FeatureCollection<
   LineString,
   {
     azimuth: number;
-    /**
-     * Peak link-margin (dB) within the segment, driving data-driven
-     * Mapbox styling so ray tint matches the raster gradient.
-     */
+    /** Peak link margin (dB) in segment; drives Mapbox tint. */
     marginDb: number;
   }
 >;
 
-/** 4/3 × mean earth radius — standard radio-horizon approximation. */
+/** 4/3 × mean earth radius for radio horizon. */
 const EFFECTIVE_EARTH_RADIUS_M = (4 / 3) * 6_371_000;
 
 export function extractCoverageRays(opts: ExtractRaysOptions): VisibilityRayFeatureCollection {
@@ -92,8 +55,7 @@ export function extractCoverageRays(opts: ExtractRaysOptions): VisibilityRayFeat
     minSegmentPx = 2,
   } = opts;
 
-  // Walk in DEM coordinates — the DEM is our finest terrain detail, so
-  // visibility is accurate regardless of the margin grid's density.
+  // Walk in DEM coords (finest terrain detail regardless of margin-grid density)
   const demW = dem.width;
   const demH = dem.height;
 
@@ -105,12 +67,10 @@ export function extractCoverageRays(opts: ExtractRaysOptions): VisibilityRayFeat
   const demToLat = (gy: number) =>
     bounds.north - (gy / (demH - 1)) * (bounds.north - bounds.south);
 
-  // Fast mapping from DEM pixel index to margin-grid pixel index.
   const margScaleX = marginW / demW;
   const margScaleY = marginH / demH;
 
-  // Physical distance per DEM pixel at bbox mid-latitude. Used for the
-  // viewshed's angular math and the earth-bulge correction.
+  // DEM-pixel metres at bbox mid-lat, for viewshed angles and earth-bulge
   const midLat = (bounds.north + bounds.south) / 2;
   const bboxWidthM =
     (bounds.east - bounds.west) * 111_320 * Math.cos((midLat * Math.PI) / 180);
@@ -143,15 +103,11 @@ export function extractCoverageRays(opts: ExtractRaysOptions): VisibilityRayFeat
 
   for (let az = 0; az < 360; az += azimuthStepDeg) {
     const azRad = (az * Math.PI) / 180;
-    // Azimuth convention: 0° = north, clockwise. Grid Y increases
-    // southward, so north-going rays have negative dy.
+    // Azimuth: 0° = N, clockwise; grid y+ = south
     const dx = Math.sin(azRad);
     const dy = -Math.cos(azRad);
 
-    // R2 viewshed state: highest terrain-to-observer angle seen so far.
-    // Any pixel whose top is above this is visible; a pixel at-or-below
-    // is blocked. Start at -Infinity so the first step is always
-    // considered visible (nothing yet occludes it).
+    // R2 viewshed: running max terrain-to-observer angle. Visible iff pixel top exceeds it.
     let maxAngle = -Infinity;
 
     let segStart: { gx: number; gy: number; step: number } | null = null;
@@ -191,27 +147,18 @@ export function extractCoverageRays(opts: ExtractRaysOptions): VisibilityRayFeat
       }
 
       const distM = t * metersPerDemPixel;
-      // 4/3-earth bulge: terrain appears lower by d² / (2 × R_eff)
-      // as distance grows. Keeps long rays from optimistically reaching
-      // over the true radio horizon.
+      // 4/3-earth bulge: d²/(2·R_eff). Keeps long rays from faking over-the-horizon.
       const earthDrop = (distM * distM) / (2 * EFFECTIVE_EARTH_RADIUS_M);
       const effTerrainElev = terrainElev - earthDrop;
       const effPixelTop = effTerrainElev + rxHeightM;
 
-      // Angles relative to the observer (tan θ ≈ θ for small angles;
-      // the ratio form is what matters for ordering).
       const terrainAngle = (effTerrainElev - originHeightM) / distM;
       const pixelAngle = (effPixelTop - originHeightM) / distM;
 
-      // R2: visible when the pixel's top is above the horizon so far.
-      // The running max is then updated from the BARE terrain angle —
-      // the receiver's height doesn't occlude further pixels, only the
-      // terrain itself does.
+      // Update horizon from BARE terrain (RX height doesn't occlude)
       const visible = pixelAngle > maxAngle;
       if (terrainAngle > maxAngle) maxAngle = terrainAngle;
 
-      // Gate on link budget too — no point drawing rays to places the
-      // raster marks unreachable.
       const margPx = Math.min(marginW - 1, Math.floor(gx * margScaleX));
       const margPy = Math.min(marginH - 1, Math.floor(gy * margScaleY));
       const m = margin[margPy * marginW + margPx];

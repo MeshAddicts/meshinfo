@@ -2,15 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS, RELIABILITY_PRESETS, type CoverageReliability, type CoverageResult } from "./coverageAnalysis";
 import type { DemSource } from "./terrainRgb";
 
-/**
- * Parse a free-form coord string into [lng, lat]. Accepts "lat, lng" with
- * optional comma and any whitespace separator. Returns null if the input
- * isn't two valid numbers within geographic bounds.
- *
- * Convention follows Google Maps / clipboard share format (lat first), since
- * that's what users will paste. We swap to [lng, lat] internally because
- * Mapbox uses lng-first throughout.
- */
+/** Parse "lat, lng" (Google Maps format) → [lng, lat]. Returns null if invalid. */
 function parseLatLng(input: string): [number, number] | null {
   const parts = input.trim().split(/[\s,]+/).filter(Boolean);
   if (parts.length !== 2) return null;
@@ -21,14 +13,7 @@ function parseLatLng(input: string): [number, number] | null {
   return [lng, lat];
 }
 
-/**
- * Detail-level presets for the coverage paint resolution. Standard (512²)
- * is instant on the worker pool; Ultra (1024²) quadruples pixels; Survey
- * (2048²) matches the underlying DEM 1:1 — every painted pixel corresponds
- * to one terrain sample, so narrow ridges/valleys stop getting bilinear-
- * averaged with neighbors. Survey costs ~4× the ITM ray-marches of Ultra;
- * worth it when zoomed into the coverage, less useful at zoomed-out view.
- */
+/** Coverage paint resolution. Standard=instant, Survey=2048² (1:1 with DEM, 4× Ultra cost). */
 export type CoverageDetail = "standard" | "high" | "ultra" | "survey";
 
 export const COVERAGE_DETAIL_SIZE: Record<CoverageDetail, number> = {
@@ -38,19 +23,7 @@ export const COVERAGE_DETAIL_SIZE: Record<CoverageDetail, number> = {
   survey: 2048,
 };
 
-/**
- * Per-Detail cap on DEM tile fetches. Higher caps let `selectZoom` in
- * `terrainRgb.ts` pick a finer native zoom level at a given bbox size,
- * so Survey mode actually reaches Tilezen's z=12-15 (3DEP 10-30 m) at
- * small-to-medium radii. At 200 km max radius, Std still caps at z=10
- * Mapbox / z=11 Tilezen regardless — the cap only helps when the bbox
- * is small enough that finer zoom is even feasible.
- *
- * Network + memory scaling: each Tilezen tile is ~256² × 4 B ≈ 256 KB
- * decoded, each Mapbox tile ~512² × 4 B = 1 MB. 768 Tilezen tiles = 192 MB
- * worst case. 768 Mapbox tiles = 768 MB (too much). Since `buildDem`
- * prefers Tilezen (smaller tiles), the tiered caps are comfortable.
- */
+/** Per-Detail DEM tile cap. Higher = finer native zoom at smaller radii. */
 export const COVERAGE_DETAIL_MAX_TILES: Record<CoverageDetail, number> = {
   standard: 256,
   high: 384,
@@ -58,13 +31,7 @@ export const COVERAGE_DETAIL_MAX_TILES: Record<CoverageDetail, number> = {
   survey: 768,
 };
 
-/**
- * Tiny info icon with a styled hover tooltip. More discoverable than a
- * browser-native `title=` attribute (which requires a long hover delay and
- * renders in OS-styled gray). `align` controls whether the tooltip anchors
- * to the right edge of the icon (default) or left — use "left" when the icon
- * is far to the right of the panel to avoid spilling off-screen.
- */
+/** Info icon with hover tooltip. `align` picks the edge it anchors to. */
 function InfoTip({ children, align = "right" }: { children: React.ReactNode; align?: "left" | "right" }) {
   return (
     <span className="relative inline-flex items-center group">
@@ -133,28 +100,23 @@ export function MapCoveragePanel({
   onEnableTerrain?: () => void;
   onClose: () => void;
   isComputing: boolean;
-  /** True during the terrain-tile fetch phase (before per-pixel compute starts). */
+  /** Terrain-fetch phase (before per-pixel compute). */
   isFetchingTerrain: boolean;
-  /** Number of worker-pool slices that have returned. Zero when idle. */
+  /** Worker-pool slices completed; 0 when idle. */
   progressCompleted: number;
-  /** Total slices dispatched in the current compute. Zero when idle. */
+  /** Slices dispatched; 0 when idle. */
   progressTotal: number;
-  /** Which tile source produced the current DEM (null until first compute completes). */
+  /** DEM tile source (null until first compute). */
   demSource: DemSource | null;
-  /** User-facing error string. Null when nothing went wrong. */
   errorMessage: string | null;
-  /** Invoked when the user clicks Retry on the error banner. */
   onRetry: () => void;
-  /** Invoked when the user aborts a running compute. */
   onCancel: () => void;
-  /** Index into COMMON_ANTENNAS — drives antenna gain in the link budget. */
+  /** Index into COMMON_ANTENNAS. */
   antennaIdx: number;
   onAntennaIdxChange: (idx: number) => void;
   hardwareIdx: number;
   onHardwareIdxChange: (idx: number) => void;
-  /** RX-side config (asymmetric link support). Defaults match TX on first
-   *  open; users can change these in the gear popover to model e.g. a
-   *  handheld TX reaching a rooftop RX. */
+  /** RX config (asymmetric); defaults match TX. */
   rxHardwareIdx: number;
   onRxHardwareIdxChange: (idx: number) => void;
   rxAntennaIdx: number;
@@ -171,45 +133,28 @@ export function MapCoveragePanel({
   onCustomSensitivityChange: (dbm: number) => void;
   detail: CoverageDetail;
   onDetailChange: (d: CoverageDetail) => void;
-  /**
-   * Antenna height above local terrain (meters). Drives a fresh recompute
-   * on change so the user sees the impact of mounting the radio higher
-   * (tree, roof, tower, etc.). Always overrides any GPS altitude on the
-   * pin so the slider is meaningful for both virtual and node origins.
-   */
+  /** Antenna AGL (m); overrides GPS altitude so the slider works for virtual + node origins. */
   antennaHeightM: number;
   onAntennaHeightChange: (m: number) => void;
-  /** ITM reliability preset. Drives time/location/situation %. */
   reliability: CoverageReliability;
   onReliabilityChange: (r: CoverageReliability) => void;
   showContours: boolean;
   onShowContoursChange: (show: boolean) => void;
-  /** Toggle the HWT-style visibility-ray fan overlay. */
   showRays: boolean;
   onShowRaysChange: (show: boolean) => void;
   onExport: (format: "geojson" | "kml") => void;
-  /**
-   * Called when the user types a custom coord into the origin label.
-   * Receives [lng, lat]. Caller should detach any node anchor and move
-   * the pin to the new location.
-   */
+  /** Custom coord typed into the origin label. Caller detaches any anchor and moves the pin. */
   onOriginChange?: (lngLat: [number, number]) => void;
 }) {
   const isCustomHardware = COMMON_HARDWARE[hardwareIdx]?.isCustom ?? false;
   const isCustomPreset = MESHTASTIC_PRESETS[presetIdx]?.isCustom ?? false;
-  // Inline editor for the origin label. Click the coord text → input.
-  // Enter commits, Escape cancels, blur commits silently (so a stray
-  // map click doesn't lose the user's typed value if it was valid).
+  // Inline origin editor: Enter commits, Escape cancels, blur commits silently if valid
   const [editingOrigin, setEditingOrigin] = useState(false);
   const [originDraft, setOriginDraft] = useState("");
   const [originDraftError, setOriginDraftError] = useState(false);
 
-  // Local string state for the antenna-height input so the user can fully
-  // clear the field while typing — a controlled `value={number}` would
-  // refuse to drop the leading "0" or hold an empty state. We commit on
-  // blur / Enter; a blank or invalid commit defaults back to 2 m.
+  // Text-based so field can be cleared while typing; commits on blur/Enter (blank → 2 m)
   const [heightInput, setHeightInput] = useState(String(antennaHeightM));
-  // Resync if the parent changes the value externally (e.g. preset reset).
   useEffect(() => {
     setHeightInput(String(antennaHeightM));
   }, [antennaHeightM]);
@@ -231,8 +176,6 @@ export function MapCoveragePanel({
     setHeightInput(String(clamped));
   };
 
-  // Same pattern for the RX antenna height input — text-based so users
-  // can temporarily clear the field while typing, commit on blur / Enter.
   const [rxHeightInput, setRxHeightInput] = useState(String(rxHeightM));
   useEffect(() => { setRxHeightInput(String(rxHeightM)); }, [rxHeightM]);
   const commitRxHeight = () => {
@@ -253,12 +196,7 @@ export function MapCoveragePanel({
     setRxHeightInput(String(clamped));
   };
 
-  // Ref to the Advanced-settings <details> so the "custom RX" pill in
-  // the header can toggle it open imperatively. The native <details>
-  // element handles its own open/closed state; we only nudge it on
-  // click. The panel's click-outside handler still closes it when the
-  // user clicks elsewhere in the panel (pill clicks stop propagation so
-  // they don't trigger that handler).
+  // Lets the header "custom RX" pill open the advanced-settings <details>
   const gearRef = useRef<HTMLDetailsElement>(null);
 
   if (terrainNeeded) {
@@ -299,8 +237,7 @@ export function MapCoveragePanel({
     );
   }
 
-  // No result yet (first compute) — show a loading banner, or an error
-  // banner if the initial compute failed before producing anything.
+  // First-compute loading/error banner
   if (!result) {
     if (errorMessage) {
       return (
@@ -391,13 +328,7 @@ export function MapCoveragePanel({
         rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
         animate-[slideInUp_200ms_ease-out]"
       onClick={(e) => {
-        // Close any open <details> popover (info, export, gear, origin
-        // editor) when the user clicks elsewhere in the panel. A click
-        // inside an open <details> (its summary or its panel content)
-        // leaves it open; a click on a different summary naturally closes
-        // the others via this same branch. We handle at the panel root so
-        // the behavior is consistent across all popovers without each one
-        // wiring its own outside-click listener.
+        // Close any open <details> popover when clicking elsewhere in the panel
         const target = e.target as Node;
         const openDetails = e.currentTarget.querySelectorAll<HTMLDetailsElement>("details[open]");
         openDetails.forEach((d) => {
@@ -406,10 +337,7 @@ export function MapCoveragePanel({
       }}
     >
 
-      {/* Recomputing overlay — small pill above the panel, doesn't hide controls.
-          Splits "Fetching terrain…" from "Recomputing coverage…" so the user
-          knows which phase is taking time (terrain fetch is network-bound,
-          compute is CPU-bound). Error pill preempts either spinner state. */}
+      {/* Status pill above the panel; splits terrain fetch vs compute. Error preempts. */}
       {errorMessage && !isComputing && (
         <div className="absolute -top-9 left-1/2 -translate-x-1/2 max-w-[calc(100%-1rem)] px-3 py-1.5 rounded-full
           bg-gray-900/95 backdrop-blur-xl border border-red-500/50 shadow-2xl
@@ -530,15 +458,7 @@ export function MapCoveragePanel({
               {Math.round(result.originHeightM)}m{result.originIsFallback ? "~" : ""}
             </span>
             {(() => {
-              // Surface asymmetric RX as a header pill so users can see
-              // at a glance that the link is being modelled with TX ≠ RX.
-              // The pill is visible whenever any RX-side config differs
-              // from the TX side — including the out-of-box default,
-              // which intentionally pairs a Station G2 TX with a
-              // Heltec V3 + rubber-duck RX (so users immediately see
-              // that it's a "from a basestation to a handheld" calc).
-              // Clicking the pill toggles the gear popover so users can
-              // jump straight to tweaking the RX config.
+              // Header pill surfaces asymmetric RX; click toggles the gear popover
               const rxMatchesTx =
                 rxHardwareIdx === hardwareIdx &&
                 rxAntennaIdx === antennaIdx &&
@@ -550,10 +470,7 @@ export function MapCoveragePanel({
                 <button
                   type="button"
                   onClick={(e) => {
-                    // Stop propagation so the panel's click-outside
-                    // handler doesn't immediately re-close the popover
-                    // we just opened. Toggle via the native `open`
-                    // attribute on the <details>.
+                    // stopPropagation so the panel's outside-click handler doesn't re-close
                     e.stopPropagation();
                     if (gearRef.current) {
                       gearRef.current.open = !gearRef.current.open;
@@ -569,9 +486,7 @@ export function MapCoveragePanel({
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          {/* Export dropdown — opens upward so it doesn't push the panel.
-              Uses a styled <details> so a map click elsewhere closes it
-              for free via the browser's native behavior. */}
+          {/* Export dropdown; opens upward. */}
           <details className="text-[10px] text-gray-400 relative group">
             <summary
               className="cursor-pointer list-none p-1 rounded-md hover:text-gray-200 hover:bg-white/5 transition-colors flex items-center gap-1"
@@ -586,7 +501,6 @@ export function MapCoveragePanel({
               <button
                 type="button"
                 onClick={(e) => {
-                  // Close the <details> after picking a format.
                   (e.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open");
                   onExport("geojson");
                 }}
@@ -721,12 +635,7 @@ export function MapCoveragePanel({
             </div>
           </details>
 
-          {/* Advanced settings gear — a second <details> popover with
-              model-tuning knobs (environment, reliability, detail, contours).
-              Living behind the gear keeps the main panel focused on the
-              high-frequency controls (hardware, modem, antenna). The ref
-              is used by the header "custom RX" pill to open/close this
-              popover imperatively. */}
+          {/* Advanced-settings gear popover (environment, reliability, detail, contours, RX). */}
           <details ref={gearRef} className="text-[10px] text-gray-400 relative">
             <summary
               className="cursor-pointer list-none p-1 rounded-md hover:text-gray-200 hover:bg-white/5 transition-colors"
@@ -738,13 +647,7 @@ export function MapCoveragePanel({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
             </summary>
-            {/* On wide viewports (xl+, 1280px+) the panel is 640px centered
-                with plenty of room on either side — anchor the advanced
-                settings popover fixed to the right of the panel so it
-                doesn't block the status pill that hovers above. Below xl
-                it falls back to opening upward (above-gear) like before.
-                `left` math: 50% (panel center) + 320px (half panel width)
-                + 12px gap = right edge of panel + gap. */}
+            {/* xl+: fixed to right of panel so status pill isn't blocked; below xl: opens upward. */}
             <div className="absolute right-0 bottom-full mb-1 w-90 p-3 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl z-50 space-y-3
               xl:fixed xl:bottom-3 xl:top-auto xl:right-auto xl:mb-0 xl:w-96
               xl:left-[calc(50%+332px)]">
@@ -752,12 +655,7 @@ export function MapCoveragePanel({
                 Advanced settings
               </div>
 
-              {/* Receiver — asymmetric RX config. TX is configured in
-                  the main panel; these knobs model the other end of the
-                  link. Defaults match TX for zero-surprise behavior; any
-                  non-default value surfaces as a "custom RX" pill in the
-                  header so users can see at a glance they're looking at
-                  an asymmetric compute. */}
+              {/* Receiver — asymmetric RX. Non-default values surface as a header pill. */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">
@@ -766,8 +664,7 @@ export function MapCoveragePanel({
                   <button
                     type="button"
                     onClick={() => {
-                      // Defaults: Heltec V3 (common entry-level hardware),
-                      // rubber-duck antenna, 2 m height.
+                      // Heltec V3 + rubber duck @ 2 m
                       onRxHardwareIdxChange(4);
                       onRxAntennaIdxChange(0);
                       onRxHeightChange(2);
@@ -855,8 +752,7 @@ export function MapCoveragePanel({
                 </div>
               </div>
 
-              {/* Environment — clutter-loss preset. Button group for
-                  visual consistency with Reliability and Detail below. */}
+              {/* Environment (clutter-loss preset). */}
               <div>
                 <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 flex items-center gap-1">
                   <span>Environment</span>
@@ -870,8 +766,6 @@ export function MapCoveragePanel({
                 <div className="flex gap-1 rounded-lg border border-white/10 bg-white/5 p-0.5 text-[10px] font-medium">
                   {ENVIRONMENTS.map((env, i) => {
                     const active = envIdx === i;
-                    // Short labels so four buttons fit cleanly; full
-                    // descriptive label is in the hover title.
                     const shortLabel =
                       env.id === "open" ? "Open"
                       : env.id === "mixed" ? "Light"
@@ -899,7 +793,7 @@ export function MapCoveragePanel({
                 </div>
               </div>
 
-              {/* Reliability — ITM time/location/situation preset */}
+              {/* Reliability (ITM TLS preset) */}
               <div>
                 <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 flex items-center gap-1">
                   <span>Reliability</span>
@@ -936,7 +830,7 @@ export function MapCoveragePanel({
                 </div>
               </div>
 
-              {/* Detail — DEM resolution */}
+              {/* Detail (output raster resolution). */}
               <div>
                 <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 flex items-center gap-1">
                   <span>Detail</span>
@@ -975,11 +869,7 @@ export function MapCoveragePanel({
                 </div>
               </div>
 
-              {/* Overlay toggles — contours + visibility rays. Both are
-                  extracted from the same margin grid as the raster, so
-                  toggling them on/off is instant (no recompute). Laid
-                  out inline so they read as a pair of peers rather than
-                  a stacked list. */}
+              {/* Overlay toggles (contours + rays); both extracted from margin grid, no recompute. */}
               <div className="flex items-center justify-between gap-3">
                 <label className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer select-none">
                   <input
@@ -1034,31 +924,22 @@ export function MapCoveragePanel({
         </div>
       </div>
 
-      {/* Stats + legend */}
       <div className="p-3 space-y-3">
         {/* Reachability summary + RSSI gradient legend */}
         {(() => {
           const reachablePx = result.clearCount + result.fresnelCount;
           const totalPx = reachablePx + result.blockedCount;
           const pct = totalPx > 0 ? (reachablePx / totalPx) * 100 : 0;
-          // DEM bbox is padded by 5% on each side, so total scanned area ≈ (2·r·1.05)².
+          // DEM bbox padded 5% each side → (2·r·1.05)²
           const scannedKm2 = (2 * result.radiusKm * 1.05) ** 2;
           const reachableKm2 = scannedKm2 * (totalPx > 0 ? reachablePx / totalPx : 0);
           const fmt = (n: number) => n >= 100 ? Math.round(n).toLocaleString() : n.toFixed(1);
 
-          // Diagnostics for when the map paints nothing:
-          //   - If virtually all pixels were NaN, the DEM didn't deliver data
-          //     over the analysis bbox — network issue on the tile source,
-          //     or a pin in a region with no 3DEP/SRTM coverage.
-          //   - If the DEM sampled but no pixels closed the budget, tell the
-          //     user the link budget itself is failing (try more power / range).
-          // `scannedPixels` is the actual output raster size (varies by Detail
-          // setting: 512²/768²/1024²/2048²) — ratioing against it means the
-          // threshold is correct regardless of Detail.
+          // Diagnostics: <5% terrain coverage → tile source issue; 0 reachable → link budget fails
           const terrainCoverage = result.scannedPixels > 0
             ? totalPx / result.scannedPixels
             : 0;
-          const noTerrainData = terrainCoverage < 0.05; // <5% of grid had terrain
+          const noTerrainData = terrainCoverage < 0.05;
           const noLinkBudget = !noTerrainData && reachablePx === 0;
           return (
             <div className="flex items-center gap-3 px-2 py-1.5 rounded-lg bg-white/5">
@@ -1113,9 +994,7 @@ export function MapCoveragePanel({
           );
         })()}
 
-        {/* Primary controls — only the high-frequency knobs live here.
-            Environment, reliability, detail, and contours moved into the
-            gear popover so the panel stays focused on "the radio." */}
+        {/* Primary controls (hardware, modem, antenna); advanced settings live in the gear popover */}
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label htmlFor="coverage-hardware" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
@@ -1216,9 +1095,6 @@ export function MapCoveragePanel({
                 altitude. Defaults to 2 m (handheld).
               </InfoTip>
             </label>
-            {/* Compact: 1–3 digits doesn't need a full half-panel-width
-                input. Hug the numeric content; leave the rest of the cell
-                as blank visual balance. */}
             <div className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 w-20">
               <input
                 id="coverage-antenna-height"

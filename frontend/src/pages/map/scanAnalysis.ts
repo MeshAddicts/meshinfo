@@ -1,23 +1,12 @@
 /**
- * Best-neighbors scan: given an origin node, compute line-of-sight + link
- * budget to every other node within a bounding box (typically the current
- * viewport), then classify and rank them.
- *
- * The scan reuses `analyzeLineOfSight` under the hood. We keep sample counts
- * modest (60/ray) so a batch of ~50 nodes completes in well under a second
- * on the main thread.
+ * Best-neighbors scan: LoS + link budget from origin to each target, classified and ranked.
+ * Stays on the main thread with 60 samples/ray.
  */
 import { analyzeLineOfSight, haversineKm, type TerrainSampler } from "./losAnalysis";
 import { pathLossDb } from "./coverageAnalysis";
 import { computeP2PLossFast, ModeOfVariability, type ItmContext } from "./itm";
 
-/**
- * Pre-configured ITM context + climate/ground parameters. When provided
- * to `runScan`, terrain-aware Longley-Rice replaces the old free-space +
- * knife-edge path loss, dramatically improving accuracy in mountainous
- * or hilly terrain. Without it, scan falls back to the legacy FSPL model
- * for backward compatibility.
- */
+/** Optional ITM config; when provided, ITM replaces FSPL+knife-edge for path loss. */
 export interface ScanItmConfig {
   context: ItmContext;
   climate: number;
@@ -45,15 +34,13 @@ export interface ScanResult {
   position: [number, number];
   distanceKm: number;
   cls: ScanClass;
-  /** Predicted RSSI (dBm). */
   rssiDbm: number;
-  /** Margin above sensitivity+fade (dB). Negative = un-reachable. */
+  /** Margin above sensitivity+fade (dB); negative = unreachable. */
   marginDb: number;
-  /** Worst knife-edge diffraction loss (dB) on this path. */
+  /** Worst knife-edge diffraction loss (dB). */
   diffractionLossDb: number;
-  /** Whether the straight LoS was terrain-blocked (even if diffraction recovers it). */
+  /** Straight-LoS terrain-blocked (diffraction may still recover). */
   losBlocked: boolean;
-  /** Whether the first Fresnel zone was intruded. */
   fresnelIntruded: boolean;
 }
 
@@ -62,9 +49,8 @@ export interface ScanInput {
   originAltitudeM?: number | null;
   originShortname?: string;
   targets: ScanTarget[];
-  /** Sampler — `(lng, lat) => meters` or `null`. */
   queryTerrainM: TerrainSampler;
-  /** LoS samples per ray. Default 60. */
+  /** LoS samples per ray; default 60. */
   raySamples?: number;
   freqGHz?: number;
   txDbm?: number;
@@ -72,17 +58,9 @@ export interface ScanInput {
   rxSensitivityDbm?: number;
   fadeMarginDb?: number;
   cableLossDb?: number;
-  /**
-   * If set, targets farther than this from the origin are skipped before the
-   * (expensive) LoS call. Speeds up big scans. Default Infinity.
-   */
+  /** Skip targets farther than this km. Default Infinity. */
   maxDistanceKm?: number;
-  /**
-   * If provided, use Longley-Rice (ITM) for terrain-aware path loss
-   * instead of free-space + knife-edge. Geometric LoS/Fresnel
-   * classification is kept from `analyzeLineOfSight`; only the loss
-   * calculation changes.
-   */
+  /** Use ITM for path loss; LoS/Fresnel classification still comes from analyzeLineOfSight. */
   itm?: ScanItmConfig;
 }
 
@@ -96,20 +74,13 @@ export interface ScanSummary {
   blockedCount: number;
 }
 
-/**
- * Quality score for sorting. Reachable first, by margin. Blocked last, by
- * shortest distance (nearest "almost made it" first).
- */
+/** Sort key: reachable by margin desc, blocked last by nearest-first. */
 export function scanSortKey(r: ScanResult): number {
   if (r.cls === "blocked") return -1000 - 1 / Math.max(0.1, r.distanceKm);
-  // Reachable: higher margin = better; tiebreak by distance (closer wins).
   return r.marginDb - r.distanceKm * 0.01;
 }
 
-/**
- * Run a scan synchronously. For MVP we stay on the main thread with reduced
- * sample counts; chunking is the caller's job if jank becomes an issue.
- */
+/** Synchronous scan. Caller must chunk if jank becomes an issue. */
 export function runScan(input: ScanInput): ScanSummary {
   const {
     origin,
@@ -137,7 +108,7 @@ export function runScan(input: ScanInput): ScanSummary {
   for (const t of targets) {
     const d = haversineKm(origin, t.position);
     if (d > maxDistanceKm) continue;
-    if (d < 0.01) continue; // origin itself
+    if (d < 0.01) continue;
 
     const los = analyzeLineOfSight({
       from: origin,
@@ -150,7 +121,7 @@ export function runScan(input: ScanInput): ScanSummary {
       queryTerrainM,
     });
 
-    // Path loss: use ITM (terrain-aware) when available, else FSPL + knife-edge.
+    // Path loss: ITM (terrain-aware) when available, else FSPL + knife-edge
     let totalLossDb: number;
     if (input.itm && los.points.length >= 2) {
       const profileM = new Float64Array(los.points.map((p) => p.ground));
@@ -171,8 +142,7 @@ export function runScan(input: ScanInput): ScanSummary {
         location: input.itm.locationPct ?? 50,
         situation: input.itm.situationPct ?? 50,
       });
-      // Fallback to FSPL if ITM returns garbage (shouldn't happen for
-      // valid profiles, but safety).
+      // Fallback to FSPL if ITM returns garbage
       totalLossDb =
         Number.isFinite(itmLoss) && itmLoss > 0
           ? itmLoss + cableLossDb
@@ -212,7 +182,6 @@ export function runScan(input: ScanInput): ScanSummary {
     });
   }
 
-  // Sort descending by score (best reachable first; blocked grouped at end).
   results.sort((a, b) => scanSortKey(b) - scanSortKey(a));
 
   return {
@@ -226,7 +195,7 @@ export function runScan(input: ScanInput): ScanSummary {
   };
 }
 
-/** Build a GeoJSON FeatureCollection of lines from origin → each target. */
+/** FeatureCollection of lines from origin → each target. */
 export function scanToGeoJSON(
   summary: ScanSummary,
 ): GeoJSON.FeatureCollection<GeoJSON.LineString, {
@@ -237,7 +206,7 @@ export function scanToGeoJSON(
 }> {
   const features = summary.results.map((r, i) => ({
     type: "Feature" as const,
-    id: i, // stable integer id so Mapbox setFeatureState can target a line
+    id: i, // stable id for setFeatureState
     geometry: {
       type: "LineString" as const,
       coordinates: [summary.origin, r.position],

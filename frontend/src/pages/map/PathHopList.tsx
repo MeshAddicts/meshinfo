@@ -1,6 +1,6 @@
 import type { IMapNode } from "./types";
 
-/** Inline list of node hops with arrows, used in traceroute result displays. */
+/** Inline node-hop list with arrows; used in traceroute results. */
 export function PathHopList({
   hops,
   liveNodes,

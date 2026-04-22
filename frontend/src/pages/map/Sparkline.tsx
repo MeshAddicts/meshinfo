@@ -1,7 +1,4 @@
-/**
- * Inline SVG sparkline — minimal, no dependencies.
- * Shows a small time-series line chart with min/max markers.
- */
+/** Inline SVG sparkline. */
 export function Sparkline({
   values,
   width = 80,

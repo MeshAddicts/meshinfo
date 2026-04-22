@@ -1,21 +1,13 @@
 /**
- * Digital Elevation Model (DEM) sampler for terrain-aware coverage.
- *
- * We pre-sample terrain over a bbox into a flat Float32Array grid on the main
- * thread (since `map.queryTerrainElevation` only exists on the Mapbox map),
- * then ship the DEM to a worker for viewshed + raster rendering.
- *
- * A 256×256 grid is ~256KB and is typically enough for ~30km-wide coverage
- * patches — each pixel represents ~120m on the ground, well below Mapbox's
- * terrain DEM source resolution.
+ * DEM sampler. Samples Mapbox's queryTerrainElevation into a Float32Array grid
+ * on the main thread, then ships it to a worker.
  */
 
-/** Any object with a Mapbox-compatible `queryTerrainElevation` method. */
 export interface MapLike {
   queryTerrainElevation: (lngLat: [number, number] | { lng: number; lat: number }) => number | null | undefined;
 }
 
-/** West / south / east / north bounds in degrees. */
+/** Bounds in degrees. */
 export interface DEMBounds {
   west: number;
   south: number;
@@ -24,18 +16,14 @@ export interface DEMBounds {
 }
 
 export interface DEM {
-  /** Row-major elevations (meters). Length = width × height. NaN = unavailable. */
+  /** Row-major elevations (m); NaN = unavailable. */
   data: Float32Array;
   width: number;
   height: number;
   bounds: DEMBounds;
 }
 
-/**
- * Sample terrain on a regular lng/lat grid over `bounds`.
- * `width` × `height` cells, row 0 = north edge, col 0 = west edge.
- * Uses 2D array access pattern: data[y * width + x].
- */
+/** Sample terrain on regular lng/lat grid. Row 0 = north, col 0 = west. data[y*width+x]. */
 export function sampleDEM(
   map: MapLike,
   bounds: DEMBounds,
@@ -47,7 +35,6 @@ export function sampleDEM(
   const latStep = (bounds.north - bounds.south) / (height - 1);
 
   for (let y = 0; y < height; y++) {
-    // Row 0 = north. Latitude decreases as y increases.
     const lat = bounds.north - y * latStep;
     const rowOffset = y * width;
     for (let x = 0; x < width; x++) {
@@ -60,16 +47,11 @@ export function sampleDEM(
   return { data, width, height, bounds };
 }
 
-/**
- * Bilinear elevation lookup at an arbitrary lng/lat.
- * Returns NaN if the point falls outside the DEM or any of the four
- * surrounding samples is missing.
- */
+/** Bilinear elevation at lng/lat; NaN outside DEM or if any neighbor is NaN. */
 export function sampleDEMAt(dem: DEM, lng: number, lat: number): number {
   const { width, height, bounds, data } = dem;
   const { west, south, east, north } = bounds;
 
-  // Normalize to pixel coordinates. x=0 at west, x=width-1 at east.
   const fx = ((lng - west) / (east - west)) * (width - 1);
   const fy = ((north - lat) / (north - south)) * (height - 1);
 
@@ -94,10 +76,7 @@ export function sampleDEMAt(dem: DEM, lng: number, lat: number): number {
   return top + (bot - top) * ty;
 }
 
-/**
- * Build a DEM bounding box centered on `origin` with half-width `radiusKm`
- * padded by `padFactor` (default 1.05 so we don't clip pixels at the edge).
- */
+/** DEM bbox centered on origin; half-width = radiusKm × padFactor (1.05 avoids edge clip). */
 export function demBoundsAround(
   origin: [number, number],
   radiusKm: number,
@@ -114,7 +93,7 @@ export function demBoundsAround(
   };
 }
 
-/** Lng/lat pixel center for DEM coordinates (x, y). */
+/** Lng/lat for DEM pixel (x, y). */
 export function demPixelToLngLat(dem: DEM, x: number, y: number): [number, number] {
   const { bounds, width, height } = dem;
   const lng = bounds.west + (x / (width - 1)) * (bounds.east - bounds.west);
@@ -122,15 +101,7 @@ export function demPixelToLngLat(dem: DEM, x: number, y: number): [number, numbe
   return [lng, lat];
 }
 
-/**
- * Downsample a DEM to a smaller grid by block-averaging. Used to build
- * a cheaper "drag preview" DEM from the authoritative high-resolution
- * DEM — the pin-drag handler can run LR over this at ~10fps without
- * re-fetching tiles or re-computing the full grid.
- *
- * NaN pixels are treated as missing (skipped in the average). A fully
- * missing block produces a NaN output pixel.
- */
+/** Block-average downsample; NaN pixels skipped, fully-missing block → NaN. */
 export function downsampleDEM(src: DEM, targetWidth: number, targetHeight: number): DEM {
   const data = new Float32Array(targetWidth * targetHeight);
   const sxStep = src.width / targetWidth;

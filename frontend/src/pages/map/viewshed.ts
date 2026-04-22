@@ -1,18 +1,7 @@
 /**
- * Terrain-aware viewshed + worst-obstacle computation.
- *
- * For each pixel in a DEM, march a ray from the origin toward that pixel and
- * track the largest vertical angle seen along the way (earth-bulge corrected).
- * If that angle exceeds the angle from origin to the pixel's own terrain, the
- * pixel is "blocked" — out of line-of-sight.
- *
- * We also record the worst Fresnel-Kirchhoff knife-edge parameter `v` along
- * each ray so the coverage pass can compute diffraction loss per pixel rather
- * than treating blocked/unblocked as binary.
- *
- * Algorithm is a "reverse R2" variant: for each target pixel we re-walk the
- * origin→target ray. Slightly redundant vs. a sweeping radial scan, but
- * trivially parallelizable and numerically robust for our ≤ 256×256 grids.
+ * Per-pixel viewshed: for each DEM pixel, walks origin→pixel ray, tracks
+ * earth-bulge-corrected max elevation angle and worst Fresnel-Kirchhoff v
+ * for per-pixel knife-edge diffraction loss.
  */
 import type { DEM } from "./terrainDEM";
 import { sampleDEMAt } from "./terrainDEM";
@@ -21,11 +10,7 @@ const R_EARTH_KM = 6371;
 const K_REFRACTION = 4 / 3;
 const SPEED_OF_LIGHT_MPS = 299_792_458;
 
-/**
- * Great-circle distance (km) between two lng/lat points.
- * Duplicated from losAnalysis.ts so this module is dependency-free
- * and safe to import from a worker.
- */
+/** Great-circle km. Duplicated from losAnalysis so this module is worker-safe. */
 function haversineKm(a: [number, number], b: [number, number]): number {
   const dLat = ((b[1] - a[1]) * Math.PI) / 180;
   const dLon = ((b[0] - a[0]) * Math.PI) / 180;
@@ -36,12 +21,12 @@ function haversineKm(a: [number, number], b: [number, number]): number {
   return 2 * R_EARTH_KM * Math.asin(Math.sqrt(s));
 }
 
-/** Earth bulge (m) at distance d1 from A toward B (d2 = D − d1). */
+/** Earth bulge (m) at d1 from A toward B (d2 = D − d1). */
 function earthBulgeM(d1Km: number, d2Km: number): number {
   return (d1Km * d2Km * 1000) / (2 * K_REFRACTION * R_EARTH_KM);
 }
 
-/** Fresnel-Kirchhoff parameter `v` for obstruction of height `h` (m) above chord. */
+/** Fresnel-Kirchhoff v for obstruction h (m) above chord. */
 function knifeEdgeV(hMeters: number, d1Km: number, d2Km: number, freqMhz: number): number {
   const lambda = SPEED_OF_LIGHT_MPS / (freqMhz * 1e6);
   const d1m = d1Km * 1000;
@@ -52,36 +37,29 @@ function knifeEdgeV(hMeters: number, d1Km: number, d2Km: number, freqMhz: number
 
 export interface ViewshedInput {
   dem: DEM;
-  /** Origin position (lng, lat). */
   origin: [number, number];
-  /** Origin MSL height (m). Already resolved (altitude or terrain+antenna). */
+  /** Origin MSL height (m); pre-resolved (altitude or terrain+antenna). */
   originHeightM: number;
-  /** Receiver antenna height above pixel ground (m). Default 2. */
+  /** RX antenna AGL (m); default 2. */
   targetAntennaHeightM?: number;
-  /** Frequency in GHz. Default 0.915. */
+  /** GHz; default 0.915. */
   freqGHz?: number;
-  /** Samples along each ray. Default 48. */
+  /** Default 48. */
   raySamples?: number;
 }
 
 export interface Viewshed {
   width: number;
   height: number;
-  /** Worst knife-edge `v` along the ray to each pixel. NaN if pixel unreachable. */
+  /** Worst knife-edge v per pixel; NaN if unreachable. */
   worstV: Float32Array;
-  /** Distance (km) from origin to each pixel. */
+  /** km from origin per pixel. */
   distanceKm: Float32Array;
-  /** True if any terrain sample along the ray was above the LoS chord (blocked). */
+  /** 1 if any ray sample above chord. */
   blocked: Uint8Array;
 }
 
-/**
- * Compute a per-pixel viewshed over `dem` from `origin`.
- * For each pixel, tracks:
- *   - distance from origin
- *   - whether the straight LoS is terrain-blocked
- *   - worst Fresnel-Kirchhoff `v` for knife-edge diffraction loss
- */
+/** Per-pixel viewshed: distance, LoS-blocked flag, worst knife-edge v. */
 export function computeViewshed(input: ViewshedInput): Viewshed {
   const {
     dem,
@@ -119,7 +97,7 @@ export function computeViewshed(input: ViewshedInput): Viewshed {
       const totalKm = haversineKm(origin, [lng, lat]);
       distanceKm[i] = totalKm;
 
-      // Degenerate case: target is the origin pixel. Mark clear.
+      // Origin pixel → clear
       if (totalKm < 1e-6) {
         worstV[i] = -Infinity;
         blocked[i] = 0;
@@ -128,7 +106,7 @@ export function computeViewshed(input: ViewshedInput): Viewshed {
 
       const targetHeight = targetGround + targetAntennaHeightM;
 
-      // Step along the ray from origin to target. Skip endpoints.
+      // Walk origin → target, skip endpoints
       let maxV = -Infinity;
       let anyBlocked = false;
       for (let s = 1; s < raySamples; s++) {
@@ -145,7 +123,7 @@ export function computeViewshed(input: ViewshedInput): Viewshed {
         const chord = originHeightM + (targetHeight - originHeightM) * t;
         const bulge = earthBulgeM(d1, d2);
         const effectiveGround = sampleGround + bulge;
-        const h = effectiveGround - chord; // positive = obstructing
+        const h = effectiveGround - chord; // + = obstructing
 
         if (h > 0) anyBlocked = true;
 
@@ -161,7 +139,7 @@ export function computeViewshed(input: ViewshedInput): Viewshed {
   return { width, height, worstV, distanceKm, blocked };
 }
 
-/** ITU-R P.526 single knife-edge diffraction loss for Fresnel `v`. */
+/** ITU-R P.526 single knife-edge loss (dB). */
 export function knifeEdgeLossDb(v: number): number {
   if (!Number.isFinite(v) || v < -0.7) return 0;
   return 6.9 + 20 * Math.log10(Math.sqrt((v - 0.1) ** 2 + 1) + v - 0.1);
