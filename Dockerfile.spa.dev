@@ -1,3 +1,13 @@
+# Compile NTIA ITM to WASM (see Dockerfile.spa for details).
+FROM emscripten/emsdk:3.1.65 AS wasm-build
+
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /itm
+COPY frontend/wasm/itm/fetch-vendor.sh frontend/wasm/itm/build.sh frontend/wasm/itm/shim.h ./
+RUN chmod +x fetch-vendor.sh build.sh && ./fetch-vendor.sh && ./build.sh
+
 # trunk-ignore-all(checkov/CKV_DOCKER_3)
 FROM node:25.9.0-alpine
 
@@ -5,6 +15,12 @@ LABEL org.opencontainers.image.source="https://github.com/MeshAddicts/meshinfo"
 LABEL org.opencontainers.image.description="Realtime web UI to run against a Meshtastic regional or private mesh network."
 
 COPY . .
+
+# src/ copy for vite dev's module resolution; public/ copy mirrors prod.
+COPY --from=wasm-build /itm/dist/itm.js /frontend/src/generated/itm/itm.js
+COPY --from=wasm-build /itm/dist/itm.d.ts /frontend/src/generated/itm/itm.d.ts
+RUN mkdir -p /frontend/public/generated/itm
+COPY --from=wasm-build /itm/dist/itm.js /frontend/public/generated/itm/itm.js
 
 WORKDIR /frontend
 
