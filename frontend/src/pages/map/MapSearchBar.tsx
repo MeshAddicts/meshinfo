@@ -84,7 +84,12 @@ export function MapSearchBar({
   }, []);
 
   return (
-    <div className="fixed top-3 left-14 z-30 w-56 sm:w-64">
+    <div
+      className="fixed top-3 left-14 z-30 transition-[width] duration-200
+        w-28 sm:w-64
+        focus-within:w-[calc(100vw-4.5rem)] focus-within:z-50
+        sm:focus-within:w-64 sm:focus-within:z-30"
+    >
       <div className="relative">
         <svg
           className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500 pointer-events-none"
@@ -111,6 +116,7 @@ export function MapSearchBar({
           onBlur={() => setTimeout(() => setOpen(false), 150)}
           onKeyDown={onKeyDown}
           placeholder="Search nodes… (press /)"
+          aria-label="Search nodes"
           className="w-full pl-8 pr-3 py-1.5 rounded-xl text-xs
             bg-gray-900/80 backdrop-blur-xl border border-white/10 shadow-2xl
             text-gray-200 placeholder-gray-500

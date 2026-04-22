@@ -1,7 +1,8 @@
 /** Scan-results panel: ranked LoS from origin to every node in view. */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS } from "./coverageAnalysis";
 import type { ScanSummary, ScanClass, ScanResult } from "./scanAnalysis";
+import { useBottomSheetGesture } from "./useBottomSheet";
 
 const CLASS_STYLES: Record<ScanClass, { bg: string; text: string; border: string; label: string }> = {
   clear:      { bg: "bg-cyan-500/15",    text: "text-cyan-300",    border: "border-cyan-500/30",    label: "Clear" },
@@ -76,9 +77,11 @@ export function MapScanPanel({
 }) {
   if (terrainNeeded && onEnableTerrain) {
     return (
-      <div className="fixed left-3 top-1/2 -translate-y-1/2 z-1050 w-85 max-w-[calc(100vw-1.5rem)]
-        rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl p-4
-        animate-[slideInLeft_220ms_ease-out]">
+      <div className="fixed z-1050 shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
+        inset-x-0 bottom-0 rounded-t-2xl p-4 pb-6 max-h-[75dvh] overflow-y-auto
+        sm:inset-x-auto sm:left-3 sm:top-1/2 sm:-translate-y-1/2 sm:bottom-auto sm:w-85
+        sm:rounded-xl sm:pb-4 sm:max-h-none sm:overflow-visible
+        sm:animate-[slideInLeft_220ms_ease-out]">
         <div className="text-xs text-gray-200 mb-3">
           Scanning requires 3D terrain so the tool can evaluate obstructions along each path.
         </div>
@@ -105,14 +108,13 @@ export function MapScanPanel({
   const toggleFilter = (cls: ScanClass) =>
     setFilter((prev) => (prev === cls ? null : cls));
 
-  const panelRef = useRef<HTMLDivElement>(null);
+  const sheet = useBottomSheetGesture(onClose);
   const isCustomHardware = COMMON_HARDWARE[hardwareIdx]?.isCustom ?? false;
   const isCustomPreset = MESHTASTIC_PRESETS[presetIdx]?.isCustom ?? false;
 
-  // Close any open <details> in the panel on outside click (map, other UI).
   useEffect(() => {
     const onDocMouseDown = (e: MouseEvent) => {
-      const root = panelRef.current;
+      const root = sheet.sheetRef.current;
       if (!root) return;
       if (root.contains(e.target as Node)) return;
       root.querySelectorAll<HTMLDetailsElement>("details[open]").forEach((d) => {
@@ -121,7 +123,7 @@ export function MapScanPanel({
     };
     document.addEventListener("mousedown", onDocMouseDown);
     return () => document.removeEventListener("mousedown", onDocMouseDown);
-  }, []);
+  }, [sheet.sheetRef]);
 
   // Text-mode input; commit on blur/Enter, blank → 2 m default.
   const [heightInput, setHeightInput] = useState(String(antennaHeightM));
@@ -151,10 +153,13 @@ export function MapScanPanel({
 
   return (
     <div
-      ref={panelRef}
-      className="fixed left-3 top-16 bottom-16 z-1050 w-85 max-w-[calc(100vw-1.5rem)]
-        rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
-        animate-[slideInLeft_220ms_ease-out] flex flex-col"
+      ref={sheet.sheetRef}
+      className="fixed z-1050 shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl flex flex-col
+        inset-x-0 bottom-0 rounded-t-2xl max-h-[78dvh]
+        animate-[slideInUp_200ms_ease-out]
+        sm:inset-x-auto sm:left-3 sm:top-16 sm:bottom-16 sm:w-85 sm:max-w-[calc(100vw-1.5rem)]
+        sm:rounded-xl sm:max-h-none
+        sm:animate-[slideInLeft_220ms_ease-out]"
       onClick={(e) => {
         const target = e.target as Node;
         const openDetails = e.currentTarget.querySelectorAll<HTMLDetailsElement>("details[open]");
@@ -163,8 +168,21 @@ export function MapScanPanel({
         });
       }}
     >
+      <div
+        className="sm:hidden flex justify-center pt-2 pb-1 cursor-grab active:cursor-grabbing touch-none shrink-0"
+        onTouchStart={sheet.onTouchStart}
+        onTouchMove={sheet.onTouchMove}
+        onTouchEnd={sheet.onTouchEnd}
+      >
+        <div className="w-10 h-1 rounded-full bg-white/20" />
+      </div>
 
-      <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-white/5 shrink-0">
+      <div
+        className="flex items-center justify-between gap-3 px-3 py-2 border-b border-white/5 shrink-0 max-sm:touch-none"
+        onTouchStart={sheet.onTouchStart}
+        onTouchMove={sheet.onTouchMove}
+        onTouchEnd={sheet.onTouchEnd}
+      >
         <div className="flex items-center gap-2 min-w-0">
           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border border-cyan-500/30 bg-cyan-500/15 text-cyan-300 shrink-0">
             <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -196,8 +214,10 @@ export function MapScanPanel({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
               </svg>
             </summary>
-            {/* Fixed-position so it escapes the panel's overflow-hidden. */}
-            <div className="fixed top-16 left-90 w-90 max-h-[calc(100vh-8rem)] overflow-y-auto p-3 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl z-1060 space-y-3">
+            {/* Fixed so it escapes the side-panel's overflow. */}
+            <div className="fixed z-1060 overflow-y-auto p-3 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl space-y-3
+              inset-x-3 top-4 bottom-4 w-auto max-w-none
+              sm:inset-auto sm:top-16 sm:left-90 sm:w-90 sm:max-h-[calc(100vh-8rem)]">
               <div className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">
                 Scan settings
               </div>
@@ -425,7 +445,7 @@ export function MapScanPanel({
         </div>
       </div>
 
-      <div className="overflow-y-auto flex-1">
+      <div className="overflow-y-auto overscroll-contain flex-1">
         {isScanning && (
           <div className="px-3 py-6 text-center text-[11px] text-gray-400">
             <div className="inline-flex items-center gap-2">
@@ -452,7 +472,8 @@ export function MapScanPanel({
             </div>
             {hiddenClasses.size > 0 && (
               <div className="px-3 py-1 text-[9px] text-gray-500 border-b border-white/5">
-                Right-click a class to toggle its map visibility.
+                <span className="sm:hidden">Long-press a class to toggle its map visibility.</span>
+                <span className="hidden sm:inline">Right-click a class to toggle its map visibility.</span>
               </div>
             )}
 

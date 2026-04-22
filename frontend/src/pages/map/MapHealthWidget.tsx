@@ -61,22 +61,22 @@ export function MapHealthWidget({ nodes }: { nodes: Record<string, IMapNode> }) 
   const health = useMemo(() => computeHealth(nodes), [nodes]);
 
   return (
-    <div className="fixed top-3 right-24 sm:right-40 z-30">
+    <div className="fixed top-3 right-20 sm:right-40 z-30 flex flex-col items-end">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="px-3 py-1.5 rounded-xl text-xs font-medium
+        className="px-2 sm:px-3 py-1.5 rounded-xl text-xs font-medium
           bg-gray-900/80 backdrop-blur-xl border border-white/10 shadow-2xl
           text-gray-300 hover:text-gray-100 hover:bg-gray-900/90 transition-colors
-          flex items-center gap-2"
+          flex items-center gap-1.5 sm:gap-2"
         title="Mesh health"
       >
         <span className="inline-flex items-center gap-1">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
           {health.online}
         </span>
-        <span className="text-gray-500">/</span>
-        <span className="text-gray-400">{health.total}</span>
+        <span className="hidden sm:inline text-gray-500">/</span>
+        <span className="hidden sm:inline text-gray-400">{health.total}</span>
       </button>
 
       {expanded && (

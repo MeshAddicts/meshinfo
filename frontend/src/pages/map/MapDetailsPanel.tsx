@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { roleTitles, type NodeRole } from "../../types";
 import { getElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLinks";
@@ -6,78 +6,8 @@ import { ROLE_COLORS, DEFAULT_NODE_COLOR } from "./utils";
 import { calculateGeodesicDistance } from "./utils";
 import { normNodeId } from "./linkFeatures";
 import { TelemetrySection } from "./TelemetrySection";
+import { useBottomSheetGesture } from "./useBottomSheet";
 import type { IMapNode, NodeDetailsData } from "./types";
-
-/** Bottom-sheet swipe gesture: down=dismiss, up=expand. Imperative DOM ops (no React fighting). */
-function useBottomSheetGesture(onClose: () => void) {
-  const sheetRef = useRef<HTMLDivElement>(null);
-  const startY = useRef(0);
-  const dragging = useRef(false);
-  const expandedRef = useRef(false);
-
-  const clearStyles = useCallback(() => {
-    const sheet = sheetRef.current;
-    if (!sheet) return;
-    sheet.style.transform = "";
-    sheet.style.transition = "";
-    sheet.classList.remove("bottom-sheet-expanded", "bottom-sheet-collapsing");
-    expandedRef.current = false;
-  }, []);
-
-  const onTouchStart = useCallback((e: React.TouchEvent) => {
-    if (e.touches.length !== 1) return;
-    dragging.current = true;
-    startY.current = e.touches[0].clientY;
-    if (sheetRef.current) {
-      sheetRef.current.style.transition = "none";
-    }
-  }, []);
-
-  const onTouchMove = useCallback((e: React.TouchEvent) => {
-    if (!dragging.current) return;
-    const dy = e.touches[0].clientY - startY.current;
-    // Down = free drag, up = resistance
-    const visualDy = dy < 0 ? dy * 0.4 : dy;
-    if (sheetRef.current) {
-      sheetRef.current.style.transform = `translateY(${visualDy}px)`;
-    }
-  }, []);
-
-  const onTouchEnd = useCallback((e: React.TouchEvent) => {
-    if (!dragging.current) return;
-    dragging.current = false;
-    const sheet = sheetRef.current;
-    if (!sheet) return;
-
-    const dy = e.changedTouches[0].clientY - startY.current;
-    const threshold = sheet.offsetHeight * 0.25;
-
-    if (dy > threshold) {
-      if (expandedRef.current) {
-        expandedRef.current = false;
-        sheet.style.transform = "translateY(0)";
-        sheet.classList.remove("bottom-sheet-expanded");
-        sheet.classList.add("bottom-sheet-collapsing");
-        sheet.addEventListener("transitionend", () => {
-          sheet.classList.remove("bottom-sheet-collapsing");
-        }, { once: true });
-      } else {
-        sheet.style.transition = "transform 200ms ease-in";
-        sheet.style.transform = "translateY(100%)";
-        sheet.addEventListener("transitionend", () => onClose(), { once: true });
-      }
-    } else if (dy < -40 && !expandedRef.current) {
-      expandedRef.current = true;
-      sheet.style.transform = "translateY(0)";
-      sheet.classList.add("bottom-sheet-expanded");
-    } else {
-      sheet.style.transition = "transform 200ms ease-out";
-      sheet.style.transform = "translateY(0)";
-    }
-  }, [onClose]);
-
-  return { sheetRef, clearStyles, onTouchStart, onTouchMove, onTouchEnd };
-}
 
 function formatLastSeen(raw: string | null | undefined): string {
   if (!raw) return "Unknown";

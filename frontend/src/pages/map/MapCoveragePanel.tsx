@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS, RELIABILITY_PRESETS, type CoverageReliability, type CoverageResult } from "./coverageAnalysis";
 import type { DemSource } from "./terrainRgb";
+import { useBottomSheetGesture } from "./useBottomSheet";
 
 /** Parse "lat, lng" (Google Maps format) → [lng, lat]. Returns null if invalid. */
 function parseLatLng(input: string): [number, number] | null {
@@ -198,12 +199,11 @@ export function MapCoveragePanel({
 
   // Lets the header "custom RX" pill open the advanced-settings <details>
   const gearRef = useRef<HTMLDetailsElement>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
+  const sheet = useBottomSheetGesture(onClose);
 
-  // Close any open <details> in the panel on outside click (map, other UI).
   useEffect(() => {
     const onDocMouseDown = (e: MouseEvent) => {
-      const root = panelRef.current;
+      const root = sheet.sheetRef.current;
       if (!root) return;
       if (root.contains(e.target as Node)) return;
       root.querySelectorAll<HTMLDetailsElement>("details[open]").forEach((d) => {
@@ -212,12 +212,14 @@ export function MapCoveragePanel({
     };
     document.addEventListener("mousedown", onDocMouseDown);
     return () => document.removeEventListener("mousedown", onDocMouseDown);
-  }, []);
+  }, [sheet.sheetRef]);
 
   if (terrainNeeded) {
     return (
-      <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(520px,calc(100vw-2rem))]
-        rounded-xl shadow-2xl border border-amber-500/30 bg-gray-900/90 backdrop-blur-xl p-4">
+      <div className="fixed z-1050 shadow-2xl border border-amber-500/30 bg-gray-900/90 backdrop-blur-xl
+        inset-x-0 bottom-0 rounded-t-2xl p-4 pb-6 max-h-[75dvh] overflow-y-auto
+        sm:inset-x-auto sm:bottom-3 sm:left-1/2 sm:-translate-x-1/2 sm:w-[min(520px,calc(100vw-2rem))]
+        sm:rounded-xl sm:pb-4 sm:max-h-none sm:overflow-visible">
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1">
             <div className="text-sm font-semibold text-amber-300 mb-1">
@@ -256,8 +258,10 @@ export function MapCoveragePanel({
   if (!result) {
     if (errorMessage) {
       return (
-        <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(520px,calc(100vw-2rem))]
-          rounded-xl shadow-2xl border border-red-500/40 bg-gray-900/90 backdrop-blur-xl p-3">
+        <div className="fixed z-1050 shadow-2xl border border-red-500/40 bg-gray-900/90 backdrop-blur-xl
+          inset-x-0 bottom-0 rounded-t-2xl p-3 pb-5
+          sm:inset-x-auto sm:bottom-3 sm:left-1/2 sm:-translate-x-1/2 sm:w-[min(520px,calc(100vw-2rem))]
+          sm:rounded-xl sm:pb-3">
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">
               <div className="text-xs font-semibold text-red-300 mb-1">
@@ -295,8 +299,10 @@ export function MapCoveragePanel({
         ? `Computing coverage from ${originLabel} · ${progressCompleted}/${progressTotal} slices (${progressPct}%)`
         : `Computing coverage from ${originLabel}…`;
     return (
-      <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(520px,calc(100vw-2rem))]
-        rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl p-3">
+      <div className="fixed z-1050 shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
+        inset-x-0 bottom-0 rounded-t-2xl p-3 pb-5
+        sm:inset-x-auto sm:bottom-3 sm:left-1/2 sm:-translate-x-1/2 sm:w-[min(520px,calc(100vw-2rem))]
+        sm:rounded-xl sm:pb-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-xs text-gray-400 min-w-0">
             <div className="w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin shrink-0" />
@@ -339,10 +345,12 @@ export function MapCoveragePanel({
 
   return (
     <div
-      ref={panelRef}
-      className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(640px,calc(100vw-2rem))]
-        rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
-        animate-[slideInUp_200ms_ease-out]"
+      ref={sheet.sheetRef}
+      className="fixed z-1050 shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
+        inset-x-0 bottom-0 rounded-t-2xl max-h-[78dvh] flex flex-col
+        animate-[slideInUp_200ms_ease-out]
+        sm:inset-x-auto sm:bottom-3 sm:left-1/2 sm:-translate-x-1/2 sm:w-[min(640px,calc(100vw-2rem))]
+        sm:rounded-xl sm:max-h-none sm:block"
       onClick={(e) => {
         // Close any open <details> popover when clicking elsewhere in the panel
         const target = e.target as Node;
@@ -352,6 +360,14 @@ export function MapCoveragePanel({
         });
       }}
     >
+      <div
+        className="sm:hidden flex justify-center pt-2 pb-1 cursor-grab active:cursor-grabbing touch-none shrink-0"
+        onTouchStart={sheet.onTouchStart}
+        onTouchMove={sheet.onTouchMove}
+        onTouchEnd={sheet.onTouchEnd}
+      >
+        <div className="w-10 h-1 rounded-full bg-white/20" />
+      </div>
 
       {/* Status pill above the panel; splits terrain fetch vs compute. Error preempts. */}
       {errorMessage && !isComputing && (
@@ -399,8 +415,12 @@ export function MapCoveragePanel({
         );
       })()}
 
-      {/* Header */}
-      <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-white/5">
+      <div
+        className="flex items-center justify-between gap-3 px-3 py-2 border-b border-white/5 shrink-0 max-sm:touch-none"
+        onTouchStart={sheet.onTouchStart}
+        onTouchMove={sheet.onTouchMove}
+        onTouchEnd={sheet.onTouchEnd}
+      >
         <div className="flex items-center gap-2 min-w-0">
           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border border-cyan-500/30 bg-cyan-500/15 text-cyan-300 shrink-0">
             <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -544,7 +564,9 @@ export function MapCoveragePanel({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </summary>
-            <div className="absolute right-0 bottom-full mb-1 w-85 p-2.5 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-gray-400 leading-relaxed space-y-1">
+            <div className="fixed z-50 overflow-y-auto p-2.5 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-gray-400 leading-relaxed space-y-1
+              inset-x-3 top-4 bottom-4 w-auto max-w-none
+              sm:absolute sm:inset-auto sm:right-0 sm:bottom-full sm:top-auto sm:mb-1 sm:w-85 sm:max-w-[calc(100vw-1rem)] sm:max-h-none sm:overflow-visible">
               <div>Pixel color shows predicted <strong>link margin</strong> (RSSI minus sensitivity and fade margin). Cyan = very reliable, orange = marginal, magenta = at threshold. Unpainted terrain is below sensitivity.</div>
               <div className="pt-1 border-t border-white/5">
                 <div className="text-gray-300 font-medium">Reliability</div>
@@ -664,9 +686,11 @@ export function MapCoveragePanel({
               </svg>
             </summary>
             {/* xl+: fixed to right of panel so status pill isn't blocked; below xl: opens upward. */}
-            <div className="absolute right-0 bottom-full mb-1 w-90 p-3 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl z-50 space-y-3
+            <div className="fixed z-50 overflow-y-auto p-3 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl space-y-3
+              inset-x-3 top-4 bottom-4 w-auto max-w-none
+              sm:absolute sm:inset-auto sm:right-0 sm:bottom-full sm:top-auto sm:mb-1 sm:w-90 sm:max-w-[calc(100vw-1rem)] sm:max-h-none sm:overflow-visible
               xl:fixed xl:bottom-3 xl:top-auto xl:right-auto xl:mb-0 xl:w-96
-              xl:left-[calc(50%+332px)]">
+              xl:left-[calc(50%+332px)] xl:overflow-visible">
               <div className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">
                 Advanced settings
               </div>
@@ -940,7 +964,7 @@ export function MapCoveragePanel({
         </div>
       </div>
 
-      <div className="p-3 space-y-3">
+      <div className="p-3 pb-5 space-y-3 overflow-y-auto overscroll-contain min-h-0 flex-1 sm:pb-3 sm:overflow-visible">
         {/* Reachability summary + RSSI gradient legend */}
         {(() => {
           const reachablePx = result.clearCount + result.fresnelCount;

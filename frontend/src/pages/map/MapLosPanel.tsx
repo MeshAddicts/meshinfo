@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { ElevationProfile } from "./ElevationProfile";
 import { COMMON_ANTENNAS, COMMON_HARDWARE } from "./coverageAnalysis";
 import type { LoSResult } from "./losAnalysis";
 import type { DemSource } from "./terrainRgb";
+import { useBottomSheetGesture } from "./useBottomSheet";
 
 /** Endpoint config column: hardware/antenna/height for one end of the LOS link. */
 function EndpointConfig({
@@ -36,7 +37,7 @@ function EndpointConfig({
   };
 
   return (
-    <div className="w-36 shrink-0 p-2 space-y-1.5 text-[10px]">
+    <div className="w-full sm:w-36 sm:shrink-0 p-2 space-y-1.5 text-[10px]">
       <div className="font-medium truncate" style={{ color }}>{label}</div>
       <div>
         <div className="text-gray-500 uppercase tracking-wider mb-0.5">Hardware</div>
@@ -129,11 +130,11 @@ export function MapLosPanel({
   /** Fires with 0-1 distance fraction on chart hover. */
   onProfileHover?: (fraction: number | null) => void;
 }) {
-  const panelRef = useRef<HTMLDivElement>(null);
-  // Close any open <details> in the panel on outside click (map, other UI).
+  const sheet = useBottomSheetGesture(onClose);
+
   useEffect(() => {
     const onDocMouseDown = (e: MouseEvent) => {
-      const root = panelRef.current;
+      const root = sheet.sheetRef.current;
       if (!root) return;
       if (root.contains(e.target as Node)) return;
       root.querySelectorAll<HTMLDetailsElement>("details[open]").forEach((d) => {
@@ -142,12 +143,14 @@ export function MapLosPanel({
     };
     document.addEventListener("mousedown", onDocMouseDown);
     return () => document.removeEventListener("mousedown", onDocMouseDown);
-  }, []);
+  }, [sheet.sheetRef]);
 
   if (terrainNeeded) {
     return (
-      <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(900px,calc(100vw-2rem))]
-        rounded-xl shadow-2xl border border-amber-500/30 bg-gray-900/90 backdrop-blur-xl p-4">
+      <div className="fixed z-1050 shadow-2xl border border-amber-500/30 bg-gray-900/90 backdrop-blur-xl
+        inset-x-0 bottom-0 rounded-t-2xl p-4 pb-6 max-h-[75dvh] overflow-y-auto
+        sm:inset-x-auto sm:bottom-3 sm:left-1/2 sm:-translate-x-1/2 sm:w-[min(900px,calc(100vw-2rem))]
+        sm:rounded-xl sm:pb-4 sm:max-h-none sm:overflow-visible">
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1">
             <div className="text-sm font-semibold text-amber-300 mb-1">
@@ -184,8 +187,10 @@ export function MapLosPanel({
 
   if (isComputing || !result) {
     return (
-      <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(900px,calc(100vw-2rem))]
-        rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl p-3">
+      <div className="fixed z-1050 shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
+        inset-x-0 bottom-0 rounded-t-2xl p-3 pb-5
+        sm:inset-x-auto sm:bottom-3 sm:left-1/2 sm:-translate-x-1/2 sm:w-[min(900px,calc(100vw-2rem))]
+        sm:rounded-xl sm:pb-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-xs text-gray-400">
             <div className="w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
@@ -239,11 +244,29 @@ export function MapLosPanel({
   }[statusColor];
 
   return (
-    <div ref={panelRef} className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(1200px,calc(100vw-2rem))]
-      rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
-      animate-[slideInUp_200ms_ease-out]">
+    <div
+      ref={sheet.sheetRef}
+      className="fixed z-1050 shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
+        inset-x-0 bottom-0 rounded-t-2xl max-h-[82dvh] flex flex-col
+        animate-[slideInUp_200ms_ease-out]
+        sm:inset-x-auto sm:bottom-3 sm:left-1/2 sm:-translate-x-1/2 sm:w-[min(1200px,calc(100vw-2rem))]
+        sm:rounded-xl sm:max-h-none sm:block"
+    >
+      <div
+        className="sm:hidden flex justify-center pt-2 pb-1 cursor-grab active:cursor-grabbing touch-none shrink-0"
+        onTouchStart={sheet.onTouchStart}
+        onTouchMove={sheet.onTouchMove}
+        onTouchEnd={sheet.onTouchEnd}
+      >
+        <div className="w-10 h-1 rounded-full bg-white/20" />
+      </div>
 
-      <div className="flex items-center justify-between gap-3 px-3 py-1.5 border-b border-white/5">
+      <div
+        className="flex items-center justify-between gap-3 px-3 py-1.5 border-b border-white/5 shrink-0 max-sm:touch-none"
+        onTouchStart={sheet.onTouchStart}
+        onTouchMove={sheet.onTouchMove}
+        onTouchEnd={sheet.onTouchEnd}
+      >
         <div className="flex items-center gap-2 min-w-0 flex-wrap">
           <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border shrink-0 ${statusClasses}`}>
             <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
@@ -345,16 +368,19 @@ export function MapLosPanel({
         </div>
       </div>
 
-      <div className="flex">
-        <EndpointConfig
-          label={fromLabel}
-          color={fromColor}
-          hwIdx={fromHwIdx} onHwIdxChange={onFromHwIdxChange}
-          antIdx={fromAntIdx} onAntIdxChange={onFromAntIdxChange}
-          heightM={fromHeightM} onHeightChange={onFromHeightChange}
-        />
-
-        <div className="flex-1 min-w-0 px-2 py-1.5 border-x border-white/5">
+      {/* Body: 3-column row on desktop (From | Profile | To); mobile stacks vertically
+          with the profile on top, then the two endpoint configs. */}
+      <div className="flex flex-col sm:flex-row overflow-y-auto overscroll-contain min-h-0 flex-1 sm:overflow-visible sm:flex-initial">
+        <div className="order-2 sm:order-1 w-full sm:w-36 sm:shrink-0 border-t sm:border-t-0 border-white/5">
+          <EndpointConfig
+            label={fromLabel}
+            color={fromColor}
+            hwIdx={fromHwIdx} onHwIdxChange={onFromHwIdxChange}
+            antIdx={fromAntIdx} onAntIdxChange={onFromAntIdxChange}
+            heightM={fromHeightM} onHeightChange={onFromHeightChange}
+          />
+        </div>
+        <div className="order-1 sm:order-2 flex-1 min-w-0 px-2 py-1.5 sm:border-x border-white/5">
           <ElevationProfile
             result={los}
             fromLabel={fromLabel}
@@ -364,14 +390,15 @@ export function MapLosPanel({
             onHoverFraction={onProfileHover}
           />
         </div>
-
-        <EndpointConfig
-          label={toLabel}
-          color={toColor}
-          hwIdx={toHwIdx} onHwIdxChange={onToHwIdxChange}
-          antIdx={toAntIdx} onAntIdxChange={onToAntIdxChange}
-          heightM={toHeightM} onHeightChange={onToHeightChange}
-        />
+        <div className="order-3 w-full sm:w-36 sm:shrink-0 border-t sm:border-t-0 border-white/5">
+          <EndpointConfig
+            label={toLabel}
+            color={toColor}
+            hwIdx={toHwIdx} onHwIdxChange={onToHwIdxChange}
+            antIdx={toAntIdx} onAntIdxChange={onToAntIdxChange}
+            heightM={toHeightM} onHeightChange={onToHeightChange}
+          />
+        </div>
       </div>
     </div>
   );
