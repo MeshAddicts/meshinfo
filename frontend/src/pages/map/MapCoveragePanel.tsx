@@ -709,11 +709,11 @@ export function MapCoveragePanel({
                 values (~3 dB worse than datasheet) and adjusts down another
                 ~2 dB for SX1276-based boards (Heltec v2). ITM does not model
                 buildings or foliage; the <em>Environment</em> selector adds a
-                flat clutter loss as a rough compensation. TX and RX antennas
-                and the RX height are independently configurable in the gear
-                popover; the default RX models a stock Heltec V3 with the
-                rubber-duck antenna at 2 m, so out-of-box results show what a
-                typical handheld would hear. Analysis area is capped at{" "}
+                flat clutter loss as a rough compensation. RX hardware,
+                antenna, and height live in the gear popover (the TX side is
+                configured in the main panel above); the default RX models a
+                stock Heltec V3 with the rubber-duck antenna at 2 m, so
+                out-of-box results show what a typical handheld would hear. Analysis area is capped at{" "}
                 <strong>200 km radius</strong> so the DEM at the pin stays fine
                 enough to capture actual peaks — use the LOS tool for specific
                 longer-range point-to-point links.
@@ -826,8 +826,7 @@ export function MapCoveragePanel({
                     <InfoTip align="left">
                       RX antenna height over local terrain (m). 2 m =
                       handheld default. Use 6-10 m for a typical rooftop
-                      station, 30 m+ for tower-mounted receivers. Fed to
-                      ITM as `rxHeightM` per pixel.
+                      station, 30 m+ for tower-mounted receivers.
                     </InfoTip>
                   </label>
                   <div className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 w-24">
@@ -863,8 +862,7 @@ export function MapCoveragePanel({
                   <span>Environment</span>
                   <InfoTip align="left">
                     Flat clutter-loss offset added on top of ITM to
-                    approximate buildings and vegetation (ITM itself doesn't
-                    model them). A foliage raster is on the roadmap — it will
+                    approximate buildings and vegetation. A foliage/building raster is on the roadmap — it will
                     replace this with a per-path loss based on real canopy
                     data.
                   </InfoTip>
