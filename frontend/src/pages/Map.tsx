@@ -374,7 +374,7 @@ export function Map() {
   const [toolVirtualPos, setToolVirtualPos] = useState<[number, number] | null>(null);
 
   // 3D terrain (Mapbox only)
-  const [terrain3D, setTerrain3D] = useState<boolean>(() => readJson<boolean>(LS_KEYS.terrain3D, false));
+  const [terrain3D, setTerrain3D] = useState<boolean>(() => readJson<boolean>(LS_KEYS.terrain3D, true));
   const [terrainExaggeration, setTerrainExaggeration] = useState<number>(
     () => readJson<number>(LS_KEYS.terrainExaggeration, 1.5)
   );
