@@ -83,7 +83,7 @@ export function MapQuickControls({
   ];
 
   return (
-    <div className={`fixed bottom-4 left-4 right-24 sm:right-auto z-1100 flex items-center gap-1.5 overflow-x-auto no-scrollbar ${hidden ? "max-sm:hidden" : ""}`}>
+    <div className={`fixed bottom-4 left-4 right-24 sm:right-auto z-1100 items-center gap-1.5 overflow-x-auto no-scrollbar hidden sm:flex ${hidden ? "sm:hidden" : ""}`}>
       <FilterDropup
         label={`Last ${daysShortLabel(recentDays)}`}
         value={recentDays}

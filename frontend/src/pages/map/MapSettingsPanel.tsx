@@ -1,13 +1,138 @@
 import { type Dispatch, type RefObject, type SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 
+import { NodeRole, roleTitles } from "../../types";
 import type { OsmBasemap } from "../../maps/baseLayer";
+import { FilterDropup, type DropupOption } from "./FilterDropup";
 import { MapLegend } from "./MapLegend";
 import type { LinkMode, MapProvider } from "./types";
+import { useBottomSheetGesture } from "./useBottomSheet";
+import { ROLE_COLORS } from "./utils";
 
 interface NodeOption {
   id: string;
   shortname?: string;
   longname?: string;
+}
+
+function MobileFiltersSection({
+  recentDays,
+  setRecentDays,
+  linkMode,
+  setLinkMode,
+  clusterEnabled,
+  setClusterEnabled,
+  roleFilter,
+  setRoleFilter,
+  channelFilter,
+  setChannelFilter,
+  availableChannels,
+  resolveChannelLabel,
+}: {
+  recentDays: number;
+  setRecentDays: Dispatch<SetStateAction<number>>;
+  linkMode: LinkMode;
+  setLinkMode: Dispatch<SetStateAction<LinkMode>>;
+  clusterEnabled: boolean;
+  setClusterEnabled: Dispatch<SetStateAction<boolean>>;
+  roleFilter: number | null;
+  setRoleFilter: Dispatch<SetStateAction<number | null>>;
+  channelFilter: string | null;
+  setChannelFilter: Dispatch<SetStateAction<string | null>>;
+  availableChannels: string[];
+  resolveChannelLabel?: (id: string | null | undefined) => string | null;
+}) {
+  const DAYS_OPTIONS: DropupOption<number>[] = [
+    { value: 1, label: "Last 1 day" },
+    { value: 3, label: "Last 3 days" },
+    { value: 5, label: "Last 5 days" },
+    { value: 7, label: "Last 7 days" },
+    { value: 14, label: "Last 14 days" },
+    { value: 30, label: "Last 30 days" },
+  ];
+  const LINK_MODE_OPTIONS: DropupOption<LinkMode>[] = [
+    { value: "selected", label: "Selected Node Only" },
+    { value: "all", label: "All Nodes" },
+    { value: "mynode", label: "My Node" },
+  ];
+  const CLUSTER_OPTIONS: DropupOption<string>[] = [
+    { value: "on", label: "Clustering On" },
+    { value: "off", label: "Clustering Off" },
+  ];
+  const ROLE_OPTIONS: DropupOption<number | null>[] = [
+    { value: null, label: "All Roles" },
+    ...Object.entries(roleTitles).map(([val, info]) => ({
+      value: Number(val),
+      label: info.title,
+      color: ROLE_COLORS[Number(val)],
+    })),
+  ];
+  const channelOptions: DropupOption<string | null>[] = [
+    { value: null, label: "All Channels" },
+    ...availableChannels.map((ch) => ({
+      value: ch,
+      label: resolveChannelLabel?.(ch) ?? `Ch ${ch}`,
+    })),
+  ];
+
+  const daysLabel = (d: number) => (d >= 30 ? "30d" : `${d}d`);
+  const linkModeLabel = (m: LinkMode) =>
+    m === "selected" ? "Selected" : m === "all" ? "All" : "My Node";
+
+  return (
+    <div className="mb-3">
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">
+        Filters
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        <FilterDropup
+          label={`Last ${daysLabel(recentDays)}`}
+          value={recentDays}
+          options={DAYS_OPTIONS}
+          onChange={(v) => setRecentDays(v)}
+          isActive={recentDays !== 30}
+        />
+        <FilterDropup
+          label={`Links: ${linkModeLabel(linkMode)}`}
+          value={linkMode}
+          options={LINK_MODE_OPTIONS}
+          onChange={(v) => setLinkMode(v)}
+          isActive={linkMode !== "selected"}
+        />
+        <FilterDropup
+          label={`Cluster: ${clusterEnabled ? "On" : "Off"}`}
+          value={clusterEnabled ? "on" : "off"}
+          options={CLUSTER_OPTIONS}
+          onChange={(v) => setClusterEnabled(v === "on")}
+          isActive={clusterEnabled}
+        />
+        <FilterDropup
+          label={
+            roleFilter != null
+              ? (roleTitles[roleFilter as NodeRole]?.abbreviation ?? "Role")
+              : "Role"
+          }
+          value={roleFilter}
+          options={ROLE_OPTIONS}
+          onChange={(v) => setRoleFilter(v)}
+          isActive={roleFilter != null}
+          maxHeight={340}
+        />
+        {availableChannels.length > 0 && (
+          <FilterDropup
+            label={
+              channelFilter != null
+                ? (resolveChannelLabel?.(channelFilter) ?? `Ch ${channelFilter}`).slice(0, 10)
+                : "Channel"
+            }
+            value={channelFilter}
+            options={channelOptions}
+            onChange={(v) => setChannelFilter(v)}
+            isActive={channelFilter != null}
+          />
+        )}
+      </div>
+    </div>
+  );
 }
 
 export function MapSettingsPanel({
@@ -43,6 +168,17 @@ export function MapSettingsPanel({
   setTerrainExaggeration,
   onExport,
   hidden = false,
+
+  recentDays,
+  setRecentDays,
+  clusterEnabled,
+  setClusterEnabled,
+  roleFilter,
+  setRoleFilter,
+  channelFilter,
+  setChannelFilter,
+  availableChannels = [],
+  resolveChannelLabel,
 }: {
   settingsPanelRef: RefObject<HTMLDivElement | null>;
   settingsToggleRef: RefObject<HTMLButtonElement | null>;
@@ -76,6 +212,17 @@ export function MapSettingsPanel({
   setTerrainExaggeration: Dispatch<SetStateAction<number>>;
   onExport?: () => void;
   hidden?: boolean;
+
+  recentDays: number;
+  setRecentDays: Dispatch<SetStateAction<number>>;
+  clusterEnabled: boolean;
+  setClusterEnabled: Dispatch<SetStateAction<boolean>>;
+  roleFilter: number | null;
+  setRoleFilter: Dispatch<SetStateAction<number | null>>;
+  channelFilter: string | null;
+  setChannelFilter: Dispatch<SetStateAction<string | null>>;
+  availableChannels?: string[];
+  resolveChannelLabel?: (id: string | null | undefined) => string | null;
 }) {
   const [nodeSearch, setNodeSearch] = useState("");
   const [legendOpen, setLegendOpen] = useState(false);
@@ -109,6 +256,8 @@ export function MapSettingsPanel({
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [legendOpen]);
+
+  const sheet = useBottomSheetGesture(() => setSettingsPanelOpen(false));
 
   const selectClasses =
     "w-full rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-gray-200 focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50 [&>option]:bg-gray-800 [&>option]:text-gray-200";
@@ -165,12 +314,33 @@ export function MapSettingsPanel({
 
       {settingsPanelOpen && (
         <div
-          ref={settingsPanelRef}
-          className="mb-2 w-72 max-w-[calc(100vw-2rem)] h-130 max-h-[calc(100vh-8rem)] overflow-y-auto
-                     rounded-xl shadow-2xl border border-white/10 bg-gray-900/80 backdrop-blur-xl"
+          ref={(el) => {
+            (settingsPanelRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+            (sheet.sheetRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+          }}
+          className="shadow-2xl border border-white/10 bg-gray-900/80 backdrop-blur-xl
+                     fixed inset-x-0 bottom-0 max-h-[85dvh] rounded-t-2xl flex flex-col
+                     animate-[slideInUp_200ms_ease-out]
+                     sm:static sm:mb-2 sm:inset-x-auto sm:bottom-auto
+                     sm:w-72 sm:max-w-[calc(100vw-2rem)] sm:h-130 sm:max-h-[calc(100vh-8rem)]
+                     sm:rounded-xl sm:animate-none"
         >
-          <div className="px-4 py-3">
-            <div className="flex items-center justify-between mb-2">
+          <div
+            className="sm:hidden flex justify-center pt-2 pb-1 shrink-0 touch-none cursor-grab active:cursor-grabbing"
+            onTouchStart={sheet.onTouchStart}
+            onTouchMove={sheet.onTouchMove}
+            onTouchEnd={sheet.onTouchEnd}
+          >
+            <div className="w-10 h-1 rounded-full bg-white/20" />
+          </div>
+
+          <div className="px-4 py-3 pb-6 sm:pb-3 overflow-y-auto overscroll-contain flex-1 min-h-0 sm:overflow-y-auto">
+            <div
+              className="flex items-center justify-between mb-2 max-sm:touch-none"
+              onTouchStart={sheet.onTouchStart}
+              onTouchMove={sheet.onTouchMove}
+              onTouchEnd={sheet.onTouchEnd}
+            >
               <h3 className="text-sm font-semibold text-gray-200">Map Settings</h3>
               <button
                 type="button"
@@ -184,9 +354,26 @@ export function MapSettingsPanel({
               </button>
             </div>
 
-            <p className="text-[10px] text-gray-500 mb-2">
+            <p className="hidden sm:block text-[10px] text-gray-500 mb-2">
               Filters (last-seen, links, clustering, role, channel) are in the pills at the bottom-left.
             </p>
+
+            <div className="sm:hidden">
+              <MobileFiltersSection
+                recentDays={recentDays}
+                setRecentDays={setRecentDays}
+                linkMode={linkMode}
+                setLinkMode={setLinkMode}
+                clusterEnabled={clusterEnabled}
+                setClusterEnabled={setClusterEnabled}
+                roleFilter={roleFilter}
+                setRoleFilter={setRoleFilter}
+                channelFilter={channelFilter}
+                setChannelFilter={setChannelFilter}
+                availableChannels={availableChannels}
+                resolveChannelLabel={resolveChannelLabel}
+              />
+            </div>
 
             <Section id="appearance" title="Appearance" subtitle="Map provider and visual style">
               <div>
@@ -394,7 +581,7 @@ export function MapSettingsPanel({
         </div>
       )}
 
-      <div className="flex items-center gap-2">
+      <div className={`flex items-center gap-2 ${settingsPanelOpen ? "max-sm:hidden" : ""}`}>
         <button
           type="button"
           onClick={() => {

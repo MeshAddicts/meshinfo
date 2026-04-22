@@ -4492,6 +4492,16 @@ export function Map() {
         setTerrainExaggeration={setTerrainExaggeration}
         onExport={handleExport}
         hidden={!!detailsData}
+        recentDays={recentDays}
+        setRecentDays={setRecentDays}
+        clusterEnabled={clusterEnabled}
+        setClusterEnabled={setClusterEnabled}
+        roleFilter={roleFilter}
+        setRoleFilter={setRoleFilter}
+        channelFilter={channelFilter}
+        setChannelFilter={setChannelFilter}
+        availableChannels={availableChannels}
+        resolveChannelLabel={resolveChannelLabel}
       />
 
       <MapQuickControls
