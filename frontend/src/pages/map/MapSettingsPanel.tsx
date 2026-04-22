@@ -14,7 +14,23 @@ interface NodeOption {
   longname?: string;
 }
 
-function MobileFiltersSection({
+function filtersSubtitle(
+  recentDays: number,
+  linkMode: LinkMode,
+  clusterEnabled: boolean,
+  roleFilter: number | null,
+  channelFilter: string | null,
+): string {
+  const parts: string[] = [];
+  if (recentDays !== 30) parts.push(`Last ${recentDays}d`);
+  if (linkMode !== "selected") parts.push(linkMode === "all" ? "All links" : "My Node");
+  if (!clusterEnabled) parts.push("No cluster");
+  if (roleFilter != null) parts.push(roleTitles[roleFilter as NodeRole]?.abbreviation ?? "Role");
+  if (channelFilter != null) parts.push(`Ch ${channelFilter}`);
+  return parts.length === 0 ? "Defaults" : parts.join(" · ");
+}
+
+function FiltersSection({
   recentDays,
   setRecentDays,
   linkMode,
@@ -79,11 +95,7 @@ function MobileFiltersSection({
     m === "selected" ? "Selected" : m === "all" ? "All" : "My Node";
 
   return (
-    <div className="mb-3">
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">
-        Filters
-      </div>
-      <div className="flex flex-wrap gap-1.5">
+    <div className="flex flex-wrap gap-1.5">
         <FilterDropup
           label={`Last ${daysLabel(recentDays)}`}
           value={recentDays}
@@ -130,7 +142,6 @@ function MobileFiltersSection({
             isActive={channelFilter != null}
           />
         )}
-      </div>
     </div>
   );
 }
@@ -140,8 +151,8 @@ export function MapSettingsPanel({
   settingsToggleRef,
   settingsPanelOpen,
   setSettingsPanelOpen,
-  openSection,
-  setOpenSection,
+  openSections,
+  setOpenSections,
 
   provider,
   setProvider,
@@ -184,8 +195,8 @@ export function MapSettingsPanel({
   settingsToggleRef: RefObject<HTMLButtonElement | null>;
   settingsPanelOpen: boolean;
   setSettingsPanelOpen: Dispatch<SetStateAction<boolean>>;
-  openSection: string;
-  setOpenSection: Dispatch<SetStateAction<string>>;
+  openSections: Set<string>;
+  setOpenSections: Dispatch<SetStateAction<Set<string>>>;
 
   provider: MapProvider;
   setProvider: Dispatch<SetStateAction<MapProvider>>;
@@ -266,7 +277,12 @@ export function MapSettingsPanel({
     "p-2 rounded-xl shadow-2xl border backdrop-blur-xl transition-colors";
 
   const toggleSection = (key: string) => {
-    setOpenSection((cur) => (cur === key ? "" : key));
+    setOpenSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   };
 
   const Section = ({
@@ -280,7 +296,7 @@ export function MapSettingsPanel({
     subtitle?: string;
     children: React.ReactNode;
   }) => {
-    const open = openSection === id;
+    const open = openSections.has(id);
     return (
       <div className="border-t border-white/5 first:border-t-0">
         <button
@@ -354,12 +370,12 @@ export function MapSettingsPanel({
               </button>
             </div>
 
-            <p className="hidden sm:block text-[10px] text-gray-500 mb-2">
-              Filters (last-seen, links, clustering, role, channel) are in the pills at the bottom-left.
-            </p>
-
-            <div className="sm:hidden">
-              <MobileFiltersSection
+            <Section
+              id="filters"
+              title="Filters"
+              subtitle={filtersSubtitle(recentDays, linkMode, clusterEnabled, roleFilter, channelFilter)}
+            >
+              <FiltersSection
                 recentDays={recentDays}
                 setRecentDays={setRecentDays}
                 linkMode={linkMode}
@@ -373,7 +389,7 @@ export function MapSettingsPanel({
                 availableChannels={availableChannels}
                 resolveChannelLabel={resolveChannelLabel}
               />
-            </div>
+            </Section>
 
             <Section id="appearance" title="Appearance" subtitle="Map provider and visual style">
               <div>

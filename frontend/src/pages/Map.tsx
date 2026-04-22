@@ -47,7 +47,7 @@ import { MapLosPanel } from "./map/MapLosPanel";
 import { MapToolPrompt, MapToolsDrawer } from "./map/MapToolsDrawer";
 import { MapTraceroutePanel } from "./map/MapTraceroutePanel";
 import { COVERAGE_DETAIL_MAX_TILES, COVERAGE_DETAIL_SIZE, type CoverageDetail, MapCoveragePanel } from "./map/MapCoveragePanel";
-import { MapQuickControls } from "./map/MapQuickControls";
+import { FiltersResetPill } from "./map/FiltersResetPill";
 import { MapSearchBar } from "./map/MapSearchBar";
 import { MapSettingsPanel } from "./map/MapSettingsPanel";
 import { LS_KEYS, readJson, toMapboxStyleUrl, writeJson } from "./map/storage";
@@ -873,7 +873,9 @@ export function Map() {
   // Which accordion section is expanded in the settings panel. Lifted to
   // Map.tsx so the tools drawer can jump the user to the "terrain" section
   // when they click a terrain-gated tool with 3D off.
-  const [settingsOpenSection, setSettingsOpenSection] = useState<string>("appearance");
+  const [settingsOpenSections, setSettingsOpenSections] = useState<Set<string>>(
+    () => new Set(["appearance"]),
+  );
 
   useEffect(() => writeJson(LS_KEYS.provider, provider), [provider]);
   useEffect(() => writeJson(LS_KEYS.mapboxStyle, mapboxStyle), [mapboxStyle]);
@@ -898,6 +900,9 @@ export function Map() {
 
       if (settingsPanelRef.current?.contains(target)) return;
       if (settingsToggleRef.current?.contains(target)) return;
+      // FilterDropup menus are portaled to <body>, outside the panel tree.
+      // A click on one of them shouldn't close the settings panel.
+      if ((target as Element | null)?.closest?.("[data-filter-menu]")) return;
 
       setSettingsPanelOpen(false);
     };
@@ -4471,8 +4476,8 @@ export function Map() {
         settingsToggleRef={settingsToggleRef}
         settingsPanelOpen={settingsPanelOpen}
         setSettingsPanelOpen={setSettingsPanelOpen}
-        openSection={settingsOpenSection}
-        setOpenSection={setSettingsOpenSection}
+        openSections={settingsOpenSections}
+        setOpenSections={setSettingsOpenSections}
         provider={provider}
         setProvider={setProvider}
         mapboxStyle={mapboxStyle}
@@ -4504,19 +4509,23 @@ export function Map() {
         resolveChannelLabel={resolveChannelLabel}
       />
 
-      <MapQuickControls
+      <FiltersResetPill
         recentDays={recentDays}
         setRecentDays={setRecentDays}
         linkMode={linkMode}
         setLinkMode={setLinkMode}
-        clusterEnabled={clusterEnabled}
-        setClusterEnabled={setClusterEnabled}
         roleFilter={roleFilter}
         setRoleFilter={setRoleFilter}
         channelFilter={channelFilter}
         setChannelFilter={setChannelFilter}
-        availableChannels={availableChannels}
-        resolveChannelLabel={resolveChannelLabel}
+        onOpenFilters={() => {
+          setSettingsOpenSections((prev) => {
+            const next = new Set(prev);
+            next.add("filters");
+            return next;
+          });
+          setSettingsPanelOpen(true);
+        }}
         hidden={!!detailsData}
       />
 
@@ -4573,7 +4582,11 @@ export function Map() {
         onRequestTerrainSetup={() => {
           // If on OSM the terrain section isn't rendered — send the user
           // to "appearance" so they can switch provider to Mapbox first.
-          setSettingsOpenSection(usingMapbox ? "terrain" : "appearance");
+          setSettingsOpenSections((prev) => {
+            const next = new Set(prev);
+            next.add(usingMapbox ? "terrain" : "appearance");
+            return next;
+          });
           setSettingsPanelOpen(true);
         }}
       />

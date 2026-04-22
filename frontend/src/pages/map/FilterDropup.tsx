@@ -90,6 +90,10 @@ export function FilterDropup<T extends string | number | null>({
       {open && menuPos && createPortal(
         <div
           ref={menuRef}
+          // Marker for outside-click handlers: this menu is portaled out of
+          // its parent panel's DOM tree, so callers must opt-out of dismissing
+          // their panel when the click lands here.
+          data-filter-menu="true"
           style={{
             position: "fixed",
             left: menuPos.left,
