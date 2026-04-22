@@ -105,17 +105,19 @@ export function MapScanPanel({
   const toggleFilter = (cls: ScanClass) =>
     setFilter((prev) => (prev === cls ? null : cls));
 
-  const gearRef = useRef<HTMLDetailsElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const isCustomHardware = COMMON_HARDWARE[hardwareIdx]?.isCustom ?? false;
   const isCustomPreset = MESHTASTIC_PRESETS[presetIdx]?.isCustom ?? false;
 
-  // Close gear popover on outside click (panel's onClick handles inside clicks).
+  // Close any open <details> in the panel on outside click (map, other UI).
   useEffect(() => {
     const onDocMouseDown = (e: MouseEvent) => {
-      const gear = gearRef.current;
-      if (!gear || !gear.open) return;
-      if (gear.contains(e.target as Node)) return;
-      gear.removeAttribute("open");
+      const root = panelRef.current;
+      if (!root) return;
+      if (root.contains(e.target as Node)) return;
+      root.querySelectorAll<HTMLDetailsElement>("details[open]").forEach((d) => {
+        d.removeAttribute("open");
+      });
     };
     document.addEventListener("mousedown", onDocMouseDown);
     return () => document.removeEventListener("mousedown", onDocMouseDown);
@@ -149,6 +151,7 @@ export function MapScanPanel({
 
   return (
     <div
+      ref={panelRef}
       className="fixed left-3 top-16 bottom-16 z-1050 w-85 max-w-[calc(100vw-1.5rem)]
         rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
         animate-[slideInLeft_220ms_ease-out] flex flex-col"
@@ -182,7 +185,7 @@ export function MapScanPanel({
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          <details ref={gearRef} className="text-[10px] text-gray-400 relative">
+          <details className="text-[10px] text-gray-400 relative">
             <summary
               className="cursor-pointer list-none p-1 rounded-md hover:text-gray-200 hover:bg-white/5 transition-colors"
               aria-label="Scan settings"

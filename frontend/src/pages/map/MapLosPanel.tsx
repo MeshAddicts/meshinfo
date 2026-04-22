@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ElevationProfile } from "./ElevationProfile";
 import { COMMON_ANTENNAS, COMMON_HARDWARE } from "./coverageAnalysis";
 import type { LoSResult } from "./losAnalysis";
@@ -129,6 +129,21 @@ export function MapLosPanel({
   /** Fires with 0-1 distance fraction on chart hover. */
   onProfileHover?: (fraction: number | null) => void;
 }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  // Close any open <details> in the panel on outside click (map, other UI).
+  useEffect(() => {
+    const onDocMouseDown = (e: MouseEvent) => {
+      const root = panelRef.current;
+      if (!root) return;
+      if (root.contains(e.target as Node)) return;
+      root.querySelectorAll<HTMLDetailsElement>("details[open]").forEach((d) => {
+        d.removeAttribute("open");
+      });
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, []);
+
   if (terrainNeeded) {
     return (
       <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(900px,calc(100vw-2rem))]
@@ -224,7 +239,7 @@ export function MapLosPanel({
   }[statusColor];
 
   return (
-    <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(1200px,calc(100vw-2rem))]
+    <div ref={panelRef} className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(1200px,calc(100vw-2rem))]
       rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
       animate-[slideInUp_200ms_ease-out]">
 

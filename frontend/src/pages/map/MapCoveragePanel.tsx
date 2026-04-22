@@ -198,6 +198,21 @@ export function MapCoveragePanel({
 
   // Lets the header "custom RX" pill open the advanced-settings <details>
   const gearRef = useRef<HTMLDetailsElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Close any open <details> in the panel on outside click (map, other UI).
+  useEffect(() => {
+    const onDocMouseDown = (e: MouseEvent) => {
+      const root = panelRef.current;
+      if (!root) return;
+      if (root.contains(e.target as Node)) return;
+      root.querySelectorAll<HTMLDetailsElement>("details[open]").forEach((d) => {
+        d.removeAttribute("open");
+      });
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, []);
 
   if (terrainNeeded) {
     return (
@@ -324,6 +339,7 @@ export function MapCoveragePanel({
 
   return (
     <div
+      ref={panelRef}
       className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(640px,calc(100vw-2rem))]
         rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
         animate-[slideInUp_200ms_ease-out]"
