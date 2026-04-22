@@ -834,6 +834,10 @@ export function Map() {
     // Desktop default open
     return stored ?? (typeof window !== "undefined" && window.innerWidth >= 1024);
   });
+  // Which accordion section is expanded in the settings panel. Lifted to
+  // Map.tsx so the tools drawer can jump the user to the "terrain" section
+  // when they click a terrain-gated tool with 3D off.
+  const [settingsOpenSection, setSettingsOpenSection] = useState<string>("appearance");
 
   useEffect(() => writeJson(LS_KEYS.provider, provider), [provider]);
   useEffect(() => writeJson(LS_KEYS.mapboxStyle, mapboxStyle), [mapboxStyle]);
@@ -4349,6 +4353,8 @@ export function Map() {
         settingsToggleRef={settingsToggleRef}
         settingsPanelOpen={settingsPanelOpen}
         setSettingsPanelOpen={setSettingsPanelOpen}
+        openSection={settingsOpenSection}
+        setOpenSection={setSettingsOpenSection}
         provider={provider}
         setProvider={setProvider}
         mapboxStyle={mapboxStyle}
@@ -4436,6 +4442,12 @@ export function Map() {
           }
         }}
         terrainEnabled={provider === "mapbox" && terrain3D}
+        onRequestTerrainSetup={() => {
+          // If on OSM the terrain section isn't rendered — send the user
+          // to "appearance" so they can switch provider to Mapbox first.
+          setSettingsOpenSection(usingMapbox ? "terrain" : "appearance");
+          setSettingsPanelOpen(true);
+        }}
       />
 
       {/* Tool prompts — guide the user through picks */}

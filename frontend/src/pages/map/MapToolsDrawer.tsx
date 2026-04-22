@@ -64,10 +64,13 @@ export function MapToolsDrawer({
   activeTool,
   onSelect,
   terrainEnabled,
+  onRequestTerrainSetup,
 }: {
   activeTool: ToolId | null;
   onSelect: (tool: ToolId | null) => void;
   terrainEnabled: boolean;
+  /** Invoked when a user clicks a terrain-gated tool with 3D terrain off. */
+  onRequestTerrainSetup?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -136,9 +139,12 @@ export function MapToolsDrawer({
               <button
                 key={tool.id}
                 type="button"
-                disabled={disabled}
                 onClick={() => {
-                  if (disabled) return;
+                  if (disabled) {
+                    onRequestTerrainSetup?.();
+                    setOpen(false);
+                    return;
+                  }
                   onSelect(tool.id);
                   setOpen(false);
                 }}
@@ -146,11 +152,11 @@ export function MapToolsDrawer({
                   isActive
                     ? "bg-cyan-500/20 text-cyan-200"
                     : disabled
-                    ? "text-gray-600 cursor-not-allowed"
+                    ? "text-gray-500 hover:bg-white/5 hover:text-gray-300 cursor-pointer"
                     : "text-gray-300 hover:bg-white/5 hover:text-gray-100"
                 }`}
               >
-                <div className={`shrink-0 mt-0.5 ${isActive ? "text-cyan-400" : disabled ? "text-gray-700" : "text-gray-500"}`}>
+                <div className={`shrink-0 mt-0.5 ${isActive ? "text-cyan-400" : disabled ? "text-gray-600" : "text-gray-500"}`}>
                   {tool.icon}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -163,7 +169,7 @@ export function MapToolsDrawer({
                     )}
                   </div>
                   <div className="text-[10px] text-gray-500 mt-0.5 leading-snug">
-                    {disabled ? "Enable 3D terrain to use this tool." : tool.description}
+                    {disabled ? "Click to enable 3D terrain." : tool.description}
                   </div>
                 </div>
               </button>

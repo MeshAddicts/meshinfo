@@ -15,6 +15,8 @@ export function MapSettingsPanel({
   settingsToggleRef,
   settingsPanelOpen,
   setSettingsPanelOpen,
+  openSection,
+  setOpenSection,
 
   provider,
   setProvider,
@@ -46,6 +48,8 @@ export function MapSettingsPanel({
   settingsToggleRef: RefObject<HTMLButtonElement | null>;
   settingsPanelOpen: boolean;
   setSettingsPanelOpen: Dispatch<SetStateAction<boolean>>;
+  openSection: string;
+  setOpenSection: Dispatch<SetStateAction<string>>;
 
   provider: MapProvider;
   setProvider: Dispatch<SetStateAction<MapProvider>>;
@@ -75,7 +79,6 @@ export function MapSettingsPanel({
 }) {
   const [nodeSearch, setNodeSearch] = useState("");
   const [legendOpen, setLegendOpen] = useState(false);
-  const [openSection, setOpenSection] = useState<string>("appearance");
   const containerRef = useRef<HTMLDivElement>(null);
 
   const filteredNodes = useMemo(() => {
@@ -163,7 +166,7 @@ export function MapSettingsPanel({
       {settingsPanelOpen && (
         <div
           ref={settingsPanelRef}
-          className="mb-2 w-72 max-w-[calc(100vw-2rem)] max-h-[calc(100vh-8rem)] overflow-y-auto
+          className="mb-2 w-72 max-w-[calc(100vw-2rem)] h-130 max-h-[calc(100vh-8rem)] overflow-y-auto
                      rounded-xl shadow-2xl border border-white/10 bg-gray-900/80 backdrop-blur-xl"
         >
           <div className="px-4 py-3">
