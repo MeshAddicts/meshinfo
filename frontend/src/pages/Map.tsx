@@ -564,7 +564,9 @@ export function Map() {
           originHeightM: Math.round(result.originHeightM),
           originIsFallback: result.originIsFallback,
           radiusKm: result.radiusKm,
-          antennaDbi: result.antennaDbi,
+          txAntennaDbi: result.txAntennaDbi,
+          rxAntennaDbi: result.rxAntennaDbi,
+          rxAntennaHeightAboveGroundM: result.rxAntennaHeightAboveGroundM,
           txDbm: result.txDbm,
           rxSensitivityDbm: result.rxSensitivityDbm,
           model: "Longley-Rice v1.4 (ITS) via WASM",
@@ -604,8 +606,8 @@ export function Map() {
         `Model: Longley-Rice v1.4 (ITS) via WASM`,
         `Origin height: ${Math.round(result.originHeightM)} m${result.originIsFallback ? " (fallback)" : ""}`,
         `Analysis radius: ${result.radiusKm} km`,
-        `TX: ${result.txDbm} dBm, antenna ${result.antennaDbi} dBi`,
-        `RX sensitivity: ${result.rxSensitivityDbm} dBm`,
+        `TX: ${result.txDbm} dBm, antenna ${result.txAntennaDbi} dBi`,
+        `RX: antenna ${result.rxAntennaDbi} dBi @ ${Math.round(result.rxAntennaHeightAboveGroundM)} m AGL, sensitivity ${result.rxSensitivityDbm} dBm`,
         `Generated: ${stamp}`,
       ].map(esc).join("\n");
 
@@ -632,7 +634,7 @@ export function Map() {
     </Style>
     <Placemark>
       <name>Coverage origin</name>
-      <description><![CDATA[${esc(`${Math.round(result.originHeightM)} m MSL · TX ${result.txDbm} dBm · ${result.antennaDbi} dBi`)}]]></description>
+      <description><![CDATA[${esc(`${Math.round(result.originHeightM)} m MSL · TX ${result.txDbm} dBm · ${result.txAntennaDbi} dBi`)}]]></description>
       <styleUrl>#origin</styleUrl>
       <Point>
         <coordinates>${result.origin[0]},${result.origin[1]},${Math.round(result.originHeightM)}</coordinates>

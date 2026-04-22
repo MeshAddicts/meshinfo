@@ -37,8 +37,10 @@ export const MESHTASTIC_PRESETS: ModemPreset[] = [
   { id: "Custom",       label: "Custom",                        sensitivityDbm: -130, datasheetSensitivityDbm: -133, sf: 11, bwKhz: 250, isCustom: true },
 ];
 
-/** SX1276 is ~2 dB less sensitive than SX1262 at the same SF/BW. */
-export const SX1276_SENSITIVITY_OFFSET_DB = -2;
+/** SX1276 is ~2 dB less sensitive than SX1262 at the same SF/BW.
+ *  Offset is added to sensitivity (dBm); a less-sensitive chipset needs a stronger
+ *  signal to decode, which in dBm terms means a less-negative value → positive offset. */
+export const SX1276_SENSITIVITY_OFFSET_DB = +2;
 
 export type LoraChipset = "SX1262" | "SX1276";
 
