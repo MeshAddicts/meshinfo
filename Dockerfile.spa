@@ -1,3 +1,13 @@
+# Compile NTIA ITM to WASM. Pinned to same emsdk as frontend/wasm/itm/Dockerfile.
+FROM emscripten/emsdk:3.1.65 AS wasm-build
+
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /itm
+COPY frontend/wasm/itm/fetch-vendor.sh frontend/wasm/itm/build.sh frontend/wasm/itm/shim.h ./
+RUN chmod +x fetch-vendor.sh build.sh && ./fetch-vendor.sh && ./build.sh
+
 FROM node:25.9.0-alpine AS build
 
 LABEL org.opencontainers.image.source="https://github.com/MeshAddicts/meshinfo"
@@ -18,6 +28,12 @@ COPY frontend/.yarn ./.yarn
 RUN yarn install --immutable
 
 COPY frontend/ ./
+
+# .d.ts for tsc; .js goes to public/ because the worker's @vite-ignore'd
+# import expects /generated/itm/itm.js at a fixed URL.
+COPY --from=wasm-build /itm/dist/itm.d.ts ./src/generated/itm/itm.d.ts
+RUN mkdir -p ./public/generated/itm
+COPY --from=wasm-build /itm/dist/itm.js ./public/generated/itm/itm.js
 
 RUN yarn build --base=/
 

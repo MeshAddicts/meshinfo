@@ -1,3 +1,9 @@
 caddy
 output
 postgres
+# Host node_modules would clobber the container install and drop .bin shims.
+frontend/node_modules
+# Regenerated inside the wasm-build stage.
+frontend/wasm/itm/vendor
+frontend/wasm/itm/dist
+frontend/wasm/itm/fixtures
