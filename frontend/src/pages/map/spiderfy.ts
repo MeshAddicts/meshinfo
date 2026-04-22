@@ -271,11 +271,9 @@ export async function spiderfy(
   if (!source) return;
 
   let leaves = await tryGetLeaves(source, clusterId);
-  let source_used = "getClusterLeaves";
 
   if (leaves.length === 0) {
     leaves = findLeavesNearCenter(fallbackPool, center, pointCount ?? 0);
-    source_used = "proximity fallback";
   }
 
   if (leaves.length === 0) return;
@@ -325,8 +323,13 @@ export async function unspiderfy(map: MbMap): Promise<void> {
     removeSpiderfyLayers(map);
     return;
   }
+  // Bind narrowed non-null values for the inner frame() closure (TS loses
+  // the outer control-flow narrowing across the Promise boundary).
+  const s = state;
+  const ns = nodeSrc;
+  const ls = legSrc;
 
-  const positions = fanPositions(state.center, state.leaves.length, map.getZoom());
+  const positions = fanPositions(s.center, s.leaves.length, map.getZoom());
   activeState = null;
 
   return new Promise<void>((resolve) => {
@@ -334,10 +337,10 @@ export async function unspiderfy(map: MbMap): Promise<void> {
     const duration = ANIMATE_MS * 0.7;
     function frame(now: number) {
       const t = Math.min((now - start) / duration, 1);
-      const pos = interpolatePositions(state.center, positions, 1 - t);
+      const pos = interpolatePositions(s.center, positions, 1 - t);
       try {
-        nodeSrc!.setData(nodesGeoJSON(state.leaves, pos));
-        legSrc!.setData(legsGeoJSON(state.center, pos));
+        ns.setData(nodesGeoJSON(s.leaves, pos));
+        ls.setData(legsGeoJSON(s.center, pos));
       } catch {
         removeSpiderfyLayers(map);
         resolve();

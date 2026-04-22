@@ -1776,10 +1776,13 @@ export function Map() {
         const originGroundFromDem = sampleDEMAt(dem, origin![0], origin![1]);
         const groundOkDem = !Number.isNaN(originGroundFromDem);
         const groundOkHz = originGroundHighZoom != null;
-        const originGround = groundOkHz
-          ? originGroundHighZoom
-          : originGroundFromDem;
         const groundOk = groundOkHz || groundOkDem;
+        // Narrowed to number with a 0 fallback; downstream usage is guarded by groundOk.
+        const originGround: number = groundOkHz
+          ? (originGroundHighZoom as number)
+          : groundOkDem
+            ? originGroundFromDem
+            : 0;
         // Guards against junk altitudes (GPS glitch, unit-scaled values); matches losAnalysis.ts
         const MAX_HEIGHT_ABOVE_TERRAIN_M = 1000;
         const altValid =
