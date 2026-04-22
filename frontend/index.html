@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <base href="/" />
     <title>MeshInfo</title>
   </head>
@@ -15,6 +15,7 @@
         font-size: 12px;
         margin: 0;
         padding: 0;
+        padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) env(safe-area-inset-bottom, 0) env(safe-area-inset-left, 0);
       }
       a {
         text-decoration: none;

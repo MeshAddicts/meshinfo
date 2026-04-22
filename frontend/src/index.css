@@ -12,6 +12,10 @@
   --color-indigo-500: #6366f1;
   --color-indigo-600: #4f46e5;
   --color-indigo-700: #4338ca;
+  /* Z-index scale for the map overlay stack (panels > settings chips > popovers). */
+  --z-index-1050: 1050;
+  --z-index-1060: 1060;
+  --z-index-1100: 1100;
 }
 
 /*
@@ -45,4 +49,67 @@
 }
 .dark a:hover {
   color: #6366f1;
+}
+
+/* Hide scrollbar but keep scroll functionality */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Bottom sheet expanded state — dvh accounts for mobile browser chrome */
+.bottom-sheet-expanded {
+  height: 100dvh !important;
+  max-height: 100dvh !important;
+  transition: height 200ms ease-out, max-height 200ms ease-out;
+}
+.bottom-sheet-collapsing {
+  transition: height 200ms ease-out, max-height 200ms ease-out;
+}
+
+/* Mapbox hover tooltip styling */
+.map-hover-tooltip .mapboxgl-popup-content {
+  background: rgba(0, 0, 0, 0.85);
+  color: white;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none;
+  box-shadow: none;
+}
+.map-hover-tooltip .mapboxgl-popup-tip {
+  border-top-color: rgba(0, 0, 0, 0.85);
+}
+
+/* OL zoom controls: move to top-right to match Mapbox layout */
+.ol-zoom {
+  left: auto !important;
+  right: 8px;
+  top: 8px;
+}
+
+/* Mapbox controls: logo + attribution side by side */
+.mapboxgl-ctrl-top-right {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 4px;
+}
+.mapboxgl-ctrl-top-right .mapboxgl-ctrl {
+  margin: 0 !important;
+}
+
+/* Map details panel slide-in animations */
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes slideInUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@keyframes slideInLeft {
+  from { transform: translate(-100%, -50%); opacity: 0; }
+  to   { transform: translate(0, -50%);      opacity: 1; }
 }

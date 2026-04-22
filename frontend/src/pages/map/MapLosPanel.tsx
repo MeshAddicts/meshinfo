@@ -1,0 +1,378 @@
+import { useEffect, useRef, useState } from "react";
+import { ElevationProfile } from "./ElevationProfile";
+import { COMMON_ANTENNAS, COMMON_HARDWARE } from "./coverageAnalysis";
+import type { LoSResult } from "./losAnalysis";
+import type { DemSource } from "./terrainRgb";
+
+/** Endpoint config column: hardware/antenna/height for one end of the LOS link. */
+function EndpointConfig({
+  label,
+  color,
+  hwIdx, onHwIdxChange,
+  antIdx, onAntIdxChange,
+  heightM, onHeightChange,
+}: {
+  label: string;
+  color: string;
+  hwIdx: number;
+  onHwIdxChange: (idx: number) => void;
+  antIdx: number;
+  onAntIdxChange: (idx: number) => void;
+  heightM: number;
+  onHeightChange: (m: number) => void;
+}) {
+  const [heightInput, setHeightInput] = useState(String(heightM));
+  useEffect(() => { setHeightInput(String(heightM)); }, [heightM]);
+  const commitHeight = () => {
+    const n = Number(heightInput.trim());
+    if (!Number.isFinite(n) || heightInput.trim() === "") {
+      onHeightChange(2);
+      setHeightInput("2");
+      return;
+    }
+    const clamped = Math.max(0, Math.min(300, n));
+    onHeightChange(clamped);
+    setHeightInput(String(clamped));
+  };
+
+  return (
+    <div className="w-36 shrink-0 p-2 space-y-1.5 text-[10px]">
+      <div className="font-medium truncate" style={{ color }}>{label}</div>
+      <div>
+        <div className="text-gray-500 uppercase tracking-wider mb-0.5">Hardware</div>
+        <select
+          value={hwIdx}
+          onChange={(e) => onHwIdxChange(Number(e.target.value))}
+          className="w-full rounded border border-white/10 bg-white/5 px-1 py-0.5 text-[10px] text-gray-200
+            focus:border-cyan-500/50 focus:outline-hidden [&>option]:bg-gray-800 [&>option]:text-gray-200"
+        >
+          {COMMON_HARDWARE.map((h, i) => (
+            <option key={i} value={i}>{h.label} ({h.txDbm})</option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <div className="text-gray-500 uppercase tracking-wider mb-0.5">Antenna</div>
+        <select
+          value={antIdx}
+          onChange={(e) => onAntIdxChange(Number(e.target.value))}
+          className="w-full rounded border border-white/10 bg-white/5 px-1 py-0.5 text-[10px] text-gray-200
+            focus:border-cyan-500/50 focus:outline-hidden [&>option]:bg-gray-800 [&>option]:text-gray-200"
+        >
+          {COMMON_ANTENNAS.map((a, i) => (
+            <option key={i} value={i}>{a.label}</option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <div className="text-gray-500 uppercase tracking-wider mb-0.5">Height</div>
+        <div className="flex items-center gap-1 rounded border border-white/10 bg-white/5 px-1 py-0.5">
+          <input
+            type="text"
+            inputMode="decimal"
+            value={heightInput}
+            onChange={(e) => setHeightInput(e.target.value)}
+            onBlur={commitHeight}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur();
+              else if (e.key === "Escape") {
+                setHeightInput(String(heightM));
+                (e.currentTarget as HTMLInputElement).blur();
+              }
+            }}
+            className="min-w-0 flex-1 bg-transparent text-[10px] text-gray-200 text-center focus:outline-hidden"
+            title="Antenna height above ground (m). Blank = 2 m."
+          />
+          <span className="text-gray-500 shrink-0">m</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function MapLosPanel({
+  result,
+  fromLabel,
+  toLabel,
+  fromColor = "#22c55e",
+  toColor = "#06b6d4",
+  terrainNeeded,
+  onEnableTerrain,
+  onClose,
+  isComputing,
+  fromHwIdx, onFromHwIdxChange,
+  fromAntIdx, onFromAntIdxChange,
+  fromHeightM, onFromHeightChange,
+  toHwIdx, onToHwIdxChange,
+  toAntIdx, onToAntIdxChange,
+  toHeightM, onToHeightChange,
+  demSource,
+  onProfileHover,
+}: {
+  result: LoSResult | null;
+  fromLabel: string;
+  toLabel: string;
+  fromColor?: string;
+  toColor?: string;
+  terrainNeeded: boolean;
+  onEnableTerrain?: () => void;
+  onClose: () => void;
+  isComputing: boolean;
+  fromHwIdx: number; onFromHwIdxChange: (idx: number) => void;
+  fromAntIdx: number; onFromAntIdxChange: (idx: number) => void;
+  fromHeightM: number; onFromHeightChange: (m: number) => void;
+  toHwIdx: number; onToHwIdxChange: (idx: number) => void;
+  toAntIdx: number; onToAntIdxChange: (idx: number) => void;
+  toHeightM: number; onToHeightChange: (m: number) => void;
+  /** DEM tile source (null before first compute). */
+  demSource: DemSource | null;
+  /** Fires with 0-1 distance fraction on chart hover. */
+  onProfileHover?: (fraction: number | null) => void;
+}) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  // Close any open <details> in the panel on outside click (map, other UI).
+  useEffect(() => {
+    const onDocMouseDown = (e: MouseEvent) => {
+      const root = panelRef.current;
+      if (!root) return;
+      if (root.contains(e.target as Node)) return;
+      root.querySelectorAll<HTMLDetailsElement>("details[open]").forEach((d) => {
+        d.removeAttribute("open");
+      });
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, []);
+
+  if (terrainNeeded) {
+    return (
+      <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(900px,calc(100vw-2rem))]
+        rounded-xl shadow-2xl border border-amber-500/30 bg-gray-900/90 backdrop-blur-xl p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1">
+            <div className="text-sm font-semibold text-amber-300 mb-1">
+              3D Terrain required for line-of-sight analysis
+            </div>
+            <p className="text-xs text-gray-400 leading-relaxed">
+              LoS analysis samples real terrain elevations to determine if obstacles block the radio path.
+              Enable 3D terrain to use this feature.
+            </p>
+            {onEnableTerrain && (
+              <button
+                type="button"
+                onClick={onEnableTerrain}
+                className="mt-2.5 text-xs px-3 py-1.5 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-200 hover:bg-amber-500/30 transition-colors font-medium"
+              >
+                Enable 3D Terrain
+              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors shrink-0"
+            aria-label="Close LoS analysis"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (isComputing || !result) {
+    return (
+      <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(900px,calc(100vw-2rem))]
+        rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl p-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-xs text-gray-400">
+            <div className="w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+            Sampling terrain between {fromLabel} and {toLabel}…
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors shrink-0"
+            aria-label="Close"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const los = result;
+  // Status pill driven by ITM mode when available (authoritative); geometric info is secondary
+  let statusLabel: string;
+  let statusColor: "cyan" | "orange" | "fuchsia" | "red";
+  if (los.itmMode === "troposcatter") {
+    statusLabel = "Beyond radio horizon";
+    statusColor = "red";
+  } else if (los.itmMode === "diffraction") {
+    statusLabel = "Diffraction path";
+    statusColor = "fuchsia";
+  } else if (los.itmMode === "line_of_sight") {
+    statusLabel = los.fresnelClear ? "Clear Line of Sight" : "LoS · Fresnel Intrusion";
+    statusColor = los.fresnelClear ? "cyan" : "orange";
+  } else {
+    statusLabel = los.losClear
+      ? (los.fresnelClear ? "Clear Line of Sight" : "LoS · Fresnel Intrusion")
+      : "Obstructed";
+    statusColor = los.losClear ? (los.fresnelClear ? "cyan" : "orange") : "red";
+  }
+  const statusClasses = {
+    cyan: "bg-cyan-500/15 border-cyan-500/30 text-cyan-300",
+    orange: "bg-orange-500/15 border-orange-500/30 text-orange-300",
+    fuchsia: "bg-fuchsia-500/15 border-fuchsia-500/30 text-fuchsia-300",
+    red: "bg-red-500/15 border-red-500/30 text-red-300",
+  }[statusColor];
+  const dotColor = {
+    cyan: "bg-cyan-400",
+    orange: "bg-orange-400",
+    fuchsia: "bg-fuchsia-400",
+    red: "bg-red-400",
+  }[statusColor];
+
+  return (
+    <div ref={panelRef} className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(1200px,calc(100vw-2rem))]
+      rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
+      animate-[slideInUp_200ms_ease-out]">
+
+      <div className="flex items-center justify-between gap-3 px-3 py-1.5 border-b border-white/5">
+        <div className="flex items-center gap-2 min-w-0 flex-wrap">
+          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border shrink-0 ${statusClasses}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
+            {statusLabel}
+          </span>
+          <div className="text-[11px] text-gray-300 truncate">
+            <span style={{ color: fromColor }} className="font-medium">{fromLabel}</span>
+            <span className="text-gray-500 mx-1.5">→</span>
+            <span style={{ color: toColor }} className="font-medium">{toLabel}</span>
+          </div>
+          <span className="text-gray-500 text-[10px]">·</span>
+          <span className="text-[11px] text-gray-300">
+            <span className="text-gray-500">{los.totalDistanceKm.toFixed(2)}km</span>
+            <span className="text-gray-600 mx-1">·</span>
+            <span className="text-gray-500">
+              Δ{los.elevationDiffM >= 0 ? "+" : ""}{Math.round(los.elevationDiffM)}m
+            </span>
+            <span className="text-gray-600 mx-1">·</span>
+            <span className="text-gray-500">
+              {Math.round(los.fromHeightM)}{los.fromIsFallback && "~"}m → {Math.round(los.toHeightM)}{los.toIsFallback && "~"}m
+            </span>
+            {los.itmLossDb != null && (
+              <>
+                <span className="text-gray-600 mx-1">·</span>
+                <span
+                  className="text-cyan-300 font-medium"
+                  title={
+                    los.itmFreeSpaceDb != null
+                      ? `Longley-Rice path loss. Free-space at this distance: ${Math.round(los.itmFreeSpaceDb)} dB (excess: ${Math.round(los.itmLossDb - los.itmFreeSpaceDb)} dB)`
+                      : "Longley-Rice basic transmission loss"
+                  }
+                >
+                  {Math.round(los.itmLossDb)} dB
+                  {los.itmMode && (
+                    <span className="text-gray-500 ml-1">
+                      ({los.itmMode.replace("_", " ")})
+                    </span>
+                  )}
+                </span>
+              </>
+            )}
+          </span>
+          {!los.losClear && (
+            <span className="text-[10px] text-red-300">
+              · obstructed by {Math.round(los.worstObstructionM)}m @ {los.worstObstructionDistKm.toFixed(1)}km
+            </span>
+          )}
+          {los.losClear && !los.fresnelClear && (
+            <span className="text-[10px] text-yellow-300">
+              · Fresnel intrusion {Math.round(los.worstFresnelIntrusion * 100)}% @ {los.worstObstructionDistKm.toFixed(1)}km
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <details className="text-[10px] text-gray-500 relative">
+            <summary className="cursor-pointer hover:text-gray-400 select-none list-none">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </summary>
+            <div className="absolute right-0 bottom-full mb-1 min-w-65 w-72 p-2 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-gray-400 leading-relaxed space-y-1">
+              <div>
+                <strong>Geometry:</strong> real terrain elevations with{" "}
+                <strong>4/3 earth radius</strong> for atmospheric refraction.
+                Fresnel zone needs ≥60% clearance for "clear."
+              </div>
+              {los.itmLossDb != null && (
+                <div className="pt-1 border-t border-white/5">
+                  <strong>Path loss:</strong> Longley-Rice v1.4 (ITS) via WASM.
+                  Assumes continental temperate climate, vertical polarization,
+                  50 % reliability.
+                </div>
+              )}
+              <div className="pt-1 border-t border-white/5">
+                <strong>Terrain data:</strong>{" "}
+                {demSource === "tilezen"
+                  ? "Tilezen terrarium (USGS 3DEP / SRTM) via AWS Open Data"
+                  : demSource === "mapbox-terrain-rgb"
+                    ? "Mapbox terrain-rgb v1 (~30 m global, Tilezen fallback)"
+                    : "awaiting first compute…"}
+              </div>
+              <div className="pt-1 border-t border-white/5">
+                Frequency: <strong>{(los.frequencyGHz * 1000).toFixed(0)} MHz</strong>.
+                "~" means node had no GPS altitude (or reported below terrain) —
+                assumed as <strong>terrain + 2m</strong>.
+              </div>
+            </div>
+          </details>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors"
+            aria-label="Close LoS analysis"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div className="flex">
+        <EndpointConfig
+          label={fromLabel}
+          color={fromColor}
+          hwIdx={fromHwIdx} onHwIdxChange={onFromHwIdxChange}
+          antIdx={fromAntIdx} onAntIdxChange={onFromAntIdxChange}
+          heightM={fromHeightM} onHeightChange={onFromHeightChange}
+        />
+
+        <div className="flex-1 min-w-0 px-2 py-1.5 border-x border-white/5">
+          <ElevationProfile
+            result={los}
+            fromLabel={fromLabel}
+            toLabel={toLabel}
+            fromColor={fromColor}
+            toColor={toColor}
+            onHoverFraction={onProfileHover}
+          />
+        </div>
+
+        <EndpointConfig
+          label={toLabel}
+          color={toColor}
+          hwIdx={toHwIdx} onHwIdxChange={onToHwIdxChange}
+          antIdx={toAntIdx} onAntIdxChange={onToAntIdxChange}
+          heightM={toHeightM} onHeightChange={onToHeightChange}
+        />
+      </div>
+    </div>
+  );
+}

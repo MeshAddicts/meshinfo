@@ -109,6 +109,11 @@ export const apiSlice = createApi({
       query: () => "telemetry",
       providesTags: [{ type: "Telemetry", id: "LIST" }],
     }),
+    getNodeTelemetry: builder.query<ITelemetryResponse[], string>({
+      query: (nodeId) => `nodes/${nodeId}/telemetry`,
+      transformResponse: (response: { telemetry: ITelemetryResponse[] }) => response.telemetry ?? [],
+      providesTags: (_result, _err, id) => [{ type: "Telemetry", id }],
+    }),
     getTraceroutes: builder.query<ITraceroutesResponse[], void>({
       query: () => "traceroutes",
       providesTags: [{ type: "Traceroutes", id: "LIST" }],
@@ -157,6 +162,7 @@ export const {
   useGetConfigQuery,
   useGetStatsQuery,
   useGetTelemetryQuery,
+  useGetNodeTelemetryQuery,
   useGetTraceroutesQuery,
   useGetMessagesQuery,
   useGetMqttMessagesQuery,

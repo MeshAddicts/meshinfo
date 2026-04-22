@@ -1,0 +1,8 @@
+# The real artifacts produced by `yarn build:wasm` overwrite the
+# placeholder files in this directory. We want to keep the placeholders
+# themselves checked in (so `tsc`/Vite resolve imports in fresh clones)
+# but ignore anything else that lands here from the build.
+*
+!.gitignore
+!itm.js
+!itm.d.ts

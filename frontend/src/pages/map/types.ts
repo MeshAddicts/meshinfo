@@ -1,6 +1,7 @@
 import type { Coordinate } from "ol/coordinate";
 
-import type { INode } from "../../types";
+import type { INode, ITraceroutesResponse, NodeRole } from "../../types";
+import type { ElsewhereLink } from "../../types/config";
 
 export type MapProvider = "osm" | "mapbox";
 export type LinkMode = "selected" | "all" | "mynode";
@@ -15,7 +16,6 @@ export type IMapNode = INode & {
   }[];
 };
 
-// OL Feature properties for click handling
 export type IFeatureNode = {
   id: string;
   shortname?: string;
@@ -31,7 +31,6 @@ export type IFeatureNode = {
   }[];
 };
 
-// Normalized shape for shared details rendering/link building
 export type NodeLike = {
   id: string;
   shortname?: string;
@@ -40,9 +39,22 @@ export type NodeLike = {
   gateway?: string | null;
   online: boolean;
   position: Coordinate; // [lon, lat]
+  role?: NodeRole;
   neighbors?: {
     id: string;
     snr: number;
     distance: number;
   }[];
 };
+
+export type NodeDetailsData = {
+  node: NodeLike;
+  liveNodes: Record<string, IMapNode>;
+  displayName: string;
+  elsewhereLinks?: ElsewhereLink[];
+  traceroutes?: ITraceroutesResponse[];
+  channelLabel?: string | null;
+  heardBy: string[];
+  maxRangeKm?: number | null;
+};
+

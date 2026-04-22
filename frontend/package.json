@@ -10,7 +10,8 @@
     "lint": "eslint . --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:wasm": "docker build -t meshinfo-itm-build wasm/itm && docker run --rm -v \"$(pwd)/src/generated/itm\":/out meshinfo-itm-build"
   },
   "dependencies": {
     "@reduxjs/toolkit": "^2.11.2",
