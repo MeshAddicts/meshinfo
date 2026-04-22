@@ -96,10 +96,10 @@ export function buildNodesGeoJSON(
   let recentNodeEntries = computeRecentNodes(nodes, recentDays);
 
   if (filters?.role != null) {
-    recentNodeEntries = recentNodeEntries.filter(([, n]) => (n as any).role === filters.role);
+    recentNodeEntries = recentNodeEntries.filter(([, n]) => n.role === filters.role);
   }
   if (filters?.channel != null) {
-    recentNodeEntries = recentNodeEntries.filter(([, n]) => (n as any).last_channel === filters.channel);
+    recentNodeEntries = recentNodeEntries.filter(([, n]) => n.last_channel === filters.channel);
   }
 
   const features: GeoFeature<GeoPoint, GeoJsonProperties>[] = [];

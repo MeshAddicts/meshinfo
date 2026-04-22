@@ -12,6 +12,10 @@
   --color-indigo-500: #6366f1;
   --color-indigo-600: #4f46e5;
   --color-indigo-700: #4338ca;
+  /* Z-index scale for the map overlay stack (panels > settings chips > popovers). */
+  --z-index-1050: 1050;
+  --z-index-1060: 1060;
+  --z-index-1100: 1100;
 }
 
 /*

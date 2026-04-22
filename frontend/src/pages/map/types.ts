@@ -58,4 +58,3 @@ export type NodeDetailsData = {
   maxRangeKm?: number | null;
 };
 
-export type MapToolId = "los" | "traceroute" | "coverage";
