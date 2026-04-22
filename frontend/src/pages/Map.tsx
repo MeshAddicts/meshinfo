@@ -38,7 +38,7 @@ import { analyzeLineOfSight, type LoSResult } from "./map/losAnalysis";
 import { Climate, computeP2PLoss, type ItmContext, loadItmContext, Polarization } from "./map/itm";
 import { LosTubeLayer, losPointsToTubeData, obstructionsToGeoJSON, pickObstructions } from "./map/losTubeLayer";
 import { ClusterDonutLayer } from "./map/clusterDonutLayer";
-import { runScan, scanToGeoJSON, type ScanSummary, type ScanTarget } from "./map/scanAnalysis";
+import { runScan, scanToGeoJSON, type ScanClass, type ScanSummary, type ScanTarget } from "./map/scanAnalysis";
 import { MapScanPanel } from "./map/MapScanPanel";
 import { findPathsBetween } from "./map/pathAnalysis";
 import { MapDetailsPanel } from "./map/MapDetailsPanel";
@@ -434,26 +434,60 @@ export function Map() {
     const hw = COMMON_HARDWARE[coverageRxHardwareIdx];
     return effectiveSensitivityDbm(coverageSensitivityDbm, hw.chipset, hw.sensitivityOffsetDb ?? 0);
   }, [coverageSensitivityDbm, coverageRxHardwareIdx]);
+  // Scan tool link-budget config — independent from coverage.
+  const [scanAntennaIdx, setScanAntennaIdx] = useState(3);
+  const scanAntennaDbi = COMMON_ANTENNAS[scanAntennaIdx]?.dbi ?? 3;
+  const [scanHardwareIdx, setScanHardwareIdx] = useState(0);
+  const [scanAntennaHeightM, setScanAntennaHeightM] = useState(2);
+  const [scanRxHardwareIdx, setScanRxHardwareIdx] = useState(4);
+  const [scanRxAntennaIdx, setScanRxAntennaIdx] = useState(0);
+  const scanRxAntennaDbi = COMMON_ANTENNAS[scanRxAntennaIdx]?.dbi ?? 3;
+  const [scanCustomTxDbm, setScanCustomTxDbm] = useState(22);
+  const scanTxDbm = COMMON_HARDWARE[scanHardwareIdx].isCustom
+    ? scanCustomTxDbm
+    : COMMON_HARDWARE[scanHardwareIdx].txDbm;
+  const [scanEnvIdx, setScanEnvIdx] = useState(0);
+  const [scanPresetIdx, setScanPresetIdx] = useState(0);
+  const [scanCustomSensDbm, setScanCustomSensDbm] = useState(-133);
+  const scanSensitivityDbm = MESHTASTIC_PRESETS[scanPresetIdx].isCustom
+    ? scanCustomSensDbm
+    : MESHTASTIC_PRESETS[scanPresetIdx].sensitivityDbm;
+  const scanEffectiveSensitivityDbm = useMemo(() => {
+    const hw = COMMON_HARDWARE[scanRxHardwareIdx];
+    return effectiveSensitivityDbm(scanSensitivityDbm, hw.chipset, hw.sensitivityOffsetDb ?? 0);
+  }, [scanSensitivityDbm, scanRxHardwareIdx]);
+  // Blocked hidden by default — the count can dominate on dense meshes.
+  const [hiddenScanClasses, setHiddenScanClasses] = useState<Set<ScanClass>>(() => new Set(["blocked"]));
+
   // DEM/raster bbox size from free-space budget. Capped at 200 km — beyond that
   // low tile-zoom averages terrain away (Mt. Oso reads ~200 m low at 500 km bbox).
   const coverageRadiusKm = useMemo(() => {
     const CABLE = 0.5;
     const FADE = 15;
+    const clutter = ENVIRONMENTS[coverageEnvIdx]?.clutterLossDb ?? 0;
     const budget =
       coverageTxDbm +
       coverageAntennaDbi +
       coverageRxAntennaDbi -
       coverageEffectiveSensitivityDbm -
       FADE -
-      CABLE;
+      CABLE -
+      clutter;
     const plConstant = 32.45 + 20 * Math.log10(915);
     const maxKm = Math.pow(10, (budget - plConstant) / 20);
     return Math.max(5, Math.min(200, Math.round(maxKm)));
-  }, [coverageAntennaDbi, coverageRxAntennaDbi, coverageTxDbm, coverageEffectiveSensitivityDbm]);
+  }, [coverageAntennaDbi, coverageRxAntennaDbi, coverageTxDbm, coverageEffectiveSensitivityDbm, coverageEnvIdx]);
   /** 3D LoS tube layer; created once per map. */
   const losTubeLayerRef = useRef<LosTubeLayer | null>(null);
   /** DOM pin for the Coverage origin (draggable). */
   const coverageOriginMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  /** Draggable pin at the scan origin. */
+  const scanOriginMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  /** Map view captured when scan starts; restored by the origin row / pin. */
+  const scanInitialViewRef = useRef<{ center: [number, number]; zoom: number; pitch: number; bearing: number } | null>(null);
+  const scanOriginKeyRef = useRef<string | null>(null);
+  /** Suppresses the cursor-elevation mousemove handler so marker drag doesn't stutter. */
+  const isDraggingMarkerRef = useRef(false);
   /** Terrain elevation (MSL m) under the cursor. */
   const [hoverElevationM, setHoverElevationM] = useState<number | null>(null);
   const [scanSummary, setScanSummary] = useState<ScanSummary | null>(null);
@@ -1370,6 +1404,41 @@ export function Map() {
       return;
     }
 
+    // Snapshot view per-origin so "return to overview" is stable across
+    // config re-runs but re-captures when the origin moves.
+    const originKey = `${origin[0].toFixed(6)},${origin[1].toFixed(6)}`;
+    if (scanOriginKeyRef.current !== originKey) {
+      scanOriginKeyRef.current = originKey;
+      scanInitialViewRef.current = null;
+    }
+    if (!scanInitialViewRef.current) {
+      const c = mb.getCenter();
+      scanInitialViewRef.current = {
+        center: [c.lng, c.lat],
+        zoom: mb.getZoom(),
+        pitch: mb.getPitch(),
+        bearing: mb.getBearing(),
+      };
+    }
+
+    if (scanOriginMarkerRef.current) {
+      scanOriginMarkerRef.current.setLngLat(origin);
+    } else {
+      const marker = new mapboxgl.Marker({ color: "#22d3ee", draggable: true })
+        .setLngLat(origin)
+        .addTo(mb);
+      marker.on("dragstart", () => { isDraggingMarkerRef.current = true; });
+      marker.on("dragend", () => {
+        isDraggingMarkerRef.current = false;
+        const ll = marker.getLngLat();
+        scanInitialViewRef.current = null;
+        scanOriginKeyRef.current = null;
+        setToolFromId(null);
+        setToolVirtualPos([ll.lng, ll.lat]);
+      });
+      scanOriginMarkerRef.current = marker;
+    }
+
     setIsScanning(true);
     let cancelled = false;
 
@@ -1425,6 +1494,14 @@ export function Map() {
         });
         if (cancelled) return;
 
+        // Override GPS altitude with terrain + configured AGL (matches coverage).
+        // Falls back to GPS altitude if DEM sampling fails.
+        const originTerrainM = sampleDEMAt(dem, origin![0], origin![1]);
+        const terrainValid = Number.isFinite(originTerrainM) && !Number.isNaN(originTerrainM);
+        const effectiveOriginAltitude = terrainValid
+          ? originTerrainM + scanAntennaHeightM
+          : originAltitude;
+
         if (!scanItmContextRef.current) {
           try {
             scanItmContextRef.current = await loadItmContext(128);
@@ -1436,12 +1513,17 @@ export function Map() {
 
         const summary = runScan({
           origin: origin!,
-          originAltitudeM: originAltitude,
+          originAltitudeM: effectiveOriginAltitude,
           originShortname,
           targets,
           maxDistanceKm: SCAN_RADIUS_KM,
           raySamples: 60,
           freqGHz: 0.915,
+          txDbm: scanTxDbm,
+          txAntennaDbi: scanAntennaDbi,
+          rxAntennaDbi: scanRxAntennaDbi,
+          rxSensitivityDbm: scanEffectiveSensitivityDbm,
+          clutterLossDb: ENVIRONMENTS[scanEnvIdx]?.clutterLossDb ?? 0,
           queryTerrainM: (lng, lat) => {
             const elev = sampleDEMAt(dem, lng, lat);
             return Number.isNaN(elev) ? null : elev;
@@ -1472,7 +1554,25 @@ export function Map() {
 
     runAsync();
     return () => { cancelled = true; };
-  }, [activeTool, toolStep, toolFromId, toolVirtualPos, provider, terrain3D, nodes]);
+  }, [activeTool, toolStep, toolFromId, toolVirtualPos, provider, terrain3D, nodes,
+      scanTxDbm, scanAntennaDbi, scanRxAntennaDbi, scanEffectiveSensitivityDbm,
+      scanEnvIdx, scanAntennaHeightM]);
+
+  // Per-class map visibility filter (compute still runs for hidden classes).
+  useEffect(() => {
+    const mb = mbMapRef.current;
+    if (!mb) return;
+    const layer = "scan-links-line";
+    if (!mb.getLayer(layer)) return;
+    if (hiddenScanClasses.size === 0) {
+      mb.setFilter(layer, null);
+    } else {
+      mb.setFilter(layer, [
+        "!",
+        ["in", ["get", "cls"], ["literal", Array.from(hiddenScanClasses)]],
+      ] as any);
+    }
+  }, [hiddenScanClasses, activeTool]);
 
   useEffect(() => {
     const mb = mbMapRef.current;
@@ -1482,6 +1582,12 @@ export function Map() {
         const src = mb.getSource("scan-links") as MbGeoJSONSource | undefined;
         src?.setData({ type: "FeatureCollection", features: [] });
       } catch {}
+      if (scanOriginMarkerRef.current) {
+        scanOriginMarkerRef.current.remove();
+        scanOriginMarkerRef.current = null;
+      }
+      scanInitialViewRef.current = null;
+      scanOriginKeyRef.current = null;
     }
   }, [activeTool]);
 
@@ -1949,6 +2055,9 @@ export function Map() {
         }
       };
 
+      marker.on("dragstart", () => {
+        isDraggingMarkerRef.current = true;
+      });
       marker.on("drag", () => {
         const ll = marker.getLngLat();
         runDragPreview([ll.lng, ll.lat]);
@@ -1956,6 +2065,7 @@ export function Map() {
 
       // On dragend: switch to a virtual origin (detach any node pick) and kick a full recompute
       marker.on("dragend", () => {
+        isDraggingMarkerRef.current = false;
         const ll = marker.getLngLat();
         dragPreviewPendingRef.current = null;
         setToolFromId(null);
@@ -3446,6 +3556,9 @@ export function Map() {
       let elevRafQueued = false;
       let pendingElevE: { lng: number; lat: number } | null = null;
       const onMapMouseMove = (e: mapboxgl.MapMouseEvent) => {
+        // Skip during marker drag — setHoverElevationM re-renders Map.tsx each
+        // frame and stutters the marker behind the cursor.
+        if (isDraggingMarkerRef.current) return;
         pendingElevE = { lng: e.lngLat.lng, lat: e.lngLat.lat };
         if (elevRafQueued) return;
         elevRafQueued = true;
@@ -4635,6 +4748,45 @@ export function Map() {
             handleNodeSelectRef.current(id);
           }}
           onHoverResult={(id) => setScanHoverId(id)}
+          onReturnToOrigin={() => {
+            const mapNow = mbMapRef.current;
+            const view = scanInitialViewRef.current;
+            if (!mapNow || !view) return;
+            mapNow.easeTo({
+              center: view.center,
+              zoom: view.zoom,
+              pitch: view.pitch,
+              bearing: view.bearing,
+              duration: 800,
+            });
+          }}
+          hiddenClasses={hiddenScanClasses}
+          onToggleClassVisibility={(cls) =>
+            setHiddenScanClasses((prev) => {
+              const next = new Set(prev);
+              if (next.has(cls)) next.delete(cls);
+              else next.add(cls);
+              return next;
+            })
+          }
+          antennaIdx={scanAntennaIdx}
+          onAntennaIdxChange={setScanAntennaIdx}
+          hardwareIdx={scanHardwareIdx}
+          onHardwareIdxChange={setScanHardwareIdx}
+          antennaHeightM={scanAntennaHeightM}
+          onAntennaHeightChange={setScanAntennaHeightM}
+          rxHardwareIdx={scanRxHardwareIdx}
+          onRxHardwareIdxChange={setScanRxHardwareIdx}
+          rxAntennaIdx={scanRxAntennaIdx}
+          onRxAntennaIdxChange={setScanRxAntennaIdx}
+          customTxDbm={scanCustomTxDbm}
+          onCustomTxDbmChange={setScanCustomTxDbm}
+          envIdx={scanEnvIdx}
+          onEnvIdxChange={setScanEnvIdx}
+          presetIdx={scanPresetIdx}
+          onPresetIdxChange={setScanPresetIdx}
+          customSensitivityDbm={scanCustomSensDbm}
+          onCustomSensitivityChange={setScanCustomSensDbm}
         />
       )}
 

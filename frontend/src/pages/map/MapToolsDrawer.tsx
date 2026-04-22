@@ -9,6 +9,8 @@ export interface ToolDef {
   icon: React.ReactNode;
   /** Needs 3D terrain. */
   requiresTerrain?: boolean;
+  /** Disabled with a "Coming soon" label. */
+  comingSoon?: boolean;
 }
 
 const TOOLS: ToolDef[] = [
@@ -37,16 +39,6 @@ const TOOLS: ToolDef[] = [
     ),
   },
   {
-    id: "traceroute",
-    label: "Traceroute",
-    description: "Observed mesh routing between two nodes",
-    icon: (
-      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-      </svg>
-    ),
-  },
-  {
     id: "scan",
     label: "Scan",
     description: "Best neighbors — rank LoS to every node in view",
@@ -54,6 +46,17 @@ const TOOLS: ToolDef[] = [
     icon: (
       <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M7 12h10M10 18h4" />
+      </svg>
+    ),
+  },
+  {
+    id: "traceroute",
+    label: "Traceroute",
+    description: "Observed mesh routing between two nodes",
+    comingSoon: true,
+    icon: (
+      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
       </svg>
     ),
   },
@@ -99,7 +102,7 @@ export function MapToolsDrawer({
   const pillIdle = "bg-gray-900/80 border-white/10 text-gray-300 hover:bg-gray-900/90 hover:border-white/20 hover:text-gray-100";
 
   return (
-    <div ref={ref} className="fixed top-3 left-[292px] sm:left-[324px] z-30">
+    <div ref={ref} className="fixed top-3 left-73 sm:left-81 z-30">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -115,7 +118,7 @@ export function MapToolsDrawer({
       </button>
 
       {open && (
-        <div className="absolute top-full left-0 mt-1 min-w-[240px] rounded-xl overflow-hidden
+        <div className="absolute top-full left-0 mt-1 min-w-60 rounded-xl overflow-hidden
           bg-gray-900/95 backdrop-blur-xl border border-white/10 shadow-2xl">
           {activeTool && (
             <button
@@ -134,13 +137,16 @@ export function MapToolsDrawer({
           )}
           {TOOLS.map((tool) => {
             const isActive = tool.id === activeTool;
-            const disabled = tool.requiresTerrain && !terrainEnabled;
+            const terrainGated = tool.requiresTerrain && !terrainEnabled;
+            const hardDisabled = tool.comingSoon === true;
             return (
               <button
                 key={tool.id}
                 type="button"
+                disabled={hardDisabled}
                 onClick={() => {
-                  if (disabled) {
+                  if (hardDisabled) return;
+                  if (terrainGated) {
                     onRequestTerrainSetup?.();
                     setOpen(false);
                     return;
@@ -151,25 +157,35 @@ export function MapToolsDrawer({
                 className={`w-full px-3 py-2 text-left transition-colors flex items-start gap-2.5 ${
                   isActive
                     ? "bg-cyan-500/20 text-cyan-200"
-                    : disabled
+                    : hardDisabled
+                    ? "text-gray-600 cursor-not-allowed opacity-60"
+                    : terrainGated
                     ? "text-gray-500 hover:bg-white/5 hover:text-gray-300 cursor-pointer"
                     : "text-gray-300 hover:bg-white/5 hover:text-gray-100"
                 }`}
               >
-                <div className={`shrink-0 mt-0.5 ${isActive ? "text-cyan-400" : disabled ? "text-gray-600" : "text-gray-500"}`}>
+                <div className={`shrink-0 mt-0.5 ${isActive ? "text-cyan-400" : hardDisabled ? "text-gray-700" : terrainGated ? "text-gray-600" : "text-gray-500"}`}>
                   {tool.icon}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-xs font-medium flex items-center gap-1.5">
                     {tool.label}
-                    {tool.requiresTerrain && (
+                    {tool.comingSoon ? (
+                      <span className="text-[9px] px-1 rounded bg-amber-500/15 text-amber-300/80 font-normal border border-amber-500/20">
+                        Coming soon
+                      </span>
+                    ) : tool.requiresTerrain && (
                       <span className="text-[9px] px-1 rounded bg-white/5 text-gray-500 font-normal">
                         3D terrain
                       </span>
                     )}
                   </div>
                   <div className="text-[10px] text-gray-500 mt-0.5 leading-snug">
-                    {disabled ? "Click to enable 3D terrain." : tool.description}
+                    {hardDisabled
+                      ? "Temporarily disabled — being polished."
+                      : terrainGated
+                        ? "Click to enable 3D terrain."
+                        : tool.description}
                   </div>
                 </div>
               </button>

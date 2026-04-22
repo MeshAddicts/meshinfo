@@ -54,10 +54,15 @@ export interface ScanInput {
   raySamples?: number;
   freqGHz?: number;
   txDbm?: number;
-  antennaDbi?: number;
+  /** TX-side antenna gain (dBi). */
+  txAntennaDbi?: number;
+  /** RX-side antenna gain (dBi); defaults to txAntennaDbi for symmetric links. */
+  rxAntennaDbi?: number;
   rxSensitivityDbm?: number;
   fadeMarginDb?: number;
   cableLossDb?: number;
+  /** Flat clutter-loss offset (dB) added on top of path loss — pairs with coverage's Environment preset. */
+  clutterLossDb?: number;
   /** Skip targets farther than this km. Default Infinity. */
   maxDistanceKm?: number;
   /** Use ITM for path loss; LoS/Fresnel classification still comes from analyzeLineOfSight. */
@@ -91,10 +96,12 @@ export function runScan(input: ScanInput): ScanSummary {
     raySamples = 60,
     freqGHz = 0.915,
     txDbm = 22,
-    antennaDbi = 3,
+    txAntennaDbi = 3,
+    rxAntennaDbi = txAntennaDbi ?? 3,
     rxSensitivityDbm = -130,
     fadeMarginDb = 15,
     cableLossDb = 0.5,
+    clutterLossDb = 0,
     maxDistanceKm = Infinity,
   } = input;
 
@@ -145,12 +152,12 @@ export function runScan(input: ScanInput): ScanSummary {
       // Fallback to FSPL if ITM returns garbage
       totalLossDb =
         Number.isFinite(itmLoss) && itmLoss > 0
-          ? itmLoss + cableLossDb
-          : pathLossDb(d, freqMhz) + los.diffractionLossDb + cableLossDb;
+          ? itmLoss + clutterLossDb + cableLossDb
+          : pathLossDb(d, freqMhz) + los.diffractionLossDb + clutterLossDb + cableLossDb;
     } else {
-      totalLossDb = pathLossDb(d, freqMhz) + los.diffractionLossDb + cableLossDb;
+      totalLossDb = pathLossDb(d, freqMhz) + los.diffractionLossDb + clutterLossDb + cableLossDb;
     }
-    const rssiDbm = txDbm + 2 * antennaDbi - totalLossDb;
+    const rssiDbm = txDbm + txAntennaDbi + rxAntennaDbi - totalLossDb;
     const marginDb = rssiDbm - rxSensitivityDbm - fadeMarginDb;
 
     let cls: ScanClass;
