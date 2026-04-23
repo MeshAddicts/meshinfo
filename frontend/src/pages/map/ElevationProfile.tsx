@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+
 import type { LoSResult } from "./losAnalysis";
 
 const WIDTH = 900;

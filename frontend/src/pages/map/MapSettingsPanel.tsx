@@ -1,8 +1,8 @@
 import { type Dispatch, type RefObject, type SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 
+import type { OsmBasemap } from "../../maps/mapStyle";
 import { NodeRole, roleTitles } from "../../types";
-import type { OsmBasemap } from "../../maps/baseLayer";
-import { FilterDropup, type DropupOption } from "./FilterDropup";
+import { type DropupOption,FilterDropup } from "./FilterDropup";
 import { MapLegend } from "./MapLegend";
 import type { LinkMode, MapProvider } from "./types";
 import { useBottomSheetGesture } from "./useBottomSheet";
@@ -154,7 +154,6 @@ export function MapSettingsPanel({
   openSections,
   setOpenSections,
 
-  provider,
   setProvider,
 
   mapboxStyle,
@@ -175,8 +174,6 @@ export function MapSettingsPanel({
   usingMapbox,
   terrain3D,
   setTerrain3D,
-  terrainExaggeration,
-  setTerrainExaggeration,
   onExport,
   hidden = false,
 
@@ -198,7 +195,6 @@ export function MapSettingsPanel({
   openSections: Set<string>;
   setOpenSections: Dispatch<SetStateAction<Set<string>>>;
 
-  provider: MapProvider;
   setProvider: Dispatch<SetStateAction<MapProvider>>;
 
   mapboxStyle: string;
@@ -219,8 +215,6 @@ export function MapSettingsPanel({
   usingMapbox: boolean;
   terrain3D: boolean;
   setTerrain3D: Dispatch<SetStateAction<boolean>>;
-  terrainExaggeration: number;
-  setTerrainExaggeration: Dispatch<SetStateAction<number>>;
   onExport?: () => void;
   hidden?: boolean;
 
@@ -271,7 +265,7 @@ export function MapSettingsPanel({
   const sheet = useBottomSheetGesture(() => setSettingsPanelOpen(false));
 
   const selectClasses =
-    "w-full rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-gray-200 focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50 [&>option]:bg-gray-800 [&>option]:text-gray-200";
+    "w-full rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-gray-200 focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50 [&_option]:bg-gray-800 [&_option]:text-gray-200 [&_optgroup]:bg-gray-900 [&_optgroup]:text-gray-400";
 
   const iconBtnBase =
     "p-2 rounded-xl shadow-2xl border backdrop-blur-xl transition-colors";
@@ -391,81 +385,56 @@ export function MapSettingsPanel({
               />
             </Section>
 
-            <Section id="appearance" title="Appearance" subtitle="Map provider and visual style">
+            <Section id="appearance" title="Appearance" subtitle="Basemap">
               <div>
                 <label
-                  htmlFor="provider-select"
+                  htmlFor="basemap-select"
                   className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1.5 block"
                 >
-                  Provider
+                  Basemap
                 </label>
                 <select
-                  id="provider-select"
-                  aria-label="Map provider selection"
+                  id="basemap-select"
+                  aria-label="Basemap selection"
                   className={selectClasses}
-                  value={provider}
-                  onChange={(e) => setProvider(e.target.value as MapProvider)}
+                  value={
+                    usingMapbox
+                      ? `mapbox:${mapboxStyle}`
+                      : `osm:${osmBasemap}`
+                  }
+                  onChange={(e) => {
+                    const [kind, value] = e.target.value.split(":", 2);
+                    if (kind === "mapbox") {
+                      setProvider("mapbox");
+                      setMapboxStyle(value);
+                    } else {
+                      setProvider("osm");
+                      setOsmBasemap(value as OsmBasemap);
+                    }
+                  }}
                 >
-                  <option value="osm">OSM (OpenLayers)</option>
-                  <option value="mapbox" disabled={!canUseMapbox}>
-                    Mapbox (GL JS){!canUseMapbox ? " — token not configured" : ""}
-                  </option>
+                  <optgroup label="OpenStreetMap (free)">
+                    <option value="osm:osm">OSM Standard</option>
+                    <option value="osm:osm_hot">OSM Humanitarian</option>
+                    <option value="osm:carto_positron">Carto Positron (Light)</option>
+                    <option value="osm:carto_dark">Carto Dark Matter (Dark)</option>
+                  </optgroup>
+                  <optgroup label={canUseMapbox ? "Mapbox (token)" : "Mapbox — token not configured"}>
+                    <option value="mapbox:mapbox/dark-v11" disabled={!canUseMapbox}>Mapbox Dark</option>
+                    <option value="mapbox:mapbox/streets-v12" disabled={!canUseMapbox}>Mapbox Streets</option>
+                    <option value="mapbox:mapbox/satellite-streets-v12" disabled={!canUseMapbox}>Mapbox Satellite</option>
+                  </optgroup>
                 </select>
               </div>
 
-              {usingMapbox ? (
-                <div>
-                  <label
-                    htmlFor="mapbox-style-select"
-                    className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1.5 block"
-                  >
-                    Mapbox Style
-                  </label>
-                  <select
-                    id="mapbox-style-select"
-                    aria-label="Mapbox map style selection"
-                    className={selectClasses}
-                    value={mapboxStyle}
-                    onChange={(e) => setMapboxStyle(e.target.value)}
-                  >
-                    <option value="mapbox/dark-v11">Dark</option>
-                    <option value="mapbox/streets-v12">Streets</option>
-                    <option value="mapbox/satellite-streets-v12">Satellite Streets</option>
-                  </select>
-                </div>
-              ) : (
-                <div>
-                  <label
-                    htmlFor="osm-basemap-select"
-                    className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1.5 block"
-                  >
-                    OSM Basemap
-                  </label>
-                  <select
-                    id="osm-basemap-select"
-                    aria-label="OpenStreetMap basemap selection"
-                    className={selectClasses}
-                    value={osmBasemap}
-                    onChange={(e) => setOsmBasemap(e.target.value as OsmBasemap)}
-                  >
-                    <option value="osm">OSM Standard</option>
-                    <option value="osm_hot">OSM HOT</option>
-                    <option value="carto_positron">Carto Positron (Light)</option>
-                    <option value="carto_dark">Carto Dark Matter (Dark)</option>
-                  </select>
-                </div>
-              )}
-
               {!canUseMapbox && (
                 <div className="text-[11px] text-gray-500 p-2 rounded-lg bg-white/5">
-                  Mapbox disabled — <code className="bg-white/10 px-1 rounded-sm text-[10px]">VITE_MAPBOX_TOKEN</code> not configured.
+                  Set <code className="bg-white/10 px-1 rounded-sm text-[10px]">VITE_MAPBOX_TOKEN</code> to enable Mapbox imagery. OpenStreetMap + 3D terrain work fully without a token.
                 </div>
               )}
             </Section>
 
-            {/* 3D terrain (Mapbox only) */}
-            {usingMapbox && (
-              <Section id="terrain" title="3D Terrain" subtitle={terrain3D ? `On · ${terrainExaggeration.toFixed(1)}× exaggeration` : "Off"}>
+            <Section id="terrain" title="3D Terrain" subtitle={terrain3D ? "On" : "Off"}>
                 <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5">
                   <div className="flex flex-col">
                     <label htmlFor="terrain-3d-checkbox" className="text-sm font-medium text-gray-300">
@@ -486,35 +455,13 @@ export function MapSettingsPanel({
                 </div>
 
                 {terrain3D && (
-                  <>
-                    <div>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <label htmlFor="terrain-exag" className="text-[10px] font-medium uppercase tracking-wider text-gray-500">
-                          Exaggeration
-                        </label>
-                        <span className="text-[10px] text-gray-400">{terrainExaggeration.toFixed(1)}×</span>
-                      </div>
-                      <input
-                        id="terrain-exag"
-                        type="range"
-                        min={0.5}
-                        max={3}
-                        step={0.1}
-                        value={terrainExaggeration}
-                        onChange={(e) => setTerrainExaggeration(Number(e.target.value))}
-                        className="w-full accent-cyan-500"
-                        aria-label="Terrain exaggeration"
-                      />
-                    </div>
-                    <div className="text-[10px] text-gray-500 p-2 rounded-lg bg-white/5 leading-relaxed">
-                      <strong className="text-gray-400">Tip:</strong> hold{" "}
-                      <kbd className="bg-white/10 px-1 rounded-sm text-[10px] mx-0.5">Right-Click</kbd>
-                      {" "}and drag to rotate/pitch. Ctrl + scroll changes pitch.
-                    </div>
-                  </>
+                  <div className="text-[10px] text-gray-500 p-2 rounded-lg bg-white/5 leading-relaxed">
+                    <strong className="text-gray-400">Tip:</strong> hold{" "}
+                    <kbd className="bg-white/10 px-1 rounded-sm text-[10px] mx-0.5">Right-Click</kbd>
+                    {" "}and drag to rotate/pitch. Ctrl + scroll changes pitch.
+                  </div>
                 )}
               </Section>
-            )}
 
             <Section id="mynode" title="My Node" subtitle={myNodeLabel || "Not set"}>
               <div>

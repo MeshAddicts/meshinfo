@@ -3,10 +3,10 @@
  * underlying "clusters" circle layer. Matched by position (not cluster_id) so they
  * survive cluster-ID reassignment across setData() calls.
  */
-import mapboxgl from "mapbox-gl";
+import maplibregl from "maplibre-gl";
 
 interface MarkerEntry {
-  marker: mapboxgl.Marker;
+  marker: maplibregl.Marker;
   el: HTMLDivElement;
   canvas: HTMLCanvasElement;
   clusterId: number;
@@ -120,7 +120,7 @@ const byPos = new Map<string, MarkerEntry>();
 const idToPos = new Map<number, string>(); // for hover highlight lookup
 
 function createEntry(
-  map: mapboxgl.Map,
+  map: maplibregl.Map,
   lngLat: [number, number],
   clusterId: number,
   count: number,
@@ -141,14 +141,14 @@ function createEntry(
   el.appendChild(canvas);
   drawDonut(canvas, size, onlineCount, count);
 
-  const marker = new mapboxgl.Marker({ element: el, anchor: "center" })
+  const marker = new maplibregl.Marker({ element: el, anchor: "center" })
     .setLngLat(lngLat)
     .addTo(map);
 
   return { marker, el, canvas, clusterId, count, online: onlineCount, size };
 }
 
-export function updateClusterMarkers(map: mapboxgl.Map): void {
+export function updateClusterMarkers(map: maplibregl.Map): void {
   if (!map.getLayer("clusters")) return;
 
   // Single-arg form — passing `undefined` as geometry drops the layer filter (Mapbox overload quirk)

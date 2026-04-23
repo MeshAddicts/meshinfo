@@ -1,6 +1,6 @@
 import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
-import { env } from "../env";
 
+import { env } from "../env";
 import {
   IChatResponse,
   IMessagesResponse,

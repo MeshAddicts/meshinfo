@@ -10,7 +10,7 @@ import type {
   LineString as GeoLineString,
   Point as GeoPoint,
 } from "geojson";
-import type { GeoJSONSource as MbGeoJSONSource, Map as MbMap } from "mapbox-gl";
+import type { GeoJSONSource as MlGeoJSONSource, Map as MlMap } from "maplibre-gl";
 
 export const SPIDERFY_SOURCE_NODES = "spiderfy-nodes";
 export const SPIDERFY_SOURCE_LEGS = "spiderfy-legs";
@@ -112,7 +112,7 @@ function legsGeoJSON(
 
 /** getClusterLeaves with a timeout; returns [] if the cluster_id is stale or the callback never fires. */
 function tryGetLeaves(
-  source: MbGeoJSONSource,
+  source: MlGeoJSONSource,
   clusterId: number,
   timeoutMs = 500,
 ): Promise<GeoFeature<GeoPoint, GeoJsonProperties>[]> {
@@ -123,12 +123,16 @@ function tryGetLeaves(
     }, timeoutMs);
 
     try {
-      source.getClusterLeaves(clusterId, Infinity, 0, (err, features) => {
+      source.getClusterLeaves(clusterId, Infinity, 0).then((features) => {
         if (done) return;
         done = true;
         clearTimeout(timer);
-        if (err || !features) return resolve([]);
-        resolve(features as GeoFeature<GeoPoint, GeoJsonProperties>[]);
+        resolve((features ?? []) as GeoFeature<GeoPoint, GeoJsonProperties>[]);
+      }).catch(() => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve([]);
       });
     } catch {
       if (!done) { done = true; clearTimeout(timer); resolve([]); }
@@ -161,11 +165,11 @@ function findLeavesNearCenter(
     .map((x) => x.f);
 }
 
-export function isSpiderfied(map: MbMap): boolean {
+export function isSpiderfied(map: MlMap): boolean {
   return !!map.getSource(SPIDERFY_SOURCE_NODES);
 }
 
-export function removeSpiderfyLayers(map: MbMap): void {
+export function removeSpiderfyLayers(map: MlMap): void {
   activeState = null;
   for (const id of [SPIDERFY_LAYER_LABELS, SPIDERFY_LAYER_NODES, SPIDERFY_LAYER_LEGS, SPIDERFY_LAYER_LEGS_SHADOW]) {
     if (map.getLayer(id)) map.removeLayer(id);
@@ -175,7 +179,7 @@ export function removeSpiderfyLayers(map: MbMap): void {
   }
 }
 
-function addSpiderfyLayers(map: MbMap): void {
+function addSpiderfyLayers(map: MlMap): void {
   map.addSource(SPIDERFY_SOURCE_LEGS, {
     type: "geojson",
     data: { type: "FeatureCollection", features: [] },
@@ -255,7 +259,7 @@ function addSpiderfyLayers(map: MbMap): void {
 }
 
 export async function spiderfy(
-  map: MbMap,
+  map: MlMap,
   clusterId: number,
   center: [number, number],
   zoom: number,
@@ -267,7 +271,7 @@ export async function spiderfy(
 ): Promise<void> {
   removeSpiderfyLayers(map);
 
-  const source = map.getSource("nodes_clustered") as MbGeoJSONSource | undefined;
+  const source = map.getSource("nodes_clustered") as MlGeoJSONSource | undefined;
   if (!source) return;
 
   let leaves = await tryGetLeaves(source, clusterId);
@@ -283,8 +287,8 @@ export async function spiderfy(
 
   addSpiderfyLayers(map);
 
-  const nodeSrc = map.getSource(SPIDERFY_SOURCE_NODES) as MbGeoJSONSource;
-  const legSrc = map.getSource(SPIDERFY_SOURCE_LEGS) as MbGeoJSONSource;
+  const nodeSrc = map.getSource(SPIDERFY_SOURCE_NODES) as MlGeoJSONSource;
+  const legSrc = map.getSource(SPIDERFY_SOURCE_LEGS) as MlGeoJSONSource;
 
   if (!animate) {
     nodeSrc.setData(nodesGeoJSON(leaves, finalPositions));
@@ -312,12 +316,12 @@ export async function spiderfy(
   });
 }
 
-export async function unspiderfy(map: MbMap): Promise<void> {
+export async function unspiderfy(map: MlMap): Promise<void> {
   if (!isSpiderfied(map)) return;
 
   const state = activeState;
-  const nodeSrc = map.getSource(SPIDERFY_SOURCE_NODES) as MbGeoJSONSource | undefined;
-  const legSrc = map.getSource(SPIDERFY_SOURCE_LEGS) as MbGeoJSONSource | undefined;
+  const nodeSrc = map.getSource(SPIDERFY_SOURCE_NODES) as MlGeoJSONSource | undefined;
+  const legSrc = map.getSource(SPIDERFY_SOURCE_LEGS) as MlGeoJSONSource | undefined;
 
   if (!nodeSrc || !legSrc || !state) {
     removeSpiderfyLayers(map);
@@ -353,7 +357,7 @@ export async function unspiderfy(map: MbMap): Promise<void> {
   });
 }
 
-export function updateSpiderfyPositions(map: MbMap): void {
+export function updateSpiderfyPositions(map: MlMap): void {
   if (!activeState || !isSpiderfied(map)) return;
 
   const zoom = map.getZoom();
@@ -367,8 +371,8 @@ export function updateSpiderfyPositions(map: MbMap): void {
   const positions = fanPositions(center, leaves.length, zoom);
 
   try {
-    const nodeSrc = map.getSource(SPIDERFY_SOURCE_NODES) as MbGeoJSONSource | undefined;
-    const legSrc = map.getSource(SPIDERFY_SOURCE_LEGS) as MbGeoJSONSource | undefined;
+    const nodeSrc = map.getSource(SPIDERFY_SOURCE_NODES) as MlGeoJSONSource | undefined;
+    const legSrc = map.getSource(SPIDERFY_SOURCE_LEGS) as MlGeoJSONSource | undefined;
     if (!nodeSrc || !legSrc) return;
     nodeSrc.setData(nodesGeoJSON(leaves, positions));
     legSrc.setData(legsGeoJSON(center, positions));
@@ -376,7 +380,7 @@ export function updateSpiderfyPositions(map: MbMap): void {
 }
 
 export async function autoSpiderfyVisibleClusters(
-  map: MbMap,
+  map: MlMap,
   fallbackPool?: GeoFeature<GeoPoint, GeoJsonProperties>[],
 ): Promise<void> {
   if (activeState) return;
@@ -389,7 +393,7 @@ export async function autoSpiderfyVisibleClusters(
   const clusterFeatures = map.queryRenderedFeatures({ layers: ["clusters"] });
   if (clusterFeatures.length === 0) return;
 
-  const source = map.getSource("nodes_clustered") as MbGeoJSONSource | undefined;
+  const source = map.getSource("nodes_clustered") as MlGeoJSONSource | undefined;
   if (!source) return;
 
   for (const cluster of clusterFeatures) {
@@ -401,11 +405,16 @@ export async function autoSpiderfyVisibleClusters(
       let done = false;
       const timer = setTimeout(() => { if (!done) { done = true; resolve(null); } }, 500);
       try {
-        source.getClusterExpansionZoom(clusterId, (err, zoom) => {
+        source.getClusterExpansionZoom(clusterId).then((zoom) => {
           if (done) return;
           done = true;
           clearTimeout(timer);
-          resolve(err ? null : zoom ?? null);
+          resolve(zoom ?? null);
+        }).catch(() => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(null);
         });
       } catch { if (!done) { done = true; clearTimeout(timer); resolve(null); } }
     });

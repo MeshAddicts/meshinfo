@@ -2,7 +2,7 @@
  * Pre-rendered donut sprite images (0-100% online in 10% steps) registered as
  * Mapbox sprites; a symbol layer picks the right one by onlineCount/point_count.
  */
-import type { Map as MbMap } from "mapbox-gl";
+import type { Map as MlMap } from "maplibre-gl";
 
 const COLOR_ONLINE = "#22c55e";
 const COLOR_OFFLINE = "rgba(100,116,139,0.45)";
@@ -77,7 +77,7 @@ function renderDonut(onlinePercent: number): { width: number; height: number; da
 }
 
 /** Register donut sprite images for each 10% online-ratio bucket. Idempotent. */
-export function registerClusterIcons(map: MbMap): void {
+export function registerClusterIcons(map: MlMap): void {
   for (let pct = 0; pct <= 100; pct += 10) {
     const id = `donut-${pct}`;
     if (map.hasImage(id)) continue;

@@ -2,9 +2,9 @@
  * Best-neighbors scan: LoS + link budget from origin to each target, classified and ranked.
  * Stays on the main thread with 60 samples/ray.
  */
-import { analyzeLineOfSight, haversineKm, type TerrainSampler } from "./losAnalysis";
 import { pathLossDb } from "./coverageAnalysis";
-import { computeP2PLossFast, ModeOfVariability, type ItmContext } from "./itm";
+import { computeP2PLossFast, type ItmContext,ModeOfVariability } from "./itm";
+import { analyzeLineOfSight, haversineKm, type TerrainSampler } from "./losAnalysis";
 
 /** Optional ITM config; when provided, ITM replaces FSPL+knife-edge for path loss. */
 export interface ScanItmConfig {

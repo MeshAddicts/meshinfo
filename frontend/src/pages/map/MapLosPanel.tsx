@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { ElevationProfile } from "./ElevationProfile";
+
 import { COMMON_ANTENNAS, COMMON_HARDWARE } from "./coverageAnalysis";
+import { ElevationProfile } from "./ElevationProfile";
 import type { LoSResult } from "./losAnalysis";
 import type { DemSource } from "./terrainRgb";
 import { useBottomSheetGesture } from "./useBottomSheet";
