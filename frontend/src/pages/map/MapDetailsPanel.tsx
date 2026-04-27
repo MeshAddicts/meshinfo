@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { roleTitles, type NodeRole } from "../../types";
+import { HardwareModel, roleTitles, type NodeRole } from "../../types";
 import { getElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLinks";
 import { ROLE_COLORS, DEFAULT_NODE_COLOR } from "./utils";
 import { calculateGeodesicDistance } from "./utils";
@@ -22,6 +22,13 @@ function formatLastSeen(raw: string | null | undefined): string {
     second: "2-digit",
     hour12: false,
   });
+}
+
+function formatHardwareLabel(model: number | null | undefined): string | null {
+  if (model == null) return null;
+  const name = HardwareModel[model as HardwareModel] as string | undefined;
+  if (!name) return null;
+  return name.replace(/_/g, " ").replace(/\bV(\d)/g, "v$1");
 }
 
 function shortenLocation(full: string): string {
@@ -222,6 +229,8 @@ export function MapDetailsPanel({
   const nodeIdInt = parseInt(node.id, 16);
   const elsewhereLinks = getElsewhereLinks(data.elsewhereLinks);
 
+  const hardwareLabel = formatHardwareLabel(liveNodes[node.id]?.hardware);
+
   const heardByRows = data.heardBy.map((nid) => {
     const nnode = liveNodes[nid];
     const neighbor = nnode?.neighbors?.find((n) => n.id === node.id);
@@ -339,6 +348,12 @@ export function MapDetailsPanel({
             {node.position[1].toFixed(5)}, {node.position[0].toFixed(5)}
           </div>
         </div>
+        {hardwareLabel && (
+          <div>
+            <div className="text-gray-500 text-[10px] uppercase tracking-wider">Hardware</div>
+            <div className="text-gray-300 truncate" title={hardwareLabel}>{hardwareLabel}</div>
+          </div>
+        )}
         {data.maxRangeKm != null && (
           <div>
             <div className="text-gray-500 text-[10px] uppercase tracking-wider">Max Range</div>
