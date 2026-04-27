@@ -2307,6 +2307,9 @@ export function Map() {
       attributionControl: false,
       canvasContextAttributes: { preserveDrawingBuffer: true }, // required for canvas.toDataURL() export
       maxPitch: 85,
+      // Spread keeps drag-rotate direction consistent regardless of cursor position.
+      // `aroundCenter` isn't in public MapOptions but is destructured by the internal handler.
+      ...({ aroundCenter: false } as object),
     });
 
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "top-right");
