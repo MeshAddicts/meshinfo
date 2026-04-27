@@ -297,6 +297,7 @@ export function Map() {
 
   // Mapbox refs
   const mbMapRef = useRef<MbMap | null>(null);
+  const clusterDonutLayerRef = useRef<ClusterDonutLayer | null>(null);
   const mbSelectedIdRef = useRef<string | null>(null);
   const mbHandlersBoundRef = useRef(false);
   const mbCurrentStyleUrlRef = useRef<string | null>(null);
@@ -1984,6 +1985,23 @@ export function Map() {
     } catch {}
   }, [activeTool, showCoverageRays, coverageResult]);
 
+  // Dim cluster donuts/count once a tool reaches its result step (origin placed / link picked)
+  // so the raster + overlays read clearly.
+  useEffect(() => {
+    const dimmed = activeTool != null && toolStep === "result";
+    const alpha = dimmed ? 0.25 : 1;
+
+    clusterDonutLayerRef.current?.setAlpha(alpha);
+
+    const mb = mbMapRef.current;
+    if (mb && mb.getLayer("clusters-count")) {
+      try { mb.setPaintProperty("clusters-count", "text-opacity", alpha); } catch {}
+    }
+
+    const olCluster = olClusterSetupRef.current?.clusterLayer;
+    if (olCluster) olCluster.setOpacity(alpha);
+  }, [activeTool, toolStep]);
+
   // Sync coverage pin to origin (node pick or virtual placement)
   useEffect(() => {
     const mb = mbMapRef.current;
@@ -3009,7 +3027,10 @@ export function Map() {
       }
 
       if (!map.getLayer("clusters-donuts")) {
-        map.addLayer(new ClusterDonutLayer());
+        const donutLayer = new ClusterDonutLayer();
+        map.addLayer(donutLayer);
+        clusterDonutLayerRef.current = donutLayer;
+        if (activeToolRef.current != null && toolStepRef.current === "result") donutLayer.setAlpha(0.25);
       }
 
       if (!map.getLayer("clusters-count")) {
@@ -3028,6 +3049,7 @@ export function Map() {
           },
           paint: {
             "text-color": "#ffffff",
+            "text-opacity": activeToolRef.current != null && toolStepRef.current === "result" ? 0.25 : 1,
           },
         });
       }
@@ -4006,6 +4028,9 @@ export function Map() {
 
     const clusterSetup = createOlClusterLayer(features);
     olClusterSetupRef.current = clusterSetup;
+    if (activeToolRef.current != null && toolStepRef.current === "result") {
+      clusterSetup.clusterLayer.setOpacity(0.25);
+    }
 
     // Add the appropriate layer based on cluster setting
     if (clusterEnabledRef.current) {

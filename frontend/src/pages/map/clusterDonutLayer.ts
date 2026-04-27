@@ -14,9 +14,11 @@ attribute float a_ratio;       // Online fraction, 0..1
 uniform mat4 u_matrix;
 uniform vec2 u_viewport;       // Framebuffer px
 uniform float u_dpr;           // devicePixelRatio
+uniform float u_alpha;         // Layer-wide opacity multiplier (0..1)
 
 varying vec2 v_uv;
 varying float v_ratio;
+varying float v_alpha;
 
 void main() {
   vec4 clip = u_matrix * vec4(a_pos, 1.0);
@@ -28,6 +30,7 @@ void main() {
   gl_Position = clip;
   v_uv = a_uv;
   v_ratio = a_ratio;
+  v_alpha = u_alpha;
 }
 `;
 
@@ -35,6 +38,7 @@ const FS = `
 precision highp float;
 varying vec2 v_uv;
 varying float v_ratio;
+varying float v_alpha;
 
 const float PI  = 3.14159265359;
 const float TAU = 6.28318530718;
@@ -85,7 +89,7 @@ void main() {
   float borderMask = smoothstep(OUTER_R - 0.015, OUTER_R - 0.005, d) * (1.0 - smoothstep(OUTER_R, OUTER_R + 0.01, d));
   color = mix(color, COL_BORDER, borderMask * 0.8);
 
-  gl_FragColor = color * outerMask;
+  gl_FragColor = color * outerMask * v_alpha;
 }
 `;
 
@@ -128,6 +132,8 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
   private uMatrix: WebGLUniformLocation | null = null;
   private uViewport: WebGLUniformLocation | null = null;
   private uDpr: WebGLUniformLocation | null = null;
+  private uAlpha: WebGLUniformLocation | null = null;
+  private alpha = 1;
   private vertexCount = 0;
   /** Rebuild vertex buffer at the start of the next render() — rebuilding inside
    *  render() avoids stale features since sourcedata/moveend can fire before tiles re-render. */
@@ -160,6 +166,7 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
     this.uMatrix = gl.getUniformLocation(program, "u_matrix");
     this.uViewport = gl.getUniformLocation(program, "u_viewport");
     this.uDpr = gl.getUniformLocation(program, "u_dpr");
+    this.uAlpha = gl.getUniformLocation(program, "u_alpha");
 
     this.buffer = gl.createBuffer();
 
@@ -206,6 +213,14 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
     this.onMoveend = null;
     this.onIdle = null;
     this.onSourceData = null;
+  }
+
+  /** Layer-wide opacity multiplier (0..1). Used to dim donuts when an RF tool is active. */
+  setAlpha(alpha: number): void {
+    const a = Math.max(0, Math.min(1, alpha));
+    if (a === this.alpha) return;
+    this.alpha = a;
+    this.map?.triggerRepaint();
   }
 
   private rebuild(): void {
@@ -299,6 +314,7 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
     gl.uniformMatrix4fv(this.uMatrix, false, matrix);
     gl.uniform2f(this.uViewport, gl.drawingBufferWidth, gl.drawingBufferHeight);
     gl.uniform1f(this.uDpr, window.devicePixelRatio || 1);
+    gl.uniform1f(this.uAlpha, this.alpha);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
     // per-vertex: pos.xyz (12) | uv (8) | pixelRadius (4) | ratio (4) = 28 B
