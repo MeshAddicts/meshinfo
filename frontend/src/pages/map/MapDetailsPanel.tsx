@@ -24,9 +24,13 @@ function formatLastSeen(raw: string | null | undefined): string {
   });
 }
 
-function formatHardwareLabel(model: number | null | undefined): string | null {
-  if (model == null) return null;
-  const name = HardwareModel[model as HardwareModel] as string | undefined;
+function formatHardwareLabel(model: number | string | null | undefined): string | null {
+  if (model == null || model === "") return null;
+  // API returns hardware as a string ("31") for some nodes and a number for others.
+  // TS numeric enums do support string-key lookups, but be explicit so non-numeric strings don't slip through.
+  const n = typeof model === "string" ? Number(model) : model;
+  if (!Number.isFinite(n)) return null;
+  const name = HardwareModel[n as HardwareModel] as string | undefined;
   if (!name) return null;
   return name.replace(/_/g, " ").replace(/\bV(\d)/g, "v$1");
 }
@@ -229,7 +233,9 @@ export function MapDetailsPanel({
   const nodeIdInt = parseInt(node.id, 16);
   const elsewhereLinks = getElsewhereLinks(data.elsewhereLinks);
 
-  const hardwareLabel = formatHardwareLabel(liveNodes[node.id]?.hardware);
+  // node.id and liveNodes keys can disagree on the `!` prefix, and `hardware` may arrive as a string from the API
+  const liveNode = liveNodes[node.id] ?? liveNodes[`!${node.id}`] ?? liveNodes[node.id.replace(/^!/, "")];
+  const hardwareLabel = formatHardwareLabel(liveNode?.hardware);
 
   const heardByRows = data.heardBy.map((nid) => {
     const nnode = liveNodes[nid];
