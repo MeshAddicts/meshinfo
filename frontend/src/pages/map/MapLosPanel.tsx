@@ -1,9 +1,40 @@
 import { useEffect, useState } from "react";
 import { ElevationProfile } from "./ElevationProfile";
-import { COMMON_ANTENNAS, COMMON_HARDWARE } from "./coverageAnalysis";
+import {
+  COMMON_ANTENNAS,
+  COMMON_HARDWARE,
+  effectiveSensitivityDbm,
+  MESHTASTIC_PRESETS,
+} from "./coverageAnalysis";
 import type { LoSResult } from "./losAnalysis";
 import type { DemSource } from "./terrainRgb";
 import { useBottomSheetGesture } from "./useBottomSheet";
+
+/** Modem preset assumed for link-budget readout in this panel.
+ *  LongFast = Meshtastic default mesh setting; -130 dBm typical SX1262 sensitivity. */
+const LOS_PRESET = MESHTASTIC_PRESETS.find((p) => p.id === "LongFast") ?? MESHTASTIC_PRESETS[1];
+
+/** One-direction link budget. Returns null if hw/ant lookups fail. */
+function dirLinkBudget(
+  txHwIdx: number,
+  txAntIdx: number,
+  rxHwIdx: number,
+  rxAntIdx: number,
+  itmLossDb: number,
+): { rssiDbm: number; marginDb: number; sensitivityDbm: number } | null {
+  const txHw = COMMON_HARDWARE[txHwIdx];
+  const txAnt = COMMON_ANTENNAS[txAntIdx];
+  const rxHw = COMMON_HARDWARE[rxHwIdx];
+  const rxAnt = COMMON_ANTENNAS[rxAntIdx];
+  if (!txHw || !txAnt || !rxHw || !rxAnt) return null;
+  const rssiDbm = txHw.txDbm + txAnt.dbi + rxAnt.dbi - itmLossDb;
+  const sensitivityDbm = effectiveSensitivityDbm(
+    LOS_PRESET.sensitivityDbm,
+    rxHw.chipset,
+    rxHw.sensitivityOffsetDb ?? 0,
+  );
+  return { rssiDbm, marginDb: rssiDbm - sensitivityDbm, sensitivityDbm };
+}
 
 /** Endpoint config column: hardware/antenna/height for one end of the LOS link. */
 function EndpointConfig({
@@ -243,6 +274,20 @@ export function MapLosPanel({
     red: "bg-red-400",
   }[statusColor];
 
+  // Link budget per direction (TX→RX = from→to and to→from). Both must work for a usable link.
+  const fwd = los.itmLossDb != null
+    ? dirLinkBudget(fromHwIdx, fromAntIdx, toHwIdx, toAntIdx, los.itmLossDb)
+    : null;
+  const rev = los.itmLossDb != null
+    ? dirLinkBudget(toHwIdx, toAntIdx, fromHwIdx, fromAntIdx, los.itmLossDb)
+    : null;
+  const worstMargin = fwd && rev ? Math.min(fwd.marginDb, rev.marginDb) : null;
+  const marginColor = worstMargin == null
+    ? ""
+    : worstMargin >= 10 ? "text-emerald-300"
+    : worstMargin >= 0 ? "text-yellow-300"
+    : "text-red-300";
+
   return (
     <div
       ref={sheet.sheetRef}
@@ -308,6 +353,23 @@ export function MapLosPanel({
                 </span>
               </>
             )}
+            {worstMargin != null && fwd && rev && (
+              <>
+                <span className="text-gray-600 mx-1">·</span>
+                <span
+                  className={`font-medium ${marginColor}`}
+                  title={
+                    `Link margin vs ${LOS_PRESET.label}.\n` +
+                    `${fromLabel} → ${toLabel}: RSSI ${Math.round(fwd.rssiDbm)} dBm, sens ${Math.round(fwd.sensitivityDbm)} dBm → ${fwd.marginDb >= 0 ? "+" : ""}${Math.round(fwd.marginDb)} dB\n` +
+                    `${toLabel} → ${fromLabel}: RSSI ${Math.round(rev.rssiDbm)} dBm, sens ${Math.round(rev.sensitivityDbm)} dBm → ${rev.marginDb >= 0 ? "+" : ""}${Math.round(rev.marginDb)} dB\n` +
+                    `Worst direction shown — both must be positive for a usable link.`
+                  }
+                >
+                  {worstMargin >= 0 ? "+" : ""}{Math.round(worstMargin)} dB
+                  <span className="text-gray-500 ml-1">margin</span>
+                </span>
+              </>
+            )}
           </span>
           {!los.losClear && (
             <span className="text-[10px] text-red-300">
@@ -338,6 +400,12 @@ export function MapLosPanel({
                   <strong>Path loss:</strong> Longley-Rice v1.4 (ITS) via WASM.
                   Assumes continental temperate climate, vertical polarization,
                   50 % reliability.
+                </div>
+              )}
+              {worstMargin != null && (
+                <div className="pt-1 border-t border-white/5">
+                  <strong>Link margin:</strong> RX − sensitivity vs <strong>{LOS_PRESET.label}</strong>{" "}
+                  ({LOS_PRESET.sensitivityDbm} dBm). Worst direction shown.
                 </div>
               )}
               <div className="pt-1 border-t border-white/5">
