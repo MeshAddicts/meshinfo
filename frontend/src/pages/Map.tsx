@@ -802,6 +802,12 @@ export function Map() {
   useEffect(() => writeJson(LS_KEYS.settingsPanelOpen, settingsPanelOpen), [settingsPanelOpen]);
   useEffect(() => writeJson(LS_KEYS.terrain3D, terrain3D), [terrain3D]);
 
+  // One-shot: drop the obsolete `terrainExaggeration` key. removeItem is idempotent —
+  // safe to keep around indefinitely; harmless on browsers that already cleaned it up.
+  useEffect(() => {
+    try { localStorage.removeItem("meshinfo.map.terrainExaggeration"); } catch {}
+  }, []);
+
   // If token disappears, force provider to osm
   useEffect(() => {
     if (provider === "mapbox" && !hasMapbox) setProvider("osm");
