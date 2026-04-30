@@ -60,8 +60,8 @@ html, body {
   overscroll-behavior-y: none;
 }
 
-/* Mapbox hover tooltip styling */
-.map-hover-tooltip .mapboxgl-popup-content {
+/* Hover tooltip popup */
+.map-hover-tooltip .maplibregl-popup-content {
   background: rgba(0, 0, 0, 0.85);
   color: white;
   padding: 6px 10px;
@@ -71,25 +71,18 @@ html, body {
   pointer-events: none;
   box-shadow: none;
 }
-.map-hover-tooltip .mapboxgl-popup-tip {
+.map-hover-tooltip .maplibregl-popup-tip {
   border-top-color: rgba(0, 0, 0, 0.85);
 }
 
-/* OL zoom controls: move to top-right to match Mapbox layout */
-.ol-zoom {
-  left: auto !important;
-  right: 8px;
-  top: 8px;
-}
-
-/* Mapbox controls: logo + attribution side by side */
-.mapboxgl-ctrl-top-right {
+/* Top-right control stack: attribution + nav side by side */
+.maplibregl-ctrl-top-right {
   display: flex;
   flex-direction: row;
   align-items: flex-start;
   gap: 4px;
 }
-.mapboxgl-ctrl-top-right .mapboxgl-ctrl {
+.maplibregl-ctrl-top-right .maplibregl-ctrl {
   margin: 0 !important;
 }
 

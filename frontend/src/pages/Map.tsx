@@ -65,6 +65,20 @@ import {
 const TRANSPARENT_1PX_PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 
+/**
+ * Real-MSL elevation via MapLibre's terrain. `map.queryTerrainElevation` returns
+ * `dem_meters * exaggeration`; we divide it back out so RF math and the hover pill
+ * see actual ground. The Mapbox API used to take `{ exaggerated: false }` but
+ * MapLibre has no such option — undo it ourselves.
+ */
+function queryTerrainElevationMSL(map: MlMap, lnglat: [number, number]): number | null {
+  const e = map.queryTerrainElevation(lnglat);
+  if (typeof e !== "number" || !Number.isFinite(e)) return null;
+  const ex = map.getTerrain()?.exaggeration;
+  const exaggeration = typeof ex === "number" && ex > 0 ? ex : 1;
+  return e / exaggeration;
+}
+
 function relativeTime(iso: string | null | undefined): string {
   if (!iso) return "Unknown";
   const ms = Date.now() - new Date(iso).getTime();
@@ -1635,13 +1649,11 @@ export function Map() {
         // robustly picks the accurate value. When both are valid at high
         // zoom they agree to within a couple of meters.
         //
-        // CRITICAL: `queryTerrainElevation` defaults to returning
-        // *exaggerated* elevation (real × terrain exaggeration factor),
-        // matching the visually rendered 3D terrain. We want real MSL
-        // meters for RF math and for the displayed pin height, so we
-        // pass `{ exaggerated: false }`. Without this, a 1.5× default
-        // exaggeration silently inflated every elevation read by ~50%.
-        const mbElev = mb.queryTerrainElevation(origin!);
+        // CRITICAL: MapLibre's `queryTerrainElevation` always returns elevation
+        // multiplied by the active terrain exaggeration. RF math and the displayed
+        // pin height need real MSL metres, so divide that out via the helper.
+        // Without this, a 1.5× default exaggeration silently inflated every read by ~50%.
+        const mbElev = queryTerrainElevationMSL(mb, origin!);
         const mbElevOk = typeof mbElev === "number" && Number.isFinite(mbElev);
         const fetchElev = await fetchElevationAt(origin![0], origin![1], mapboxToken);
         const fetchOk = fetchElev != null && Number.isFinite(fetchElev);
@@ -1910,8 +1922,8 @@ export function Map() {
           const previewId = -Math.floor(performance.now());
           const demGround = sampleDEMAt(dem, lngLat[0], lngLat[1]);
           const demGroundOk = !Number.isNaN(demGround);
-          // exaggerated:false for real MSL (see authoritative path)
-          const mbGround = mb.queryTerrainElevation(lngLat);
+          // Real MSL — see queryTerrainElevationMSL helper for the exaggeration math.
+          const mbGround = queryTerrainElevationMSL(mb, lngLat);
           const mbGroundOk = typeof mbGround === "number" && Number.isFinite(mbGround);
           const accurateGround = mbGroundOk ? mbGround : (demGroundOk ? demGround : 0);
           const antennaH = coverageAntennaHeightMRef.current;
@@ -3326,15 +3338,10 @@ export function Map() {
           elevRafQueued = false;
           if (!pendingElevE || !mbMapRef.current) return;
           try {
-            // Real MSL meters, not exaggerated — users expect the
-            // elevation pill to match what a topo map would show, not
-            // the 3D render's inflated value. Without
-            // `{ exaggerated: false }` this was displaying ~1.5× the
-            // real elevation at default 1.5× exaggeration.
-            const elev = mbMapRef.current.queryTerrainElevation(
-              [pendingElevE.lng, pendingElevE.lat],
-            );
-            setHoverElevationM(typeof elev === "number" && Number.isFinite(elev) ? elev : null);
+            // Real MSL meters — users expect the elevation pill to match a topo map,
+            // not the rendered terrain's exaggerated value. See queryTerrainElevationMSL.
+            const elev = queryTerrainElevationMSL(mbMapRef.current, [pendingElevE.lng, pendingElevE.lat]);
+            setHoverElevationM(elev);
           } catch {
             setHoverElevationM(null);
           }
