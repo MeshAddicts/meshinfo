@@ -161,11 +161,16 @@ export function ensureTerrain(map: MlMap, opts: BuildStyleOptions, exaggeration:
   map.setSky(SKY_SPEC);
 }
 
-/** Leaves the DEM source in place for cheap re-enable. */
+/** `setTerrain(null)` alone leaves MapLibre 5's depth pass referencing destroyed
+ *  state (shaderPreludeCode crash + triggerRepaint loop). Removing the DEM source
+ *  after halts the pipeline cleanly until ensureTerrain re-adds it. */
 export function removeTerrain(map: MlMap): void {
   try { map.setTerrain(null); } catch {}
-  // setSky's public type rejects null; runtime accepts it and fully clears the spec.
-  try { (map.setSky as unknown as (sky: null) => void)(null); } catch {}
+  try {
+    if (map.getSource(TERRAIN_SOURCE_ID)) map.removeSource(TERRAIN_SOURCE_ID);
+  } catch {}
+  try { map.setSky({}); } catch {}
+  try { map.triggerRepaint(); } catch {}
 }
 
 export const MAP_STYLE_IDS = {

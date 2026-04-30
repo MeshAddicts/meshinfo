@@ -3435,33 +3435,26 @@ export function Map() {
     applyClusterVisibility(map, clusterEnabled);
   }, [clusterEnabled]);
 
-  // Effect: react to terrain3D / exaggeration / provider changes
+  // No isStyleLoaded gate: removeTerrain calls removeSource which leaves the style
+  // briefly "unloaded", and a queued style.load listener never fires for non-style
+  // changes — initial-mount case is covered by ensureSourcesAndLayers on style.load.
   useEffect(() => {
     const map = mbMapRef.current;
     if (!map) return;
 
-    const run = () => {
-      try {
-        if (terrain3D) {
-          ensureTerrain(map, { provider, mapboxToken, mapboxStyle, osmBasemap }, terrainExaggeration);
-        } else {
-          removeTerrain(map);
-        }
-      } catch (err) {
-        console.warn("[Map] Terrain apply failed:", err);
+    try {
+      if (terrain3D) {
+        ensureTerrain(map, { provider, mapboxToken, mapboxStyle, osmBasemap }, terrainExaggeration);
+      } else {
+        removeTerrain(map);
       }
+    } catch (err) {
+      console.warn("[Map] Terrain apply failed:", err);
+    }
 
-      // When disabling 3D, reset pitch + bearing to 0 for a clean 2D view.
-      // When enabling, don't auto-nudge — saved pitch from localStorage is the right answer.
-      if (!terrain3D) {
-        map.easeTo({ pitch: 0, bearing: 0, duration: 400 });
-      }
-    };
-
-    if (map.isStyleLoaded()) {
-      run();
-    } else {
-      map.once("style.load", run);
+    // Snap to 2D camera on disable; on enable the saved pitch from localStorage stands.
+    if (!terrain3D) {
+      map.easeTo({ pitch: 0, bearing: 0, duration: 400 });
     }
   }, [terrain3D, provider, mapboxToken, mapboxStyle, osmBasemap]);
 
