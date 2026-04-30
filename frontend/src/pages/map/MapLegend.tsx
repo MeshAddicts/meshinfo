@@ -53,21 +53,60 @@ export function MapLegend({
 
         <div className="border-t border-white/10 my-1" />
 
+        {/* Link color = SNR (quality). Kind is conveyed by line style below. */}
         <div className="flex items-center gap-2">
-          <div className="w-4 h-0.5 bg-[#66FF66] rounded-full shrink-0" />
+          <svg viewBox="0 0 24 4" preserveAspectRatio="none" className="w-4 h-0.5 shrink-0">
+            <defs>
+              <linearGradient id="legend-snr-gradient" x1="0" x2="1" y1="0" y2="0">
+                <stop offset="0%" stopColor="#FF4444" />
+                <stop offset="50%" stopColor="#FFDD00" />
+                <stop offset="100%" stopColor="#44CC44" />
+              </linearGradient>
+            </defs>
+            <rect x="0" y="0" width="24" height="4" fill="url(#legend-snr-gradient)" />
+          </svg>
+          <span>Link quality (low → high SNR)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-0.5 bg-gray-400 rounded-full shrink-0" />
+          <span>SNR unknown</span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <svg viewBox="0 0 24 4" preserveAspectRatio="none" className="w-4 h-0.5 shrink-0">
+            <line x1="0" y1="2" x2="24" y2="2" stroke="#cbd5e1" strokeWidth="2.5" strokeLinecap="round" />
+          </svg>
           <span>This node heard neighbor</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-4 h-0.5 bg-[#6666FF] rounded-full shrink-0" />
+          <svg viewBox="0 0 24 4" preserveAspectRatio="none" className="w-4 h-0.5 shrink-0">
+            <line x1="0" y1="2" x2="24" y2="2" stroke="#cbd5e1" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="4 3" />
+          </svg>
           <span>Neighbor heard this node</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-4 h-0.5 bg-[#FF66FF] rounded-full shrink-0" />
+          <svg viewBox="0 0 24 8" preserveAspectRatio="none" className="w-4 h-2 shrink-0">
+            <path d="M 1 6 Q 12 -2 23 6" stroke="#cbd5e1" strokeWidth="2.5" fill="none" strokeLinecap="round" />
+          </svg>
           <span>Mutual link</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-4 h-0.5 bg-[#F59E0B] rounded-full shrink-0" />
-          <span>Traceroute link</span>
+          <svg viewBox="0 0 24 4" preserveAspectRatio="none" className="w-4 h-0.5 shrink-0">
+            <line x1="0" y1="2" x2="24" y2="2" stroke="#F59E0B" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="1 3" />
+          </svg>
+          <span>Traceroute (inferred)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <svg viewBox="0 0 24 4" preserveAspectRatio="none" className="w-4 h-0.5 shrink-0">
+            <defs>
+              <linearGradient id="legend-recency-fade" x1="0" x2="1" y1="0" y2="0">
+                <stop offset="0%" stopColor="#FFFFFF" stopOpacity="1.0" />
+                <stop offset="100%" stopColor="#FFFFFF" stopOpacity="0.2" />
+              </linearGradient>
+            </defs>
+            <rect x="0" y="0" width="24" height="4" fill="url(#legend-recency-fade)" />
+          </svg>
+          <span>Recency (recent → stale)</span>
         </div>
 
         <div className="border-t border-white/10 my-1" />

@@ -6,7 +6,46 @@ import type {
 } from "geojson";
 
 import type { ITraceroutesResponse } from "../../types";
-import type { IMapNode, NodeLike } from "./types";
+import type { IMapNeighbor, IMapNode, NodeLike } from "./types";
+
+/** Time-since-heard → opacity multiplier. Stale links taper to 0.3 (still visible). */
+function recencyOpacityFromAgeMs(ageMs: number | null): number {
+  if (ageMs == null || !Number.isFinite(ageMs)) return 0.6;
+  const m = ageMs / 60_000;
+  if (m <= 15) return 1.0;
+  if (m <= 60) return 1.0 - ((m - 15) / 45) * 0.4;       // 1.0 → 0.6
+  if (m <= 360) return 0.6 - ((m - 60) / 300) * 0.3;     // 0.6 → 0.3
+  return 0.3;
+}
+
+/** Most recent edge activity (ms). Prefers per-direction `lastRxTime`; falls
+ *  back to the older of the two endpoints' `last_seen` when neither side has
+ *  rx-time data (typical for traceroute-inferred edges). */
+function edgeLastHeardMs(
+  forwardNeighbor: IMapNeighbor | undefined,
+  reverseNeighbor: IMapNeighbor | undefined,
+  fwdLastSeen: string | undefined,
+  revLastSeen: string | undefined,
+): number | null {
+  const fwdRx = forwardNeighbor?.lastRxTime;
+  const revRx = reverseNeighbor?.lastRxTime;
+  const rxMs: number[] = [];
+  if (typeof fwdRx === "number" && fwdRx > 0) rxMs.push(fwdRx * 1000);
+  if (typeof revRx === "number" && revRx > 0) rxMs.push(revRx * 1000);
+  if (rxMs.length > 0) return Math.max(...rxMs);
+
+  const seenMs: number[] = [];
+  if (fwdLastSeen) {
+    const t = new Date(fwdLastSeen).getTime();
+    if (Number.isFinite(t)) seenMs.push(t);
+  }
+  if (revLastSeen) {
+    const t = new Date(revLastSeen).getTime();
+    if (Number.isFinite(t)) seenMs.push(t);
+  }
+  if (seenMs.length > 0) return Math.min(...seenMs);
+  return null;
+}
 
 /** Curved arc between two points; offsetFactor 0 = straight line. */
 function arcCoordinates(
@@ -51,6 +90,8 @@ export function buildMapboxLinkFeatureCollection(opts: {
   const heardBySet = new Set(heardBy);
   const union = new Set<string>([...neighborSet, ...heardBySet]);
 
+  const nowMs = Date.now();
+
   union.forEach((otherId) => {
     const other = liveNodes[otherId];
     if (!other?.map_position) return;
@@ -60,16 +101,25 @@ export function buildMapboxLinkFeatureCollection(opts: {
     const kind = isNeighbor && isHeardBy ? "both" : isNeighbor ? "neighbor" : "heard_by";
 
     // Prefer this node's SNR; fall back to reverse
-    const fwdSnr = (node.neighbors ?? []).find((n) => n.id === otherId)?.snr;
-    const revSnr = (other.neighbors ?? []).find((n) => n.id === node.id)?.snr;
-    const snr = fwdSnr ?? revSnr ?? null;
+    const fwdEntry = (node.neighbors ?? []).find((n) => n.id === otherId);
+    const revEntry = (other.neighbors ?? []).find((n) => n.id === node.id);
+    const snr = fwdEntry?.snr ?? revEntry?.snr ?? null;
+    const lastHeardMs = edgeLastHeardMs(fwdEntry, revEntry, node.last_seen, other.last_seen);
+    const recencyOpacity = recencyOpacityFromAgeMs(lastHeardMs == null ? null : nowMs - lastHeardMs);
 
     const from: [number, number] = [node.position[0], node.position[1]];
     const to: [number, number] = [other.map_position[0], other.map_position[1]];
 
     linkFeatures.push({
       type: "Feature",
-      properties: { kind, snr },
+      properties: {
+        kind,
+        snr,
+        aId: node.id,
+        bId: otherId,
+        lastHeardMs,
+        recencyOpacity,
+      },
       geometry: {
         type: "LineString",
         coordinates: kind === "both" ? arcCoordinates(from, to) : [from, to],
@@ -85,8 +135,8 @@ export function buildAllLinksFeatureCollection(
   liveNodes: Record<string, IMapNode>,
 ): FeatureCollection<GeoLineString, GeoJsonProperties> {
   const linkFeatures: GeoFeature<GeoLineString, GeoJsonProperties>[] = [];
-
   const seen = new Set<string>(); // sorted "idA|idB"
+  const nowMs = Date.now();
 
   for (const [nodeId, node] of Object.entries(liveNodes)) {
     if (!node.map_position || !node.neighbors?.length) continue;
@@ -104,9 +154,10 @@ export function buildAllLinksFeatureCollection(
 
       const reverseNeighbors = other.neighbors ?? [];
       const isMutual = reverseNeighbors.some((n) => n.id === nodeId);
-
       const revEntry = reverseNeighbors.find((n) => n.id === nodeId);
       const snr = neighbor.snr ?? revEntry?.snr ?? null;
+      const lastHeardMs = edgeLastHeardMs(neighbor, revEntry, node.last_seen, other.last_seen);
+      const recencyOpacity = recencyOpacityFromAgeMs(lastHeardMs == null ? null : nowMs - lastHeardMs);
 
       const from: [number, number] = [node.map_position[0], node.map_position[1]];
       const to: [number, number] = [other.map_position[0], other.map_position[1]];
@@ -114,7 +165,14 @@ export function buildAllLinksFeatureCollection(
 
       linkFeatures.push({
         type: "Feature",
-        properties: { kind, snr },
+        properties: {
+          kind,
+          snr,
+          aId: nodeId,
+          bId: neighbor.id,
+          lastHeardMs,
+          recencyOpacity,
+        },
         geometry: {
           type: "LineString",
           coordinates: kind === "both" ? arcCoordinates(from, to) : [from, to],
@@ -176,9 +234,22 @@ export function buildTracerouteLinkFeatureCollection(
       const nodeB = liveNodes[kb] ?? liveNodes[`!${kb}`];
       if (!nodeA?.map_position || !nodeB?.map_position) continue;
 
+      // Traceroute lines have no per-link rx_time; fall back to whichever endpoint
+      // we last saw alive — gives recency fade something to bite on.
+      const lastHeardMs = edgeLastHeardMs(undefined, undefined, nodeA.last_seen, nodeB.last_seen);
+      const nowMs = Date.now();
+      const recencyOpacity = recencyOpacityFromAgeMs(lastHeardMs == null ? null : nowMs - lastHeardMs);
+
       linkFeatures.push({
         type: "Feature",
-        properties: { kind: "traceroute", snr: null },
+        properties: {
+          kind: "traceroute",
+          snr: null,
+          aId: ka,
+          bId: kb,
+          lastHeardMs,
+          recencyOpacity,
+        },
         geometry: {
           type: "LineString",
           coordinates: [

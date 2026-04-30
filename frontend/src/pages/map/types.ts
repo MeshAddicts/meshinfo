@@ -8,14 +8,19 @@ export type Coordinate = [number, number];
 
 export type LinkMode = "selected" | "all" | "mynode";
 
+/** `lastRxTime` is `NeighborInfo.last_rx_time` from the protobuf — Unix epoch
+ *  seconds, NOT ms. Multiply by 1000 before comparing to `Date.now()`. */
+export interface IMapNeighbor {
+  id: string;
+  snr: number;
+  distance: number;
+  lastRxTime?: number;
+}
+
 export type IMapNode = INode & {
   online: boolean;
   map_position?: Coordinate; // [lon, lat]
-  neighbors?: {
-    id: string;
-    snr: number;
-    distance: number;
-  }[];
+  neighbors?: IMapNeighbor[];
 };
 
 export type IFeatureNode = {
@@ -26,11 +31,7 @@ export type IFeatureNode = {
   gateway?: string | null;
   position: Coordinate; // [lon, lat]
   online: boolean;
-  neighbors?: {
-    id: string;
-    snr: number;
-    distance: number;
-  }[];
+  neighbors?: IMapNeighbor[];
 };
 
 export type NodeLike = {
@@ -42,11 +43,7 @@ export type NodeLike = {
   online: boolean;
   position: Coordinate; // [lon, lat]
   role?: NodeRole;
-  neighbors?: {
-    id: string;
-    snr: number;
-    distance: number;
-  }[];
+  neighbors?: IMapNeighbor[];
 };
 
 export type NodeDetailsData = {

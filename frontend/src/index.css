@@ -75,6 +75,26 @@ html, body {
   border-top-color: rgba(0, 0, 0, 0.85);
 }
 
+/* Link hover card. Compound `.maplibregl-popup.map-link-tooltip` selector wins
+ *  over MapLibre's default popup styles. All four border-*-color slots set so
+ *  the tip stays dark at any anchor direction. */
+.maplibregl-popup.map-link-tooltip .maplibregl-popup-content {
+  background: rgba(0, 0, 0, 0.85);
+  color: white;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none;
+  box-shadow: none;
+}
+.maplibregl-popup.map-link-tooltip .maplibregl-popup-tip {
+  border-top-color: rgba(0, 0, 0, 0.85);
+  border-bottom-color: rgba(0, 0, 0, 0.85);
+  border-left-color: rgba(0, 0, 0, 0.85);
+  border-right-color: rgba(0, 0, 0, 0.85);
+}
+
 /* Top-right control stack: attribution + nav side by side */
 .maplibregl-ctrl-top-right {
   display: flex;

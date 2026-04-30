@@ -872,6 +872,7 @@ export function Map() {
             id: convertNodeIdFromIntToHex(neighbor.node_id),
             snr: neighbor.snr,
             distance: neighbor.distance ?? 0,
+            lastRxTime: neighbor.last_rx_time,
           })),
         },
       ])
@@ -2675,21 +2676,22 @@ export function Map() {
           -10, 1.5, 0, 3, 5, 5, 10, 7, 20, 9,
         ],
       ] as any;
+      // Color = SNR (link quality); kind is conveyed by line style. Traceroute
+      // keeps its orange — per-hop SNR isn't meaningful on an inferred path.
       const linkColor = [
         "case",
         ["==", ["get", "kind"], "traceroute"], "#F59E0B",
-        ["==", ["get", "snr"], null], [
-          "match", ["get", "kind"],
-          "neighbor", "#66FF66",
-          "heard_by", "#6666FF",
-          "both", "#FF66FF",
-          "#FFFFFF",
-        ],
+        ["==", ["get", "snr"], null], "#9ca3af",
         ["interpolate", ["linear"], ["get", "snr"],
           -10, "#FF4444", -5, "#FF6644", 0, "#FFAA00",
           2.5, "#FFDD00", 5, "#88DD00", 10, "#44CC44",
         ],
       ] as any;
+
+      // Initial line-opacity bakes recencyOpacity from the feature; focus-on-hover
+      // swaps these expressions in to dim non-connected links.
+      const linkOpacityInitial = (base: number) =>
+        ["*", base, ["coalesce", ["get", "recencyOpacity"], 1.0]] as any;
 
       // Neighbor + both links (solid; "both" uses curved arcs)
       if (!map.getLayer("links-solid")) {
@@ -2699,7 +2701,11 @@ export function Map() {
           source: "links",
           filter: ["in", ["get", "kind"], ["literal", ["neighbor", "both"]]],
           layout: { "line-join": "round", "line-cap": "round" },
-          paint: { "line-opacity": 0.9, "line-width": linkWidth, "line-color": linkColor },
+          paint: {
+            "line-opacity": linkOpacityInitial(0.9),
+            "line-width": linkWidth,
+            "line-color": linkColor,
+          },
         });
       }
 
@@ -2711,7 +2717,7 @@ export function Map() {
           filter: ["==", ["get", "kind"], "heard_by"],
           layout: { "line-join": "round", "line-cap": "round" },
           paint: {
-            "line-opacity": 0.7,
+            "line-opacity": linkOpacityInitial(0.7),
             "line-width": linkWidth,
             "line-color": linkColor,
             "line-dasharray": [4, 3],
@@ -2727,7 +2733,7 @@ export function Map() {
           filter: ["==", ["get", "kind"], "traceroute"],
           layout: { "line-join": "round", "line-cap": "round" },
           paint: {
-            "line-opacity": 0.7,
+            "line-opacity": linkOpacityInitial(0.7),
             "line-width": linkWidth,
             "line-color": linkColor,
             "line-dasharray": [1, 3],
@@ -3054,6 +3060,76 @@ export function Map() {
       bindHover("unclustered-nodes");
       bindHover("plain-nodes");
 
+      // Focus-on-hover: hovering a node highlights its ego-network (the node +
+      // its neighbors + nodes that heard it) and dims everything else.
+      const LINK_LAYER_BASE_OPACITY: Record<string, number> = {
+        "links-solid": 0.9,
+        "links-dashed": 0.7,
+        "links-dotted": 0.7,
+      };
+      const LINK_DIM_OPACITY = 0.1;
+      const NODE_DIM_OPACITY = 0.2;
+
+      const recencyExpr = ["coalesce", ["get", "recencyOpacity"], 1.0] as any;
+
+      const linkOpacityForFocus = (base: number, focusedId: string | null) => {
+        if (!focusedId) return ["*", base, recencyExpr] as any;
+        return [
+          "case",
+          ["any", ["==", ["get", "aId"], focusedId], ["==", ["get", "bId"], focusedId]],
+          ["*", base, recencyExpr],
+          ["*", LINK_DIM_OPACITY, recencyExpr],
+        ] as any;
+      };
+
+      const nodeOpacityForFocus = (relatedIds: string[] | null) => {
+        if (!relatedIds || relatedIds.length === 0) return 1.0 as any;
+        return [
+          "case",
+          ["match", ["get", "id"], relatedIds, true, false],
+          1.0,
+          NODE_DIM_OPACITY,
+        ] as any;
+      };
+
+      const collectRelatedIds = (focusedId: string): string[] => {
+        const liveNodes = nodesRef.current;
+        const ids = new Set<string>([focusedId]);
+        const focusedNode = liveNodes[focusedId] ?? liveNodes[`!${focusedId}`];
+        for (const nb of focusedNode?.neighbors ?? []) ids.add(nb.id);
+        // heardBy: nodes whose neighbor list includes the focused node
+        for (const [otherId, other] of Object.entries(liveNodes)) {
+          if (other.neighbors?.some((n) => n.id === focusedId)) ids.add(otherId);
+        }
+        return [...ids];
+      };
+
+      const applyLinkFocus = (focusedId: string | null) => {
+        for (const [layerId, base] of Object.entries(LINK_LAYER_BASE_OPACITY)) {
+          if (map.getLayer(layerId)) {
+            try { map.setPaintProperty(layerId, "line-opacity", linkOpacityForFocus(base, focusedId)); } catch {}
+          }
+        }
+        const related = focusedId ? collectRelatedIds(focusedId) : null;
+        const nodeExpr = nodeOpacityForFocus(related);
+        for (const layerId of ["plain-nodes", "unclustered-nodes"]) {
+          if (map.getLayer(layerId)) {
+            try { map.setPaintProperty(layerId, "circle-opacity", nodeExpr); } catch {}
+          }
+        }
+      };
+
+      const bindFocusHover = (layerId: string) => {
+        map.on("mouseenter", layerId, (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+          const f = e.features?.[0];
+          const id = f?.properties?.id as string | undefined;
+          if (id) applyLinkFocus(id);
+        });
+        map.on("mouseleave", layerId, () => applyLinkFocus(null));
+      };
+      bindFocusHover("unclustered-nodes");
+      bindFocusHover("plain-nodes");
+
       // Cluster click — handler is on the invisible circle hit-test layer
       // ("clusters"), NOT the symbol donut layer. Circle hit-testing is reliable
       // geometry; symbol hit-testing is flaky with dynamic icon-size expressions.
@@ -3374,6 +3450,73 @@ export function Map() {
       for (const layerId of ["unclustered-nodes", "plain-nodes", SPIDERFY_LAYER_NODES]) {
         map.on("mouseenter", layerId, showTooltip);
         map.on("mouseleave", layerId, hideTooltip);
+      }
+
+      // --- Link hover card ---
+      const linkPopup = new maplibregl.Popup({
+        closeButton: false,
+        closeOnClick: false,
+        offset: 12,
+        className: "map-link-tooltip",
+      });
+
+      const KIND_LABEL: Record<string, string> = {
+        neighbor: "Neighbor",
+        heard_by: "Heard by",
+        both: "Mutual",
+        traceroute: "Traceroute",
+      };
+
+      const buildLinkPopupHtml = (p: Record<string, unknown>): string => {
+        const liveNodes = nodesRef.current;
+        const aId = String(p.aId ?? "");
+        const bId = String(p.bId ?? "");
+        const aShort = liveNodes[aId]?.shortname ?? aId.slice(0, 8);
+        const bShort = liveNodes[bId]?.shortname ?? bId.slice(0, 8);
+        const kind = String(p.kind ?? "");
+        const kindLabel = KIND_LABEL[kind] ?? kind;
+        const snrRaw = p.snr;
+        const snrStr = typeof snrRaw === "number" && Number.isFinite(snrRaw)
+          ? `${snrRaw.toFixed(1)} dB`
+          : "—";
+        const lastHeardMs = p.lastHeardMs;
+        const heardStr = typeof lastHeardMs === "number" && Number.isFinite(lastHeardMs)
+          ? relativeTime(new Date(lastHeardMs).toISOString())
+          : "—";
+
+        return (
+          `<div style="display:flex;align-items:center;gap:6px;font-size:11px">` +
+            `<strong>${escapeHtml(aShort)}</strong>` +
+            `<span style="opacity:0.6">↔</span>` +
+            `<strong>${escapeHtml(bShort)}</strong>` +
+          `</div>` +
+          `<div style="display:flex;justify-content:space-between;gap:12px;margin-top:4px;font-size:10px;opacity:0.85">` +
+            `<span>${escapeHtml(kindLabel)}</span>` +
+            `<span>SNR <strong>${snrStr}</strong></span>` +
+          `</div>` +
+          `<div style="font-size:10px;opacity:0.6;margin-top:2px">${escapeHtml(heardStr)}</div>`
+        );
+      };
+
+      const showLinkPopup = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        const f = e.features?.[0];
+        if (!f) return;
+        linkPopup
+          .setLngLat(e.lngLat)
+          .setHTML(buildLinkPopupHtml(f.properties ?? {}))
+          .addTo(map);
+      };
+      const moveLinkPopup = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        const f = e.features?.[0];
+        if (!f) return;
+        linkPopup.setLngLat(e.lngLat).setHTML(buildLinkPopupHtml(f.properties ?? {}));
+      };
+      const hideLinkPopup = () => linkPopup.remove();
+
+      for (const layerId of ["links-solid", "links-dashed", "links-dotted"]) {
+        map.on("mouseenter", layerId, showLinkPopup);
+        map.on("mousemove", layerId, moveLinkPopup);
+        map.on("mouseleave", layerId, hideLinkPopup);
       }
     };
 
