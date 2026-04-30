@@ -3214,13 +3214,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"robust-predicates@npm:^2.0.4":
-  version: 2.0.4
-  resolution: "robust-predicates@npm:2.0.4"
-  checksum: 10c0/3c801ff1ea5ce842c1818da62e2be0cc427ab507dc7a21f3ff2e6278f1d32b5c2f2fc740f8e9c188b4e7a2946228c0173607534432314940e89eae15ded79b5f
-  languageName: node
-  linkType: hard
-
 "rolldown@npm:1.0.0-rc.17":
   version: 1.0.0-rc.17
   resolution: "rolldown@npm:1.0.0-rc.17"
@@ -3556,7 +3549,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"tinyqueue@npm:3.0.0, tinyqueue@npm:^3.0.0":
+"tinyqueue@npm:^3.0.0":
   version: 3.0.0
   resolution: "tinyqueue@npm:3.0.0"
   checksum: 10c0/edd6f1a6146aa3aa7bc85b44b3aacf44cddfa805b0901019272d7e9235894b4f28b2f9d09c1bce500ae48883b03708b6b871aa33920e895d2943720f7a9ad3ba
