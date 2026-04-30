@@ -100,11 +100,28 @@ function CopyLinkButton({ nodeId }: { nodeId: string }) {
   );
 }
 
-function RecentPackets({ nodeId }: { nodeId: string }) {
+function RecentPackets({
+  nodeId,
+  nodes,
+}: {
+  nodeId: string;
+  nodes: Record<string, INode>;
+}) {
   const { data, isFetching } = useGetNodePacketsQuery({ nodeId, limit: 50 });
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const packets = useMemo(() => data?.packets ?? [], [data]);
+
+  const labelFor = (hex: string): string => {
+    const cleaned = hex.replace(/^!/, "");
+    const n = nodes[cleaned] ?? nodes[`!${cleaned}`];
+    return n?.shortname || n?.longname || cleaned;
+  };
+
+  const normHop = (h: any): string => {
+    if (typeof h === "number") return convertNodeIdFromIntToHex(h);
+    return String(h ?? "").replace(/^!/, "");
+  };
 
   return (
     <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-xs">
@@ -148,6 +165,19 @@ function RecentPackets({ nodeId }: { nodeId: string }) {
             const other = isSent ? to : from;
             const isExpanded = expanded === key;
 
+            let trForward: string[] | null = null;
+            let trBack: string[] | null = null;
+            if (pktType === "traceroute") {
+              const fwdHopsRaw: any[] = Array.isArray(pkt.route_ids) && pkt.route_ids.length > 0
+                ? pkt.route_ids
+                : Array.isArray(pkt.payload?.route) ? pkt.payload.route : [];
+              const backHopsRaw: any[] = Array.isArray(pkt.payload?.route_back) ? pkt.payload.route_back : [];
+              trForward = [from, ...fwdHopsRaw.map(normHop), to];
+              if (backHopsRaw.length > 0) {
+                trBack = [to, ...backHopsRaw.map(normHop), from];
+              }
+            }
+
             return (
               <button
                 key={key}
@@ -170,6 +200,30 @@ function RecentPackets({ nodeId }: { nodeId: string }) {
                     {isSent ? "\u2192" : "\u2190"} {other}
                   </span>
                 </div>
+
+                {trForward && (
+                  <div className="mt-1 ml-1 pl-2 border-l-2 border-indigo-500/30 text-[10px] space-y-0.5">
+                    <div className="text-gray-600 dark:text-gray-400 font-mono break-all">
+                      <span className="text-indigo-500/80 dark:text-indigo-400/80">\u2192</span>{" "}
+                      {trForward.map(labelFor).join(" \u2192 ")}
+                    </div>
+                    {trBack ? (
+                      <div className="text-gray-600 dark:text-gray-400 font-mono break-all">
+                        <span className="text-indigo-500/80 dark:text-indigo-400/80">\u2190</span>{" "}
+                        {trBack.map(labelFor).join(" \u2190 ")}
+                      </div>
+                    ) : (
+                      <div className="text-gray-500 dark:text-gray-500 italic">no return path</div>
+                    )}
+                    <Link
+                      to={`/traceroutes?range=all&sel=${encodeURIComponent(`pair:${from}|${to}`)}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="inline-block text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300 underline hover:no-underline"
+                    >
+                      View on Traceroutes \u2192
+                    </Link>
+                  </div>
+                )}
 
                 {isExpanded && (
                   <pre className="mt-2 rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-950/50 p-2 text-[10px] font-mono text-gray-700 dark:text-gray-300 overflow-x-auto whitespace-pre-wrap break-all">
@@ -433,7 +487,7 @@ export function NodeDetailsPanel({
           </div>
 
           {/* Recent Packets */}
-          <RecentPackets nodeId={id} />
+          <RecentPackets nodeId={id} nodes={nodes} />
 
           {/* Elsewhere */}
           <div className="rounded-xl border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-900/30 p-3 shadow-xs">
