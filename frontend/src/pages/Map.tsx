@@ -210,6 +210,9 @@ export function Map() {
 
   const mbMapRef = useRef<MlMap | null>(null);
   const clusterDonutLayerRef = useRef<ClusterDonutLayer | null>(null);
+  /** Currently hover-focused node id, or null. Drives focus-on-hover dimming
+   *  alongside the per-tool dim — the cluster layer applies whichever is dimmer. */
+  const focusedNodeIdRef = useRef<string | null>(null);
   // Sticky after first style.load — `isStyleLoaded()` momentarily lies post-removeSource.
   const styleEverLoadedRef = useRef(false);
   const mbSelectedIdRef = useRef<string | null>(null);
@@ -1849,11 +1852,14 @@ export function Map() {
     } catch {}
   }, [activeTool, showCoverageRays, coverageResult]);
 
-  // Dim cluster donuts/count once a tool reaches its result step (origin placed / link picked)
-  // so the raster + overlays read clearly.
-  useEffect(() => {
-    const dimmed = activeTool != null && toolStep === "result";
-    const alpha = dimmed ? 0.25 : 1;
+  /** Cluster donut + count text dim. Combines the tool-active dim (when an RF
+   *  tool is in result step, so the raster reads clearly) with focus-on-hover
+   *  dim (everything outside the hovered node's ego-network), taking whichever
+   *  is dimmer. Reads from refs so it's safe to call from any code path. */
+  const applyClusterDim = () => {
+    const toolDim = activeToolRef.current != null && toolStepRef.current === "result" ? 0.25 : 1;
+    const focusDim = focusedNodeIdRef.current != null ? 0.2 : 1;
+    const alpha = Math.min(toolDim, focusDim);
 
     clusterDonutLayerRef.current?.setAlpha(alpha);
 
@@ -1861,6 +1867,10 @@ export function Map() {
     if (mb && mb.getLayer("clusters-count")) {
       try { mb.setPaintProperty("clusters-count", "text-opacity", alpha); } catch {}
     }
+  };
+
+  useEffect(() => {
+    applyClusterDim();
   }, [activeTool, toolStep]);
 
   // Sync coverage pin to origin (node pick or virtual placement)
@@ -3068,7 +3078,7 @@ export function Map() {
         "links-dotted": 0.7,
       };
       const LINK_DIM_OPACITY = 0.1;
-      const NODE_DIM_OPACITY = 0.2;
+      // const NODE_DIM_OPACITY = 0.2;  // Re-enable with the disabled block in applyLinkFocus.
 
       const recencyExpr = ["coalesce", ["get", "recencyOpacity"], 1.0] as any;
 
@@ -3082,27 +3092,28 @@ export function Map() {
         ] as any;
       };
 
-      const nodeOpacityForFocus = (relatedIds: string[] | null) => {
-        if (!relatedIds || relatedIds.length === 0) return 1.0 as any;
-        return [
-          "case",
-          ["match", ["get", "id"], relatedIds, true, false],
-          1.0,
-          NODE_DIM_OPACITY,
-        ] as any;
-      };
-
-      const collectRelatedIds = (focusedId: string): string[] => {
-        const liveNodes = nodesRef.current;
-        const ids = new Set<string>([focusedId]);
-        const focusedNode = liveNodes[focusedId] ?? liveNodes[`!${focusedId}`];
-        for (const nb of focusedNode?.neighbors ?? []) ids.add(nb.id);
-        // heardBy: nodes whose neighbor list includes the focused node
-        for (const [otherId, other] of Object.entries(liveNodes)) {
-          if (other.neighbors?.some((n) => n.id === focusedId)) ids.add(otherId);
-        }
-        return [...ids];
-      };
+      // Node + cluster dimming helpers — kept for easy re-enable; see applyLinkFocus.
+      // const nodeOpacityForFocus = (relatedIds: string[] | null) => {
+      //   if (!relatedIds || relatedIds.length === 0) return 1.0 as any;
+      //   return [
+      //     "case",
+      //     ["match", ["get", "id"], relatedIds, true, false],
+      //     1.0,
+      //     NODE_DIM_OPACITY,
+      //   ] as any;
+      // };
+      //
+      // const collectRelatedIds = (focusedId: string): string[] => {
+      //   const liveNodes = nodesRef.current;
+      //   const ids = new Set<string>([focusedId]);
+      //   const focusedNode = liveNodes[focusedId] ?? liveNodes[`!${focusedId}`];
+      //   for (const nb of focusedNode?.neighbors ?? []) ids.add(nb.id);
+      //   // heardBy: nodes whose neighbor list includes the focused node
+      //   for (const [otherId, other] of Object.entries(liveNodes)) {
+      //     if (other.neighbors?.some((n) => n.id === focusedId)) ids.add(otherId);
+      //   }
+      //   return [...ids];
+      // };
 
       const applyLinkFocus = (focusedId: string | null) => {
         for (const [layerId, base] of Object.entries(LINK_LAYER_BASE_OPACITY)) {
@@ -3110,13 +3121,19 @@ export function Map() {
             try { map.setPaintProperty(layerId, "line-opacity", linkOpacityForFocus(base, focusedId)); } catch {}
           }
         }
-        const related = focusedId ? collectRelatedIds(focusedId) : null;
-        const nodeExpr = nodeOpacityForFocus(related);
-        for (const layerId of ["plain-nodes", "unclustered-nodes"]) {
-          if (map.getLayer(layerId)) {
-            try { map.setPaintProperty(layerId, "circle-opacity", nodeExpr); } catch {}
-          }
-        }
+
+        // Node + cluster dimming intentionally disabled — pure link focus reads
+        // cleanly without the ambient nodes/clusters fading away. Re-enable as
+        // a single block if we want full ego-network dimming back.
+        // focusedNodeIdRef.current = focusedId;
+        // const related = focusedId ? collectRelatedIds(focusedId) : null;
+        // const nodeExpr = nodeOpacityForFocus(related);
+        // for (const layerId of ["plain-nodes", "unclustered-nodes"]) {
+        //   if (map.getLayer(layerId)) {
+        //     try { map.setPaintProperty(layerId, "circle-opacity", nodeExpr); } catch {}
+        //   }
+        // }
+        // applyClusterDim();
       };
 
       const bindFocusHover = (layerId: string) => {
