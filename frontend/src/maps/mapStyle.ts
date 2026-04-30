@@ -127,19 +127,10 @@ export function buildMapStyle(opts: BuildStyleOptions): StyleSpecification {
   };
 }
 
-export function demSourceSpec(opts: BuildStyleOptions): RasterDEMSourceSpecification {
-  if (opts.provider === "mapbox" && opts.mapboxToken) {
-    return {
-      type: "raster-dem",
-      tiles: [
-        `https://api.mapbox.com/v4/mapbox.mapbox-terrain-dem-v1/{z}/{x}/{y}.pngraw?access_token=${opts.mapboxToken}`,
-      ],
-      tileSize: 512,
-      maxzoom: 14,
-      encoding: "mapbox",
-      attribution: ATTRIB_MAPBOX,
-    };
-  }
+/** Tilezen everywhere keeps the rendered terrain in lockstep with what the RF
+ *  tools (LoS / coverage / scan) feed into ITM. 3DEP 10 m in the US, SRTM 30 m
+ *  global, no token. */
+export function demSourceSpec(): RasterDEMSourceSpecification {
   return {
     type: "raster-dem",
     tiles: [
@@ -153,9 +144,9 @@ export function demSourceSpec(opts: BuildStyleOptions): RasterDEMSourceSpecifica
 }
 
 /** Idempotent — safe to re-call after style reloads. */
-export function ensureTerrain(map: MlMap, opts: BuildStyleOptions, exaggeration: number): void {
+export function ensureTerrain(map: MlMap, exaggeration: number): void {
   if (!map.getSource(TERRAIN_SOURCE_ID)) {
-    map.addSource(TERRAIN_SOURCE_ID, demSourceSpec(opts));
+    map.addSource(TERRAIN_SOURCE_ID, demSourceSpec());
   }
   map.setTerrain({ source: TERRAIN_SOURCE_ID, exaggeration });
   map.setSky(SKY_SPEC);

@@ -405,6 +405,8 @@ export function Map() {
   const [scanSummary, setScanSummary] = useState<ScanSummary | null>(null);
   const [isScanning, setIsScanning] = useState(false);
   const [scanHoverId, setScanHoverId] = useState<string | null>(null);
+  /** DEM tile source used for the last scan. */
+  const [scanDemSource, setScanDemSource] = useState<DemSource | null>(null);
   /** Monotonic request id — stale worker replies are dropped. */
   const coverageRequestIdRef = useRef(0);
   /** Lazily-created coverage worker pool; terminated on unmount. */
@@ -908,9 +910,6 @@ export function Map() {
   const isPickingNode = activeTool != null && toolStep !== "result";
   const terrain3DRef = useRef(terrain3D);
   const setDetailsDataRef = useRef(setDetailsData);
-  const providerRef = useRef(provider);
-  const mapboxStyleRef = useRef(mapboxStyle);
-  const osmBasemapRef = useRef(osmBasemap);
 
   useEffect(() => {
     nodesRef.current = nodes;
@@ -947,9 +946,6 @@ export function Map() {
   useEffect(() => {
     terrain3DRef.current = terrain3D;
   }, [terrain3D]);
-  useEffect(() => { providerRef.current = provider; }, [provider]);
-  useEffect(() => { mapboxStyleRef.current = mapboxStyle; }, [mapboxStyle]);
-  useEffect(() => { osmBasemapRef.current = osmBasemap; }, [osmBasemap]);
 
   useEffect(() => {
     const mb = mbMapRef.current;
@@ -983,6 +979,7 @@ export function Map() {
     setCoverageProgress({ completed: 0, total: 0 });
     setCoverageDemSource(null);
     setLosDemSource(null);
+    setScanDemSource(null);
     setIsScanning(false);
 
     const mb = mbMapRef.current;
@@ -1382,13 +1379,14 @@ export function Map() {
           return;
         }
         const scanBounds = demBoundsAround(origin!, SCAN_RADIUS_KM, 1.05);
-        const { dem } = await buildDem({
+        const { dem, source: demSourceUsedForScan } = await buildDem({
           bounds: scanBounds,
           targetWidth: 1024,
           targetHeight: 1024,
           token: mapboxToken,
         });
         if (cancelled) return;
+        setScanDemSource(demSourceUsedForScan);
 
         // Override GPS altitude with terrain + configured AGL (matches coverage).
         // Falls back to GPS altitude if DEM sampling fails.
@@ -2906,11 +2904,7 @@ export function Map() {
       // Re-apply terrain if it was enabled (style.load wipes this)
       if (terrain3DRef.current) {
         try {
-          ensureTerrain(
-            map,
-            { provider: providerRef.current, mapboxToken, mapboxStyle: mapboxStyleRef.current, osmBasemap: osmBasemapRef.current },
-            terrainExaggeration,
-          );
+          ensureTerrain(map, terrainExaggeration);
         } catch (err) {
           console.warn("[Map] Terrain re-apply failed after style load:", err);
         }
@@ -3445,7 +3439,7 @@ export function Map() {
 
     try {
       if (terrain3D) {
-        ensureTerrain(map, { provider, mapboxToken, mapboxStyle, osmBasemap }, terrainExaggeration);
+        ensureTerrain(map, terrainExaggeration);
       } else {
         removeTerrain(map);
       }
@@ -3817,6 +3811,7 @@ export function Map() {
               : "Virtual location"
           }
           isScanning={isScanning}
+          demSource={scanDemSource}
           terrainNeeded={!terrain3D}
           onEnableTerrain={() => setTerrain3D(true)}
           onClose={resetTool}

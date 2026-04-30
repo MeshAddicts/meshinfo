@@ -5,6 +5,8 @@
  */
 import maplibregl, { type CustomRenderMethodInput } from "maplibre-gl";
 
+import { MAP_STYLE_IDS } from "../../maps/mapStyle";
+
 const VS = `
 attribute vec3 a_pos;          // Mercator xyz (z = altitude → terrain-aware)
 attribute vec2 a_uv;           // Local corner [-1, 1] (+y = up)
@@ -138,6 +140,9 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
   /** Rebuild vertex buffer at the start of the next render() — rebuilding inside
    *  render() avoids stale features since sourcedata/moveend can fire before tiles re-render. */
   private dirty = true;
+  /** Cache of the last queryRenderedFeatures pass — render() rebuilds the GPU
+   *  buffer from this each frame with fresh terrain z when terrain is on. */
+  private lastClusters: { lng: number; lat: number; r: number; ratio: number }[] = [];
 
   private onMoveend: (() => void) | null = null;
   private onIdle: (() => void) | null = null;
@@ -184,11 +189,18 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
     };
     this.onIdle = markDirty;
     this.onSourceData = (e) => {
-      if (e.sourceId !== "nodes_clustered") return;
-      // Hide stale donuts while tiles re-render after setData(); render() will rebuild.
-      this.vertexCount = 0;
-      this.dirty = true;
-      map.triggerRepaint();
+      if (e.sourceId === "nodes_clustered") {
+        // Hide stale donuts while tiles re-render after setData(); render() will rebuild.
+        this.vertexCount = 0;
+        this.dirty = true;
+        map.triggerRepaint();
+        return;
+      }
+      // Kick a repaint when DEM tiles arrive on an idle map; render's per-frame
+      // z-refresh picks up the new elevation. No dirty — cluster set is unchanged.
+      if (e.sourceId === MAP_STYLE_IDS.terrainSource) {
+        map.triggerRepaint();
+      }
     };
     map.on("moveend", this.onMoveend);
     map.on("idle", this.onIdle);
@@ -225,25 +237,18 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
 
   private rebuild(): void {
     const map = this.map;
-    const gl = this.gl;
-    if (!map || !gl || !this.buffer) return;
-    if (!map.getLayer("clusters")) { this.vertexCount = 0; return; }
+    if (!map) return;
+    if (!map.getLayer("clusters")) {
+      this.lastClusters = [];
+      this.vertexCount = 0;
+      return;
+    }
 
     const features = map.queryRenderedFeatures({ layers: ["clusters"] });
 
-    const terrainEnabled = !!map.getTerrain?.();
-    const elevationAt = (lng: number, lat: number): number => {
-      if (!terrainEnabled) return 0;
-      // Want exaggerated elevation here: mercatorMatrix doesn't scale terrain,
-      // so vertex z must already be in the same exaggerated space as the rendered mesh.
-      const e = map.queryTerrainElevation?.({ lng, lat });
-      return Number.isFinite(e) ? (e as number) : 0;
-    };
-
     // Dedupe by position — cluster_ids can flip across setData calls
     const seen = new Set<string>();
-    type Cluster = { x: number; y: number; z: number; r: number; ratio: number };
-    const clusters: Cluster[] = [];
+    const next: { lng: number; lat: number; r: number; ratio: number }[] = [];
 
     for (const f of features) {
       const coords = (f.geometry as any)?.coordinates;
@@ -260,22 +265,33 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
       const online = (f.properties?.onlineCount as number) ?? 0;
       const ratio = count > 0 ? online / count : 0;
 
-      const mc = maplibregl.MercatorCoordinate.fromLngLat({ lng, lat }, elevationAt(lng, lat));
-      clusters.push({
-        x: mc.x,
-        y: mc.y,
-        z: mc.z,
-        r: pixelRadiusForCount(count),
-        ratio,
-      });
+      next.push({ lng, lat, r: pixelRadiusForCount(count), ratio });
     }
 
-    if (clusters.length === 0) { this.vertexCount = 0; return; }
+    this.lastClusters = next;
+    this.uploadVerts();
+  }
+
+  /** Build verts from `lastClusters` with current terrain elevations and upload. */
+  private uploadVerts(): void {
+    const map = this.map;
+    const gl = this.gl;
+    if (!map || !gl || !this.buffer) return;
+    if (this.lastClusters.length === 0) { this.vertexCount = 0; return; }
+
+    const terrainEnabled = !!map.getTerrain?.();
+    const elevationAt = (lng: number, lat: number): number => {
+      if (!terrainEnabled) return 0;
+      // Want exaggerated elevation here: mercatorMatrix doesn't scale terrain,
+      // so vertex z must already be in the same exaggerated space as the rendered mesh.
+      const e = map.queryTerrainElevation?.({ lng, lat });
+      return Number.isFinite(e) ? (e as number) : 0;
+    };
 
     // 6 verts/cluster × 7 floats: x, y, z, ux, uy, r, ratio
     const floatsPerVertex = 7;
     const vertsPerCluster = 6;
-    const verts = new Float32Array(clusters.length * vertsPerCluster * floatsPerVertex);
+    const verts = new Float32Array(this.lastClusters.length * vertsPerCluster * floatsPerVertex);
 
     const corners: [number, number][] = [
       [-1,  1], [-1, -1], [ 1, -1],  // UL, LL, LR
@@ -283,11 +299,12 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
     ];
 
     let i = 0;
-    for (const c of clusters) {
+    for (const c of this.lastClusters) {
+      const mc = maplibregl.MercatorCoordinate.fromLngLat({ lng: c.lng, lat: c.lat }, elevationAt(c.lng, c.lat));
       for (const [ux, uy] of corners) {
-        verts[i++] = c.x;
-        verts[i++] = c.y;
-        verts[i++] = c.z;
+        verts[i++] = mc.x;
+        verts[i++] = mc.y;
+        verts[i++] = mc.z;
         verts[i++] = ux;
         verts[i++] = uy;
         verts[i++] = c.r;
@@ -297,7 +314,7 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
     gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
-    this.vertexCount = clusters.length * vertsPerCluster;
+    this.vertexCount = this.lastClusters.length * vertsPerCluster;
   }
 
   render(gl: WebGLRenderingContext | WebGL2RenderingContext, options: CustomRenderMethodInput): void {
@@ -307,6 +324,10 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
     if (this.dirty) {
       this.rebuild();
       this.dirty = false;
+    } else if (this.map?.getTerrain?.() && this.lastClusters.length > 0) {
+      // Symbol layer (cluster number labels) reprojects to terrain per-frame;
+      // donuts must too, or they drift relative to numbers in 3D-pitched view.
+      this.uploadVerts();
     }
 
     if (this.vertexCount === 0) return;
