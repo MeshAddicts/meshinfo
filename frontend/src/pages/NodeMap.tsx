@@ -155,12 +155,14 @@ export const NodeMap = ({ node }: { node: INode }) => {
   const settings = useMemo(() => {
     const storedProvider = readJson<MapProvider | null>(LS_KEYS.provider, null);
     const provider: MapProvider =
-      storedProvider === "mapbox" && !hasMapbox ? "osm" : storedProvider ?? "osm";
+      storedProvider === "mapbox" && !hasMapbox
+        ? "osm"
+        : storedProvider ?? (hasMapbox ? "mapbox" : "osm");
 
     const mapboxStyle =
       readJson<string | null>(LS_KEYS.mapboxStyle, null) ??
       env.MAPBOX_STYLE ??
-      "mapbox/dark-v11";
+      "mapbox/satellite-streets-v12";
 
     const osmBasemap =
       readJson<OsmBasemap | null>(LS_KEYS.osmBasemap, null) ?? "carto_dark";

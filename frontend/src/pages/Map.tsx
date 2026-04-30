@@ -242,7 +242,7 @@ export function Map() {
   const [provider, setProvider] = useState<MapProvider>(() => {
     const stored = readJson<MapProvider | null>(LS_KEYS.provider, null);
     if (stored) return stored === "mapbox" && !hasMapbox ? "osm" : stored;
-    return "osm";
+    return hasMapbox ? "mapbox" : "osm";
   });
 
   const [mapboxStyle, setMapboxStyle] = useState<string>(() => {
