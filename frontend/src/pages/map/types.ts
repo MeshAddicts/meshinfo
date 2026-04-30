@@ -1,10 +1,11 @@
 import type { INode, ITraceroutesResponse, NodeRole } from "../../types";
 import type { ElsewhereLink } from "../../types/config";
 
+export type { MapProvider } from "../../maps/mapStyle";
+
 /** [lon, lat] tuple for map coordinates. */
 export type Coordinate = [number, number];
 
-export type MapProvider = "osm" | "mapbox";
 export type LinkMode = "selected" | "all" | "mynode";
 
 export type IMapNode = INode & {

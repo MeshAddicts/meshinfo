@@ -164,7 +164,8 @@ export function ensureTerrain(map: MlMap, opts: BuildStyleOptions, exaggeration:
 /** Leaves the DEM source in place for cheap re-enable. */
 export function removeTerrain(map: MlMap): void {
   try { map.setTerrain(null); } catch {}
-  try { map.setSky({}); } catch {}
+  // setSky's public type rejects null; runtime accepts it and fully clears the spec.
+  try { (map.setSky as unknown as (sky: null) => void)(null); } catch {}
 }
 
 export const MAP_STYLE_IDS = {
