@@ -1,4 +1,4 @@
-import { Coordinate } from "ol/coordinate";
+type Coordinate = [number, number];
 
 export const getDistanceBetweenTwoPoints = (
   coord1: Coordinate,

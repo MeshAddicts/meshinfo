@@ -8,7 +8,6 @@ export const LS_KEYS = {
   linkMode: "meshinfo.map.linkMode",
   myNodeId: "meshinfo.map.myNodeId",
   terrain3D: "meshinfo.map.terrain3D",
-  terrainExaggeration: "meshinfo.map.terrainExaggeration",
 } as const;
 
 export function readJson<T>(key: string, fallback: T): T {

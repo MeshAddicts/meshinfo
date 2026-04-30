@@ -1,7 +1,7 @@
+import type { ITraceroutesResponse } from "../../types";
 import { findPathsBetween } from "./pathAnalysis";
 import { PathHopList } from "./PathHopList";
 import type { IMapNode } from "./types";
-import type { ITraceroutesResponse } from "../../types";
 
 export function MapTraceroutePanel({
   fromId,

@@ -1,7 +1,8 @@
 /** Scan-results panel: ranked LoS from origin to every node in view. */
 import { useEffect, useMemo, useState } from "react";
+
 import { COMMON_ANTENNAS, COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS } from "./coverageAnalysis";
-import type { ScanSummary, ScanClass, ScanResult } from "./scanAnalysis";
+import type { ScanClass, ScanResult,ScanSummary } from "./scanAnalysis";
 import { useBottomSheetGesture } from "./useBottomSheet";
 
 const CLASS_STYLES: Record<ScanClass, { bg: string; text: string; border: string; label: string }> = {

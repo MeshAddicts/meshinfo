@@ -3,7 +3,7 @@
  * Buffer rebuilds on moveend/idle; pixel→NDC sizing happens in the shader.
  * Hit-testing is handled by the companion "clusters" circle layer.
  */
-import mapboxgl from "mapbox-gl";
+import maplibregl, { type CustomRenderMethodInput } from "maplibre-gl";
 
 const VS = `
 attribute vec3 a_pos;          // Mercator xyz (z = altitude → terrain-aware)
@@ -23,7 +23,7 @@ varying float v_alpha;
 void main() {
   vec4 clip = u_matrix * vec4(a_pos, 1.0);
 
-  // CSS-pixel → physical → NDC. u_dpr keeps donuts aligned with Mapbox native layers on HiDPI.
+  // CSS-pixel → physical → NDC. u_dpr keeps donuts aligned with native layers on HiDPI.
   vec2 ndcOffset = a_uv * (a_pixelRadius * 2.0 * u_dpr) / u_viewport;
   clip.xy += ndcOffset * clip.w;
 
@@ -116,12 +116,12 @@ function pixelRadiusForCount(count: number): number {
   return 52;
 }
 
-export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
+export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
   readonly id = "clusters-donuts";
   readonly type = "custom" as const;
   readonly renderingMode = "2d" as const;
 
-  private map: mapboxgl.Map | null = null;
+  private map: maplibregl.Map | null = null;
   private gl: WebGLRenderingContext | null = null;
   private program: WebGLProgram | null = null;
   private buffer: WebGLBuffer | null = null;
@@ -141,10 +141,10 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
 
   private onMoveend: (() => void) | null = null;
   private onIdle: (() => void) | null = null;
-  private onSourceData: ((e: mapboxgl.MapSourceDataEvent) => void) | null = null;
+  private onSourceData: ((e: maplibregl.MapSourceDataEvent) => void) | null = null;
   private moveendTimer: ReturnType<typeof setTimeout> | null = null;
 
-  onAdd(map: mapboxgl.Map, gl: WebGLRenderingContext): void {
+  onAdd(map: maplibregl.Map, gl: WebGLRenderingContext): void {
     this.map = map;
     this.gl = gl;
 
@@ -195,7 +195,7 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
     map.on("sourcedata", this.onSourceData);
   }
 
-  onRemove(map: mapboxgl.Map, gl: WebGLRenderingContext): void {
+  onRemove(map: maplibregl.Map, gl: WebGLRenderingContext): void {
     if (this.moveendTimer != null) {
       clearTimeout(this.moveendTimer);
       this.moveendTimer = null;
@@ -231,11 +231,12 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
 
     const features = map.queryRenderedFeatures({ layers: ["clusters"] });
 
-    const terrainEnabled = !!(map as any).getTerrain?.();
+    const terrainEnabled = !!map.getTerrain?.();
     const elevationAt = (lng: number, lat: number): number => {
       if (!terrainEnabled) return 0;
-      // exaggerated:false reads real MSL metres; default true applies terrain exaggeration and would float donuts above the ground
-      const e = map.queryTerrainElevation?.({ lng, lat } as any, { exaggerated: false });
+      // Want exaggerated elevation here: mercatorMatrix doesn't scale terrain,
+      // so vertex z must already be in the same exaggerated space as the rendered mesh.
+      const e = map.queryTerrainElevation?.({ lng, lat });
       return Number.isFinite(e) ? (e as number) : 0;
     };
 
@@ -259,7 +260,7 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
       const online = (f.properties?.onlineCount as number) ?? 0;
       const ratio = count > 0 ? online / count : 0;
 
-      const mc = mapboxgl.MercatorCoordinate.fromLngLat({ lng, lat }, elevationAt(lng, lat));
+      const mc = maplibregl.MercatorCoordinate.fromLngLat({ lng, lat }, elevationAt(lng, lat));
       clusters.push({
         x: mc.x,
         y: mc.y,
@@ -299,7 +300,7 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
     this.vertexCount = clusters.length * vertsPerCluster;
   }
 
-  render(gl: WebGLRenderingContext, matrix: number[]): void {
+  render(gl: WebGLRenderingContext | WebGL2RenderingContext, options: CustomRenderMethodInput): void {
     if (!this.program || !this.buffer) return;
 
     // Rebuild inside render() so queryRenderedFeatures sees current tile state
@@ -309,6 +310,11 @@ export class ClusterDonutLayer implements mapboxgl.CustomLayerInterface {
     }
 
     if (this.vertexCount === 0) return;
+
+    // Shader expects 0..1 Mercator → clip; the public `modelViewProjectionMatrix`
+    // expects coord×worldSize. Internal `mercatorMatrix` has the worldSize baked in.
+    const tr = this.map ? (this.map as unknown as { transform?: { mercatorMatrix?: Float32List | number[] } }).transform : undefined;
+    const matrix = (tr?.mercatorMatrix ?? options.modelViewProjectionMatrix) as Float32List;
 
     gl.useProgram(this.program);
     gl.uniformMatrix4fv(this.uMatrix, false, matrix);

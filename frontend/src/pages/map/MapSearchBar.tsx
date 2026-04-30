@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { roleTitles, type NodeRole } from "../../types";
-import { ROLE_COLORS, DEFAULT_NODE_COLOR } from "./utils";
+import { type NodeRole,roleTitles } from "../../types";
 import type { IMapNode } from "./types";
+import { DEFAULT_NODE_COLOR,ROLE_COLORS } from "./utils";
 
 export function MapSearchBar({
   nodes,

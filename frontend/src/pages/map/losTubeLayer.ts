@@ -1,8 +1,8 @@
 /**
- * Mapbox 3D LoS "tube" layer: GL_LINE_STRIP in Mercator world space,
+ * 3D LoS "tube" custom layer: GL_LINE_STRIP in Mercator world space,
  * color-coded per vertex (clear/fresnel/blocked). Sits in the depth buffer.
  */
-import mapboxgl from "mapbox-gl";
+import maplibregl, { type CustomRenderMethodInput } from "maplibre-gl";
 
 export type LosSegmentColor = "clear" | "fresnel" | "blocked";
 
@@ -43,12 +43,12 @@ function compile(gl: WebGLRenderingContext, type: number, source: string): WebGL
   return shader;
 }
 
-export class LosTubeLayer implements mapboxgl.CustomLayerInterface {
+export class LosTubeLayer implements maplibregl.CustomLayerInterface {
   readonly id = "los-tube";
   readonly type = "custom" as const;
   readonly renderingMode = "3d" as const;
 
-  private map: mapboxgl.Map | null = null;
+  private map: maplibregl.Map | null = null;
   private gl: WebGLRenderingContext | null = null;
   private program: WebGLProgram | null = null;
   private buffer: WebGLBuffer | null = null;
@@ -59,7 +59,7 @@ export class LosTubeLayer implements mapboxgl.CustomLayerInterface {
   /** Cached raw input (unscaled); re-uploaded with current terrain exaggeration. */
   private lastData: LosTubeData | null = null;
 
-  onAdd(map: mapboxgl.Map, gl: WebGLRenderingContext): void {
+  onAdd(map: maplibregl.Map, gl: WebGLRenderingContext): void {
     this.map = map;
     this.gl = gl;
 
@@ -97,7 +97,7 @@ export class LosTubeLayer implements mapboxgl.CustomLayerInterface {
     this.buffer = gl.createBuffer();
   }
 
-  onRemove(_map: mapboxgl.Map, gl: WebGLRenderingContext): void {
+  onRemove(_map: maplibregl.Map, gl: WebGLRenderingContext): void {
     if (this.buffer) gl.deleteBuffer(this.buffer);
     if (this.program) gl.deleteProgram(this.program);
     this.buffer = null;
@@ -129,7 +129,7 @@ export class LosTubeLayer implements mapboxgl.CustomLayerInterface {
       return;
     }
 
-    // Mapbox types exaggeration as DataDrivenPropertyValueSpecification; we only set numbers
+    // Lift altitudes into the same exaggerated space as the rendered terrain mesh.
     const exagRaw = this.map?.getTerrain()?.exaggeration;
     const exaggeration = typeof exagRaw === "number" ? exagRaw : 1;
 
@@ -137,7 +137,7 @@ export class LosTubeLayer implements mapboxgl.CustomLayerInterface {
     const verts = new Float32Array(data.points.length * 6);
     let i = 0;
     for (const p of data.points) {
-      const mc = mapboxgl.MercatorCoordinate.fromLngLat(
+      const mc = maplibregl.MercatorCoordinate.fromLngLat(
         { lng: p.lng, lat: p.lat },
         p.altitude * exaggeration,
       );
@@ -156,8 +156,12 @@ export class LosTubeLayer implements mapboxgl.CustomLayerInterface {
     this.map?.triggerRepaint();
   }
 
-  render(gl: WebGLRenderingContext, matrix: number[]): void {
+  render(gl: WebGLRenderingContext | WebGL2RenderingContext, options: CustomRenderMethodInput): void {
     if (!this.program || !this.buffer || this.vertexCount < 2) return;
+
+    // See clusterDonutLayer.ts for the mercatorMatrix vs modelViewProjectionMatrix story.
+    const tr = this.map ? (this.map as unknown as { transform?: { mercatorMatrix?: Float32List | number[] } }).transform : undefined;
+    const matrix = (tr?.mercatorMatrix ?? options.modelViewProjectionMatrix) as Float32List;
 
     gl.useProgram(this.program);
     gl.uniformMatrix4fv(this.uMatrix, false, matrix);

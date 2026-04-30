@@ -3,7 +3,6 @@
  * Hot loop is alloc-free (shared Float64 profile buffer, pre-allocated WASM ctx).
  * Profile length adapts to path length (15-96 samples, ~1.5/km).
  */
-import { type DEM, sampleDEMAt } from "./terrainDEM";
 import {
   Climate,
   computeP2PLossFast,
@@ -11,6 +10,7 @@ import {
   ModeOfVariability,
   Polarization,
 } from "./itm";
+import { type DEM, sampleDEMAt } from "./terrainDEM";
 
 const R_EARTH_KM = 6371;
 

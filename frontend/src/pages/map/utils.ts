@@ -5,8 +5,7 @@ import type {
   LineString as GeoLineString,
   Point as GeoPoint,
 } from "geojson";
-import type { Map as MbMap } from "mapbox-gl";
-import type { Map as OlMap } from "ol";
+import type { Map as MlMap } from "maplibre-gl";
 
 import { NodeRole } from "../../types";
 import { removeSpiderfyLayers } from "./spiderfy";
@@ -72,22 +71,6 @@ export function computeRecentNodes(nodes: Record<string, IMapNode>, recentDays: 
   });
 }
 
-export function bumpOlRender(map: OlMap) {
-  map.updateSize();
-  map.renderSync();
-
-  requestAnimationFrame(() => {
-    map.updateSize();
-    map.renderSync();
-  });
-
-  // Delayed bump for late layout/font/sidebar shifts
-  window.setTimeout(() => {
-    map.updateSize();
-    map.renderSync();
-  }, 200);
-}
-
 export function buildNodesGeoJSON(
   nodes: Record<string, IMapNode>,
   recentDays: number,
@@ -132,7 +115,7 @@ export function emptyLineFeatureCollection(): FeatureCollection<GeoLineString, G
   return { type: "FeatureCollection", features: [] };
 }
 
-export function applyMapboxClusterVisibility(map: MbMap, enabled: boolean): void {
+export function applyClusterVisibility(map: MlMap, enabled: boolean): void {
   const set = (layerId: string, visible: boolean) => {
     if (!map.getLayer(layerId)) return;
     map.setLayoutProperty(layerId, "visibility", visible ? "visible" : "none");

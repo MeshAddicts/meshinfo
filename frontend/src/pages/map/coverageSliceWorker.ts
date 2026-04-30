@@ -2,18 +2,18 @@
  * Coverage slice worker: runs ITM per pixel over a row range of a shared DEM.
  * Each worker keeps its own ITM WASM context warm across requests.
  */
-import type { DEM, DEMBounds } from "./terrainDEM";
 import {
+  type RasterParams,
+  renderCoverageRaster,
+} from "./coverageRaster";
+import {
+  Climate,
+  disposeItmContext,
   type ItmContext,
   loadItmContext,
-  disposeItmContext,
-  Climate,
   Polarization,
 } from "./itm";
-import {
-  renderCoverageRaster,
-  type RasterParams,
-} from "./coverageRaster";
+import type { DEM, DEMBounds } from "./terrainDEM";
 
 export interface CoverageSliceRequest {
   requestId: number;

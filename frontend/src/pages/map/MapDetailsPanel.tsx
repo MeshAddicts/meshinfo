@@ -2,12 +2,12 @@ import { useEffect, useRef, useState } from "react";
 
 import { HardwareModel, roleTitles, type NodeRole } from "../../types";
 import { getElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLinks";
-import { ROLE_COLORS, DEFAULT_NODE_COLOR } from "./utils";
-import { calculateGeodesicDistance } from "./utils";
 import { normNodeId } from "./linkFeatures";
 import { TelemetrySection } from "./TelemetrySection";
-import { useBottomSheetGesture } from "./useBottomSheet";
 import type { IMapNode, NodeDetailsData } from "./types";
+import { useBottomSheetGesture } from "./useBottomSheet";
+import { DEFAULT_NODE_COLOR,ROLE_COLORS } from "./utils";
+import { calculateGeodesicDistance } from "./utils";
 
 function formatLastSeen(raw: string | null | undefined): string {
   if (!raw) return "Unknown";

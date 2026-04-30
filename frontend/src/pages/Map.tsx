@@ -1,81 +1,59 @@
-import "ol/ol.css";
-import "mapbox-gl/dist/mapbox-gl.css";
+import "maplibre-gl/dist/maplibre-gl.css";
 
-import mapboxgl, {
-  GeoJSONSource as MbGeoJSONSource,
-  Map as MbMap,
-} from "mapbox-gl";
-import { Feature, Map as OlMap, Overlay, View } from "ol";
-import { Coordinate } from "ol/coordinate";
-import { click } from "ol/events/condition";
-import { LineString, Polygon } from "ol/geom";
-import Point from "ol/geom/Point";
-import Select from "ol/interaction/Select";
-import VectorLayer from "ol/layer/Vector";
-import { fromLonLat, transform } from "ol/proj";
-import { Vector } from "ol/source";
-import VectorSource from "ol/source/Vector";
-import { Circle, Fill, Stroke, Style } from "ol/style";
+import maplibregl, {
+  GeoJSONSource as MlGeoJSONSource,
+  Map as MlMap,
+} from "maplibre-gl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
-import { NodeRole, roleTitles, type ITraceroutesResponse } from "../types";
 import { env } from "../env";
-import { createBaseTileLayer, type OsmBasemap } from "../maps/baseLayer";
 import { reverseGeocode } from "../maps/geocoder";
+import { buildMapStyle, ensureTerrain, type OsmBasemap,removeTerrain } from "../maps/mapStyle";
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
+import { type ITraceroutesResponse,NodeRole, roleTitles } from "../types";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
-import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
-import { COMMON_ANTENNAS, COMMON_HARDWARE, effectiveSensitivityDbm, ENVIRONMENTS, MESHTASTIC_PRESETS, reliabilityPreset, type CoverageReliability, type CoverageResult } from "./map/coverageAnalysis";
-import { demBoundsAround, downsampleDEM, sampleDEMAt, type DEM, type DEMBounds } from "./map/terrainDEM";
-import { buildDem, fetchElevationAt, type DemSource } from "./map/terrainRgb";
-import { CoverageWorkerPool } from "./map/coverageWorkerPool";
-import type { CoverageSliceRequest } from "./map/coverageSliceWorker";
-import type { RasterParams } from "./map/coverageRaster";
-import { extractCoverageContours, type ContourFeatureCollection } from "./map/coverageContours";
-import { extractCoverageRays, type VisibilityRayFeatureCollection } from "./map/coverageRays";
-import { analyzeLineOfSight, type LoSResult } from "./map/losAnalysis";
-import { Climate, computeP2PLoss, type ItmContext, loadItmContext, Polarization } from "./map/itm";
-import { LosTubeLayer, losPointsToTubeData, obstructionsToGeoJSON, pickObstructions } from "./map/losTubeLayer";
 import { ClusterDonutLayer } from "./map/clusterDonutLayer";
-import { runScan, scanToGeoJSON, type ScanClass, type ScanSummary, type ScanTarget } from "./map/scanAnalysis";
-import { MapScanPanel } from "./map/MapScanPanel";
-import { findPathsBetween } from "./map/pathAnalysis";
+import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult,effectiveSensitivityDbm, ENVIRONMENTS, MESHTASTIC_PRESETS, reliabilityPreset } from "./map/coverageAnalysis";
+import { type ContourFeatureCollection,extractCoverageContours } from "./map/coverageContours";
+import type { RasterParams } from "./map/coverageRaster";
+import { extractCoverageRays, type VisibilityRayFeatureCollection } from "./map/coverageRays";
+import type { CoverageSliceRequest } from "./map/coverageSliceWorker";
+import { CoverageWorkerPool } from "./map/coverageWorkerPool";
+import { FiltersResetPill } from "./map/FiltersResetPill";
+import { Climate, computeP2PLoss, type ItmContext, loadItmContext, Polarization } from "./map/itm";
+import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
+import { analyzeLineOfSight, type LoSResult } from "./map/losAnalysis";
+import { losPointsToTubeData, LosTubeLayer, obstructionsToGeoJSON, pickObstructions } from "./map/losTubeLayer";
+import { COVERAGE_DETAIL_MAX_TILES, COVERAGE_DETAIL_SIZE, type CoverageDetail, MapCoveragePanel } from "./map/MapCoveragePanel";
 import { MapDetailsPanel } from "./map/MapDetailsPanel";
 import { MapHealthWidget } from "./map/MapHealthWidget";
 import { MapLosPanel } from "./map/MapLosPanel";
-import { MapToolPrompt, MapToolsDrawer } from "./map/MapToolsDrawer";
-import { MapTraceroutePanel } from "./map/MapTraceroutePanel";
-import { COVERAGE_DETAIL_MAX_TILES, COVERAGE_DETAIL_SIZE, type CoverageDetail, MapCoveragePanel } from "./map/MapCoveragePanel";
-import { FiltersResetPill } from "./map/FiltersResetPill";
+import { MapScanPanel } from "./map/MapScanPanel";
 import { MapSearchBar } from "./map/MapSearchBar";
 import { MapSettingsPanel } from "./map/MapSettingsPanel";
-import { LS_KEYS, readJson, toMapboxStyleUrl, writeJson } from "./map/storage";
-import type { IFeatureNode, IMapNode, LinkMode, MapProvider, NodeDetailsData, NodeLike } from "./map/types";
+import { MapToolPrompt, MapToolsDrawer } from "./map/MapToolsDrawer";
+import { MapTraceroutePanel } from "./map/MapTraceroutePanel";
+import { findPathsBetween } from "./map/pathAnalysis";
+import { runScan, type ScanClass, type ScanSummary, type ScanTarget,scanToGeoJSON } from "./map/scanAnalysis";
 import {
   autoSpiderfyVisibleClusters,
   removeSpiderfyLayers,
   spiderfy,
+  SPIDERFY_LAYER_LABELS,
+  SPIDERFY_LAYER_NODES,
+  SPIDERFY_SOURCE_NODES,
   unspiderfy,
   updateSpiderfyPositions,
-  SPIDERFY_LAYER_NODES,
-  SPIDERFY_LAYER_LABELS,
-  SPIDERFY_SOURCE_NODES,
 } from "./map/spiderfy";
+import { LS_KEYS, readJson, writeJson } from "./map/storage";
+import { type DEM, type DEMBounds,demBoundsAround, downsampleDEM, sampleDEMAt } from "./map/terrainDEM";
+import { buildDem, type DemSource,fetchElevationAt } from "./map/terrainRgb";
+import type { IMapNode, LinkMode, MapProvider, NodeDetailsData, NodeLike } from "./map/types";
 import {
-  autoOlSpiderfy,
-  createOlClusterLayer,
-  handleOlClusterClick,
-  removeOlSpiderfy,
-  updateOlSpiderfyPositions,
-  type OlClusterSetup,
-} from "./map/spiderfy-ol";
-import {
-  applyMapboxClusterVisibility,
+  applyClusterVisibility,
   buildNodesGeoJSON,
-  bumpOlRender,
   calculateGeodesicDistance,
-  computeRecentNodes,
   DEFAULT_NODE_COLOR,
   emptyLineFeatureCollection,
   escapeHtml,
@@ -87,22 +65,14 @@ import {
 const TRANSPARENT_1PX_PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 
-// SNR → color/width for OL link styles
-function snrToOlColor(snr: number | null | undefined, kind: string): string {
-  if (kind === "traceroute") return "#F59E0B";
-  if (snr == null) {
-    return kind === "both" ? "#FF66FF" : kind === "heard_by" ? "#6666FF" : "#66FF66";
-  }
-  if (snr >= 10) return "#44CC44";
-  if (snr >= 5) return "#88DD00";
-  if (snr >= 0) return "#FFAA00";
-  if (snr >= -5) return "#FF6644";
-  return "#FF4444";
-}
-
-function snrToOlWidth(snr: number | null | undefined): number {
-  if (snr == null) return 3;
-  return Math.max(1.5, Math.min(9, 3 + snr * 0.4));
+/** `map.queryTerrainElevation` returns `dem_m × exaggeration` with no opt-out;
+ *  divide it back out for real MSL (RF math, hover pill, anywhere needing physical metres). */
+function queryTerrainElevationMSL(map: MlMap, lnglat: [number, number]): number | null {
+  const e = map.queryTerrainElevation(lnglat);
+  if (typeof e !== "number" || !Number.isFinite(e)) return null;
+  const ex = map.getTerrain()?.exaggeration;
+  const exaggeration = typeof ex === "number" && ex > 0 ? ex : 1;
+  return e / exaggeration;
 }
 
 function relativeTime(iso: string | null | undefined): string {
@@ -229,80 +199,23 @@ const mbRoleColorExpr = [
   ],
 ] as any;
 
-const defaultStyle = new Style({
-  image: new Circle({
-    radius: 6,
-    fill: new Fill({ color: "rgba(0, 0, 240, 1)" }),
-    stroke: new Stroke({ color: "white", width: 2 }),
-  }),
-});
-
-const offlineStyle = new Style({
-  image: new Circle({
-    radius: 6,
-    fill: new Fill({ color: "rgba(0, 0, 0, 0.50)" }),
-    stroke: new Stroke({ color: "white", width: 2 }),
-  }),
-});
-
-// Cache OL styles per role to avoid creating new objects every render
-const olRoleStyleCache: Record<string, Style[]> = {};
-
-function hexToRgba(hex: string, alpha: number): string {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r},${g},${b},${alpha})`;
-}
-
-function getOlNodeStyle(online: boolean, role?: number | null): Style | Style[] {
-  if (!online) return offlineStyle;
-  const color = (role != null && ROLE_COLORS[role]) || DEFAULT_NODE_COLOR;
-  let cached = olRoleStyleCache[color];
-  if (!cached) {
-    const pulseStyle = new Style({
-      image: new Circle({ radius: 12, fill: new Fill({ color: hexToRgba(color, 0.25) }) }),
-    });
-    const nodeStyle = new Style({
-      image: new Circle({
-        radius: 6,
-        fill: new Fill({ color }),
-        stroke: new Stroke({ color: "white", width: 2 }),
-      }),
-    });
-    cached = [pulseStyle, nodeStyle];
-    olRoleStyleCache[color] = cached;
-  }
-  return cached;
-}
-
 export function Map() {
   const mapRef = useRef<HTMLDivElement>(null);
 
   const settingsPanelRef = useRef<HTMLDivElement>(null);
   const settingsToggleRef = useRef<HTMLButtonElement>(null);
 
-  // OL state (OSM)
-  const [olMap, setOlMap] = useState<OlMap>();
-  const olBaseLayerRef = useRef<ReturnType<typeof createBaseTileLayer> | null>(null);
-  const olNodesSourceRef = useRef<VectorSource<Feature<Point>> | null>(null);
-  const olClusterSetupRef = useRef<OlClusterSetup | null>(null);
-  const olPersistentLinksLayerRef = useRef<VectorLayer<VectorSource<Feature>, Feature> | null>(null);
-  // JSON signatures skip setData/layer rebuild when the GeoJSON is byte-identical across polls
+  // JSON signature skips setData when the GeoJSON is byte-identical across polls
   const persistentLinksMbJsonRef = useRef<string>("");
-  const persistentLinksOlJsonRef = useRef<string>("");
-  const olHighlightLayerRef = useRef<VectorLayer<VectorSource<Feature>, Feature> | null>(null);
-  const olCoverageLayerRef = useRef<VectorLayer<VectorSource<Feature>, Feature> | null>(null);
-  const olPathLayerRef = useRef<VectorLayer<VectorSource<Feature>, Feature> | null>(null);
 
-  // Mapbox refs
-  const mbMapRef = useRef<MbMap | null>(null);
+  const mbMapRef = useRef<MlMap | null>(null);
   const clusterDonutLayerRef = useRef<ClusterDonutLayer | null>(null);
+  // Sticky after first style.load — `isStyleLoaded()` momentarily lies post-removeSource.
+  const styleEverLoadedRef = useRef(false);
   const mbSelectedIdRef = useRef<string | null>(null);
   const mbHandlersBoundRef = useRef(false);
   const mbCurrentStyleUrlRef = useRef<string | null>(null);
   const mbKeydownHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
-  /** Cleanup for Mapbox canvas touch-listener trio. */
   const mbTouchCleanupRef = useRef<(() => void) | null>(null);
 
   // Set by whichever provider is active
@@ -329,7 +242,7 @@ export function Map() {
   const [provider, setProvider] = useState<MapProvider>(() => {
     const stored = readJson<MapProvider | null>(LS_KEYS.provider, null);
     if (stored) return stored === "mapbox" && !hasMapbox ? "osm" : stored;
-    return "osm";
+    return hasMapbox ? "mapbox" : "osm";
   });
 
   const [mapboxStyle, setMapboxStyle] = useState<string>(() => {
@@ -374,11 +287,9 @@ export function Map() {
   const [toolToId, setToolToId] = useState<string | null>(null);
   const [toolVirtualPos, setToolVirtualPos] = useState<[number, number] | null>(null);
 
-  // 3D terrain (Mapbox only)
+  // 3D terrain
   const [terrain3D, setTerrain3D] = useState<boolean>(() => readJson<boolean>(LS_KEYS.terrain3D, true));
-  const [terrainExaggeration, setTerrainExaggeration] = useState<number>(
-    () => readJson<number>(LS_KEYS.terrainExaggeration, 1.5)
-  );
+  const terrainExaggeration = 1.5;
   const [losResult, setLosResult] = useState<LoSResult | null>(null);
   /** DEM tile source used for the last LoS compute. */
   const [losDemSource, setLosDemSource] = useState<DemSource | null>(null);
@@ -481,9 +392,9 @@ export function Map() {
   /** 3D LoS tube layer; created once per map. */
   const losTubeLayerRef = useRef<LosTubeLayer | null>(null);
   /** DOM pin for the Coverage origin (draggable). */
-  const coverageOriginMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  const coverageOriginMarkerRef = useRef<maplibregl.Marker | null>(null);
   /** Draggable pin at the scan origin. */
-  const scanOriginMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  const scanOriginMarkerRef = useRef<maplibregl.Marker | null>(null);
   /** Map view captured when scan starts; restored by the origin row / pin. */
   const scanInitialViewRef = useRef<{ center: [number, number]; zoom: number; pitch: number; bearing: number } | null>(null);
   const scanOriginKeyRef = useRef<string | null>(null);
@@ -526,7 +437,7 @@ export function Map() {
   const losFromPosRef = useRef<[number, number] | null>(null);
   const losToPosRef = useRef<[number, number] | null>(null);
   // Marker for the LOS elevation-chart hover
-  const losHoverMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  const losHoverMarkerRef = useRef<maplibregl.Marker | null>(null);
   const handleLosProfileHover = useCallback((fraction: number | null) => {
     const mb = mbMapRef.current;
     if (!mb) return;
@@ -546,7 +457,7 @@ export function Map() {
         "width:14px;height:14px;border-radius:50%;background:#f97316;" +
         "border:2px solid white;box-shadow:0 0 8px rgba(0,0,0,0.5);" +
         "pointer-events:none;";
-      losHoverMarkerRef.current = new mapboxgl.Marker({ element: el })
+      losHoverMarkerRef.current = new maplibregl.Marker({ element: el })
         .setLngLat([lng, lat])
         .addTo(mb);
     } else {
@@ -834,7 +745,7 @@ export function Map() {
       }, "image/png");
     });
 
-    const src = mb.getSource("coverage-raster") as mapboxgl.ImageSource | undefined;
+    const src = mb.getSource("coverage-raster") as maplibregl.ImageSource | undefined;
     const coords: [[number, number], [number, number], [number, number], [number, number]] = [
       [dem.bounds.west, dem.bounds.north],
       [dem.bounds.east, dem.bounds.north],
@@ -843,7 +754,7 @@ export function Map() {
     ];
     if (src && typeof (src as unknown as { updateImage?: Function }).updateImage === "function") {
       (src as unknown as { updateImage: (o: { url: string; coordinates: typeof coords }) => void }).updateImage({ url, coordinates: coords });
-      // Revoke previous blob — Mapbox already has the new texture on the GPU
+      // Revoke previous blob — the GPU already holds the new texture.
       const previous = coverageRasterUrlRef.current;
       coverageRasterUrlRef.current = url;
       if (previous) URL.revokeObjectURL(previous);
@@ -887,7 +798,11 @@ export function Map() {
   useEffect(() => writeJson(LS_KEYS.myNodeId, myNodeId), [myNodeId]);
   useEffect(() => writeJson(LS_KEYS.settingsPanelOpen, settingsPanelOpen), [settingsPanelOpen]);
   useEffect(() => writeJson(LS_KEYS.terrain3D, terrain3D), [terrain3D]);
-  useEffect(() => writeJson(LS_KEYS.terrainExaggeration, terrainExaggeration), [terrainExaggeration]);
+
+  // Obsolete key from the prior exaggeration slider; removeItem is idempotent.
+  useEffect(() => {
+    try { localStorage.removeItem("meshinfo.map.terrainExaggeration"); } catch {}
+  }, []);
 
   // If token disappears, force provider to osm
   useEffect(() => {
@@ -949,7 +864,7 @@ export function Map() {
               ? ([
                   (node.position.longitude_i ?? 0) / 10_000_000,
                   (node.position.latitude_i ?? 0) / 10_000_000,
-                ] as Coordinate)
+                ] as [number, number])
               : undefined,
           neighbors: node.neighborinfo?.neighbors?.map((neighbor) => ({
             id: convertNodeIdFromIntToHex(neighbor.node_id),
@@ -976,7 +891,7 @@ export function Map() {
 
   const [detailsData, setDetailsData] = useState<NodeDetailsData | null>(null);
 
-  // Refs to avoid stale closures in Mapbox handlers
+  // Refs to avoid stale closures in long-lived map event handlers.
   const nodesRef = useRef(nodes);
   const traceroutesRef = useRef(rawTraceroutes);
   const configRef = useRef(config);
@@ -992,8 +907,10 @@ export function Map() {
 
   const isPickingNode = activeTool != null && toolStep !== "result";
   const terrain3DRef = useRef(terrain3D);
-  const terrainExaggerationRef = useRef(terrainExaggeration);
   const setDetailsDataRef = useRef(setDetailsData);
+  const providerRef = useRef(provider);
+  const mapboxStyleRef = useRef(mapboxStyle);
+  const osmBasemapRef = useRef(osmBasemap);
 
   useEffect(() => {
     nodesRef.current = nodes;
@@ -1030,20 +947,16 @@ export function Map() {
   useEffect(() => {
     terrain3DRef.current = terrain3D;
   }, [terrain3D]);
-  useEffect(() => {
-    terrainExaggerationRef.current = terrainExaggeration;
-  }, [terrainExaggeration]);
+  useEffect(() => { providerRef.current = provider; }, [provider]);
+  useEffect(() => { mapboxStyleRef.current = mapboxStyle; }, [mapboxStyle]);
+  useEffect(() => { osmBasemapRef.current = osmBasemap; }, [osmBasemap]);
 
   useEffect(() => {
     const mb = mbMapRef.current;
     if (mb) {
       mb.getCanvas().style.cursor = isPickingNode ? "crosshair" : "";
     }
-    if (olMap) {
-      const el = olMap.getTargetElement();
-      if (el) el.style.cursor = isPickingNode ? "crosshair" : "";
-    }
-  }, [isPickingNode, olMap]);
+  }, [isPickingNode]);
 
   // Reset the whole tool state. Also imperatively clears map visual geometry
   // so there's no one-tick flash of stale tubes / rasters / scan lines while
@@ -1076,13 +989,13 @@ export function Map() {
     if (mb) {
       const empty: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
       try {
-        (mb.getSource("los-obstructions") as MbGeoJSONSource | undefined)?.setData(empty);
+        (mb.getSource("los-obstructions") as MlGeoJSONSource | undefined)?.setData(empty);
       } catch {}
       try {
-        (mb.getSource("scan-links") as MbGeoJSONSource | undefined)?.setData(empty);
+        (mb.getSource("scan-links") as MlGeoJSONSource | undefined)?.setData(empty);
       } catch {}
       try {
-        (mb.getSource("path-analysis") as MbGeoJSONSource | undefined)?.setData(empty);
+        (mb.getSource("path-analysis") as MlGeoJSONSource | undefined)?.setData(empty);
       } catch {}
       if (coverageOriginMarkerRef.current) {
         coverageOriginMarkerRef.current.remove();
@@ -1098,10 +1011,10 @@ export function Map() {
         if (mb.getLayer("coverage-rays-line")) {
           mb.setLayoutProperty("coverage-rays-line", "visibility", "none");
         }
-        (mb.getSource("coverage-contours") as MbGeoJSONSource | undefined)?.setData(empty);
-        (mb.getSource("coverage-rays") as MbGeoJSONSource | undefined)?.setData(empty);
+        (mb.getSource("coverage-contours") as MlGeoJSONSource | undefined)?.setData(empty);
+        (mb.getSource("coverage-rays") as MlGeoJSONSource | undefined)?.setData(empty);
         // Swap to 1×1 PNG to release the 16 MB GPU texture (visibility:none keeps it resident)
-        const rasterSrc = mb.getSource("coverage-raster") as mapboxgl.ImageSource | undefined;
+        const rasterSrc = mb.getSource("coverage-raster") as maplibregl.ImageSource | undefined;
         if (rasterSrc && typeof (rasterSrc as unknown as { updateImage?: Function }).updateImage === "function") {
           (rasterSrc as unknown as { updateImage: (o: { url: string; coordinates: [[number, number], [number, number], [number, number], [number, number]] }) => void }).updateImage({
             url: TRANSPARENT_1PX_PNG,
@@ -1117,13 +1030,6 @@ export function Map() {
       coverageContoursRef.current = null;
       coverageRaysRef.current = null;
       coverageMarginRef.current = null;
-    }
-
-    if (olMap) {
-      if (olPathLayerRef.current) {
-        olMap.removeLayer(olPathLayerRef.current);
-        olPathLayerRef.current = null;
-      }
     }
   };
 
@@ -1145,7 +1051,7 @@ export function Map() {
 
     const mb = mbMapRef.current;
     if (mb) {
-      const src = mb.getSource("path-analysis") as MbGeoJSONSource | undefined;
+      const src = mb.getSource("path-analysis") as MlGeoJSONSource | undefined;
       if (src) {
         const coords = computePathCoords();
         src.setData(
@@ -1156,23 +1062,7 @@ export function Map() {
       }
     }
 
-    if (olMap) {
-      if (olPathLayerRef.current) {
-        olMap.removeLayer(olPathLayerRef.current);
-        olPathLayerRef.current = null;
-      }
-      const coords = computePathCoords();
-      if (coords) {
-        const coords3857 = coords.map((c) => transform(c, "EPSG:4326", "EPSG:3857"));
-        const pathFeature = new Feature({ geometry: new LineString(coords3857) });
-        pathFeature.setStyle(new Style({ stroke: new Stroke({ color: "#06b6d4", width: 4 }) }));
-        const pathSource = new VectorSource({ features: [pathFeature as Feature] });
-        const pathLayer = new VectorLayer({ source: pathSource });
-        olPathLayerRef.current = pathLayer;
-        olMap.addLayer(pathLayer);
-      }
-    }
-  }, [activeTool, toolStep, toolFromId, toolToId, rawTraceroutes, nodes, olMap]);
+  }, [activeTool, toolStep, toolFromId, toolToId, rawTraceroutes, nodes]);
 
   // LoS analysis between toolFromId and toolToId (LOS tool active + both picks done)
   useEffect(() => {
@@ -1183,7 +1073,7 @@ export function Map() {
     const hasFrom = toolFromId || losVirtualFrom;
     const hasTo = toolToId || losVirtualTo;
     if (!hasFrom || !hasTo) { setLosResult(null); return; }
-    if (provider !== "mapbox" || !terrain3D) { setLosResult(null); return; }
+    if (!terrain3D) { setLosResult(null); return; }
     const mb = mbMapRef.current;
     if (!mb) { setLosResult(null); return; }
 
@@ -1309,7 +1199,7 @@ export function Map() {
     const fitKey = `${fromPos[0]},${fromPos[1]}-${toPos[0]},${toPos[1]}`;
     if (losFitKeyRef.current !== fitKey) {
       losFitKeyRef.current = fitKey;
-      const bounds = new mapboxgl.LngLatBounds(fromPos, toPos);
+      const bounds = new maplibregl.LngLatBounds(fromPos, toPos);
       mb.fitBounds(bounds, { padding: 120, duration: 600, maxZoom: 11 });
     }
 
@@ -1330,7 +1220,7 @@ export function Map() {
     const hasTo = toolToId || losVirtualTo;
     const showing =
       activeTool === "los" && toolStep === "result" && losResult && hasFrom && hasTo;
-    const obsSrc = mb.getSource("los-obstructions") as MbGeoJSONSource | undefined;
+    const obsSrc = mb.getSource("los-obstructions") as MlGeoJSONSource | undefined;
     const tube = losTubeLayerRef.current;
 
     if (!showing) {
@@ -1376,7 +1266,7 @@ export function Map() {
       f.properties.topM *= exag;
     });
     obsSrc?.setData(obsGeo);
-  }, [activeTool, toolStep, losResult, toolFromId, toolToId, losVirtualFrom, losVirtualTo, nodes, terrainExaggeration]);
+  }, [activeTool, toolStep, losResult, toolFromId, toolToId, losVirtualFrom, losVirtualTo, nodes]);
 
   // Scan tool: batch LoS to every node in radius from a chosen origin
   useEffect(() => {
@@ -1385,7 +1275,7 @@ export function Map() {
       setIsScanning(false);
       return;
     }
-    if (provider !== "mapbox" || !terrain3D) {
+    if (!terrain3D) {
       setScanSummary(null);
       return;
     }
@@ -1430,7 +1320,7 @@ export function Map() {
     if (scanOriginMarkerRef.current) {
       scanOriginMarkerRef.current.setLngLat(origin);
     } else {
-      const marker = new mapboxgl.Marker({ color: "#22d3ee", draggable: true })
+      const marker = new maplibregl.Marker({ color: "#22d3ee", draggable: true })
         .setLngLat(origin)
         .addTo(mb);
       marker.on("dragstart", () => { isDraggingMarkerRef.current = true; });
@@ -1548,7 +1438,7 @@ export function Map() {
 
         if (cancelled) return;
         setScanSummary(summary);
-        const src = mb.getSource("scan-links") as MbGeoJSONSource | undefined;
+        const src = mb.getSource("scan-links") as MlGeoJSONSource | undefined;
         src?.setData(scanToGeoJSON(summary));
       } catch (err) {
         console.warn("[Map] Scan failed:", err);
@@ -1585,7 +1475,7 @@ export function Map() {
     if (!mb) return;
     if (activeTool !== "scan") {
       try {
-        const src = mb.getSource("scan-links") as MbGeoJSONSource | undefined;
+        const src = mb.getSource("scan-links") as MlGeoJSONSource | undefined;
         src?.setData({ type: "FeatureCollection", features: [] });
       } catch {}
       if (scanOriginMarkerRef.current) {
@@ -1632,7 +1522,7 @@ export function Map() {
       setCoverageProgress({ completed: 0, total: 0 });
       return;
     }
-    if (provider !== "mapbox" || !terrain3D) {
+    if (!terrain3D) {
       setCoverageResult(null);
       setIsComputingCoverage(false);
       setIsFetchingCoverageTerrain(false);
@@ -1670,8 +1560,7 @@ export function Map() {
 
     const radKm = coverageRadiusKm;
     const demBounds = demBoundsAround(origin, radKm, 1.05);
-    // Gently center on the pin; tiles are fetched directly from Mapbox's
-    // terrain-rgb endpoint independent of the viewport.
+    // Recenter on the pin; tile fetch is viewport-independent so we don't need to fly.
     mb.easeTo({ center: origin, duration: 300 });
 
     const mapboxToken = env.MAPBOX_TOKEN;
@@ -1736,38 +1625,14 @@ export function Map() {
         }
         setIsFetchingCoverageTerrain(false);
 
-        // 2. Resolve origin height. Base = GPS altitude (if valid) or terrain; antenna stacks on top.
-        // originIsFallback flags "no terrain AND no GPS altitude" — base synthesized from 0.
-        // z=14 fetch at the pin beats the bbox DEM (forced to z≤10 by tile cap, undersamples peaks 400+ m).
-        // Best origin-ground reading. Combines two independent sources
-        // so the displayed pin elevation is accurate regardless of the
-        // user's current viewport zoom:
-        //
-        //   1. `queryTerrainElevation` reads whichever `mapbox-terrain-
-        //      dem-v1` tiles Mapbox GL has currently loaded. Fast and
-        //      accurate when the user is zoomed in (z=13-14 tiles give
-        //      ~5-30 m pixels). At low zoom the returned value is
-        //      averaged over coarse pixels and can under-read a peak by
-        //      ~180 m — that's the bug we're guarding against.
-        //   2. `fetchElevationAt` fetches a dedicated z=15 tile for the
-        //      pin lat/lng via Tilezen (AWS Open Data, USGS 3DEP-backed
-        //      in the US — same data source Mapbox GL reads internally).
-        //      Always high-resolution regardless of viewport state; one
-        //      HTTP round-trip, LRU-cached for subsequent reads at the
-        //      same pin.
-        //
-        // We take the MAX of the two — a low-zoom-averaged reading can
-        // only under-report the peak, never over-report it, so max()
-        // robustly picks the accurate value. When both are valid at high
-        // zoom they agree to within a couple of meters.
-        //
-        // CRITICAL: `queryTerrainElevation` defaults to returning
-        // *exaggerated* elevation (real × terrain exaggeration factor),
-        // matching the visually rendered 3D terrain. We want real MSL
-        // meters for RF math and for the displayed pin height, so we
-        // pass `{ exaggerated: false }`. Without this, a 1.5× default
-        // exaggeration silently inflated every elevation read by ~50%.
-        const mbElev = mb.queryTerrainElevation(origin!, { exaggerated: false });
+        // Resolve origin ground via two independent sources; we take the MAX because
+        // a low-zoom-averaged reading can only under-report a peak, never over-report:
+        //   1. `queryTerrainElevation` reads the loaded raster-dem tiles. Accurate when
+        //      zoomed in (~5-30 m px at z=13-14); at low zoom can under-read a peak by ~180 m.
+        //   2. `fetchElevationAt` does a dedicated z=15 fetch — viewport-independent,
+        //      LRU-cached. Source: Tilezen (USGS 3DEP / SRTM), Mapbox terrain-RGB fallback.
+        // queryTerrainElevationMSL undoes MapLibre's built-in exaggeration multiply.
+        const mbElev = queryTerrainElevationMSL(mb, origin!);
         const mbElevOk = typeof mbElev === "number" && Number.isFinite(mbElev);
         const fetchElev = await fetchElevationAt(origin![0], origin![1], mapboxToken);
         const fetchOk = fetchElev != null && Number.isFinite(fetchElev);
@@ -1862,7 +1727,7 @@ export function Map() {
         });
         coverageContoursRef.current = contours;
         try {
-          const src = mb.getSource("coverage-contours") as MbGeoJSONSource | undefined;
+          const src = mb.getSource("coverage-contours") as MlGeoJSONSource | undefined;
           src?.setData(contours);
         } catch {}
 
@@ -1879,7 +1744,7 @@ export function Map() {
         });
         coverageRaysRef.current = rays;
         try {
-          const src = mb.getSource("coverage-rays") as MbGeoJSONSource | undefined;
+          const src = mb.getSource("coverage-rays") as MlGeoJSONSource | undefined;
           src?.setData(rays);
         } catch {}
 
@@ -1997,9 +1862,6 @@ export function Map() {
     if (mb && mb.getLayer("clusters-count")) {
       try { mb.setPaintProperty("clusters-count", "text-opacity", alpha); } catch {}
     }
-
-    const olCluster = olClusterSetupRef.current?.clusterLayer;
-    if (olCluster) olCluster.setOpacity(alpha);
   }, [activeTool, toolStep]);
 
   // Sync coverage pin to origin (node pick or virtual placement)
@@ -2034,7 +1896,7 @@ export function Map() {
     if (coverageOriginMarkerRef.current) {
       coverageOriginMarkerRef.current.setLngLat(origin);
     } else {
-      const marker = new mapboxgl.Marker({ color: "#22d3ee", draggable: true })
+      const marker = new maplibregl.Marker({ color: "#22d3ee", draggable: true })
         .setLngLat(origin)
         .addTo(mb);
 
@@ -2053,8 +1915,8 @@ export function Map() {
           const previewId = -Math.floor(performance.now());
           const demGround = sampleDEMAt(dem, lngLat[0], lngLat[1]);
           const demGroundOk = !Number.isNaN(demGround);
-          // exaggerated:false for real MSL (see authoritative path)
-          const mbGround = mb.queryTerrainElevation(lngLat, { exaggerated: false });
+          // Real MSL — see queryTerrainElevationMSL helper for the exaggeration math.
+          const mbGround = queryTerrainElevationMSL(mb, lngLat);
           const mbGroundOk = typeof mbGround === "number" && Number.isFinite(mbGround);
           const accurateGround = mbGroundOk ? mbGround : (demGroundOk ? demGround : 0);
           const antennaH = coverageAntennaHeightMRef.current;
@@ -2151,17 +2013,6 @@ export function Map() {
         return true;
       }
 
-      if (olMap) {
-        flyToHandledRef.current = urlNodeId;
-        olMap.getView().animate({
-          center: fromLonLat([lon, lat]),
-          zoom: 14,
-          duration: 1200,
-        });
-        setSearchParams((prev) => { prev.delete("node"); return prev; }, { replace: true });
-        return true;
-      }
-
       return false;
     };
 
@@ -2176,7 +2027,7 @@ export function Map() {
     }
 
     return () => timers.forEach(clearTimeout);
-  }, [urlNodeId, flyToTarget, olMap, setSearchParams]);
+  }, [urlNodeId, flyToTarget, setSearchParams]);
 
   // Debounced URL sync for center/zoom
   useEffect(() => {
@@ -2189,20 +2040,11 @@ export function Map() {
         let z: number | undefined;
 
         const mb = mbMapRef.current;
-        if (mb && provider === "mapbox") {
+        if (mb) {
           const c = mb.getCenter();
           lat = +c.lat.toFixed(5);
           lng = +c.lng.toFixed(5);
           z = +mb.getZoom().toFixed(2);
-        } else if (olMap && provider === "osm") {
-          const center = olMap.getView().getCenter();
-          const zoom = olMap.getView().getZoom();
-          if (center) {
-            const [lo, la] = transform(center, "EPSG:3857", "EPSG:4326");
-            lat = +la.toFixed(5);
-            lng = +lo.toFixed(5);
-          }
-          if (zoom != null) z = +zoom.toFixed(2);
         }
 
         if (lat != null && lng != null && z != null) {
@@ -2217,16 +2059,12 @@ export function Map() {
     };
 
     const mb = mbMapRef.current;
-    if (mb && provider === "mapbox") {
+    if (mb) {
       mb.on("moveend", syncUrl);
       return () => { clearTimeout(timer); mb.off("moveend", syncUrl); };
     }
-    if (olMap && provider === "osm") {
-      olMap.on("moveend", syncUrl);
-      return () => { clearTimeout(timer); olMap.un("moveend", syncUrl); };
-    }
     return () => clearTimeout(timer);
-  }, [provider, olMap, setSearchParams]);
+  }, [setSearchParams]);
 
   const myNodeLabel = useMemo(() => {
     if (!myNodeId) return null;
@@ -2305,65 +2143,12 @@ export function Map() {
     return emptyLineFeatureCollection();
   }
 
-  /** Build OL line features for the current persistent link mode. */
-  function buildOlPersistentLinkFeatures(): Feature<LineString>[] {
-    const geojson = computePersistentLinks();
-    return geojson.features.map((f) => {
-      const coords = f.geometry.coordinates.map((c) =>
-        transform([c[0], c[1]], "EPSG:4326", "EPSG:3857")
-      );
-      const line = new Feature({ geometry: new LineString(coords) });
-      const kind = f.properties?.kind ?? "neighbor";
-      const snr = f.properties?.snr as number | null;
-      const color = snrToOlColor(snr, kind);
-      const width = snrToOlWidth(snr);
-      const dash = kind === "heard_by" ? [8, 6] : kind === "traceroute" ? [2, 6] : undefined;
-      line.setStyle(
-        new Style({
-          stroke: new Stroke({ color, width, lineDash: dash }),
-        })
-      );
-      return line;
-    });
-  }
-
-  /** Refresh the OL persistent links layer. */
-  function refreshOlPersistentLinks(map: OlMap) {
-    const mode = linkModeRef.current;
-    if (mode === "selected") {
-      if (olPersistentLinksLayerRef.current) {
-        map.removeLayer(olPersistentLinksLayerRef.current);
-        olPersistentLinksLayerRef.current = null;
-      }
-      persistentLinksOlJsonRef.current = "";
-      return;
-    }
-
-    // Skip layer rebuild if GeoJSON unchanged (5s poll optimization)
-    const geojson = computePersistentLinks();
-    const json = JSON.stringify(geojson);
-    if (json === persistentLinksOlJsonRef.current && olPersistentLinksLayerRef.current) return;
-    persistentLinksOlJsonRef.current = json;
-
-    if (olPersistentLinksLayerRef.current) {
-      map.removeLayer(olPersistentLinksLayerRef.current);
-      olPersistentLinksLayerRef.current = null;
-    }
-    const features = buildOlPersistentLinkFeatures();
-    if (features.length === 0) return;
-
-    const source = new VectorSource({ features: features as Feature[] });
-    const layer = new VectorLayer({ source });
-    olPersistentLinksLayerRef.current = layer;
-    map.addLayer(layer);
-  }
-
-  /** Push persistent link data to the Mapbox "links" source. */
+  /** Push persistent link data to the "links" source. */
   function refreshMapboxLinks() {
     const map = mbMapRef.current;
     if (!map) return;
     try {
-      const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
+      const linksSource = map.getSource("links") as MlGeoJSONSource | undefined;
       if (!linksSource) return;
       const fc = computePersistentLinks();
       const json = JSON.stringify(fc);
@@ -2384,7 +2169,7 @@ export function Map() {
       document.body.removeChild(a);
     };
 
-    if (provider === "mapbox" && mbMapRef.current) {
+    if (mbMapRef.current) {
       try {
         // Force repaint so custom layers are captured, then wait a frame
         mbMapRef.current.triggerRepaint();
@@ -2393,42 +2178,8 @@ export function Map() {
           triggerDownload(canvas.toDataURL("image/png"));
         }, 100);
       } catch (err) {
-        console.error("Mapbox export failed:", err);
+        console.error("Map export failed:", err);
       }
-      return;
-    }
-
-    if (provider === "osm" && olMap) {
-      const mapSize = olMap.getSize();
-      if (!mapSize) return;
-      const [w, h] = mapSize;
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-
-      // Composite all OL canvases
-      const olCanvases = olMap.getTargetElement().querySelectorAll<HTMLCanvasElement>(
-        ".ol-layer canvas, canvas.ol-layer",
-      );
-      olCanvases.forEach((srcCanvas) => {
-        if (srcCanvas.width === 0 || srcCanvas.height === 0) return;
-        const opacity = srcCanvas.parentElement?.style.opacity;
-        ctx.globalAlpha = opacity === "" || opacity == null ? 1 : Number(opacity);
-        const transform = srcCanvas.style.transform;
-        const match = /^matrix\(([^)]+)\)$/.exec(transform);
-        if (match) {
-          const [a, b, c, d, e, f] = match[1].split(",").map(Number);
-          ctx.setTransform(a, b, c, d, e, f);
-        } else {
-          ctx.setTransform(1, 0, 0, 1, 0, 0);
-        }
-        ctx.drawImage(srcCanvas, 0, 0);
-      });
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.globalAlpha = 1;
-      triggerDownload(canvas.toDataURL("image/png"));
     }
   }
 
@@ -2453,22 +2204,22 @@ export function Map() {
     // Restore persistent links (all/mynode) or clear if mode is "selected"
     if (map) {
       try {
-        const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
+        const linksSource = map.getSource("links") as MlGeoJSONSource | undefined;
         linksSource?.setData(computePersistentLinks());
       } catch {}
       // Clear coverage circle
       try {
-        const coverageSrc = map.getSource("coverage") as MbGeoJSONSource | undefined;
+        const coverageSrc = map.getSource("coverage") as MlGeoJSONSource | undefined;
         coverageSrc?.setData({ type: "FeatureCollection", features: [] });
       } catch {}
       // Clear link highlight
       try {
-        const hlSrc = map.getSource("link-highlight") as MbGeoJSONSource | undefined;
+        const hlSrc = map.getSource("link-highlight") as MlGeoJSONSource | undefined;
         hlSrc?.setData({ type: "FeatureCollection", features: [] });
       } catch {}
       // Clear path analysis
       try {
-        const paSrc = map.getSource("path-analysis") as MbGeoJSONSource | undefined;
+        const paSrc = map.getSource("path-analysis") as MlGeoJSONSource | undefined;
         paSrc?.setData({ type: "FeatureCollection", features: [] });
       } catch {}
     }
@@ -2478,33 +2229,9 @@ export function Map() {
   }
 
   // ----------------------------
-  // Provider switching cleanup
+  // MapLibre: init + layers
   // ----------------------------
   useEffect(() => {
-    if (provider !== "mapbox" && mbMapRef.current) {
-      mbMapRef.current.remove();
-      mbMapRef.current = null;
-      mbSelectedIdRef.current = null;
-      mbHandlersBoundRef.current = false;
-      mbCurrentStyleUrlRef.current = null;
-
-      if (mapRef.current) mapRef.current.innerHTML = "";
-    }
-
-    if (provider !== "osm" && olMap) {
-      olMap.setTarget(undefined);
-      if (mapRef.current) mapRef.current.innerHTML = "";
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider]);
-
-  // ----------------------------
-  // Mapbox: init + layers
-  // ----------------------------
-  useEffect(() => {
-    const usingMapbox = provider === "mapbox" && hasMapbox;
-
-    if (!usingMapbox) return;
     if (mbMapRef.current) return;
     if (!mapRef.current) return;
 
@@ -2555,14 +2282,15 @@ export function Map() {
       }
     }
 
-    const styleUrl = toMapboxStyleUrl(mapboxStyle);
-    mbCurrentStyleUrlRef.current = styleUrl;
+    const styleSpec = buildMapStyle({
+      provider,
+      osmBasemap,
+      mapboxToken,
+      mapboxStyle,
+    });
+    mbCurrentStyleUrlRef.current = JSON.stringify({ provider, mapboxStyle, osmBasemap });
 
     mapRef.current.innerHTML = "";
-
-    if (!mapboxgl.accessToken) {
-      mapboxgl.accessToken = mapboxToken!;
-    }
 
     // Persisted pitch/bearing (center + zoom persisted separately)
     let initialPitch = 0;
@@ -2574,20 +2302,22 @@ export function Map() {
       if (Number.isFinite(b)) initialBearing = b;
     } catch {}
 
-    const map = new mapboxgl.Map({
+    const map = new maplibregl.Map({
       container: mapRef.current,
-      style: styleUrl,
+      style: styleSpec,
       center: initialCenter,
       zoom: initialZoom,
       pitch: initialPitch,
       bearing: initialBearing,
       attributionControl: false,
-      logoPosition: "top-right",
-      preserveDrawingBuffer: true, // required for canvas.toDataURL() export
-      projection: "mercator",
+      canvasContextAttributes: { preserveDrawingBuffer: true }, // required for canvas.toDataURL() export
+      maxPitch: 85,
+      // Spread keeps drag-rotate direction consistent regardless of cursor position.
+      // `aroundCenter` isn't in public MapOptions but is destructured by the internal handler.
+      ...({ aroundCenter: false } as object),
     });
 
-    map.addControl(new mapboxgl.AttributionControl({ compact: true }), "top-right");
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), "top-right");
 
     mbMapRef.current = map;
 
@@ -2638,10 +2368,10 @@ export function Map() {
 
       const data = buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters());
 
-      const clustered = m.getSource("nodes_clustered") as MbGeoJSONSource | undefined;
+      const clustered = m.getSource("nodes_clustered") as MlGeoJSONSource | undefined;
       clustered?.setData(data);
 
-      const plain = m.getSource("nodes_plain") as MbGeoJSONSource | undefined;
+      const plain = m.getSource("nodes_plain") as MlGeoJSONSource | undefined;
       plain?.setData(data);
     };
 
@@ -3171,12 +2901,16 @@ export function Map() {
       }
 
       // Apply current cluster visibility (use ref to avoid stale closure)
-      applyMapboxClusterVisibility(map, clusterEnabledRef.current);
+      applyClusterVisibility(map, clusterEnabledRef.current);
 
       // Re-apply terrain if it was enabled (style.load wipes this)
       if (terrain3DRef.current) {
         try {
-          applyTerrainState(map, true, terrainExaggerationRef.current);
+          ensureTerrain(
+            map,
+            { provider: providerRef.current, mapboxToken, mapboxStyle: mapboxStyleRef.current, osmBasemap: osmBasemapRef.current },
+            terrainExaggeration,
+          );
         } catch (err) {
           console.warn("[Map] Terrain re-apply failed after style load:", err);
         }
@@ -3244,7 +2978,7 @@ export function Map() {
           features: [...neighborFC.features, ...tracerouteFC.features],
         };
 
-        const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
+        const linksSource = map.getSource("links") as MlGeoJSONSource | undefined;
         if (linkModeRef.current === "selected") {
           linksSource?.setData(mergedFC);
         } else {
@@ -3257,7 +2991,7 @@ export function Map() {
         }
 
         // Coverage radius circle — always shown on selection
-        const coverageSrc = map.getSource("coverage") as MbGeoJSONSource | undefined;
+        const coverageSrc = map.getSource("coverage") as MlGeoJSONSource | undefined;
         if (coverageSrc) {
           if (maxRangeKm) {
             const roleColor = ROLE_COLORS[(node as any).role] ?? DEFAULT_NODE_COLOR;
@@ -3283,7 +3017,7 @@ export function Map() {
       handleLinkHoverRef.current = (otherId: string | null) => {
         const m = mbMapRef.current;
         if (!m) return;
-        const src = m.getSource("link-highlight") as MbGeoJSONSource | undefined;
+        const src = m.getSource("link-highlight") as MlGeoJSONSource | undefined;
         if (!src) return;
         const selectedId = mbSelectedIdRef.current;
         if (!otherId || !selectedId) {
@@ -3334,7 +3068,7 @@ export function Map() {
         if (!cluster) return;
 
         const clusterId = cluster.properties?.cluster_id;
-        const source = map.getSource("nodes_clustered") as MbGeoJSONSource;
+        const source = map.getSource("nodes_clustered") as MlGeoJSONSource;
         if (!source || clusterId == null) return;
 
         const [lng, lat] = (cluster.geometry as any).coordinates as [number, number];
@@ -3350,12 +3084,12 @@ export function Map() {
         };
         const timer = setTimeout(zoomFallback, 300);
 
-        source.getClusterExpansionZoom(clusterId, (err, zoom) => {
+        source.getClusterExpansionZoom(clusterId).then((zoom) => {
           if (handled) return;
           handled = true;
           clearTimeout(timer);
 
-          if (err || zoom == null) { zoomFallback(); return; }
+          if (zoom == null) { zoomFallback(); return; }
 
           if (zoom >= maxZoom) {
             clearMapboxSelectionAndOverlays();
@@ -3374,13 +3108,18 @@ export function Map() {
             removeSpiderfyLayers(map);
             map.easeTo({ center: [lng, lat], zoom: targetZoom });
           }
+        }).catch(() => {
+          if (handled) return;
+          handled = true;
+          clearTimeout(timer);
+          zoomFallback();
         });
       });
 
       // Cluster hover cursor (donut icons are GL-native, no HTML to highlight)
       bindHover("clusters");
 
-      const onNodeLayerClick = (e: mapboxgl.MapMouseEvent & { features?: mapboxgl.MapboxGeoJSONFeature[] }) => {
+      const onNodeLayerClick = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
         const feature = e.features?.[0];
         if (!feature) return;
         const id = (feature.properties?.id ?? "") as string;
@@ -3485,7 +3224,7 @@ export function Map() {
       map.once("load", triggerAutoSpiderfy);
 
       // Right-click / long-press: "Set as My Node"
-      const findNodeIdAtPoint = (point: mapboxgl.PointLike): string | null => {
+      const findNodeIdAtPoint = (point: maplibregl.PointLike): string | null => {
         const nodeLayers = ["unclustered-nodes", "plain-nodes"];
         if (map.getLayer(SPIDERFY_LAYER_NODES)) nodeLayers.push(SPIDERFY_LAYER_NODES);
         const features = map.queryRenderedFeatures(point, { layers: nodeLayers });
@@ -3503,7 +3242,7 @@ export function Map() {
 
       // Long-press (mobile) — 500ms threshold
       let longPressTimer: ReturnType<typeof setTimeout> | null = null;
-      let longPressPoint: mapboxgl.PointLike | null = null;
+      let longPressPoint: maplibregl.PointLike | null = null;
 
       const canvas = map.getCanvas();
       const onTouchStart = (e: TouchEvent) => {
@@ -3585,7 +3324,7 @@ export function Map() {
       // Throttled via rAF so we don't call queryTerrainElevation on every pixel.
       let elevRafQueued = false;
       let pendingElevE: { lng: number; lat: number } | null = null;
-      const onMapMouseMove = (e: mapboxgl.MapMouseEvent) => {
+      const onMapMouseMove = (e: maplibregl.MapMouseEvent) => {
         // Skip during marker drag — setHoverElevationM re-renders Map.tsx each
         // frame and stutters the marker behind the cursor.
         if (isDraggingMarkerRef.current) return;
@@ -3596,16 +3335,10 @@ export function Map() {
           elevRafQueued = false;
           if (!pendingElevE || !mbMapRef.current) return;
           try {
-            // Real MSL meters, not exaggerated — users expect the
-            // elevation pill to match what a topo map would show, not
-            // the 3D render's inflated value. Without
-            // `{ exaggerated: false }` this was displaying ~1.5× the
-            // real elevation at default 1.5× exaggeration.
-            const elev = mbMapRef.current.queryTerrainElevation(
-              [pendingElevE.lng, pendingElevE.lat],
-              { exaggerated: false },
-            );
-            setHoverElevationM(typeof elev === "number" && Number.isFinite(elev) ? elev : null);
+            // Real MSL meters — users expect the elevation pill to match a topo map,
+            // not the rendered terrain's exaggerated value. See queryTerrainElevationMSL.
+            const elev = queryTerrainElevationMSL(mbMapRef.current, [pendingElevE.lng, pendingElevE.lat]);
+            setHoverElevationM(elev);
           } catch {
             setHoverElevationM(null);
           }
@@ -3616,14 +3349,14 @@ export function Map() {
       map.on("mouseout", onMapMouseOut);
 
       // --- Hover tooltips (desktop only) ---
-      const hoverPopup = new mapboxgl.Popup({
+      const hoverPopup = new maplibregl.Popup({
         closeButton: false,
         closeOnClick: false,
         offset: 12,
         className: "map-hover-tooltip",
       });
 
-      const showTooltip = (e: mapboxgl.MapMouseEvent & { features?: mapboxgl.MapboxGeoJSONFeature[] }) => {
+      const showTooltip = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
         const feature = e.features?.[0];
         if (!feature) return;
         const p = feature.properties!;
@@ -3650,6 +3383,7 @@ export function Map() {
       }
     };
 
+    map.on("style.load", () => { styleEverLoadedRef.current = true; });
     map.on("style.load", ensureSourcesAndLayers);
 
     return () => {
@@ -3674,129 +3408,63 @@ export function Map() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider, hasMapbox, serverNode]);
+  }, [serverNode]);
 
-  // Mapbox: style switching (re-style, let style.load re-add layers/sources)
+  // Style switching (re-style, let style.load re-add layers/sources)
   useEffect(() => {
     const map = mbMapRef.current;
     if (!map) return;
-    if (provider !== "mapbox") return;
-    if (!hasMapbox) return;
 
-    const desired = toMapboxStyleUrl(mapboxStyle);
+    const desired = JSON.stringify({ provider, mapboxStyle, osmBasemap });
     if (mbCurrentStyleUrlRef.current === desired) return;
 
     try {
-      // Style change resets sources/layers; style.load handler re-creates them.
       mbCurrentStyleUrlRef.current = desired;
 
       // Clear selection & overlays to avoid stale feature-state during style swap
       mbSelectedIdRef.current = null;
       setDetailsData(null);
-      const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
+      const linksSource = map.getSource("links") as MlGeoJSONSource | undefined;
       linksSource?.setData(emptyLineFeatureCollection());
 
-      map.setStyle(desired);
+      map.setStyle(buildMapStyle({ provider, osmBasemap, mapboxToken, mapboxStyle }));
     } catch {}
-  }, [mapboxStyle, provider, hasMapbox]);
+  }, [mapboxStyle, osmBasemap, provider, mapboxToken]);
 
-  // Mapbox: cluster toggle
+  // Cluster toggle
   useEffect(() => {
     const map = mbMapRef.current;
     if (!map) return;
-    if (provider !== "mapbox") return;
-    if (!hasMapbox) return;
-    applyMapboxClusterVisibility(map, clusterEnabled);
-  }, [clusterEnabled, provider, hasMapbox]);
+    applyClusterVisibility(map, clusterEnabled);
+  }, [clusterEnabled]);
 
-  // Mapbox: 3D terrain — add/remove DEM source, terrain, and sky layer.
-  // Safe to call repeatedly: each action is idempotent and survives style reloads.
-  const applyTerrainState = (map: MbMap, enabled: boolean, exaggeration: number) => {
-    if (enabled) {
-      // 1. DEM source (creates raster-dem source for terrain heights)
-      if (!map.getSource("mapbox-dem")) {
-        map.addSource("mapbox-dem", {
-          type: "raster-dem",
-          url: "mapbox://mapbox.mapbox-terrain-dem-v1",
-          tileSize: 512,
-          maxzoom: 14,
-        });
+  // Initial mount is handled by ensureSourcesAndLayers on style.load; this only runs live toggles.
+  useEffect(() => {
+    const map = mbMapRef.current;
+    if (!map || !styleEverLoadedRef.current) return;
+
+    try {
+      if (terrain3D) {
+        ensureTerrain(map, { provider, mapboxToken, mapboxStyle, osmBasemap }, terrainExaggeration);
+      } else {
+        removeTerrain(map);
       }
-      // 2. Apply terrain with current exaggeration
-      map.setTerrain({ source: "mapbox-dem", exaggeration });
-      // 3. Add atmospheric sky layer (only once)
-      if (!map.getLayer("sky")) {
-        map.addLayer({
-          id: "sky",
-          type: "sky",
-          paint: {
-            "sky-type": "atmosphere",
-            "sky-atmosphere-sun": [0.0, 90.0],
-            "sky-atmosphere-sun-intensity": 15,
-          },
-        });
-      }
-    } else {
-      // Disable terrain and remove sky
-      try { map.setTerrain(null); } catch {}
-      if (map.getLayer("sky")) {
-        try { map.removeLayer("sky"); } catch {}
-      }
-      // Leave the DEM source in place — cheap and allows quick re-enable
+    } catch (err) {
+      console.warn("[Map] Terrain apply failed:", err);
     }
-  };
+  }, [terrain3D, provider, mapboxToken, mapboxStyle, osmBasemap]);
 
-  // Effect: react to terrain3D / exaggeration changes
+  // Live updates (nodes appear/disappear) via setData()
   useEffect(() => {
     const map = mbMapRef.current;
     if (!map) return;
-    if (provider !== "mapbox") return;
-    if (!hasMapbox) return;
-
-    const run = () => {
-      try {
-        applyTerrainState(map, terrain3D, terrainExaggeration);
-      } catch (err) {
-        console.warn("[Map] Terrain apply failed:", err);
-      }
-
-      // When disabling 3D, reset pitch + bearing to 0 for a clean 2D view.
-      // When enabling, DON'T auto-nudge — the saved pitch from localStorage
-      // (or the user's manual tilt) is the right answer. Previously we
-      // nudged to 45° on enable, which fought with the saved camera state
-      // on page load and caused a "tilts then snaps flat" flash.
-      if (!terrain3D) {
-        map.easeTo({ pitch: 0, bearing: 0, duration: 400 });
-      }
-    };
-
-    if (map.isStyleLoaded()) {
-      run();
-    } else {
-      map.once("style.load", run);
-    }
-  }, [terrain3D, terrainExaggeration, provider, hasMapbox]);
-
-  // If user switches provider away from Mapbox, disable 3D terrain state
-  useEffect(() => {
-    if (provider !== "mapbox" && terrain3D) {
-      setTerrain3D(false);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider]);
-
-  // Mapbox: live updates (nodes appear/disappear) via setData()
-  useEffect(() => {
-    const map = mbMapRef.current;
-    if (!map) return;
-    if (provider !== "mapbox") return;
 
     const data = buildNodesGeoJSON(nodes, recentDays, { role: roleFilter, channel: channelFilter });
 
-    const clustered = map.getSource("nodes_clustered") as MbGeoJSONSource | undefined;
+    const clustered = map.getSource("nodes_clustered") as MlGeoJSONSource | undefined;
     clustered?.setData(data);
 
-    const plain = map.getSource("nodes_plain") as MbGeoJSONSource | undefined;
+    const plain = map.getSource("nodes_plain") as MlGeoJSONSource | undefined;
     plain?.setData(data);
 
     // If selected node disappears, clear selection + links/panel
@@ -3813,24 +3481,23 @@ export function Map() {
 
         mbSelectedIdRef.current = null;
 
-        const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
+        const linksSource = map.getSource("links") as MlGeoJSONSource | undefined;
         linksSource?.setData(emptyLineFeatureCollection());
         setDetailsData(null);
       }
     }
-  }, [nodes, recentDays, provider, roleFilter, channelFilter]);
+  }, [nodes, recentDays, roleFilter, channelFilter]);
 
-  // Mapbox: react to linkMode / myNodeId / nodes changes for persistent links
+  // React to linkMode / myNodeId / nodes changes for persistent links
   useEffect(() => {
     const map = mbMapRef.current;
     if (!map) return;
-    if (provider !== "mapbox") return;
 
     // In "selected" mode, don't override — handleNodeClick manages links
     if (linkMode === "selected" && !mbSelectedIdRef.current) {
       // Clear any lingering persistent links
       try {
-        const linksSource = map.getSource("links") as MbGeoJSONSource | undefined;
+        const linksSource = map.getSource("links") as MlGeoJSONSource | undefined;
         linksSource?.setData(emptyLineFeatureCollection());
       } catch {}
       return;
@@ -3840,634 +3507,7 @@ export function Map() {
       refreshMapboxLinks();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [linkMode, myNodeId, nodes, rawTraceroutes, provider]);
-
-  // ----------------------------
-  // OpenLayers: init (OSM path)
-  // ----------------------------
-  useEffect(() => {
-    const usingOsm = provider === "osm";
-
-    if (!usingOsm) return;
-    if (olMap) {
-      const target = olMap.getTarget();
-      if (target && target === mapRef.current) return;
-
-      if (mapRef.current) {
-        mapRef.current.innerHTML = "";
-        olMap.setTarget(mapRef.current as HTMLElement);
-
-        // Prevent "blank until resize" / stalled render
-        bumpOlRender(olMap);
-        return;
-      }
-    }
-    if (!mapRef.current) return;
-
-    mapRef.current.innerHTML = "";
-
-    const defaultPosition = { latitude: 38.5816, longitude: -121.4944 };
-
-    // Prefer serverNode if it has a position, otherwise fall back to any node with a position
-    const fallbackNodeWithPos =
-      serverNode?.map_position ? serverNode : Object.values(nodes).find((n) => n.map_position);
-
-    const centerPos = fallbackNodeWithPos?.map_position
-      ? {
-          latitude: fallbackNodeWithPos.map_position[1],
-          longitude: fallbackNodeWithPos.map_position[0],
-        }
-      : defaultPosition;
-
-    // Safer savedCenter parsing (avoid NaN / wrong shape)
-    let savedCenter: unknown = [];
-    try {
-      savedCenter = JSON.parse(localStorage.getItem("savedCenter") ?? "[]");
-    } catch {
-      savedCenter = [];
-    }
-
-    const saved = Array.isArray(savedCenter) ? savedCenter : [];
-    const savedLon = typeof saved[0] === "number" ? saved[0] : undefined;
-    const savedLat = typeof saved[1] === "number" ? saved[1] : undefined;
-
-    // Priority: ?node= fly-to > URL lat/lng/z > localStorage > defaults
-    const flyTarget = flyToTargetRef.current;
-    const urlLat = parseFloat(searchParams.get("lat") ?? "");
-    const urlLng = parseFloat(searchParams.get("lng") ?? "");
-    const urlZ = parseFloat(searchParams.get("z") ?? "");
-
-    const initialCenter = flyTarget
-      ? fromLonLat([flyTarget[0], flyTarget[1]])
-      : Number.isFinite(urlLng) && Number.isFinite(urlLat)
-        ? fromLonLat([urlLng, urlLat])
-        : fromLonLat([savedLon ?? centerPos.longitude, savedLat ?? centerPos.latitude]);
-
-    let initialZoom = flyTarget ? 14 : Number.isFinite(urlZ) ? urlZ : 9.5;
-    if (!flyTarget && !Number.isFinite(urlZ)) {
-      try {
-        const z = JSON.parse(localStorage.getItem("savedZoom") ?? "9.5");
-        if (typeof z === "number" && Number.isFinite(z)) initialZoom = z;
-      } catch {
-        // ignore
-      }
-    }
-
-    const tileLayer = createBaseTileLayer({
-      provider: "osm",
-      osmBasemap,
-    });
-
-    const map = new OlMap({
-      layers: [tileLayer],
-      target: mapRef.current as HTMLElement,
-      view: new View({
-        center: initialCenter,
-        zoom: initialZoom,
-      }),
-    });
-
-    setOlMap(map);
-    olBaseLayerRef.current = tileLayer;
-
-    // Helps prevent "blank until resize" in some layouts
-    bumpOlRender(map);
-
-    map.on("moveend", () => {
-      const center = map.getView().getCenter();
-      const zoom = map.getView().getZoom();
-      if (center) {
-        const [lon, lat] = transform(center, "EPSG:3857", "EPSG:4326");
-        localStorage.setItem("savedCenter", JSON.stringify([lon, lat]));
-      }
-      if (zoom != null) {
-        localStorage.setItem("savedZoom", zoom.toString());
-      }
-    });
-
-    // Hover tooltip (desktop only)
-    const tooltipEl = document.createElement("div");
-    tooltipEl.className = "ol-hover-tooltip";
-    tooltipEl.style.cssText =
-      "background:rgba(0,0,0,0.85);color:white;padding:6px 10px;border-radius:6px;" +
-      "font-size:12px;line-height:1.4;pointer-events:none;white-space:nowrap;";
-    const tooltipOverlay = new Overlay({
-      element: tooltipEl,
-      offset: [12, 0],
-      positioning: "center-left",
-    });
-    map.addOverlay(tooltipOverlay);
-
-    map.on("pointermove", (evt) => {
-      const hit = map.hasFeatureAtPixel(evt.pixel);
-      map.getTargetElement().style.cursor = hit ? "pointer" : "";
-
-      if (!hit) {
-        tooltipOverlay.setPosition(undefined);
-        return;
-      }
-
-      let found = false;
-      map.forEachFeatureAtPixel(evt.pixel, (f) => {
-        if (found) return;
-        const props = (f as Feature).getProperties();
-        const nodeData = props.node as IFeatureNode | undefined;
-        if (!nodeData?.id) return;
-        found = true;
-
-        const fullNode = nodesRef.current[nodeData.id];
-        const role = fullNode?.role != null ? roleTitles[fullNode.role]?.title ?? "" : "";
-        const snr = bestSnr(nodeData.id, nodesRef.current);
-        tooltipEl.innerHTML =
-          `<div style="display:flex;align-items:center;gap:4px">` +
-          signalBarsHtml(snr) +
-          `<strong>${escapeHtml(nodeData.shortname || nodeData.id)}</strong>` +
-          `</div>` +
-          (role ? `<span style="opacity:0.6">${role}</span><br/>` : "") +
-          `<span style="opacity:0.6">${relativeTime(nodeData.last_seen)}</span>`;
-        const geom = (f as Feature<Point>).getGeometry();
-        if (geom) tooltipOverlay.setPosition(geom.getCoordinates());
-      });
-
-      if (!found) tooltipOverlay.setPosition(undefined);
-    });
-
-    // nodes layer
-    const nodeEntries = computeRecentNodes(nodes, recentDays);
-    const features = nodeEntries
-      .map(([id, node]) => {
-        if (!node.map_position) return null;
-
-        const feature = new Feature({
-          geometry: new Point(fromLonLat([node.map_position[0], node.map_position[1]])),
-          node: {
-            id,
-            shortname: node.shortname,
-            longname: node.longname,
-            last_seen: node.last_seen,
-            position: [node.map_position[0], node.map_position[1]] as Coordinate,
-            online: node.online,
-            neighbors: node.neighbors,
-            gateway: node.gateway,
-          } satisfies IFeatureNode,
-        });
-
-        feature.setStyle(getOlNodeStyle(node.online, (node as any).role));
-        return feature;
-      })
-      .filter((f): f is Feature<Point> => Boolean(f));
-
-    // Create both plain and clustered layers — toggle via clusterEnabled
-    const nodeSource = new VectorSource({ features });
-    olNodesSourceRef.current = nodeSource;
-
-    const plainLayer = new VectorLayer({
-      style: defaultStyle,
-      source: nodeSource,
-    });
-
-    const clusterSetup = createOlClusterLayer(features);
-    olClusterSetupRef.current = clusterSetup;
-    if (activeToolRef.current != null && toolStepRef.current === "result") {
-      clusterSetup.clusterLayer.setOpacity(0.25);
-    }
-
-    // Add the appropriate layer based on cluster setting
-    if (clusterEnabledRef.current) {
-      map.addLayer(clusterSetup.clusterLayer);
-    } else {
-      map.addLayer(plainLayer);
-    }
-
-    const neighborLayers: VectorLayer<VectorSource<Feature>, Feature>[] = [];
-
-    const handleNodeDetails = async (node: IFeatureNode) => {
-      selectedNodeIdRef.current = node.id;
-      const displayName = await reverseGeocode(node.position[0], node.position[1]);
-
-      const liveNodes = nodesRef.current;
-      const fullNode = liveNodes[node.id];
-
-      const nodeLike: NodeLike = {
-        id: node.id,
-        shortname: node.shortname,
-        longname: node.longname,
-        last_seen: node.last_seen,
-        online: Boolean(node.online),
-        position: node.position,
-        neighbors: node.neighbors,
-        gateway: node.gateway,
-        role: fullNode?.role,
-      };
-
-      const heardBy = computeHeardByIds(liveNodes, node.id);
-
-      const relevantTraceroutes = traceroutesRef.current.filter((tr) => {
-        const norm = normNodeId(node.id);
-        const from = normNodeId(tr.from);
-        const to = normNodeId(tr.to);
-        if (from === norm || to === norm) return true;
-        const hops = (tr.route_ids ?? tr.route ?? []).map((r: string) => normNodeId(r));
-        return hops.includes(norm);
-      });
-      const maxRangeKm = computeMaxRange(node.id, [node.position[0], node.position[1]], liveNodes, heardBy, relevantTraceroutes);
-
-      setDetailsDataRef.current({
-        node: nodeLike,
-        liveNodes,
-        displayName: displayName || "Unknown",
-        elsewhereLinks: configRef.current?.mesh?.elsewhere_links,
-        traceroutes: traceroutesRef.current,
-        channelLabel: resolveChannelLabel((fullNode as any)?.last_channel),
-        heardBy,
-        maxRangeKm,
-      });
-
-      // Draw neighbor lines
-      node.neighbors?.forEach((neighbor) => {
-        const nnode = nodes[neighbor.id];
-        if (!nnode?.map_position) return;
-
-        const points: Coordinate[] = [node.position, nnode.map_position];
-        for (let i = 0; i < points.length; i++) {
-          points[i] = transform(points[i], "EPSG:4326", "EPSG:3857");
-        }
-
-        const featureLine = new Feature({ geometry: new LineString(points) });
-        const vectorLine = new Vector({});
-        vectorLine.addFeature(featureLine);
-
-        const linkColor = snrToOlColor(neighbor.snr, "neighbor");
-        const linkWidth = snrToOlWidth(neighbor.snr);
-        const vectorLineLayer = new VectorLayer({
-          source: vectorLine,
-          style: new Style({
-            fill: new Fill({ color: linkColor }),
-            stroke: new Stroke({ color: linkColor, width: linkWidth }),
-          }),
-        });
-        neighborLayers.push(vectorLineLayer);
-        map.addLayer(vectorLineLayer);
-      });
-
-      // Coverage radius circle
-      if (olCoverageLayerRef.current) {
-        map.removeLayer(olCoverageLayerRef.current);
-        olCoverageLayerRef.current = null;
-      }
-      if (maxRangeKm) {
-        const circleLonLat = geodesicCircleCoords([node.position[0], node.position[1]], maxRangeKm);
-        const circle3857 = circleLonLat.map((c) => transform(c, "EPSG:4326", "EPSG:3857"));
-        const roleColor = ROLE_COLORS[(fullNode as any)?.role] ?? DEFAULT_NODE_COLOR;
-        const polyFeature = new Feature({ geometry: new Polygon([circle3857]) });
-        polyFeature.setStyle(
-          new Style({
-            fill: new Fill({ color: hexToRgba(roleColor, 0.08) }),
-            stroke: new Stroke({ color: roleColor, width: 1.5, lineDash: [4, 4] }),
-          }),
-        );
-        const covSource = new VectorSource({ features: [polyFeature as Feature] });
-        const covLayer = new VectorLayer({ source: covSource });
-        olCoverageLayerRef.current = covLayer;
-        map.addLayer(covLayer);
-      }
-    };
-
-    // Expose handleNodeDetails for panel node-select navigation
-    handleNodeSelectRef.current = (id: string) => {
-      const targetNode = nodesRef.current[id];
-      if (!targetNode?.map_position) return;
-      void handleNodeDetails({
-        id,
-        shortname: targetNode.shortname,
-        longname: targetNode.longname,
-        last_seen: targetNode.last_seen,
-        position: [targetNode.map_position[0], targetNode.map_position[1]] as Coordinate,
-        online: Boolean(targetNode.online),
-        neighbors: targetNode.neighbors,
-        gateway: targetNode.gateway,
-      });
-    };
-
-    // OL: link-highlight callback for details panel hover
-    handleLinkHoverRef.current = (otherId: string | null) => {
-      if (olHighlightLayerRef.current) {
-        map.removeLayer(olHighlightLayerRef.current);
-        olHighlightLayerRef.current = null;
-      }
-      if (!otherId) return;
-
-      const selId = selectedNodeIdRef.current;
-      if (!selId) return;
-      const selNode = nodesRef.current[selId];
-      if (!selNode?.map_position) return;
-
-      const otherNode = nodesRef.current[otherId] ?? nodesRef.current[`!${otherId}`];
-      if (!otherNode?.map_position) return;
-
-      const coords = [selNode.map_position, otherNode.map_position].map((c) =>
-        transform([c[0], c[1]], "EPSG:4326", "EPSG:3857"),
-      );
-      const hlFeature = new Feature({ geometry: new LineString(coords) });
-      hlFeature.setStyle(
-        new Style({ stroke: new Stroke({ color: "#ffffff", width: 5 }) }),
-      );
-      const hlSource = new VectorSource({ features: [hlFeature as Feature] });
-      const hlLayer = new VectorLayer({ source: hlSource });
-      olHighlightLayerRef.current = hlLayer;
-      map.addLayer(hlLayer);
-    };
-
-    // Select interaction for non-clustered mode
-    const selectedStyle = new Style({
-      image: new Circle({
-        radius: 6,
-        fill: new Fill({ color: "rgba(0, 0, 240, 1)" }),
-        stroke: new Stroke({ color: "orange", width: 2 }),
-      }),
-    });
-
-    const select = new Select({ condition: click, style: selectedStyle });
-    map.addInteraction(select);
-
-    // Draw persistent links if mode is all/mynode at init
-    refreshOlPersistentLinks(map);
-
-    // Right-click / long-press: "Set as My Node" (OL)
-    const findOlNodeAtPixel = (pixel: number[]): IFeatureNode | null => {
-      let found: IFeatureNode | null = null;
-      map.forEachFeatureAtPixel(pixel, (f) => {
-        const props = f.getProperties();
-        if (props.node?.id) found = props.node as IFeatureNode;
-      });
-      return found;
-    };
-
-    const viewport = map.getViewport();
-    const onOlContextMenu = (e: MouseEvent) => {
-      const pixel = map.getEventPixel(e);
-      const node = findOlNodeAtPixel(pixel);
-      if (!node) return;
-      e.preventDefault();
-      setMyNodeId(node.id);
-      setLinkMode("mynode");
-    };
-    viewport.addEventListener("contextmenu", onOlContextMenu);
-
-    // Long-press for mobile (OL)
-    let olLongPressTimer: ReturnType<typeof setTimeout> | null = null;
-    let olLongPressPixel: number[] | null = null;
-
-    const onOlTouchStart = (e: TouchEvent) => {
-      if (e.touches.length !== 1) return;
-      const rect = viewport.getBoundingClientRect();
-      olLongPressPixel = [
-        e.touches[0].clientX - rect.left,
-        e.touches[0].clientY - rect.top,
-      ];
-      olLongPressTimer = setTimeout(() => {
-        if (!olLongPressPixel) return;
-        const node = findOlNodeAtPixel(olLongPressPixel);
-        if (!node) return;
-        setMyNodeId(node.id);
-        setLinkMode("mynode");
-        olLongPressPixel = null;
-      }, 500);
-    };
-    const onOlTouchCancel = () => {
-      if (olLongPressTimer) { clearTimeout(olLongPressTimer); olLongPressTimer = null; }
-      olLongPressPixel = null;
-    };
-    viewport.addEventListener("touchstart", onOlTouchStart, { passive: true });
-    viewport.addEventListener("touchmove", onOlTouchCancel, { passive: true });
-    viewport.addEventListener("touchend", onOlTouchCancel, { passive: true });
-
-    map.on("singleclick", async (event) => {
-      neighborLayers.forEach((layer) => map.removeLayer(layer));
-      neighborLayers.length = 0;
-
-      // Clear coverage + path overlays on any click (will be re-added if a node is selected)
-      if (olCoverageLayerRef.current) {
-        map.removeLayer(olCoverageLayerRef.current);
-        olCoverageLayerRef.current = null;
-      }
-      if (olPathLayerRef.current) {
-        map.removeLayer(olPathLayerRef.current);
-        olPathLayerRef.current = null;
-      }
-
-      // Helper: if a tool is picking a node, intercept the click
-      const handleNodeClickMaybePick = (node: IFeatureNode) => {
-        const activeToolCur = activeToolRef.current;
-        const stepCur = toolStepRef.current;
-        if (activeToolCur && stepCur === "pickFrom") {
-          setToolFromId(node.id);
-          if (activeToolCur === "coverage" || activeToolCur === "scan") {
-            setToolStep("result");
-          } else {
-            setToolStep("pickTo");
-          }
-          return true;
-        }
-        if (activeToolCur && stepCur === "pickTo") {
-          if (node.id === toolFromIdRef.current) return true;
-          setToolToId(node.id);
-          setToolStep("result");
-          return true;
-        }
-        return false;
-      };
-
-      if (clusterEnabledRef.current) {
-        // Clustered mode — use spiderfy-aware click handler
-        const node = handleOlClusterClick(map, clusterSetup.clusterSource, event.pixel);
-        if (node) {
-          if (handleNodeClickMaybePick(node)) return;
-          select.getFeatures().clear();
-          void handleNodeDetails(node);
-        } else if (!map.hasFeatureAtPixel(event.pixel)) {
-          setDetailsDataRef.current(null);
-        }
-        return;
-      }
-
-      // Plain mode — original behavior
-      if (map.hasFeatureAtPixel(event.pixel) !== true) {
-        setDetailsDataRef.current(null);
-        return;
-      }
-
-      const feature = map.forEachFeatureAtPixel(event.pixel, (f) => f);
-      if (!feature) return;
-
-      const props = feature.getProperties();
-      const { node } = props as { node: IFeatureNode };
-      if (!node?.id) return;
-
-      if (handleNodeClickMaybePick(node)) return;
-      void handleNodeDetails(node);
-    });
-
-    // Zoom handlers for OL spiderfy
-    map.getView().on("change:resolution", () => {
-      updateOlSpiderfyPositions(map);
-    });
-
-    map.on("moveend", () => {
-      if (clusterEnabledRef.current) {
-        autoOlSpiderfy(map, clusterSetup.clusterSource);
-      }
-    });
-
-    // Escape key for OL spiderfy
-    const olKeydownHandler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        removeOlSpiderfy(map);
-        setDetailsDataRef.current(null);
-      }
-    };
-    document.addEventListener("keydown", olKeydownHandler);
-
-    return () => {
-      document.removeEventListener("keydown", olKeydownHandler);
-      viewport.removeEventListener("contextmenu", onOlContextMenu);
-      viewport.removeEventListener("touchstart", onOlTouchStart);
-      viewport.removeEventListener("touchmove", onOlTouchCancel);
-      viewport.removeEventListener("touchend", onOlTouchCancel);
-      if (olLongPressTimer) clearTimeout(olLongPressTimer);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider, serverNode, olMap]);
-
-  // OpenLayers: update nodes in real time when nodes/recentDays change
-  useEffect(() => {
-    if (provider !== "osm") return;
-    if (!olMap) return;
-
-    const nodeEntries = computeRecentNodes(nodes, recentDays);
-    const features = nodeEntries
-      .map(([id, node]) => {
-        if (!node.map_position) return null;
-
-        const feature = new Feature({
-          geometry: new Point(fromLonLat([node.map_position[0], node.map_position[1]])),
-          node: {
-            id,
-            shortname: node.shortname,
-            longname: node.longname,
-            last_seen: node.last_seen,
-            position: [node.map_position[0], node.map_position[1]] as Coordinate,
-            online: node.online,
-            neighbors: node.neighbors,
-            gateway: node.gateway,
-          } satisfies IFeatureNode,
-        });
-
-        feature.setStyle(getOlNodeStyle(node.online, (node as any).role));
-        return feature;
-      })
-      .filter((f): f is Feature<Point> => Boolean(f));
-
-    // Update plain source
-    if (olNodesSourceRef.current) {
-      olNodesSourceRef.current.clear();
-      olNodesSourceRef.current.addFeatures(features);
-    }
-
-    // Update cluster source (uses its own feature source)
-    if (olClusterSetupRef.current) {
-      removeOlSpiderfy(olMap); // clear spiderfy before updating features
-      olClusterSetupRef.current.featureSource.clear();
-      // Re-create features for cluster source (separate instances)
-      const clusterFeatures = nodeEntries
-        .map(([id, node]) => {
-          if (!node.map_position) return null;
-          const f = new Feature({
-            geometry: new Point(fromLonLat([node.map_position[0], node.map_position[1]])),
-            node: {
-              id,
-              shortname: node.shortname,
-              longname: node.longname,
-              last_seen: node.last_seen,
-              position: [node.map_position[0], node.map_position[1]] as Coordinate,
-              online: node.online,
-              neighbors: node.neighbors,
-            } satisfies IFeatureNode,
-          });
-          f.setStyle(getOlNodeStyle(node.online, (node as any).role));
-          return f;
-        })
-        .filter((f): f is Feature<Point> => Boolean(f));
-      olClusterSetupRef.current.featureSource.addFeatures(clusterFeatures as Feature[]);
-    }
-  }, [nodes, recentDays, provider, olMap]);
-
-  // OpenLayers: swap basemap live
-  useEffect(() => {
-    if (provider !== "osm") return;
-    if (!olMap) return;
-
-    const newBase = createBaseTileLayer({ provider: "osm", osmBasemap });
-
-    // Replace layer 0 (base layer)
-    olMap.getLayers().setAt(0, newBase);
-    olBaseLayerRef.current = newBase;
-
-    bumpOlRender(olMap);
-  }, [osmBasemap, provider, olMap]);
-
-  // OpenLayers: cluster toggle — swap between plain and clustered layers
-  useEffect(() => {
-    if (provider !== "osm") return;
-    if (!olMap) return;
-
-    const clusterSetup = olClusterSetupRef.current;
-    if (!clusterSetup) return;
-
-    // Remove spiderfy when toggling
-    removeOlSpiderfy(olMap);
-
-    const layers = olMap.getLayers();
-
-    if (clusterEnabled) {
-      // Remove any plain node layer (index 1+), add cluster layer
-      for (let i = layers.getLength() - 1; i >= 1; i--) {
-        const layer = layers.item(i);
-        // Only remove plain vector layers that use our node source
-        if (layer instanceof VectorLayer && (layer as VectorLayer<VectorSource>).getSource() === olNodesSourceRef.current) {
-          layers.removeAt(i);
-        }
-      }
-      if (!layers.getArray().includes(clusterSetup.clusterLayer)) {
-        olMap.addLayer(clusterSetup.clusterLayer);
-      }
-    } else {
-      // Remove cluster layer, add plain layer
-      if (layers.getArray().includes(clusterSetup.clusterLayer)) {
-        olMap.removeLayer(clusterSetup.clusterLayer);
-      }
-      // Re-add a plain layer if not present
-      const hasPlain = layers.getArray().some(
-        (l) => l instanceof VectorLayer && (l as VectorLayer<VectorSource>).getSource() === olNodesSourceRef.current
-      );
-      if (!hasPlain && olNodesSourceRef.current) {
-        olMap.addLayer(
-          new VectorLayer({
-            style: defaultStyle,
-            source: olNodesSourceRef.current,
-          })
-        );
-      }
-    }
-  }, [clusterEnabled, provider, olMap]);
-
-  // OpenLayers: react to linkMode / myNodeId / nodes changes for persistent links
-  useEffect(() => {
-    if (provider !== "osm") return;
-    if (!olMap) return;
-    refreshOlPersistentLinks(olMap);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [linkMode, myNodeId, nodes, rawTraceroutes, provider, olMap]);
+  }, [linkMode, myNodeId, nodes, rawTraceroutes]);
 
   // ----------------------------
   // Settings panel UI
@@ -4503,7 +3543,6 @@ export function Map() {
         setSettingsPanelOpen={setSettingsPanelOpen}
         openSections={settingsOpenSections}
         setOpenSections={setSettingsOpenSections}
-        provider={provider}
         setProvider={setProvider}
         mapboxStyle={mapboxStyle}
         setMapboxStyle={setMapboxStyle}
@@ -4518,8 +3557,6 @@ export function Map() {
         usingMapbox={usingMapbox}
         terrain3D={terrain3D}
         setTerrain3D={setTerrain3D}
-        terrainExaggeration={terrainExaggeration}
-        setTerrainExaggeration={setTerrainExaggeration}
         onExport={handleExport}
         hidden={!!detailsData}
         recentDays={recentDays}
@@ -4583,7 +3620,7 @@ export function Map() {
 
       {/* Live terrain elevation under the cursor — helps sanity-check coverage
           paints. Only renders when 3D terrain is on and we got a valid sample. */}
-      {provider === "mapbox" && terrain3D && hoverElevationM != null && (
+      {terrain3D && hoverElevationM != null && (
         <div className="fixed top-3 left-120 sm:left-135 z-30 px-2.5 py-1 rounded-full text-[11px] font-medium border border-white/10 bg-gray-900/80 backdrop-blur-xl text-gray-300 shadow-2xl pointer-events-none select-none flex items-center gap-1.5">
           <svg className="w-3 h-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21l6-6 4 4 8-8" />
@@ -4603,13 +3640,11 @@ export function Map() {
             setToolStep("pickFrom");
           }
         }}
-        terrainEnabled={provider === "mapbox" && terrain3D}
+        terrainEnabled={terrain3D}
         onRequestTerrainSetup={() => {
-          // If on OSM the terrain section isn't rendered — send the user
-          // to "appearance" so they can switch provider to Mapbox first.
           setSettingsOpenSections((prev) => {
             const next = new Set(prev);
-            next.add(usingMapbox ? "terrain" : "appearance");
+            next.add("terrain");
             return next;
           });
           setSettingsPanelOpen(true);
@@ -4664,10 +3699,10 @@ export function Map() {
           }
           fromColor="#06b6d4"
           toColor="#d946ef"
-          terrainNeeded={provider === "mapbox" && !terrain3D}
-          onEnableTerrain={provider === "mapbox" ? () => setTerrain3D(true) : undefined}
+          terrainNeeded={!terrain3D}
+          onEnableTerrain={() => setTerrain3D(true)}
           onClose={resetTool}
-          isComputing={provider === "mapbox" && terrain3D && !losResult}
+          isComputing={terrain3D && !losResult}
           fromHwIdx={losFromHwIdx} onFromHwIdxChange={setLosFromHwIdx}
           fromAntIdx={losFromAntIdx} onFromAntIdxChange={setLosFromAntIdx}
           fromHeightM={losFromHeightM} onFromHeightChange={setLosFromHeightM}
@@ -4690,8 +3725,8 @@ export function Map() {
                 ? `${toolVirtualPos[1].toFixed(5)}, ${toolVirtualPos[0].toFixed(5)}`
                 : ""
           }
-          terrainNeeded={provider === "mapbox" && !terrain3D}
-          onEnableTerrain={provider === "mapbox" ? () => setTerrain3D(true) : undefined}
+          terrainNeeded={!terrain3D}
+          onEnableTerrain={() => setTerrain3D(true)}
           onClose={resetTool}
           isComputing={isComputingCoverage}
           isFetchingTerrain={isFetchingCoverageTerrain}
@@ -4782,8 +3817,8 @@ export function Map() {
               : "Virtual location"
           }
           isScanning={isScanning}
-          terrainNeeded={provider === "mapbox" && !terrain3D}
-          onEnableTerrain={provider === "mapbox" ? () => setTerrain3D(true) : undefined}
+          terrainNeeded={!terrain3D}
+          onEnableTerrain={() => setTerrain3D(true)}
           onClose={resetTool}
           onSelectResult={(id) => {
             // Fly to the target, then open its details panel.

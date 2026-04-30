@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { COMMON_ANTENNAS, COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS, RELIABILITY_PRESETS, type CoverageReliability, type CoverageResult } from "./coverageAnalysis";
+
+import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult,ENVIRONMENTS, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
 import type { DemSource } from "./terrainRgb";
 import { useBottomSheetGesture } from "./useBottomSheet";
 

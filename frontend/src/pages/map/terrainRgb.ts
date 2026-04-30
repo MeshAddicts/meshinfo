@@ -112,8 +112,9 @@ class TileLRU {
 // ~64 × 512² × 4B ≈ 64 MB worst case
 const tileCache = new TileLRU(64);
 
-// Separate cache for Tilezen (avoids z/x/y collision with Mapbox; different encodings). ~4 MB.
-const tilezenCache = new TileLRU(16);
+// Sized to fit a standard-detail compute (256 max tiles) so back-to-back computes at the
+// same origin hit 100% cache. 256 × 256² × 4B ≈ 64 MB worst case.
+const tilezenCache = new TileLRU(256);
 
 async function fetchTile(
   z: number,
@@ -249,11 +250,18 @@ export async function fetchElevationAt(
     const elev = sampleTileBilinear(tile, tileX, tileY, lng, lat, clampedZoom);
     if (elev != null) return elev;
   } catch (err) {
-    console.warn(
-      "[terrainRgb] Tilezen tile fetch failed, falling back to Mapbox terrain-rgb:",
-      err,
-    );
+    if (token) {
+      console.warn(
+        "[terrainRgb] Tilezen tile fetch failed, falling back to Mapbox terrain-rgb:",
+        err,
+      );
+    } else {
+      console.warn("[terrainRgb] Tilezen tile fetch failed (no Mapbox fallback — token not configured):", err);
+      return null;
+    }
   }
+
+  if (!token) return null;
 
   try {
     const tile = await fetchTile(clampedZoom, tileX, tileY, token);
@@ -278,12 +286,16 @@ export interface BuildDemOptions {
 /** Tile source for DEM attribution. */
 export type DemSource = "tilezen" | "mapbox-terrain-rgb";
 
-/** Try Tilezen; fall back to Mapbox terrain-rgb. Returns source tag for attribution. */
+/** Try Tilezen; fall back to Mapbox terrain-rgb when a token is configured. Returns source tag for attribution. */
 export async function buildDem(opts: BuildDemOptions): Promise<{ dem: DEM; source: DemSource }> {
   try {
     const dem = await buildDemFromTilezen(opts);
     return { dem, source: "tilezen" };
   } catch (err) {
+    if (!opts.token) {
+      console.warn("[terrainRgb] Bulk DEM from Tilezen failed (no Mapbox fallback — token not configured):", err);
+      throw err;
+    }
     console.warn(
       "[terrainRgb] Bulk DEM from Tilezen failed, falling back to Mapbox terrain-rgb:",
       err,
