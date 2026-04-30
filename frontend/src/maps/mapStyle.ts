@@ -1,9 +1,3 @@
-/**
- * Unified MapLibre style assembler. Produces a StyleSpecification for either
- * tile source (OSM/CARTO raster, or Mapbox raster via Styles API) plus helpers
- * for 3D terrain (Tilezen terrarium free; Mapbox terrain-RGB when token present)
- * and the atmospheric sky layer.
- */
 import type { Map as MlMap, RasterDEMSourceSpecification, SkySpecification, StyleSpecification } from "maplibre-gl";
 
 export type MapProvider = "osm" | "mapbox";
@@ -13,7 +7,7 @@ export interface BuildStyleOptions {
   provider: MapProvider;
   osmBasemap?: OsmBasemap;
   mapboxToken?: string;
-  /** Style path, e.g. "mapbox/streets-v12" or "mapbox://styles/mapbox/streets-v12". */
+  /** "mapbox/streets-v12" or "mapbox://styles/mapbox/streets-v12". */
   mapboxStyle?: string;
 }
 
@@ -133,7 +127,6 @@ export function buildMapStyle(opts: BuildStyleOptions): StyleSpecification {
   };
 }
 
-/** Returns the DEM source spec for the active provider (Mapbox terrain-RGB if token, else Tilezen terrarium). */
 export function demSourceSpec(opts: BuildStyleOptions): RasterDEMSourceSpecification {
   if (opts.provider === "mapbox" && opts.mapboxToken) {
     return {
@@ -159,7 +152,7 @@ export function demSourceSpec(opts: BuildStyleOptions): RasterDEMSourceSpecifica
   };
 }
 
-/** Add/refresh the DEM source + terrain + atmospheric sky. Idempotent; safe after style reloads. */
+/** Idempotent — safe to re-call after style reloads. */
 export function ensureTerrain(map: MlMap, opts: BuildStyleOptions, exaggeration: number): void {
   if (!map.getSource(TERRAIN_SOURCE_ID)) {
     map.addSource(TERRAIN_SOURCE_ID, demSourceSpec(opts));
@@ -168,18 +161,10 @@ export function ensureTerrain(map: MlMap, opts: BuildStyleOptions, exaggeration:
   map.setSky(SKY_SPEC);
 }
 
-/** Disable terrain and clear sky. DEM source is left in place for cheap re-enable. */
+/** Leaves the DEM source in place for cheap re-enable. */
 export function removeTerrain(map: MlMap): void {
-  try {
-    map.setTerrain(null);
-  } catch {
-    // ignore — terrain may not be set
-  }
-  try {
-    map.setSky({});
-  } catch {
-    // ignore
-  }
+  try { map.setTerrain(null); } catch {}
+  try { map.setSky({}); } catch {}
 }
 
 export const MAP_STYLE_IDS = {

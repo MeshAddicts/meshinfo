@@ -1,6 +1,6 @@
 /**
- * Spiderfy for Mapbox GL JS: fans co-located cluster members out in a circle
- * (≤8) or Fermat spiral (>8) with animated leg lines.
+ * Cluster spiderfy: fans co-located cluster members out in a circle (≤8) or
+ * Fermat spiral (>8) with animated leg lines.
  */
 
 import type {

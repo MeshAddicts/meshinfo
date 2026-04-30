@@ -21,7 +21,7 @@ varying float v_ratio;
 void main() {
   vec4 clip = u_matrix * vec4(a_pos, 1.0);
 
-  // CSS-pixel → physical → NDC. u_dpr keeps donuts aligned with Mapbox native layers on HiDPI.
+  // CSS-pixel → physical → NDC. u_dpr keeps donuts aligned with native layers on HiDPI.
   vec2 ndcOffset = a_uv * (a_pixelRadius * 2.0 * u_dpr) / u_viewport;
   clip.xy += ndcOffset * clip.w;
 
@@ -219,7 +219,8 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
     const terrainEnabled = !!map.getTerrain?.();
     const elevationAt = (lng: number, lat: number): number => {
       if (!terrainEnabled) return 0;
-      // MapLibre's queryTerrainElevation returns un-exaggerated MSL metres — donuts sit on the ground
+      // Want exaggerated elevation here: mercatorMatrix doesn't scale terrain,
+      // so vertex z must already be in the same exaggerated space as the rendered mesh.
       const e = map.queryTerrainElevation?.({ lng, lat });
       return Number.isFinite(e) ? (e as number) : 0;
     };
@@ -295,9 +296,8 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
 
     if (this.vertexCount === 0) return;
 
-    // MapLibre's `modelViewProjectionMatrix` expects world-sized Mercator (coord*worldSize).
-    // Our shader speaks 0..1 Mercator (same as Mapbox's legacy custom-layer matrix), so
-    // prefer the internal `mercatorMatrix` which has the worldSize baked in.
+    // Shader expects 0..1 Mercator → clip; the public `modelViewProjectionMatrix`
+    // expects coord×worldSize. Internal `mercatorMatrix` has the worldSize baked in.
     const tr = this.map ? (this.map as unknown as { transform?: { mercatorMatrix?: Float32List | number[] } }).transform : undefined;
     const matrix = (tr?.mercatorMatrix ?? options.modelViewProjectionMatrix) as Float32List;
 

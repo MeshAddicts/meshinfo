@@ -1,5 +1,5 @@
 /**
- * Mapbox 3D LoS "tube" layer: GL_LINE_STRIP in Mercator world space,
+ * 3D LoS "tube" custom layer: GL_LINE_STRIP in Mercator world space,
  * color-coded per vertex (clear/fresnel/blocked). Sits in the depth buffer.
  */
 import maplibregl, { type CustomRenderMethodInput } from "maplibre-gl";
@@ -129,7 +129,7 @@ export class LosTubeLayer implements maplibregl.CustomLayerInterface {
       return;
     }
 
-    // Mapbox types exaggeration as DataDrivenPropertyValueSpecification; we only set numbers
+    // Lift altitudes into the same exaggerated space as the rendered terrain mesh.
     const exagRaw = this.map?.getTerrain()?.exaggeration;
     const exaggeration = typeof exagRaw === "number" ? exagRaw : 1;
 
@@ -159,8 +159,7 @@ export class LosTubeLayer implements maplibregl.CustomLayerInterface {
   render(gl: WebGLRenderingContext | WebGL2RenderingContext, options: CustomRenderMethodInput): void {
     if (!this.program || !this.buffer || this.vertexCount < 2) return;
 
-    // See clusterDonutLayer.ts — use the internal `mercatorMatrix` (0..1 Mercator → clip)
-    // rather than `modelViewProjectionMatrix` (world-sized Mercator → clip).
+    // See clusterDonutLayer.ts for the mercatorMatrix vs modelViewProjectionMatrix story.
     const tr = this.map ? (this.map as unknown as { transform?: { mercatorMatrix?: Float32List | number[] } }).transform : undefined;
     const matrix = (tr?.mercatorMatrix ?? options.modelViewProjectionMatrix) as Float32List;
 

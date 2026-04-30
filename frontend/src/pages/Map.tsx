@@ -65,12 +65,8 @@ import {
 const TRANSPARENT_1PX_PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 
-/**
- * Real-MSL elevation via MapLibre's terrain. `map.queryTerrainElevation` returns
- * `dem_meters * exaggeration`; we divide it back out so RF math and the hover pill
- * see actual ground. The Mapbox API used to take `{ exaggerated: false }` but
- * MapLibre has no such option — undo it ourselves.
- */
+/** `map.queryTerrainElevation` returns `dem_m × exaggeration` with no opt-out;
+ *  divide it back out for real MSL (RF math, hover pill, anywhere needing physical metres). */
 function queryTerrainElevationMSL(map: MlMap, lnglat: [number, number]): number | null {
   const e = map.queryTerrainElevation(lnglat);
   if (typeof e !== "number" || !Number.isFinite(e)) return null;
@@ -212,13 +208,11 @@ export function Map() {
   // JSON signature skips setData when the GeoJSON is byte-identical across polls
   const persistentLinksMbJsonRef = useRef<string>("");
 
-  // MapLibre refs
   const mbMapRef = useRef<MlMap | null>(null);
   const mbSelectedIdRef = useRef<string | null>(null);
   const mbHandlersBoundRef = useRef(false);
   const mbCurrentStyleUrlRef = useRef<string | null>(null);
   const mbKeydownHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
-  /** Cleanup for Mapbox canvas touch-listener trio. */
   const mbTouchCleanupRef = useRef<(() => void) | null>(null);
 
   // Set by whichever provider is active
@@ -757,7 +751,7 @@ export function Map() {
     ];
     if (src && typeof (src as unknown as { updateImage?: Function }).updateImage === "function") {
       (src as unknown as { updateImage: (o: { url: string; coordinates: typeof coords }) => void }).updateImage({ url, coordinates: coords });
-      // Revoke previous blob — Mapbox already has the new texture on the GPU
+      // Revoke previous blob — the GPU already holds the new texture.
       const previous = coverageRasterUrlRef.current;
       coverageRasterUrlRef.current = url;
       if (previous) URL.revokeObjectURL(previous);
@@ -802,8 +796,7 @@ export function Map() {
   useEffect(() => writeJson(LS_KEYS.settingsPanelOpen, settingsPanelOpen), [settingsPanelOpen]);
   useEffect(() => writeJson(LS_KEYS.terrain3D, terrain3D), [terrain3D]);
 
-  // One-shot: drop the obsolete `terrainExaggeration` key. removeItem is idempotent —
-  // safe to keep around indefinitely; harmless on browsers that already cleaned it up.
+  // Obsolete key from the prior exaggeration slider; removeItem is idempotent.
   useEffect(() => {
     try { localStorage.removeItem("meshinfo.map.terrainExaggeration"); } catch {}
   }, []);
@@ -895,7 +888,7 @@ export function Map() {
 
   const [detailsData, setDetailsData] = useState<NodeDetailsData | null>(null);
 
-  // Refs to avoid stale closures in Mapbox handlers
+  // Refs to avoid stale closures in long-lived map event handlers.
   const nodesRef = useRef(nodes);
   const traceroutesRef = useRef(rawTraceroutes);
   const configRef = useRef(config);
@@ -1564,8 +1557,7 @@ export function Map() {
 
     const radKm = coverageRadiusKm;
     const demBounds = demBoundsAround(origin, radKm, 1.05);
-    // Gently center on the pin; tiles are fetched directly from Mapbox's
-    // terrain-rgb endpoint independent of the viewport.
+    // Recenter on the pin; tile fetch is viewport-independent so we don't need to fly.
     mb.easeTo({ center: origin, duration: 300 });
 
     const mapboxToken = env.MAPBOX_TOKEN;
@@ -1630,35 +1622,13 @@ export function Map() {
         }
         setIsFetchingCoverageTerrain(false);
 
-        // 2. Resolve origin height. Base = GPS altitude (if valid) or terrain; antenna stacks on top.
-        // originIsFallback flags "no terrain AND no GPS altitude" — base synthesized from 0.
-        // z=14 fetch at the pin beats the bbox DEM (forced to z≤10 by tile cap, undersamples peaks 400+ m).
-        // Best origin-ground reading. Combines two independent sources
-        // so the displayed pin elevation is accurate regardless of the
-        // user's current viewport zoom:
-        //
-        //   1. `queryTerrainElevation` reads whichever `mapbox-terrain-
-        //      dem-v1` tiles Mapbox GL has currently loaded. Fast and
-        //      accurate when the user is zoomed in (z=13-14 tiles give
-        //      ~5-30 m pixels). At low zoom the returned value is
-        //      averaged over coarse pixels and can under-read a peak by
-        //      ~180 m — that's the bug we're guarding against.
-        //   2. `fetchElevationAt` fetches a dedicated z=15 tile for the
-        //      pin lat/lng via Tilezen (AWS Open Data, USGS 3DEP-backed
-        //      in the US — same data source Mapbox GL reads internally).
-        //      Always high-resolution regardless of viewport state; one
-        //      HTTP round-trip, LRU-cached for subsequent reads at the
-        //      same pin.
-        //
-        // We take the MAX of the two — a low-zoom-averaged reading can
-        // only under-report the peak, never over-report it, so max()
-        // robustly picks the accurate value. When both are valid at high
-        // zoom they agree to within a couple of meters.
-        //
-        // CRITICAL: MapLibre's `queryTerrainElevation` always returns elevation
-        // multiplied by the active terrain exaggeration. RF math and the displayed
-        // pin height need real MSL metres, so divide that out via the helper.
-        // Without this, a 1.5× default exaggeration silently inflated every read by ~50%.
+        // Resolve origin ground via two independent sources; we take the MAX because
+        // a low-zoom-averaged reading can only under-report a peak, never over-report:
+        //   1. `queryTerrainElevation` reads the loaded raster-dem tiles. Accurate when
+        //      zoomed in (~5-30 m px at z=13-14); at low zoom can under-read a peak by ~180 m.
+        //   2. `fetchElevationAt` does a dedicated z=15 fetch — viewport-independent,
+        //      LRU-cached. Source: Tilezen (USGS 3DEP / SRTM), Mapbox terrain-RGB fallback.
+        // queryTerrainElevationMSL undoes MapLibre's built-in exaggeration multiply.
         const mbElev = queryTerrainElevationMSL(mb, origin!);
         const mbElevOk = typeof mbElev === "number" && Number.isFinite(mbElev);
         const fetchElev = await fetchElevationAt(origin![0], origin![1], mapboxToken);
