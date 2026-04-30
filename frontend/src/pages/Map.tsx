@@ -210,6 +210,8 @@ export function Map() {
 
   const mbMapRef = useRef<MlMap | null>(null);
   const clusterDonutLayerRef = useRef<ClusterDonutLayer | null>(null);
+  // Sticky after first style.load — `isStyleLoaded()` momentarily lies post-removeSource.
+  const styleEverLoadedRef = useRef(false);
   const mbSelectedIdRef = useRef<string | null>(null);
   const mbHandlersBoundRef = useRef(false);
   const mbCurrentStyleUrlRef = useRef<string | null>(null);
@@ -3381,6 +3383,7 @@ export function Map() {
       }
     };
 
+    map.on("style.load", () => { styleEverLoadedRef.current = true; });
     map.on("style.load", ensureSourcesAndLayers);
 
     return () => {
@@ -3435,12 +3438,10 @@ export function Map() {
     applyClusterVisibility(map, clusterEnabled);
   }, [clusterEnabled]);
 
-  // No isStyleLoaded gate: removeTerrain calls removeSource which leaves the style
-  // briefly "unloaded", and a queued style.load listener never fires for non-style
-  // changes — initial-mount case is covered by ensureSourcesAndLayers on style.load.
+  // Initial mount is handled by ensureSourcesAndLayers on style.load; this only runs live toggles.
   useEffect(() => {
     const map = mbMapRef.current;
-    if (!map) return;
+    if (!map || !styleEverLoadedRef.current) return;
 
     try {
       if (terrain3D) {
