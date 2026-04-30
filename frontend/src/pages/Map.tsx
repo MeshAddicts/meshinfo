@@ -3452,11 +3452,6 @@ export function Map() {
     } catch (err) {
       console.warn("[Map] Terrain apply failed:", err);
     }
-
-    // Snap to 2D camera on disable; on enable the saved pitch from localStorage stands.
-    if (!terrain3D) {
-      map.easeTo({ pitch: 0, bearing: 0, duration: 400 });
-    }
   }, [terrain3D, provider, mapboxToken, mapboxStyle, osmBasemap]);
 
   // Live updates (nodes appear/disappear) via setData()
