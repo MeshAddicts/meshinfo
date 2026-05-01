@@ -290,6 +290,39 @@ export function sampleClutterClassAt(
   return data[y * width + x];
 }
 
+/**
+ * Nearest-neighbor downsample of a ClutterRaster to (newWidth × newHeight) over
+ * the same geographic bounds. Used to keep a small raster alongside the cached
+ * DEM for the drag-preview compute path.
+ */
+export function downsampleClutterRaster(
+  src: ClutterRaster,
+  newWidth: number,
+  newHeight: number,
+): ClutterRaster {
+  const data = new Uint8Array(newWidth * newHeight);
+  data.fill(NLCD_DEFAULT_CLASS_ID);
+  for (let j = 0; j < newHeight; j++) {
+    const lat =
+      src.bounds.north -
+      ((src.bounds.north - src.bounds.south) * j) / Math.max(1, newHeight - 1);
+    for (let i = 0; i < newWidth; i++) {
+      const lng =
+        src.bounds.west +
+        ((src.bounds.east - src.bounds.west) * i) / Math.max(1, newWidth - 1);
+      data[j * newWidth + i] = sampleClutterClassAt(src, lng, lat);
+    }
+  }
+  return {
+    data,
+    width: newWidth,
+    height: newHeight,
+    bounds: src.bounds,
+    tilesPresent: src.tilesPresent,
+    tilesTotal: src.tilesTotal,
+  };
+}
+
 /** Reset the tile cache. Test-only. */
 export function _resetLandcoverCacheForTests(): void {
   (tileCache as unknown as { cache: Map<string, unknown> }).cache.clear();

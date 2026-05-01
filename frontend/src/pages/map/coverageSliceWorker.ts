@@ -13,6 +13,7 @@ import {
   loadItmContext,
   Polarization,
 } from "./itm";
+import type { ClutterRaster } from "./landcoverTiles";
 import type { DEM, DEMBounds } from "./terrainDEM";
 
 export interface CoverageSliceRequest {
@@ -32,6 +33,10 @@ export interface CoverageSliceRequest {
   outputHeight: number;
   rowStart: number;
   rowEnd: number;
+  /** Optional class-ID raster aligned to DEM bounds. Absent → workers treat all samples as default class. */
+  clutterBuffer?: ArrayBuffer;
+  clutterWidth?: number;
+  clutterHeight?: number;
 }
 
 export interface CoverageSliceResponse {
@@ -100,6 +105,18 @@ self.onmessage = async (evt: MessageEvent<CoverageSliceRequest>) => {
       height: msg.demHeight,
       bounds: msg.bounds,
     };
+    const clutter: ClutterRaster | null =
+      msg.clutterBuffer && msg.clutterWidth && msg.clutterHeight
+        ? {
+            data: new Uint8Array(msg.clutterBuffer),
+            width: msg.clutterWidth,
+            height: msg.clutterHeight,
+            bounds: msg.bounds,
+            // Telemetry fields not used in the worker; default to 0 so the type matches.
+            tilesPresent: 0,
+            tilesTotal: 0,
+          }
+        : null;
     const rendered = renderCoverageRaster(
       dem,
       msg.params,
@@ -111,6 +128,7 @@ self.onmessage = async (evt: MessageEvent<CoverageSliceRequest>) => {
       },
       { rowStart: msg.rowStart, rowEnd: msg.rowEnd },
       { width: msg.outputWidth, height: msg.outputHeight },
+      clutter,
     );
     post({
       requestId: msg.requestId,

@@ -22,6 +22,11 @@ import type { CoverageSliceRequest } from "./map/coverageSliceWorker";
 import { CoverageWorkerPool } from "./map/coverageWorkerPool";
 import { FiltersResetPill } from "./map/FiltersResetPill";
 import { Climate, computeP2PLoss, type ItmContext, loadItmContext, Polarization } from "./map/itm";
+import {
+  buildClutterRaster,
+  type ClutterRaster,
+  downsampleClutterRaster,
+} from "./map/landcoverTiles";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
 import { analyzeLineOfSight, type LoSResult } from "./map/losAnalysis";
 import { losPointsToTubeData, LosTubeLayer, obstructionsToGeoJSON, pickObstructions } from "./map/losTubeLayer";
@@ -87,6 +92,20 @@ function relativeTime(iso: string | null | undefined): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   return `${d}d ago`;
+}
+
+/**
+ * Transitional mapping from the legacy 4-preset Environment dropdown to the new
+ * per-pixel ITU clutter model's aggression scaler. PR 4 will replace the
+ * dropdown with a slider that drives this directly; until then the existing
+ * preset selection is reinterpreted:
+ *   0 (Open / Rural)         → 0.0× (zero clutter)
+ *   1 (Light terrain)        → 0.5×
+ *   2 (Suburban)             → 1.0× (calibrated default)
+ *   3 (Urban / Dense forest) → 1.5× (conservative)
+ */
+function envIdxToAggression(idx: number): number {
+  return [0.0, 0.5, 1.0, 1.5][idx] ?? 1.0;
 }
 
 /** SVG signal bars (1-4) colored by best SNR. */
@@ -431,6 +450,10 @@ export function Map() {
   const coverageDemRef = useRef<DEM | null>(null);
   /** 256² downsample of the above; lets drag preview run LR at ~8-12 fps. */
   const coverageDragDemRef = useRef<DEM | null>(null);
+  /** Cached authoritative class-ID raster. Null until the first compute completes (or fully out-of-bbox). */
+  const coverageClutterRef = useRef<ClutterRaster | null>(null);
+  /** 256² downsample of the above; drag preview ships this to workers alongside the drag DEM. */
+  const coverageDragClutterRef = useRef<ClutterRaster | null>(null);
   /** Latest raster params snapshot (drag preview reuses untouched). */
   const coverageLastRasterParamsRef = useRef<RasterParams | null>(null);
   /** Last origin context (bounds); drag re-samples DEM per move. */
@@ -618,6 +641,8 @@ export function Map() {
    *  Shared by main compute + drag preview. Null = superseded or WASM missing. */
   const renderCoverageToImageSource = useCallback(async (opts: {
     dem: DEM;
+    /** Optional class-ID raster aligned to DEM bounds. Null = workers fall back to default class. */
+    clutter?: ClutterRaster | null;
     origin: [number, number];
     originHeightM: number;
     /** TX antenna AGL (m); ITM wants AGL not MSL. */
@@ -642,7 +667,7 @@ export function Map() {
     outputHeight: number;
     itmUnavailable?: boolean;
   } | null> => {
-    const { dem, origin, originHeightM, originAntennaHeightAboveGroundM, params, requestId, onSliceProgress } = opts;
+    const { dem, clutter, origin, originHeightM, originAntennaHeightAboveGroundM, params, requestId, onSliceProgress } = opts;
     const outputWidth = opts.outputWidth ?? dem.width;
     const outputHeight = opts.outputHeight ?? dem.height;
     const mb = mbMapRef.current;
@@ -674,6 +699,8 @@ export function Map() {
       if (rowStart >= outputHeight) break;
       const rowEnd = Math.min(rowStart + rowsPerTask, outputHeight);
       const demCopy = new Float32Array(dem.data);
+      // Per-worker clutter copy mirrors the DEM-copy pattern (transferable buffers can't be shared).
+      const clutterCopy = clutter ? new Uint8Array(clutter.data) : null;
       const req: CoverageSliceRequest = {
         requestId,
         demBuffer: demCopy.buffer,
@@ -688,9 +715,14 @@ export function Map() {
         outputHeight,
         rowStart,
         rowEnd,
+        clutterBuffer: clutterCopy?.buffer,
+        clutterWidth: clutter?.width,
+        clutterHeight: clutter?.height,
       };
+      const transfer: Transferable[] = [demCopy.buffer];
+      if (clutterCopy) transfer.push(clutterCopy.buffer);
       tasks.push(
-        pool.dispatch(req, [demCopy.buffer]).then((resp) => {
+        pool.dispatch(req, transfer).then((resp) => {
           sliceResponses.push(resp);
           completedSlices += 1;
           if (requestId === coverageRequestIdRef.current) {
@@ -1383,12 +1415,19 @@ export function Map() {
           return;
         }
         const scanBounds = demBoundsAround(origin!, SCAN_RADIUS_KM, 1.05);
-        const { dem, source: demSourceUsedForScan } = await buildDem({
-          bounds: scanBounds,
-          targetWidth: 1024,
-          targetHeight: 1024,
-          token: mapboxToken,
-        });
+        const [{ dem, source: demSourceUsedForScan }, scanClutter] = await Promise.all([
+          buildDem({
+            bounds: scanBounds,
+            targetWidth: 1024,
+            targetHeight: 1024,
+            token: mapboxToken,
+          }),
+          buildClutterRaster({
+            bounds: scanBounds,
+            targetWidth: 1024,
+            targetHeight: 1024,
+          }),
+        ]);
         if (cancelled) return;
         setScanDemSource(demSourceUsedForScan);
 
@@ -1421,7 +1460,8 @@ export function Map() {
           txAntennaDbi: scanAntennaDbi,
           rxAntennaDbi: scanRxAntennaDbi,
           rxSensitivityDbm: scanEffectiveSensitivityDbm,
-          clutterLossDb: ENVIRONMENTS[scanEnvIdx]?.clutterLossDb ?? 0,
+          clutterRaster: scanClutter,
+          clutterAggression: envIdxToAggression(scanEnvIdx),
           queryTerrainM: (lng, lat) => {
             const elev = sampleDEMAt(dem, lng, lat);
             return Number.isNaN(elev) ? null : elev;
@@ -1579,7 +1619,6 @@ export function Map() {
     // DEM is fixed 2048²; "Detail" only changes OUTPUT_SIZE (paint pixelation, not RF accuracy).
     const DEM_SIZE = 2048;
     const OUTPUT_SIZE = COVERAGE_DETAIL_SIZE[coverageDetail];
-    const envEntry = ENVIRONMENTS[coverageEnvIdx];
     const rel = reliabilityPreset(coverageReliability);
     const rasterParams: RasterParams = {
       freqMhz: 915,
@@ -1590,7 +1629,10 @@ export function Map() {
       rxSensitivityDbm: coverageEffectiveSensitivityDbm,
       fadeMarginDb: 15,
       cableLossDb: 0.5,
-      clutterLossDb: envEntry.clutterLossDb,
+      // Map the legacy 4-preset Environment dropdown to an aggression scaler over
+      // the new per-pixel ITU clutter model. PR 4 will replace the dropdown with a
+      // direct slider; until then this gives users continuity with the existing UI.
+      clutterAggression: envIdxToAggression(coverageEnvIdx),
       // Continental Temperate + N=301 is the NA Meshtastic default
       climate: 5 /* Climate.ContinentalTemperate */,
       surfaceRefractivityN: 301,
@@ -1609,16 +1651,25 @@ export function Map() {
         timings[name] = performance.now() - fromMs;
       };
       try {
-        // 1. Fetch terrain tiles, build full DEM on main thread (Tilezen → Mapbox fallback)
+        // 1. Fetch terrain + land-cover tiles in parallel; both build at DEM_SIZE so
+        //    the worker can sample DEM and clutter at the same lng/lat indexing.
         const tFetch = performance.now();
         setIsFetchingCoverageTerrain(true);
-        const { dem, source: demSourceUsed } = await buildDem({
-          bounds: demBounds,
-          targetWidth: DEM_SIZE,
-          targetHeight: DEM_SIZE,
-          token: mapboxToken,
-          maxTiles: COVERAGE_DETAIL_MAX_TILES[coverageDetail],
-        });
+        const [{ dem, source: demSourceUsed }, clutter] = await Promise.all([
+          buildDem({
+            bounds: demBounds,
+            targetWidth: DEM_SIZE,
+            targetHeight: DEM_SIZE,
+            token: mapboxToken,
+            maxTiles: COVERAGE_DETAIL_MAX_TILES[coverageDetail],
+          }),
+          buildClutterRaster({
+            bounds: demBounds,
+            targetWidth: DEM_SIZE,
+            targetHeight: DEM_SIZE,
+            maxTiles: COVERAGE_DETAIL_MAX_TILES[coverageDetail],
+          }),
+        ]);
         setCoverageDemSource(demSourceUsed);
         mark("demFetchMs", tFetch);
         if (cancelled || requestId !== coverageRequestIdRef.current) {
@@ -1679,6 +1730,7 @@ export function Map() {
         const tDispatch = performance.now();
         const rendered = await renderCoverageToImageSource({
           dem,
+          clutter,
           origin: origin!,
           originHeightM,
           originAntennaHeightAboveGroundM: txAboveGroundM,
@@ -1707,9 +1759,11 @@ export function Map() {
           return;
         }
 
-        // 4. Cache full + downsampled DEM for the drag-preview pass.
+        // 4. Cache full + downsampled DEM and clutter raster for the drag-preview pass.
         coverageDemRef.current = dem;
         coverageDragDemRef.current = downsampleDEM(dem, 256, 256);
+        coverageClutterRef.current = clutter;
+        coverageDragClutterRef.current = downsampleClutterRaster(clutter, 256, 256);
         coverageLastRasterParamsRef.current = rasterParams;
         coverageLastOriginContextRef.current = { bounds: dem.bounds };
 
@@ -1916,6 +1970,7 @@ export function Map() {
           return;
         }
         const dem = coverageDragDemRef.current;
+        const clutter = coverageDragClutterRef.current;
         const params = coverageLastRasterParamsRef.current;
         if (!dem || !params) return;
         dragPreviewBusyRef.current = true;
@@ -1936,6 +1991,7 @@ export function Map() {
           coverageRequestIdRef.current = previewId;
           await renderCoverageToImageSource({
             dem,
+            clutter,
             origin: lngLat,
             originHeightM: originH,
             originAntennaHeightAboveGroundM: txAboveGroundM,
