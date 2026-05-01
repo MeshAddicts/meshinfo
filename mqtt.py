@@ -468,15 +468,16 @@ class MQTT:
         id = msg['from']
         if id in self.data.nodes:
             node = self.data.nodes[id]
-            node['position'] = msg['payload'] if 'payload' in msg else None
         else:
             node = Node.default_node(id)
-            node['position'] = msg['payload'] if 'payload' in msg else None
-            self.data.update_node(id, node)
             logger.debug("Node %s skeleton added with position", id)
+
+        node['position'] = msg['payload'] if 'payload' in msg else None
 
         if 'channel' in msg:
             node['last_channel'] = str(msg['channel'])
+
+        self.data.update_node(id, node)
 
         # Emit event for Discord bridge
         try:
