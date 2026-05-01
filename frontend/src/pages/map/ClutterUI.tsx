@@ -69,7 +69,7 @@ export function ClutterStatusChip({ status }: ClutterStatusChipProps) {
   return (
     <div className="flex items-start gap-1.5 text-[10px] leading-snug text-gray-500">
       <span
-        className={`mt-0.5 inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+        className={`mt-0.5 inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
           fallback ? "bg-amber-400/80" : "bg-emerald-400/70"
         }`}
         aria-hidden
@@ -82,7 +82,7 @@ export function ClutterStatusChip({ status }: ClutterStatusChipProps) {
           </>
         ) : (
           <>
-            Land cover: <span className="text-gray-300">USGS NLCD 2021</span>
+            Land cover: <span className="text-gray-300">USGS NLCD</span>
             {partial && (
               <span className="text-amber-400/80">
                 {" "}
@@ -125,7 +125,7 @@ export function ClassLegend() {
         </svg>
       </button>
       {open && (
-        <div className="mt-1 max-h-48 overflow-y-auto rounded border border-white/5 bg-white/[0.02]">
+        <div className="mt-1 max-h-48 overflow-y-auto rounded border border-white/5 bg-white/2">
           <table className="w-full text-[9px]">
             <thead className="text-gray-500 border-b border-white/5">
               <tr>

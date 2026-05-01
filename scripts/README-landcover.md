@@ -2,8 +2,10 @@
 
 Meshinfo's coverage and scan tools sample per-pixel land-cover classes for
 ITU-R clutter loss. Tiles are pre-baked from USGS NLCD and served as static
-PNGs under `/tiles/landcover/{z}/{x}/{y}.png`. See
-[../docs/clutter-design.md](../docs/clutter-design.md) for the full RF model.
+PNGs under `/tiles/landcover/{z}/{x}/{y}.png`.
+
+For the propagation model that consumes these tiles (ITM + ITU-R P.452-17 +
+ITU-R P.833-9), see [../RF-MODEL.md](../RF-MODEL.md).
 
 This guide walks through running the bake once per region. Re-bake every 2–3
 years when a new NLCD release ships.
