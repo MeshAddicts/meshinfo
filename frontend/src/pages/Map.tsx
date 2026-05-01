@@ -14,7 +14,7 @@ import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../
 import { type ITraceroutesResponse,NodeRole, roleTitles } from "../types";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { ClusterDonutLayer } from "./map/clusterDonutLayer";
-import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult,effectiveSensitivityDbm, ENVIRONMENTS, MESHTASTIC_PRESETS, reliabilityPreset } from "./map/coverageAnalysis";
+import { AGGRESSION_STOPS, COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, DEFAULT_AGGRESSION_IDX,effectiveSensitivityDbm, MESHTASTIC_PRESETS, reliabilityPreset, REPRESENTATIVE_CLUTTER_DB } from "./map/coverageAnalysis";
 import { type ContourFeatureCollection,extractCoverageContours } from "./map/coverageContours";
 import type { RasterParams } from "./map/coverageRaster";
 import { extractCoverageRays, type VisibilityRayFeatureCollection } from "./map/coverageRays";
@@ -92,20 +92,6 @@ function relativeTime(iso: string | null | undefined): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   return `${d}d ago`;
-}
-
-/**
- * Transitional mapping from the legacy 4-preset Environment dropdown to the new
- * per-pixel ITU clutter model's aggression scaler. PR 4 will replace the
- * dropdown with a slider that drives this directly; until then the existing
- * preset selection is reinterpreted:
- *   0 (Open / Rural)         → 0.0× (zero clutter)
- *   1 (Light terrain)        → 0.5×
- *   2 (Suburban)             → 1.0× (calibrated default)
- *   3 (Urban / Dense forest) → 1.5× (conservative)
- */
-function envIdxToAggression(idx: number): number {
-  return [0.0, 0.5, 1.0, 1.5][idx] ?? 1.0;
 }
 
 /** SVG signal bars (1-4) colored by best SNR. */
@@ -334,6 +320,9 @@ export function Map() {
   // total === 0 means idle / drag preview / terrain fetch
   const [coverageProgress, setCoverageProgress] = useState<{ completed: number; total: number }>({ completed: 0, total: 0 });
   const [coverageDemSource, setCoverageDemSource] = useState<DemSource | null>(null);
+  /** Tile-availability telemetry from the most recent compute. Drives the panel's land-cover status chip. */
+  const [coverageClutterStatus, setCoverageClutterStatus] = useState<{ tilesPresent: number; tilesTotal: number } | null>(null);
+  const [scanClutterStatus, setScanClutterStatus] = useState<{ tilesPresent: number; tilesTotal: number } | null>(null);
   // Index into COMMON_ANTENNAS (value-based <select> can't distinguish same-dBi models)
   const [coverageAntennaIdx, setCoverageAntennaIdx] = useState(3);
   const coverageAntennaDbi = COMMON_ANTENNAS[coverageAntennaIdx]?.dbi ?? 3;
@@ -347,7 +336,13 @@ export function Map() {
   const coverageTxDbm = COMMON_HARDWARE[coverageHardwareIdx].isCustom
     ? coverageCustomTxDbm
     : COMMON_HARDWARE[coverageHardwareIdx].txDbm;
-  const [coverageEnvIdx, setCoverageEnvIdx] = useState(0);
+  const [coverageAggressionIdx, setCoverageAggressionIdxRaw] = useState(() =>
+    readJson<number>(LS_KEYS.coverageAggressionIdx, DEFAULT_AGGRESSION_IDX),
+  );
+  const setCoverageAggressionIdx = useCallback((idx: number) => {
+    setCoverageAggressionIdxRaw(idx);
+    writeJson(LS_KEYS.coverageAggressionIdx, idx);
+  }, []);
   const [coveragePresetIdx, setCoveragePresetIdx] = useState(0); // MediumFast
   const [coverageCustomSensDbm, setCoverageCustomSensDbm] = useState(-133);
   const coverageSensitivityDbm = MESHTASTIC_PRESETS[coveragePresetIdx].isCustom
@@ -380,7 +375,13 @@ export function Map() {
   const scanTxDbm = COMMON_HARDWARE[scanHardwareIdx].isCustom
     ? scanCustomTxDbm
     : COMMON_HARDWARE[scanHardwareIdx].txDbm;
-  const [scanEnvIdx, setScanEnvIdx] = useState(0);
+  const [scanAggressionIdx, setScanAggressionIdxRaw] = useState(() =>
+    readJson<number>(LS_KEYS.scanAggressionIdx, DEFAULT_AGGRESSION_IDX),
+  );
+  const setScanAggressionIdx = useCallback((idx: number) => {
+    setScanAggressionIdxRaw(idx);
+    writeJson(LS_KEYS.scanAggressionIdx, idx);
+  }, []);
   const [scanPresetIdx, setScanPresetIdx] = useState(0);
   const [scanCustomSensDbm, setScanCustomSensDbm] = useState(-133);
   const scanSensitivityDbm = MESHTASTIC_PRESETS[scanPresetIdx].isCustom
@@ -395,10 +396,13 @@ export function Map() {
 
   // DEM/raster bbox size from free-space budget. Capped at 200 km — beyond that
   // low tile-zoom averages terrain away (Mt. Oso reads ~200 m low at 500 km bbox).
+  // Per-pixel clutter only resolves once the bbox is set, so the sizer pre-charges
+  // a representative Mixed-Forest-handheld value scaled by the user's aggression.
   const coverageRadiusKm = useMemo(() => {
     const CABLE = 0.5;
     const FADE = 15;
-    const clutter = ENVIRONMENTS[coverageEnvIdx]?.clutterLossDb ?? 0;
+    const aggression = AGGRESSION_STOPS[coverageAggressionIdx]?.value ?? 1.0;
+    const clutter = REPRESENTATIVE_CLUTTER_DB * aggression;
     const budget =
       coverageTxDbm +
       coverageAntennaDbi +
@@ -410,7 +414,7 @@ export function Map() {
     const plConstant = 32.45 + 20 * Math.log10(915);
     const maxKm = Math.pow(10, (budget - plConstant) / 20);
     return Math.max(5, Math.min(200, Math.round(maxKm)));
-  }, [coverageAntennaDbi, coverageRxAntennaDbi, coverageTxDbm, coverageEffectiveSensitivityDbm, coverageEnvIdx]);
+  }, [coverageAntennaDbi, coverageRxAntennaDbi, coverageTxDbm, coverageEffectiveSensitivityDbm, coverageAggressionIdx]);
   /** 3D LoS tube layer; created once per map. */
   const losTubeLayerRef = useRef<LosTubeLayer | null>(null);
   /** DOM pin for the Coverage origin (draggable). */
@@ -1430,6 +1434,7 @@ export function Map() {
         ]);
         if (cancelled) return;
         setScanDemSource(demSourceUsedForScan);
+        setScanClutterStatus({ tilesPresent: scanClutter.tilesPresent, tilesTotal: scanClutter.tilesTotal });
 
         // Override GPS altitude with terrain + configured AGL (matches coverage).
         // Falls back to GPS altitude if DEM sampling fails.
@@ -1461,7 +1466,7 @@ export function Map() {
           rxAntennaDbi: scanRxAntennaDbi,
           rxSensitivityDbm: scanEffectiveSensitivityDbm,
           clutterRaster: scanClutter,
-          clutterAggression: envIdxToAggression(scanEnvIdx),
+          clutterAggression: AGGRESSION_STOPS[scanAggressionIdx]?.value ?? 1.0,
           queryTerrainM: (lng, lat) => {
             const elev = sampleDEMAt(dem, lng, lat);
             return Number.isNaN(elev) ? null : elev;
@@ -1494,7 +1499,7 @@ export function Map() {
     return () => { cancelled = true; };
   }, [activeTool, toolStep, toolFromId, toolVirtualPos, provider, terrain3D, nodes,
       scanTxDbm, scanAntennaDbi, scanRxAntennaDbi, scanEffectiveSensitivityDbm,
-      scanEnvIdx, scanAntennaHeightM]);
+      scanAggressionIdx, scanAntennaHeightM]);
 
   // Per-class map visibility filter (compute still runs for hidden classes).
   useEffect(() => {
@@ -1629,10 +1634,7 @@ export function Map() {
       rxSensitivityDbm: coverageEffectiveSensitivityDbm,
       fadeMarginDb: 15,
       cableLossDb: 0.5,
-      // Map the legacy 4-preset Environment dropdown to an aggression scaler over
-      // the new per-pixel ITU clutter model. PR 4 will replace the dropdown with a
-      // direct slider; until then this gives users continuity with the existing UI.
-      clutterAggression: envIdxToAggression(coverageEnvIdx),
+      clutterAggression: AGGRESSION_STOPS[coverageAggressionIdx]?.value ?? 1.0,
       // Continental Temperate + N=301 is the NA Meshtastic default
       climate: 5 /* Climate.ContinentalTemperate */,
       surfaceRefractivityN: 301,
@@ -1671,6 +1673,7 @@ export function Map() {
           }),
         ]);
         setCoverageDemSource(demSourceUsed);
+        setCoverageClutterStatus({ tilesPresent: clutter.tilesPresent, tilesTotal: clutter.tilesTotal });
         mark("demFetchMs", tFetch);
         if (cancelled || requestId !== coverageRequestIdRef.current) {
           setIsFetchingCoverageTerrain(false);
@@ -1859,7 +1862,7 @@ export function Map() {
     return () => {
       cancelled = true;
     };
-  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageRxAntennaDbi, coverageRxHeightM, coverageTxDbm, coverageEnvIdx, coverageSensitivityDbm, coverageDetail, coverageAntennaHeightM, coverageReliability, provider, terrain3D, nodes, coverageRetryNonce]);
+  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageRxAntennaDbi, coverageRxHeightM, coverageTxDbm, coverageAggressionIdx, coverageSensitivityDbm, coverageDetail, coverageAntennaHeightM, coverageReliability, provider, terrain3D, nodes, coverageRetryNonce]);
 
   // Hide coverage raster when leaving tool; sources/layers stay for fast re-entry
   useEffect(() => {
@@ -3972,8 +3975,9 @@ export function Map() {
           onHardwareIdxChange={setCoverageHardwareIdx}
           customTxDbm={coverageCustomTxDbm}
           onCustomTxDbmChange={setCoverageCustomTxDbm}
-          envIdx={coverageEnvIdx}
-          onEnvIdxChange={setCoverageEnvIdx}
+          aggressionIdx={coverageAggressionIdx}
+          onAggressionIdxChange={setCoverageAggressionIdx}
+          clutterStatus={coverageClutterStatus}
           presetIdx={coveragePresetIdx}
           onPresetIdxChange={setCoveragePresetIdx}
           customSensitivityDbm={coverageCustomSensDbm}
@@ -4078,8 +4082,9 @@ export function Map() {
           onRxAntennaIdxChange={setScanRxAntennaIdx}
           customTxDbm={scanCustomTxDbm}
           onCustomTxDbmChange={setScanCustomTxDbm}
-          envIdx={scanEnvIdx}
-          onEnvIdxChange={setScanEnvIdx}
+          aggressionIdx={scanAggressionIdx}
+          onAggressionIdxChange={setScanAggressionIdx}
+          clutterStatus={scanClutterStatus}
           presetIdx={scanPresetIdx}
           onPresetIdxChange={setScanPresetIdx}
           customSensitivityDbm={scanCustomSensDbm}

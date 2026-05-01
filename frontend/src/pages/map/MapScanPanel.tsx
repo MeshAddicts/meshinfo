@@ -1,7 +1,8 @@
 /** Scan-results panel: ranked LoS from origin to every node in view. */
 import { useEffect, useMemo, useState } from "react";
 
-import { COMMON_ANTENNAS, COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS } from "./coverageAnalysis";
+import { AggressionSlider, ClassLegend, ClutterStatusChip } from "./ClutterUI";
+import { COMMON_ANTENNAS, COMMON_HARDWARE, MESHTASTIC_PRESETS } from "./coverageAnalysis";
 import type { ScanClass, ScanResult,ScanSummary } from "./scanAnalysis";
 import type { DemSource } from "./terrainRgb";
 import { useBottomSheetGesture } from "./useBottomSheet";
@@ -38,8 +39,9 @@ export function MapScanPanel({
   onRxAntennaIdxChange,
   customTxDbm,
   onCustomTxDbmChange,
-  envIdx,
-  onEnvIdxChange,
+  aggressionIdx,
+  onAggressionIdxChange,
+  clutterStatus,
   presetIdx,
   onPresetIdxChange,
   customSensitivityDbm,
@@ -73,8 +75,11 @@ export function MapScanPanel({
   onRxAntennaIdxChange: (idx: number) => void;
   customTxDbm: number;
   onCustomTxDbmChange: (dbm: number) => void;
-  envIdx: number;
-  onEnvIdxChange: (idx: number) => void;
+  /** Index into AGGRESSION_STOPS (0/1/2) for the per-pixel ITU clutter model. */
+  aggressionIdx: number;
+  onAggressionIdxChange: (idx: number) => void;
+  /** Tile-availability telemetry from the most recent scan; null until first run. */
+  clutterStatus: { tilesPresent: number; tilesTotal: number } | null;
   presetIdx: number;
   onPresetIdxChange: (idx: number) => void;
   customSensitivityDbm: number;
@@ -402,39 +407,14 @@ export function MapScanPanel({
                 </div>
               </div>
 
-              {/* Environment */}
-              <div>
-                <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
-                  Environment
+              {/* Clutter (per-pixel ITU model + aggression scaler). */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 block">
+                  Clutter
                 </label>
-                <div className="flex gap-1 rounded-lg border border-white/10 bg-white/5 p-0.5 text-[10px] font-medium">
-                  {ENVIRONMENTS.map((env, i) => {
-                    const active = envIdx === i;
-                    const shortLabel =
-                      env.id === "open" ? "Open"
-                      : env.id === "mixed" ? "Light"
-                      : env.id === "suburban" ? "Suburb"
-                      : "Urban";
-                    return (
-                      <button
-                        key={i}
-                        type="button"
-                        onClick={() => onEnvIdxChange(i)}
-                        title={env.description}
-                        className={`flex-1 rounded-md px-1.5 py-1 transition-colors ${
-                          active
-                            ? "bg-cyan-500/20 text-cyan-200"
-                            : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
-                        }`}
-                      >
-                        <div>{shortLabel}</div>
-                        <div className="text-[9px] text-gray-500 font-normal">
-                          {env.clutterLossDb === 0 ? "0 dB" : `+${env.clutterLossDb} dB`}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
+                <AggressionSlider aggressionIdx={aggressionIdx} onChange={onAggressionIdxChange} />
+                <ClutterStatusChip status={clutterStatus} />
+                <ClassLegend />
               </div>
 
               <div className="pt-2 border-t border-white/5 text-[10px] text-gray-500 leading-relaxed">

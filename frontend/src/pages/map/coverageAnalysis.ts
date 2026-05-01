@@ -1,19 +1,38 @@
 /** Coverage prediction constants/presets shared between the panel UI and the worker. */
 
-/** Propagation environment; excess path loss beyond free-space. */
-export interface Environment {
+/**
+ * Aggression scaler stops for the per-pixel ITU clutter model.
+ * 1.0 is the calibrated default (matches ITU-R P.452-17 + P.833-9 published values);
+ * <1 dials conservatism down (your measured links beat predictions);
+ * >1 dials it up (your area has heavier clutter than the published averages).
+ *
+ * This value is multiplied into the final A_h_tx + A_h_rx + L_v sum in computePathClutterLoss.
+ */
+export interface AggressionStop {
   id: string;
   label: string;
-  /** Excess loss (dB) added on top of ITM to represent building/foliage clutter (ITM doesn't model either). */
-  clutterLossDb: number;
+  /** Short label for the compact 3-button row. */
+  short: string;
+  value: number;
   description: string;
 }
-export const ENVIRONMENTS: Environment[] = [
-  { id: "open",     label: "Open / Rural",         clutterLossDb: 0,  description: "Line-of-sight with no obstacles — open country, water, desert" },
-  { id: "mixed",    label: "Light terrain",        clutterLossDb: 3,  description: "Scattered trees and rolling hills — mixed countryside" },
-  { id: "suburban", label: "Suburban",             clutterLossDb: 6,  description: "Residential neighborhoods with buildings and moderate clutter" },
-  { id: "urban",    label: "Urban / Dense forest", clutterLossDb: 12, description: "Heavy obstruction — city core, thick canopy, industrial" },
+export const AGGRESSION_STOPS: AggressionStop[] = [
+  { id: "conservative", label: "Conservative", short: "Cons.", value: 0.7, description: "Predictions are pessimistic — measured links are reaching farther than the model says." },
+  { id: "calibrated",   label: "Calibrated",   short: "Cal.",  value: 1.0, description: "ITU-R P.452 / P.833 calibrated baseline. Use this unless you have measured-link data telling you otherwise." },
+  { id: "aggressive",   label: "Aggressive",   short: "Aggr.", value: 1.3, description: "Predictions are optimistic — measured links fall short. Heavier clutter than published averages (dense canopy, urban valleys)." },
 ];
+
+/** Index of the calibrated-default stop. Keep in sync with AGGRESSION_STOPS. */
+export const DEFAULT_AGGRESSION_IDX = 1;
+export const DEFAULT_AGGRESSION = AGGRESSION_STOPS[DEFAULT_AGGRESSION_IDX].value;
+
+/**
+ * Representative clutter dB used by the bbox sizer when picking a coverage radius.
+ * The sizer can't run the per-pixel model before knowing the bbox, so it scales
+ * a Mixed-Forest-handheld endpoint estimate (~16 dB) by the active aggression.
+ * Approximate; the bbox is a sizing heuristic, not the RF answer.
+ */
+export const REPRESENTATIVE_CLUTTER_DB = 16;
 
 /** Meshtastic modem presets. `sensitivityDbm` is real-world typical (~3 dB worse than
  *  SX1262 datasheet). SX1276 adds another ~2 dB (see COMMON_HARDWARE.chipset + effectiveSensitivityDbm).

@@ -8,6 +8,9 @@ export const LS_KEYS = {
   linkMode: "meshinfo.map.linkMode",
   myNodeId: "meshinfo.map.myNodeId",
   terrain3D: "meshinfo.map.terrain3D",
+  /** AGGRESSION_STOPS index (0/1/2). Default 1 = calibrated baseline. */
+  coverageAggressionIdx: "meshinfo.map.coverageAggressionIdx",
+  scanAggressionIdx: "meshinfo.map.scanAggressionIdx",
 } as const;
 
 export function readJson<T>(key: string, fallback: T): T {
