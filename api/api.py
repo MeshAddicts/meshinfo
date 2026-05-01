@@ -2,11 +2,14 @@ import asyncio
 import datetime
 import logging
 import os
+from pathlib import Path
 from fastapi.encoders import jsonable_encoder
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import FileResponse
 
 from config import Config
 from api.static_map import generate_static_map
@@ -15,6 +18,19 @@ import utils
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
+
+
+class ImmutableTileFiles(StaticFiles):
+    """StaticFiles subclass that tags every response with a long-lived cache header.
+
+    Land-cover tiles are content-addressed by (z,x,y) within a single bake; class IDs
+    don't change between bakes, so a 1-year immutable cache is correct.
+    """
+    async def get_response(self, path: str, scope):  # type: ignore[override]
+        response = await super().get_response(path, scope)
+        if isinstance(response, FileResponse):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
 
 class API:
     def __init__(self, config, data):
@@ -415,6 +431,25 @@ class API:
         async def server_config(request: Request) -> JSONResponse:
             return jsonable_encoder({'config': Config.cleanse(self.config)})
 
+        # Land-cover tiles for the coverage/scan clutter model. Tiles are pre-baked
+        # once by scripts/landcover_tiles.py; missing tiles 404 and the frontend falls
+        # back to a default class. See docs/clutter-design.md.
+        landcover_cfg = self.config.get("landcover", {}) or {}
+        if landcover_cfg.get("enabled", False):
+            tile_dir = Path(landcover_cfg.get("tile_dir", "output/landcover"))
+            if tile_dir.is_dir():
+                app.mount(
+                    "/tiles/landcover",
+                    ImmutableTileFiles(directory=str(tile_dir)),
+                    name="landcover_tiles",
+                )
+                logger.info("Mounted land-cover tiles at /tiles/landcover from %s", tile_dir.resolve())
+            else:
+                logger.info(
+                    "Land-cover tiles enabled but %s does not exist — frontend will use default class. "
+                    "Run scripts/landcover_tiles.py to populate.",
+                    tile_dir,
+                )
 
         allow_origins = os.getenv("ALLOW_ORIGINS", "").split(",")
         logger.info("Allowed origins: %s (%d)", allow_origins, len(allow_origins))

@@ -130,6 +130,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "max_pool_size": 5,
         },
     },
+    # Per-pixel land-cover clutter for coverage / scan tools (see docs/clutter-design.md).
+    # When enabled and tile_dir exists, the API mounts {tile_dir} at /tiles/landcover.
+    # Tiles are pre-baked once via scripts/landcover_tiles.py; an absent tile_dir simply
+    # means the frontend falls back to a default "Mixed Forest" class everywhere.
+    "landcover": {
+        "enabled": True,
+        "tile_dir": "output/landcover",
+        "source": "USGS NLCD 2021",  # surfaced to the UI attribution chip
+    },
     "debug": False,
 }
 
