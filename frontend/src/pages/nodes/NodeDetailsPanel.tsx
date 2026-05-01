@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 
 import { Avatar } from "../../components/Avatar";
@@ -14,6 +14,7 @@ import { getElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLin
 import { formatTimestamp } from "../../utils/formatTimestamp";
 import { calculateDistanceBetweenNodes } from "../../utils/getDistanceBetweenTwoNodes";
 import { NodeMap } from "../NodeMap";
+import { classifyAltitude, getGroundElevation } from "./groundElevation";
 import {
   cleanNodeId,
   getLatLon,
@@ -262,6 +263,23 @@ export function NodeDetailsPanel({
   const ll = getLatLon(node);
   const telem = getTelemetrySnapshot(node);
 
+  // ll is a fresh array each render; depend on its primitives instead.
+  const lng = ll?.[0] ?? null;
+  const lat = ll?.[1] ?? null;
+  const [groundM, setGroundM] = useState<number | null>(null);
+  useEffect(() => {
+    if (lng == null || lat == null || !id) { setGroundM(null); return; }
+    let cancelled = false;
+    void getGroundElevation(id, lng, lat).then((elev) => {
+      if (!cancelled) setGroundM(elev);
+    });
+    return () => { cancelled = true; };
+  }, [id, lng, lat]);
+  const altSanity = useMemo(
+    () => classifyAltitude(n?.position?.altitude, groundM),
+    [n?.position?.altitude, groundM],
+  );
+
   const distanceFromServer =
     serverNode && calculateDistanceBetweenNodes(serverNode as any, node as any) != null
       ? calculateDistanceBetweenNodes(serverNode as any, node as any)
@@ -393,9 +411,27 @@ export function NodeDetailsPanel({
               <KV
                 k="Altitude"
                 v={
-                  n?.position?.altitude != null
-                    ? `${n.position.altitude} m`
-                    : "Unknown"
+                  altSanity.reportedM != null ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      <span>{altSanity.reportedM} m</span>
+                      {altSanity.suspectReason && (
+                        <span
+                          className="group relative inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md
+                            bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30
+                            text-[10px] font-medium cursor-help"
+                          title={altSanity.suspectReason}
+                        >
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                              d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
+                          </svg>
+                          suspect
+                        </span>
+                      )}
+                    </span>
+                  ) : (
+                    "Unknown"
+                  )
                 }
               />
               <KV

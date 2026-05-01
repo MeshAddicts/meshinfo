@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { COMMON_ANTENNAS, COMMON_HARDWARE, ENVIRONMENTS, MESHTASTIC_PRESETS } from "./coverageAnalysis";
 import type { ScanClass, ScanResult,ScanSummary } from "./scanAnalysis";
+import type { DemSource } from "./terrainRgb";
 import { useBottomSheetGesture } from "./useBottomSheet";
 
 const CLASS_STYLES: Record<ScanClass, { bg: string; text: string; border: string; label: string }> = {
@@ -16,6 +17,7 @@ export function MapScanPanel({
   summary,
   originLabel,
   isScanning,
+  demSource,
   terrainNeeded,
   onEnableTerrain,
   onClose,
@@ -46,6 +48,8 @@ export function MapScanPanel({
   summary: ScanSummary | null;
   originLabel: string;
   isScanning: boolean;
+  /** null = scan hasn't run yet; otherwise the bulk DEM source actually used. */
+  demSource: DemSource | null;
   terrainNeeded?: boolean;
   onEnableTerrain?: () => void;
   onClose: () => void;
@@ -431,6 +435,15 @@ export function MapScanPanel({
                     );
                   })}
                 </div>
+              </div>
+
+              <div className="pt-2 border-t border-white/5 text-[10px] text-gray-500 leading-relaxed">
+                <span className="font-medium text-gray-400">Terrain data:</span>{" "}
+                {demSource === "tilezen"
+                  ? "Tilezen terrarium (USGS 3DEP / SRTM) via AWS Open Data"
+                  : demSource === "mapbox-terrain-rgb"
+                    ? "Mapbox terrain-rgb v1 (~30 m global, Tilezen fallback)"
+                    : "awaiting first scan…"}
               </div>
             </div>
           </details>
