@@ -1,16 +1,8 @@
 /**
- * Land-cover (NLCD) tile fetcher. Mirrors terrainRgb.ts at the surface level —
- * slippy XYZ tiles, LRU cache, OffscreenCanvas decode — but encodes class IDs
- * in the red channel rather than terrain elevation.
- *
- * Tiles are produced by scripts/landcover_tiles.py and served at
- * /tiles/landcover/{z}/{x}/{y}.png. A 404 means the tile is outside the bake
- * bbox; callers fall back to NLCD_DEFAULT_CLASS_ID at the corresponding pixels.
- *
- * Tile encoding (per docs/clutter-design.md §8):
- *   R = NLCD class ID (0 = nodata)
- *   A = 0 for nodata, 255 for valid pixels
- *   G, B unused (reserved)
+ * Land-cover (NLCD) tile fetcher. Tiles are produced by scripts/landcover_tiles.py
+ * and served at /tiles/landcover/{z}/{x}/{y}.png. Encoding: R = NLCD class ID,
+ * A = 0/255 for nodata/valid, G/B reserved. A 404 means the tile is outside the
+ * bake bbox; the per-pixel fallback uses NLCD_DEFAULT_CLASS_ID.
  */
 import { env } from "../../env";
 import { NLCD_DEFAULT_CLASS_ID } from "./clutterClasses";
@@ -18,19 +10,14 @@ import type { DEMBounds } from "./terrainDEM";
 
 const TILE_SIZE = 256;
 const MIN_ZOOM = 0;
-/** Bake script's default ceiling — z=12 ≈ 10 m/px at lat 37, matching NLCD's 30 m source. */
+/** Matches the bake's default ceiling; z=12 ≈ 10 m/px at lat 37, NLCD is 30 m native. */
 const MAX_ZOOM = 12;
 const DEFAULT_MAX_TILES_PER_REQUEST = 256;
 
 function tileBaseUrl(): string {
-  // Same base resolution as apiSlice.ts: runtime > build-time > origin.
   const apiBase = env.API_BASE_URL ?? window.location.origin;
   return `${apiBase}/tiles/landcover`;
 }
-
-// --- Slippy Map / Web Mercator helpers ---
-// Same forms as terrainRgb.ts; could be deduplicated later. Keeping them inlined keeps
-// landcoverTiles.ts self-contained for the worker imports.
 
 function lng2tileX(lng: number, zoom: number): number {
   return ((lng + 180) / 360) * Math.pow(2, zoom);
@@ -76,21 +63,18 @@ export function selectLandcoverZoom(
   return MIN_ZOOM;
 }
 
-/** Decoded tile content. */
 export interface CachedLandcoverTile {
-  /** Row-major class IDs, length TILE_SIZE². 0 = nodata (transparent pixel). */
+  /** Row-major class IDs, length TILE_SIZE². 0 = nodata. */
   data: Uint8Array;
-  /** Always TILE_SIZE; kept as a field for symmetry with terrainRgb.ts. */
   size: number;
 }
 
-/** Sentinel returned for tiles that 404'd. Distinct from "tile not yet attempted." */
+/** Sentinel for 404'd tiles, distinct from "not yet attempted." */
 export const TILE_MISSING: CachedLandcoverTile = Object.freeze({
   data: new Uint8Array(0),
   size: TILE_SIZE,
 }) as CachedLandcoverTile;
 
-/** LRU; same shape as terrainRgb.ts TileLRU. Insertion order = recency. */
 class LandcoverTileLRU {
   private cache = new Map<string, CachedLandcoverTile>();
   constructor(private readonly maxEntries: number) {}
@@ -114,10 +98,10 @@ class LandcoverTileLRU {
   }
 }
 
-// 256 tiles × 256² × 1B ≈ 16 MB worst case. Per-tile is 1/4 the size of terrain-rgb cache.
+// 256 tiles × 256² × 1B ≈ 16 MB worst case.
 const tileCache = new LandcoverTileLRU(256);
 
-/** Fetch + decode one slippy tile. Returns TILE_MISSING for 404 (not an error). */
+/** Returns TILE_MISSING for 404 (not an error). */
 export async function fetchLandcoverTile(
   z: number,
   x: number,
@@ -155,7 +139,6 @@ export async function fetchLandcoverTile(
     const img = ctx.getImageData(0, 0, w, h);
     const px = img.data;
     const data = new Uint8Array(w * h);
-    // Class ID lives in R; A=0 means nodata → keep 0 (caller substitutes default class).
     for (let i = 0, n = data.length; i < n; i++) {
       const o = i * 4;
       data[i] = px[o + 3] === 0 ? 0 : px[o];
@@ -170,30 +153,26 @@ export async function fetchLandcoverTile(
 
 export interface BuildClutterRasterOptions {
   bounds: DEMBounds;
-  /** Output grid resolution; matches DEM dims so the worker can sample with one index per pixel. */
   targetWidth: number;
   targetHeight: number;
-  /** Overrides DEFAULT_MAX_TILES_PER_REQUEST. Coverage Detail tiers should pass the same cap as buildDem. */
   maxTiles?: number;
 }
 
 export interface ClutterRaster {
-  /** Row-major class IDs, length width*height. NLCD_DEFAULT_CLASS_ID where the source had no data or the tile 404'd. */
+  /** Row-major class IDs. NLCD_DEFAULT_CLASS_ID where the source had no data or the tile 404'd. */
   data: Uint8Array;
   width: number;
   height: number;
   bounds: DEMBounds;
-  /** Number of tiles successfully fetched / total tiles intersecting the bbox. Useful for telemetry + UI fallback indicator. */
+  /** For telemetry + UI fallback indicator. */
   tilesPresent: number;
   tilesTotal: number;
 }
 
 /**
- * Build a class-ID raster covering `bounds` at `targetWidth × targetHeight`.
- *
- * Sampling: nearest-neighbor (class IDs are categorical; bilinear would invent
- * non-existent IDs). Missing tiles → pixels filled with NLCD_DEFAULT_CLASS_ID.
- * The function never throws on 404 — that's the documented out-of-bbox path.
+ * Class-ID raster covering `bounds`. Nearest-neighbor (categorical IDs;
+ * bilinear would invent non-existent IDs). Missing tiles → NLCD_DEFAULT_CLASS_ID.
+ * Never throws on 404 — that's the out-of-bbox path.
  */
 export async function buildClutterRaster(
   opts: BuildClutterRasterOptions,
@@ -201,7 +180,6 @@ export async function buildClutterRaster(
   const { bounds, targetWidth, targetHeight } = opts;
   const maxTiles = opts.maxTiles ?? DEFAULT_MAX_TILES_PER_REQUEST;
 
-  // Match resolution to the DEM grid so each output pixel maps to ≤ 1 source tile pixel.
   const midLat = (bounds.north + bounds.south) / 2;
   const bboxWidthM =
     (bounds.east - bounds.west) * 111_320 * Math.cos((midLat * Math.PI) / 180);
@@ -214,7 +192,6 @@ export async function buildClutterRaster(
   const yMax = Math.floor(lat2tileY(bounds.south, zoom));
   const tilesTotal = (xMax - xMin + 1) * (yMax - yMin + 1);
 
-  // Parallel fetch; 404s become TILE_MISSING.
   const tileMap = new Map<string, CachedLandcoverTile>();
   const jobs: Promise<void>[] = [];
   for (let x = xMin; x <= xMax; x++) {
@@ -237,12 +214,11 @@ export async function buildClutterRaster(
     if (t !== TILE_MISSING && t.data.length > 0) tilesPresent++;
   }
 
-  // Nearest-neighbor resample into the output grid.
   const data = new Uint8Array(targetWidth * targetHeight);
   data.fill(NLCD_DEFAULT_CLASS_ID);
   const scale = Math.pow(2, zoom);
 
-  /** Class ID at absolute tile-pixel (absX, absY). Returns 0 for missing/nodata. */
+  /** Class ID at absolute tile-pixel; 0 for missing/nodata. */
   const lookup = (absX: number, absY: number): number => {
     const tileX = Math.floor(absX / TILE_SIZE);
     const tileY = Math.floor(absY / TILE_SIZE);
@@ -267,7 +243,6 @@ export async function buildClutterRaster(
       const xIdx = Math.floor(absX);
 
       const cls = lookup(xIdx, yIdx);
-      // 0 = nodata sentinel; keep the pre-filled default class instead.
       if (cls !== 0) data[j * targetWidth + i] = cls;
     }
   }
@@ -290,11 +265,7 @@ export function sampleClutterClassAt(
   return data[y * width + x];
 }
 
-/**
- * Nearest-neighbor downsample of a ClutterRaster to (newWidth × newHeight) over
- * the same geographic bounds. Used to keep a small raster alongside the cached
- * DEM for the drag-preview compute path.
- */
+/** Nearest-neighbor downsample over the same bounds. */
 export function downsampleClutterRaster(
   src: ClutterRaster,
   newWidth: number,
@@ -323,7 +294,7 @@ export function downsampleClutterRaster(
   };
 }
 
-/** Reset the tile cache. Test-only. */
+/** Test-only. */
 export function _resetLandcoverCacheForTests(): void {
   (tileCache as unknown as { cache: Map<string, unknown> }).cache.clear();
 }

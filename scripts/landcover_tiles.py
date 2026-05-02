@@ -1,24 +1,11 @@
 """
 Bake an NLCD land-cover GeoTIFF into a {z}/{x}/{y}.png slippy tile pyramid.
+Output tiles encode the NLCD class ID in the red channel (A=255 valid / 0 nodata).
+See RF-MODEL.md for what the tiles are for, scripts/README-landcover.md for the
+operator runbook.
 
-One-shot operator script. Output tiles encode the NLCD class ID in the red
-channel (G=B=0, A=255 valid / 0 nodata). The Meshinfo coverage and scan tools
-sample these tiles per-pixel for ITU-R clutter loss; see docs/clutter-design.md.
-
-Usage:
-    python scripts/landcover_tiles.py \\
-        --source /path/to/nlcd_2021_land_cover_l48_20230630.img \\
-        --out output/landcover \\
-        --zooms 8 12 \\
-        --bbox -125 24 -67 49
-
-Source data: USGS NLCD 2021 (CONUS) from https://www.mrlc.gov/data
-Default bbox is the lower 48; pass --bbox to bake AK / HI / PR or a sub-region.
-Pyramid range z=8..12 matches NLCD's 30 m native resolution; deeper zooms
-inflate storage without adding information.
-
-The script is idempotent — existing tiles are skipped unless --force is set,
-so an interrupted bake can be resumed by re-running.
+Idempotent: existing tiles are skipped unless --force, so interrupted bakes
+resume by re-running.
 """
 from __future__ import annotations
 
@@ -72,10 +59,7 @@ def _tile_path(out_dir: Path, z: int, x: int, y: int) -> Path:
 
 
 def bake_tile(job: TileJob) -> str:
-    """Reproject one source-CRS window into a 256² Web Mercator PNG.
-
-    Returns "written", "skipped" (already exists), or "empty" (all nodata).
-    """
+    """Returns "written", "skipped" (already exists), or "empty" (all nodata)."""
     out_path = _tile_path(Path(job.out_dir), job.z, job.x, job.y)
     if out_path.exists() and not job.force:
         return "skipped"
@@ -88,7 +72,7 @@ def bake_tile(job: TileJob) -> str:
     dst = np.zeros((TILE_PX, TILE_PX), dtype=np.uint8)
 
     with rasterio.open(job.source) as src:
-        # nearest-neighbor: classes are categorical, bilinear would invent IDs
+        # Nearest-neighbor: bilinear over categorical IDs would invent IDs.
         reproject(
             source=rasterio.band(src, 1),
             destination=dst,
@@ -98,12 +82,10 @@ def bake_tile(job: TileJob) -> str:
             dst_nodata=0,
         )
 
-    # Ocean / out-of-source tiles are entirely nodata; skip rather than write a 4 KB no-op.
-    # Frontend treats 404 as "out-of-bbox, fall back to default class."
+    # Skip empty tiles; frontend treats 404 as out-of-bbox and falls back.
     if not dst.any():
         return "empty"
 
-    # R = class ID; A = 0 for nodata pixels so the frontend can mask them.
     rgba = np.zeros((TILE_PX, TILE_PX, 4), dtype=np.uint8)
     rgba[..., 0] = dst
     rgba[..., 3] = np.where(dst == 0, 0, 255)

@@ -1,17 +1,12 @@
 /** Coverage prediction constants/presets shared between the panel UI and the worker. */
 
 /**
- * Aggression scaler stops for the per-pixel ITU clutter model.
- * 1.0 is the calibrated default (matches ITU-R P.452-17 + P.833-9 published values);
- * <1 dials conservatism down (your measured links beat predictions);
- * >1 dials it up (your area has heavier clutter than the published averages).
- *
- * This value is multiplied into the final A_h_tx + A_h_rx + L_v sum in computePathClutterLoss.
+ * Aggression scaler stops for the per-pixel ITU clutter model. Multiplied into
+ * the final A_h_tx + A_h_rx + L_v sum in computePathClutterLoss.
  */
 export interface AggressionStop {
   id: string;
   label: string;
-  /** Short label for the compact 3-button row. */
   short: string;
   value: number;
   description: string;
@@ -22,15 +17,13 @@ export const AGGRESSION_STOPS: AggressionStop[] = [
   { id: "aggressive",   label: "Aggressive",   short: "Aggr.", value: 1.3, description: "Predictions are optimistic — measured links fall short. Heavier clutter than published averages (dense canopy, urban valleys)." },
 ];
 
-/** Index of the calibrated-default stop. Keep in sync with AGGRESSION_STOPS. */
+/** Keep in sync with AGGRESSION_STOPS. */
 export const DEFAULT_AGGRESSION_IDX = 1;
 export const DEFAULT_AGGRESSION = AGGRESSION_STOPS[DEFAULT_AGGRESSION_IDX].value;
 
 /**
- * Representative clutter dB used by the bbox sizer when picking a coverage radius.
- * The sizer can't run the per-pixel model before knowing the bbox, so it scales
- * a Mixed-Forest-handheld endpoint estimate (~16 dB) by the active aggression.
- * Approximate; the bbox is a sizing heuristic, not the RF answer.
+ * Used by the bbox sizer (which runs before the per-pixel model). ~Mixed-Forest
+ * handheld endpoint estimate; scaled by aggression. Sizing heuristic only.
  */
 export const REPRESENTATIVE_CLUTTER_DB = 16;
 

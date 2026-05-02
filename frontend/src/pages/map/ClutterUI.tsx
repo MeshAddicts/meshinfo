@@ -1,20 +1,10 @@
-/**
- * Shared UI bits for the per-pixel ITU clutter model — used by both
- * MapCoveragePanel and MapScanPanel:
- *
- *   - <AggressionSlider/>   3-stop conservative / calibrated / aggressive picker
- *   - <ClutterStatusChip/>  "Land cover: USGS NLCD 2021" or fallback indicator
- *   - <ClassLegend/>        collapsible 16-row NLCD legend with per-class dB hints
- *
- * Kept compact and self-contained so it can drop into either panel's settings block.
- */
+/** Shared clutter-UI bits used by MapCoveragePanel and MapScanPanel. */
 import { useState } from "react";
 
 import { endpointClutterDb, NLCD_CLASSES } from "./clutterClasses";
 import { AGGRESSION_STOPS } from "./coverageAnalysis";
 
 const F_915 = 915;
-/** Reference antenna height (m) used to populate the legend's "@ 2 m" column. */
 const LEGEND_REF_AGL_M = 2;
 
 export function AggressionSlider({
@@ -50,16 +40,11 @@ export function AggressionSlider({
 }
 
 export interface ClutterStatusChipProps {
-  /** Most recent compute's tile-availability snapshot. Null until first compute. */
+  /** Null until first compute. */
   status: { tilesPresent: number; tilesTotal: number } | null;
 }
 
 export function ClutterStatusChip({ status }: ClutterStatusChipProps) {
-  // Three states:
-  //   - status === null: first compute hasn't completed; assume the bake is healthy
-  //   - tilesPresent === 0 && tilesTotal > 0: fully out of the baked region or the
-  //     API has no tile mount → fall back to default class everywhere
-  //   - otherwise: at least some tiles came back; show the source name
   const fallback = status != null && status.tilesTotal > 0 && status.tilesPresent === 0;
   const partial =
     status != null &&
@@ -96,15 +81,12 @@ export function ClutterStatusChip({ status }: ClutterStatusChipProps) {
   );
 }
 
-/** Collapsible table summarizing the 16 NLCD CONUS classes the model uses. */
 export function ClassLegend() {
   const [open, setOpen] = useState(false);
 
-  // Order classes by ID for predictable legend ordering.
+  // CONUS-relevant rows only; AK-only classes and lichen/moss are skipped.
   const rows = Object.values(NLCD_CLASSES)
     .sort((a, b) => a.id - b.id)
-    // Skip AK-only and lichen/moss rows in the default view — keeps the legend
-    // focused on the classes a CONUS operator actually sees.
     .filter((c) => ![51, 72, 73, 74].includes(c.id));
 
   return (

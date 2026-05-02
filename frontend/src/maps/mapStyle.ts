@@ -17,9 +17,8 @@ const ATTRIB_CARTO =
   '© <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>';
 const ATTRIB_MAPBOX =
   '© <a href="https://www.mapbox.com/about/maps/" target="_blank" rel="noopener">Mapbox</a>';
-// Tilezen elevation has no required attribution: 3DEP/SRTM/GMTED are public-domain
-// USGS / NASA data, and Mapzen (the Tilezen project) is defunct. Source is still
-// credited where users actually look — the panel's "Terrain data" footer.
+// Tilezen DEM has no required attribution (public-domain USGS/NASA sources).
+// The panel's "Terrain data" footer credits it where users actually look.
 
 const TERRAIN_SOURCE_ID = "terrain-dem";
 const BASE_SOURCE_ID = "base";

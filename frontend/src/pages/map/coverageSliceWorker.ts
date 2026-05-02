@@ -33,7 +33,7 @@ export interface CoverageSliceRequest {
   outputHeight: number;
   rowStart: number;
   rowEnd: number;
-  /** Optional class-ID raster aligned to DEM bounds. Absent → workers treat all samples as default class. */
+  /** Optional class-ID raster aligned to DEM bounds. Absent → default class everywhere. */
   clutterBuffer?: ArrayBuffer;
   clutterWidth?: number;
   clutterHeight?: number;
@@ -112,7 +112,6 @@ self.onmessage = async (evt: MessageEvent<CoverageSliceRequest>) => {
             width: msg.clutterWidth,
             height: msg.clutterHeight,
             bounds: msg.bounds,
-            // Telemetry fields not used in the worker; default to 0 so the type matches.
             tilesPresent: 0,
             tilesTotal: 0,
           }

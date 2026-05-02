@@ -21,11 +21,8 @@ app = FastAPI()
 
 
 class ImmutableTileFiles(StaticFiles):
-    """StaticFiles subclass that tags every response with a long-lived cache header.
-
-    Land-cover tiles are content-addressed by (z,x,y) within a single bake; class IDs
-    don't change between bakes, so a 1-year immutable cache is correct.
-    """
+    """StaticFiles with a 1-year immutable cache header. Tiles are content-addressed
+    by (z,x,y) within a bake; class IDs don't change between bakes."""
     async def get_response(self, path: str, scope):  # type: ignore[override]
         response = await super().get_response(path, scope)
         if isinstance(response, FileResponse):
@@ -431,9 +428,9 @@ class API:
         async def server_config(request: Request) -> JSONResponse:
             return jsonable_encoder({'config': Config.cleanse(self.config)})
 
-        # Land-cover tiles for the coverage/scan clutter model. Tiles are pre-baked
-        # once by scripts/landcover_tiles.py; missing tiles 404 and the frontend falls
-        # back to a default class. See docs/clutter-design.md.
+        # Land-cover tiles for the coverage/scan clutter model. Pre-baked by
+        # scripts/landcover_tiles.py; missing tiles 404 and the frontend falls
+        # back to a default class. See RF-MODEL.md.
         landcover_cfg = self.config.get("landcover", {}) or {}
         if landcover_cfg.get("enabled", False):
             tile_dir = Path(landcover_cfg.get("tile_dir", "output/landcover"))

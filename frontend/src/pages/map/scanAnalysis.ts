@@ -64,16 +64,9 @@ export interface ScanInput {
   rxSensitivityDbm?: number;
   fadeMarginDb?: number;
   cableLossDb?: number;
-  /**
-   * Optional class-ID raster for the per-pixel ITU clutter model (P.452 endpoint
-   * + P.833 path-traversed vegetation). Null/absent → workers fall back to the
-   * default class everywhere, which is conservative.
-   */
+  /** Optional class-ID raster aligned to bbox; absent → default class everywhere. */
   clutterRaster?: ClutterRaster | null;
-  /**
-   * Aggression scaler applied to the clutter model output. 1.0 = calibrated default.
-   * Pairs with coverage's slider (PR 4) so scan and coverage stay synchronized.
-   */
+  /** Scalar on the ITU clutter model output. 1.0 = calibrated baseline. */
   clutterAggression?: number;
   /** Skip targets farther than this km. Default Infinity. */
   maxDistanceKm?: number;
@@ -125,7 +118,6 @@ export function runScan(input: ScanInput): ScanSummary {
   let diffractedCount = 0;
   let blockedCount = 0;
 
-  // Reusable scratch for the clutter model — one per scan run, shared across targets.
   const clutterScratch = makeClutterScratch();
 
   for (const t of targets) {
@@ -144,9 +136,7 @@ export function runScan(input: ScanInput): ScanSummary {
       queryTerrainM,
     });
 
-    // Per-target clutter loss via the shared P.452 + P.833 model (matches coverage).
-    // We re-sample classes along the great-circle from origin → target using the
-    // same lerp coverage uses; LoS points carry distanceKm but not lng/lat.
+    // LoS points only carry distanceKm; lerp lng/lat ourselves to sample classes.
     const profileM = new Float64Array(los.points.map((p) => p.ground));
     const profileClasses = new Uint8Array(profileM.length);
     if (clutterRaster) {

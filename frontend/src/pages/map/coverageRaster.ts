@@ -31,11 +31,7 @@ export interface RasterParams {
   rxSensitivityDbm: number;
   fadeMarginDb: number;
   cableLossDb: number;
-  /**
-   * Aggression scaler applied to the per-pixel ITU-R clutter model
-   * (P.452-17 endpoint + P.833-9 path-traversed vegetation). 1.0 is the calibrated
-   * default; <1 dials conservatism down, >1 up. See docs/clutter-design.md.
-   */
+  /** Scalar on the ITU-R clutter model output. 1.0 = calibrated baseline. */
   clutterAggression: number;
   climate: Climate;
   /** Surface refractivity in N-units (e.g. 301 continental). */
@@ -174,9 +170,7 @@ export function renderCoverageRaster(
   );
   const maxSamples = profileSampleCount(diagonalKm);
   const profileBuf = new Float64Array(maxSamples);
-  // Per-sample NLCD class ID. Reused across pixels (only `nSamples` entries valid per pixel).
   const profileClassBuf = new Uint8Array(maxSamples);
-  // Class-distance accumulator scratch reused by computePathClutterLoss across pixels.
   const clutterScratch = makeClutterScratch();
 
   const [origLng, origLat] = origin.position;
@@ -245,7 +239,6 @@ export function renderCoverageRaster(
           break;
         }
         profileBuf[s] = elev;
-        // Same lerp serves clutter classification — out-of-raster falls back to default class.
         profileClassBuf[s] = clutter ? sampleClutterClassAt(clutter, sLng, sLat) : 0;
       }
       if (!validProfile) {
@@ -267,7 +260,6 @@ export function renderCoverageRaster(
         continue;
       }
 
-      // Per-pixel clutter via P.452 endpoint + P.833 MED path integration.
       const clutterLossDb = computePathClutterLoss(
         profileBuf,
         profileClassBuf,

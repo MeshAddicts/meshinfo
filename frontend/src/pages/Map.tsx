@@ -320,7 +320,7 @@ export function Map() {
   // total === 0 means idle / drag preview / terrain fetch
   const [coverageProgress, setCoverageProgress] = useState<{ completed: number; total: number }>({ completed: 0, total: 0 });
   const [coverageDemSource, setCoverageDemSource] = useState<DemSource | null>(null);
-  /** Tile-availability telemetry from the most recent compute. Drives the panel's land-cover status chip. */
+  // Drives the land-cover status chip in each panel.
   const [coverageClutterStatus, setCoverageClutterStatus] = useState<{ tilesPresent: number; tilesTotal: number } | null>(null);
   const [scanClutterStatus, setScanClutterStatus] = useState<{ tilesPresent: number; tilesTotal: number } | null>(null);
   // Index into COMMON_ANTENNAS (value-based <select> can't distinguish same-dBi models)
@@ -396,8 +396,8 @@ export function Map() {
 
   // DEM/raster bbox size from free-space budget. Capped at 200 km — beyond that
   // low tile-zoom averages terrain away (Mt. Oso reads ~200 m low at 500 km bbox).
-  // Per-pixel clutter only resolves once the bbox is set, so the sizer pre-charges
-  // a representative Mixed-Forest-handheld value scaled by the user's aggression.
+  // The sizer can't run the per-pixel clutter model before the bbox exists, so
+  // it uses REPRESENTATIVE_CLUTTER_DB scaled by aggression as a sizing heuristic.
   const coverageRadiusKm = useMemo(() => {
     const CABLE = 0.5;
     const FADE = 15;
@@ -454,9 +454,8 @@ export function Map() {
   const coverageDemRef = useRef<DEM | null>(null);
   /** 256² downsample of the above; lets drag preview run LR at ~8-12 fps. */
   const coverageDragDemRef = useRef<DEM | null>(null);
-  /** Cached authoritative class-ID raster. Null until the first compute completes (or fully out-of-bbox). */
+  /** Authoritative + 256² downsampled class-ID rasters; drag preview reuses these. */
   const coverageClutterRef = useRef<ClutterRaster | null>(null);
-  /** 256² downsample of the above; drag preview ships this to workers alongside the drag DEM. */
   const coverageDragClutterRef = useRef<ClutterRaster | null>(null);
   /** Latest raster params snapshot (drag preview reuses untouched). */
   const coverageLastRasterParamsRef = useRef<RasterParams | null>(null);
@@ -703,7 +702,7 @@ export function Map() {
       if (rowStart >= outputHeight) break;
       const rowEnd = Math.min(rowStart + rowsPerTask, outputHeight);
       const demCopy = new Float32Array(dem.data);
-      // Per-worker clutter copy mirrors the DEM-copy pattern (transferable buffers can't be shared).
+      // Transferable buffers can't be shared across workers; copy per slice.
       const clutterCopy = clutter ? new Uint8Array(clutter.data) : null;
       const req: CoverageSliceRequest = {
         requestId,
@@ -1653,8 +1652,8 @@ export function Map() {
         timings[name] = performance.now() - fromMs;
       };
       try {
-        // 1. Fetch terrain + land-cover tiles in parallel; both build at DEM_SIZE so
-        //    the worker can sample DEM and clutter at the same lng/lat indexing.
+        // 1. Fetch terrain + land-cover in parallel; both at DEM_SIZE so the worker
+        //    samples DEM and clutter at the same lng/lat indexing.
         const tFetch = performance.now();
         setIsFetchingCoverageTerrain(true);
         const [{ dem, source: demSourceUsed }, clutter] = await Promise.all([
@@ -1762,7 +1761,7 @@ export function Map() {
           return;
         }
 
-        // 4. Cache full + downsampled DEM and clutter raster for the drag-preview pass.
+        // 4. Cache full + downsampled rasters for the drag-preview pass.
         coverageDemRef.current = dem;
         coverageDragDemRef.current = downsampleDEM(dem, 256, 256);
         coverageClutterRef.current = clutter;
@@ -2386,12 +2385,10 @@ export function Map() {
     });
 
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "top-right");
-    // MapLibre 5 lands the compact attribution EXPANDED. The first
-    // _updateAttributions-with-content adds `maplibregl-compact-show` + the
-    // <details open> attribute. We use a MutationObserver instead of `once('idle')`
-    // so the add → remove happens inside the same render frame (microtask runs
-    // before paint), no visible expand-then-collapse flicker. After our one-shot
-    // removal we disconnect so the user's click toggle works normally.
+    // MapLibre 5 lands compact attributions EXPANDED on first content (sets
+    // `maplibregl-compact-show` + <details open>). MutationObserver beats the
+    // paint — microtask drains before render, so no flicker. once('idle') was
+    // too late: it fires after the browser has already painted the open state.
     const attribEl = map.getContainer().querySelector<HTMLElement>(".maplibregl-ctrl-attrib");
     if (attribEl) {
       const observer = new MutationObserver(() => {
