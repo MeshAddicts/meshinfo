@@ -200,6 +200,20 @@ export const NodeMap = ({ node }: { node: INode }) => {
         maxPitch: 85,
       });
 
+      // MapLibre 5 lands compact attributions expanded. MutationObserver beats
+      // the paint so there's no flicker; see Map.tsx for the longer rationale.
+      const attribEl = map.getContainer().querySelector<HTMLElement>(".maplibregl-ctrl-attrib");
+      if (attribEl) {
+        const observer = new MutationObserver(() => {
+          if (attribEl.classList.contains("maplibregl-compact-show")) {
+            attribEl.classList.remove("maplibregl-compact-show");
+            attribEl.removeAttribute("open");
+            observer.disconnect();
+          }
+        });
+        observer.observe(attribEl, { attributes: true, attributeFilter: ["class", "open"] });
+      }
+
       mbMapRef.current = map;
       map.addControl(new maplibregl.NavigationControl({ showCompass: true }), "top-left");
 

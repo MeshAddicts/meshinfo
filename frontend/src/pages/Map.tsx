@@ -2386,6 +2386,23 @@ export function Map() {
     });
 
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "top-right");
+    // MapLibre 5 lands the compact attribution EXPANDED. The first
+    // _updateAttributions-with-content adds `maplibregl-compact-show` + the
+    // <details open> attribute. We use a MutationObserver instead of `once('idle')`
+    // so the add → remove happens inside the same render frame (microtask runs
+    // before paint), no visible expand-then-collapse flicker. After our one-shot
+    // removal we disconnect so the user's click toggle works normally.
+    const attribEl = map.getContainer().querySelector<HTMLElement>(".maplibregl-ctrl-attrib");
+    if (attribEl) {
+      const observer = new MutationObserver(() => {
+        if (attribEl.classList.contains("maplibregl-compact-show")) {
+          attribEl.classList.remove("maplibregl-compact-show");
+          attribEl.removeAttribute("open");
+          observer.disconnect();
+        }
+      });
+      observer.observe(attribEl, { attributes: true, attributeFilter: ["class", "open"] });
+    }
 
     mbMapRef.current = map;
 

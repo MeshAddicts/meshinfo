@@ -17,8 +17,9 @@ const ATTRIB_CARTO =
   '© <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>';
 const ATTRIB_MAPBOX =
   '© <a href="https://www.mapbox.com/about/maps/" target="_blank" rel="noopener">Mapbox</a>';
-const ATTRIB_TILEZEN =
-  'Elevation: <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">AWS Terrain Tiles</a> (Tilezen/Mapzen, 3DEP/SRTM/GMTED)';
+// Tilezen elevation has no required attribution: 3DEP/SRTM/GMTED are public-domain
+// USGS / NASA data, and Mapzen (the Tilezen project) is defunct. Source is still
+// credited where users actually look — the panel's "Terrain data" footer.
 
 const TERRAIN_SOURCE_ID = "terrain-dem";
 const BASE_SOURCE_ID = "base";
@@ -139,7 +140,6 @@ export function demSourceSpec(): RasterDEMSourceSpecification {
     tileSize: 256,
     maxzoom: 15,
     encoding: "terrarium",
-    attribution: ATTRIB_TILEZEN,
   };
 }
 
