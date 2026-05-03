@@ -1,11 +1,8 @@
 /**
  * Path-aware clutter loss = P.452-17 endpoint clutter (TX & RX) + P.833-9 §4.1
- * MED for path-traversed vegetation. The two recommendations are designed to be
- * additive; we skip the first/last d_k km of the profile from MED accumulation
- * to avoid double-counting the near-antenna zone P.452 already covers.
- *
- * z_path(s) is a linear lerp of TX/RX MSL antenna heights — ITM handles terrain
- * diffraction internally, so canopy along ITM-blocked paths is moot anyway.
+ * MED for path-traversed vegetation. Skip first txSkipN / last rxSkipN samples
+ * from MED accumulation to avoid double-counting the near-antenna zone P.452
+ * already covers. z_path is a linear lerp of TX/RX MSL antenna heights.
  */
 import {
   classForId,
@@ -14,7 +11,7 @@ import {
   vegetationPathLossDb,
 } from "./clutterClasses";
 
-/** NLCD legend max ID is 95; +1 for inclusive index. */
+/** NLCD legend max ID is 95. */
 export const CLUTTER_SCRATCH_LEN = 96;
 
 export function makeClutterScratch(): Float32Array {
@@ -22,11 +19,8 @@ export function makeClutterScratch(): Float32Array {
 }
 
 /**
- * Total clutter loss in dB for one TX→RX profile.
- *
- * `profileClasses[0]` and `profileClasses[nSamples-1]` are the TX/RX endpoints.
- * `scratch` (length ≥ 96, reused across pixels) accumulates per-class distance
- * to avoid per-call allocation; touched slots are reset before return.
+ * `scratch` (length ≥ 96, reused across pixels) accumulates per-class distance;
+ * touched slots are reset before return.
  */
 export function computePathClutterLoss(
   profileM: Float64Array,
@@ -50,17 +44,14 @@ export function computePathClutterLoss(
   const txMsl = profileM[0] + txAntennaAGLm;
   const rxMsl = profileM[nSamples - 1] + rxAntennaAGLm;
 
-  const skipDistanceM =
-    Math.max(txClass.nominalDistanceKm, rxClass.nominalDistanceKm) * 1000;
-  const skipN = Math.ceil(skipDistanceM / pointSpacingM);
+  const txSkipN = Math.ceil((txClass.nominalDistanceKm * 1000) / pointSpacingM);
+  const rxSkipN = Math.ceil((rxClass.nominalDistanceKm * 1000) / pointSpacingM);
 
-  // Track touched slots so cleanup is O(touched), not O(96).
   const touched: number[] = [];
 
   const lastIdx = nSamples - 1;
-  for (let s = skipN; s <= lastIdx - skipN; s++) {
-    const id = profileClasses[s];
-    const cls = classForId(id);
+  for (let s = txSkipN; s <= lastIdx - rxSkipN; s++) {
+    const cls = classForId(profileClasses[s]);
     if (!cls.penetrable) continue;
 
     const t = s / lastIdx;
@@ -71,13 +62,16 @@ export function computePathClutterLoss(
     if (zPath >= canopyTop) continue;
     if (zPath < zTerrain) continue;
 
-    if (scratch[id] === 0) touched.push(id);
-    scratch[id] += pointSpacingM;
+    // Key by canonical cls.id; raw 0 (NLCD nodata) would otherwise split into
+    // scratch[0] and scratch[43] and double-count via concave MED.
+    const idx = cls.id;
+    if (scratch[idx] === 0) touched.push(idx);
+    scratch[idx] += pointSpacingM;
   }
 
   let lV = 0;
   for (const id of touched) {
-    lV += vegetationPathLossDb(NLCD_CLASSES[id] ?? classForId(id), scratch[id]);
+    lV += vegetationPathLossDb(NLCD_CLASSES[id], scratch[id]);
     scratch[id] = 0;
   }
 
