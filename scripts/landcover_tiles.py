@@ -1,8 +1,12 @@
 """
-Bake an NLCD land-cover GeoTIFF into a {z}/{x}/{y}.png slippy tile pyramid.
+Bake an NLCD land-cover raster into a {z}/{x}/{y}.png slippy tile pyramid.
 Output tiles encode the NLCD class ID in the red channel (A=255 valid / 0 nodata).
 See RF-MODEL.md for what the tiles are for, scripts/README-landcover.md for the
 operator runbook.
+
+When --source is omitted, the script auto-downloads NLCD 2024 (CONUS, Annual NLCD
+Collection 1.1) from MRLC into output/landcover-source/, extracts, and bakes.
+Pass --source to point at a pre-downloaded raster (offline / mirror / regional).
 
 Idempotent: existing tiles are skipped unless --force, so interrupted bakes
 resume by re-running.
@@ -12,6 +16,9 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import urllib.error
+import urllib.request
+import zipfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from os import cpu_count
@@ -42,6 +49,15 @@ TILE_PX = 256
 
 # CONUS bbox (lower 48). AK/HI/PR are separate NLCD source files.
 CONUS_BBOX = (-125.0, 24.0, -67.0, 49.0)
+
+# MRLC direct download (anonymous-public). Update for a new vintage; class IDs
+# follow the standard NLCD legend, stable since NLCD 2001, so existing class
+# table doesn't need re-tuning.
+DEFAULT_SOURCE_URL = (
+    "https://www.mrlc.gov/downloads/sciweb1/shared/mrlc/data-bundles/"
+    "Annual_NLCD_LndCov_2024_CU_C1V1.zip"
+)
+DEFAULT_SOURCE_DIR = Path("output/landcover-source")
 
 
 @dataclass(frozen=True)
@@ -110,16 +126,107 @@ def count_tiles(bbox: tuple[float, float, float, float], zooms: range) -> int:
     return sum(1 for _ in iter_tiles(bbox, zooms))
 
 
+def _find_raster(src_dir: Path) -> Path | None:
+    for pattern in ("*.tif", "*.img"):
+        for cand in sorted(src_dir.glob(pattern)):
+            return cand
+    return None
+
+
+def _download_with_progress(url: str, dest: Path) -> None:
+    """Resumes via Range when a partial file exists and the server returns 206;
+    falls back to a fresh download if the server returns 200 instead."""
+    existing = dest.stat().st_size if dest.exists() else 0
+    headers = {"Range": f"bytes={existing}-"} if existing > 0 else {}
+    req = urllib.request.Request(url, headers=headers)
+
+    log.info("Downloading %s", url)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            status = resp.status
+            if existing > 0 and status == 206:
+                mode = "ab"
+                total = existing + int(resp.headers.get("Content-Length", 0))
+                downloaded = existing
+                log.info("Resuming from byte %d", existing)
+            else:
+                if existing > 0:
+                    log.info("Server returned %d (no Range); restarting download", status)
+                mode = "wb"
+                total = int(resp.headers.get("Content-Length", 0))
+                downloaded = 0
+
+            chunk = 1 << 16
+            last_pct = -5
+            with dest.open(mode) as f:
+                while True:
+                    buf = resp.read(chunk)
+                    if not buf:
+                        break
+                    f.write(buf)
+                    downloaded += len(buf)
+                    if total:
+                        pct = (downloaded * 100) // total
+                        if pct >= last_pct + 5:
+                            log.info("  [%3d%%]  %.1f / %.1f MB",
+                                     pct, downloaded / 1e6, total / 1e6)
+                            last_pct = pct
+    except urllib.error.URLError as e:
+        # Leave the partial file in place so a re-run can resume.
+        raise RuntimeError(f"Download failed: {e}. Re-run to resume.") from e
+
+    log.info("Download complete: %s (%.1f MB)", dest, dest.stat().st_size / 1e6)
+
+
+def _extract_zip(zip_path: Path, dest_dir: Path) -> None:
+    log.info("Extracting %s ...", zip_path.name)
+    with zipfile.ZipFile(zip_path) as zf:
+        zf.extractall(dest_dir)
+    log.info("Extraction complete")
+
+
+def ensure_source(source_arg: str | None) -> Path:
+    """If --source is given, use it. Otherwise look for a raster in
+    output/landcover-source/, then a zip to extract, then download the default."""
+    if source_arg:
+        p = Path(source_arg)
+        if not p.exists():
+            raise RuntimeError(f"Source raster not found: {p}")
+        return p
+
+    DEFAULT_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
+
+    raster = _find_raster(DEFAULT_SOURCE_DIR)
+    if raster:
+        log.info("Using existing raster: %s", raster)
+        return raster
+
+    zips = sorted(DEFAULT_SOURCE_DIR.glob("*.zip"))
+    if not zips:
+        zip_dest = DEFAULT_SOURCE_DIR / Path(DEFAULT_SOURCE_URL).name
+        _download_with_progress(DEFAULT_SOURCE_URL, zip_dest)
+        zips = [zip_dest]
+
+    _extract_zip(zips[0], DEFAULT_SOURCE_DIR)
+    raster = _find_raster(DEFAULT_SOURCE_DIR)
+    if not raster:
+        raise RuntimeError(
+            f"Extracted {zips[0].name} but no .tif or .img found in {DEFAULT_SOURCE_DIR}"
+        )
+    return raster
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Bake NLCD GeoTIFF into a slippy tile pyramid for Meshinfo clutter model.",
+        description="Bake NLCD into a slippy tile pyramid for the Meshinfo clutter model.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     p.add_argument(
         "--source",
-        required=True,
-        help="Path to NLCD source raster (GeoTIFF, IMG, or COG). Single band, uint8 class IDs.",
+        default=None,
+        help="Path to NLCD source raster (GeoTIFF, IMG, or COG). "
+             "Omit to auto-download NLCD 2024 CONUS into output/landcover-source/.",
     )
     p.add_argument(
         "--out",
@@ -141,7 +248,7 @@ def parse_args() -> argparse.Namespace:
         metavar=("MIN", "MAX"),
         default=[8, 12],
         help="Inclusive zoom range to bake (default: 8 12). NLCD is 30 m native; "
-             "z=12 ≈ 10 m/px is the matching frontier.",
+             "z=12 ~= 10 m/px is the matching frontier.",
     )
     p.add_argument(
         "--workers",
@@ -160,9 +267,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
 
-    source = Path(args.source)
-    if not source.exists():
-        log.error("Source raster not found: %s", source)
+    try:
+        source = ensure_source(args.source)
+    except RuntimeError as e:
+        log.error("%s", e)
         return 1
 
     out_dir = Path(args.out)

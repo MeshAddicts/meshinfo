@@ -7,130 +7,113 @@ PNGs under `/tiles/landcover/{z}/{x}/{y}.png`.
 For the propagation model that consumes these tiles (ITM + ITU-R P.452-17 +
 ITU-R P.833-9), see [../RF-MODEL.md](../RF-MODEL.md).
 
-This guide walks through running the bake once per region. Re-bake every 2–3
-years when a new NLCD release ships.
+## Quick start
 
-## What you get
+The bake auto-downloads NLCD 2024 (CONUS, Annual Collection 1.1) from MRLC if
+no source file is provided. Two ways to run:
 
-- `output/landcover/{z}/{x}/{y}.png` — slippy-tile pyramid, z=8..12 by default.
-- ~700 MB – 1.1 GB on disk for the full CONUS bake.
-- Bake time: ~30–90 min depending on CPU and disk speed.
-
-Tiles outside the bake bbox 404 at request time, and the frontend falls back
-to a "Mixed Forest" default class. So an operator who only deploys in one
-state can pass `--bbox` to bake just that state.
-
-## Prerequisites
+### Docker (recommended — no host Python deps)
 
 ```bash
-# In a venv:
+docker compose --profile bake run --rm landcover-bake
+```
+
+### Python directly
+
+```bash
 pip install -r scripts/requirements-landcover.txt
+python scripts/landcover_tiles.py
 ```
 
-`rasterio` ships GDAL wheels on PyPI for Linux/macOS/Windows — no system GDAL
-is required for typical bakes.
+Either way, the script:
 
-## Source data
+1. Downloads `Annual_NLCD_LndCov_2024_CU_C1V1.zip` (~1.4 GB) into
+   `output/landcover-source/` if not already present.
+2. Extracts the GeoTIFF.
+3. Bakes the full CONUS pyramid (z=8..12) into `output/landcover/`.
 
-NLCD is published by the USGS Multi-Resolution Land Characteristics consortium
-at <https://www.mrlc.gov/data>. Pick the **Land Cover** product for the year
-you want and your region:
+The Meshinfo API picks the tiles up automatically on next start (or restart if
+already running) — no extra config.
 
-| Region | File (example, 2021 release) |
-|---|---|
-| CONUS (lower 48) | `nlcd_2021_land_cover_l48_<rev>.img` |
-| Alaska | `NLCD_2016_Land_Cover_AK_<rev>.img` |
-| Hawaii | (separate; see MRLC portal) |
-| Puerto Rico | (separate; see MRLC portal) |
+**First-run footprint:** ~1.4 GB zip + ~1.7 GB extracted raster + ~1 GB tiles.
+Delete `output/landcover-source/` after the bake if you don't plan to re-bake.
 
-The MRLC site requires a free account but downloads are public-domain.
-Download the IMG/TIF; the bake script accepts either via `rasterio`.
+**Time:** ~15–90 min depending on CPU. The bake is idempotent — ctrl-C and re-run
+to resume; already-baked tiles are skipped.
 
-## Running the bake (CONUS default)
+## Sub-region or offline bake
+
+Pass `--source` to skip the download and use a local raster (mirror, regional
+NLCD release, alternate vintage):
 
 ```bash
-python scripts/landcover_tiles.py \
-    --source ~/Downloads/nlcd_2021_land_cover_l48_20230630.img \
-    --out output/landcover
+python scripts/landcover_tiles.py --source /path/to/nlcd.tif
 ```
 
-The default bbox covers the CONUS lower 48 (`-125 24 -67 49`) and the default
-zoom range is `8 12`. With 8 worker processes on a modern CPU, expect
-roughly 30–60 minutes for the full CONUS pyramid.
-
-The script is **idempotent** — already-baked tiles are skipped, so you can
-ctrl-C and resume by re-running the same command.
-
-## Baking a smaller region
-
-To bake just California, for example:
+Or restrict the bbox to a single state for a faster bake:
 
 ```bash
-python scripts/landcover_tiles.py \
-    --source nlcd_2021_land_cover_l48_20230630.img \
-    --out output/landcover \
-    --bbox -125 32 -113 43
+# California only
+python scripts/landcover_tiles.py --bbox -125 32 -113 43
 ```
 
-Smaller bbox → fewer tiles → faster bake and less storage. Operators outside
-the bbox transparently fall back to the default class.
+Operators who only deploy in one region can save storage and bake time this
+way; the frontend falls back to the default "Mixed Forest" class everywhere
+outside the baked bbox.
 
-## Adding AK / HI / PR
+## All flags
 
-Run the bake again with the matching source file and the appropriate bbox.
-The output directory can be the same — tile coordinates don't collide.
-
-```bash
-# Alaska (using the regional NLCD file)
-python scripts/landcover_tiles.py \
-    --source nlcd_alaska_2016_land_cover.img \
-    --out output/landcover \
-    --bbox -180 50 -129 72
+```
+--source PATH       Use a local NLCD raster instead of auto-downloading.
+--out PATH          Tile output directory (default: output/landcover).
+--bbox W S E N      Geographic bbox (default: CONUS -125 24 -67 49).
+--zooms MIN MAX     Zoom range (default: 8 12; NLCD is 30 m native).
+--workers N         Parallel worker count (default: cpu_count).
+--force             Overwrite existing tiles instead of skipping.
 ```
 
 ## Refreshing for a new NLCD release
 
-NLCD releases a new full product every 2–3 years. To refresh:
+NLCD publishes a new vintage every 1–3 years (Annual NLCD has yearly snapshots
+since 2019). Class IDs follow the standard NLCD legend, which has been stable
+since 2001 — bake-time tuning is rarely needed.
 
-```bash
-python scripts/landcover_tiles.py \
-    --source nlcd_2024_land_cover_l48_<rev>.img \
-    --out output/landcover \
-    --force
-```
+To refresh: update `DEFAULT_SOURCE_URL` in [landcover_tiles.py](landcover_tiles.py)
+to the newer vintage, delete `output/landcover-source/` and `output/landcover/`,
+and re-run the bake.
 
-`--force` overwrites existing tiles; without it, the script skips them.
+## How the tiles are served
 
-## Serving the tiles
+The Meshinfo API mounts `output/landcover` (configurable via `landcover.tile_dir`
+in `config.toml`) at `/tiles/landcover` automatically when `landcover.enabled =
+true` (default).
 
-The Meshinfo API mounts `output/landcover` (configurable via
-`landcover.tile_dir`) at `/tiles/landcover` automatically when
-`landcover.enabled = true` in `config.toml` (default).
-
-Both `docker-compose.yml` and `docker-compose-dev.yml` already bind-mount
+Both `docker-compose.yml` and `docker-compose-dev.yml` bind-mount
 `./output:/app/output`, so tiles baked on the host appear at
-`/app/output/landcover` inside the container with no extra volume config.
+`/app/output/landcover` inside the container with no extra config.
 
-The frontend fetches tiles through the existing Caddy `/api/*` proxy:
+The frontend fetches via the Caddy `/api/*` proxy:
 
 ```
 /api/tiles/landcover/{z}/{x}/{y}.png   →   meshinfo:9000/tiles/landcover/{z}/{x}/{y}.png
 ```
 
-Tiles respond with `Cache-Control: public, max-age=31536000, immutable`
-because class IDs don't change between bakes.
+Tiles respond with `Cache-Control: public, max-age=31536000, immutable` since
+class IDs don't change within a bake.
 
 ## Troubleshooting
 
-- **`Missing dependency: rasterio`** — install requirements-landcover.txt.
-- **`Source raster not found`** — pass an absolute path, or run from the
-  Meshinfo root.
-- **All tiles report `empty`** — your bbox doesn't overlap the source raster.
-  Check that you're using the right NLCD region file for your bbox.
-- **Slow bake** — increase `--workers`, or check that the source file is on
-  a fast local disk (network filesystems hurt random-access reprojection).
+- **`Missing dependency: rasterio`** — install `scripts/requirements-landcover.txt`.
+- **Download interrupted** — re-run the same command. Resumes via HTTP Range if
+  the server supports it; otherwise restarts cleanly.
+- **`Extracted X but no .tif or .img found`** — corrupt zip. Delete
+  `output/landcover-source/*.zip` and re-run.
+- **All tiles report `empty`** — bbox doesn't overlap the source raster. Check
+  you're not passing a non-CONUS `--bbox` against the CONUS source file.
+- **Slow bake** — bump `--workers`, ensure the source file is on a local disk
+  (network filesystems hurt random-access reprojection).
 
-## File format reference
+## File format
 
 Each output tile is a 256×256 RGBA PNG:
 

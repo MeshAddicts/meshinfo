@@ -110,7 +110,13 @@ See [config.toml.sample](config.toml.sample) for all options with inline documen
 
 For PostgreSQL-specific details, see [POSTGRES.md](POSTGRES.md).
 
-For the Coverage and Scan tools' propagation model (ITM + ITU-R clutter), see [RF-MODEL.md](RF-MODEL.md). Operators wanting per-pixel land-cover-aware predictions also need to bake NLCD tiles once via [scripts/README-landcover.md](scripts/README-landcover.md).
+For the Coverage and Scan tools' propagation model (ITM + ITU-R clutter), see [RF-MODEL.md](RF-MODEL.md). To enable per-pixel land-cover-aware predictions, run the one-shot tile bake:
+
+```sh
+docker compose --profile bake run --rm landcover-bake
+```
+
+The bake auto-downloads NLCD from MRLC, extracts, and writes tiles to `output/landcover/`. ~15–90 min one-time, no manual download. See [scripts/README-landcover.md](scripts/README-landcover.md) for sub-region or offline options.
 
 ### Caddy / Reverse Proxy
 
