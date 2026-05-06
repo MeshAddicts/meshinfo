@@ -81,6 +81,8 @@ export function MapCoveragePanel({
   onCustomTxDbmChange,
   aggressionIdx,
   onAggressionIdxChange,
+  clutterEnabled,
+  onClutterEnabledChange,
   clutterStatus,
   presetIdx,
   onPresetIdxChange,
@@ -133,6 +135,9 @@ export function MapCoveragePanel({
   /** Index into AGGRESSION_STOPS (0/1/2). Drives the per-pixel ITU clutter scaler. */
   aggressionIdx: number;
   onAggressionIdxChange: (idx: number) => void;
+  /** Master on/off for the clutter model. Off → ITM-only path loss. */
+  clutterEnabled: boolean;
+  onClutterEnabledChange: (enabled: boolean) => void;
   /** Tile-availability telemetry from the most recent compute; null if none yet. */
   clutterStatus: { tilesPresent: number; tilesTotal: number } | null;
   presetIdx: number;
@@ -801,18 +806,28 @@ export function MapCoveragePanel({
 
               {/* Clutter (per-pixel ITU model + aggression scaler). */}
               <div className="space-y-1.5">
-                <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 flex items-center gap-1">
-                  <span>Clutter</span>
-                  <InfoTip align="left">
-                    Per-pixel building / vegetation loss from USGS NLCD land
-                    cover, applied via ITU-R P.452-17 (endpoint clutter) and
-                    P.833-9 (path-traversed vegetation). The slider scales the
-                    calibrated baseline — leave at <em>Calibrated</em> unless
-                    measured links say otherwise.
-                  </InfoTip>
-                </label>
-                <AggressionSlider aggressionIdx={aggressionIdx} onChange={onAggressionIdxChange} />
-                <ClutterStatusChip status={clutterStatus} />
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 flex items-center gap-1">
+                    <span>Clutter</span>
+                    <InfoTip align="left">
+                      Per-pixel building / vegetation loss from USGS NLCD land
+                      cover, applied via ITU-R P.452-17 (endpoint clutter) and
+                      P.833-9 (path-traversed vegetation). Toggle off for
+                      ITM-only bare-earth predictions.
+                    </InfoTip>
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[10px] text-gray-300 cursor-pointer select-none shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={clutterEnabled}
+                      onChange={(e) => onClutterEnabledChange(e.target.checked)}
+                      className="w-3 h-3 accent-cyan-500 cursor-pointer"
+                    />
+                    <span>Enabled</span>
+                  </label>
+                </div>
+                <AggressionSlider aggressionIdx={aggressionIdx} onChange={onAggressionIdxChange} enabled={clutterEnabled} />
+                <ClutterStatusChip status={clutterStatus} enabled={clutterEnabled} />
                 <ClassLegend />
               </div>
 

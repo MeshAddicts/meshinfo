@@ -41,6 +41,8 @@ export function MapScanPanel({
   onCustomTxDbmChange,
   aggressionIdx,
   onAggressionIdxChange,
+  clutterEnabled,
+  onClutterEnabledChange,
   clutterStatus,
   presetIdx,
   onPresetIdxChange,
@@ -78,6 +80,9 @@ export function MapScanPanel({
   /** Index into AGGRESSION_STOPS (0/1/2) for the per-pixel ITU clutter model. */
   aggressionIdx: number;
   onAggressionIdxChange: (idx: number) => void;
+  /** Master on/off for the clutter model. Off → ITM-only path loss. */
+  clutterEnabled: boolean;
+  onClutterEnabledChange: (enabled: boolean) => void;
   /** Tile-availability telemetry from the most recent scan; null until first run. */
   clutterStatus: { tilesPresent: number; tilesTotal: number } | null;
   presetIdx: number;
@@ -409,11 +414,22 @@ export function MapScanPanel({
 
               {/* Clutter (per-pixel ITU model + aggression scaler). */}
               <div className="space-y-1.5">
-                <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 block">
-                  Clutter
-                </label>
-                <AggressionSlider aggressionIdx={aggressionIdx} onChange={onAggressionIdxChange} />
-                <ClutterStatusChip status={clutterStatus} />
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 block">
+                    Clutter
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[10px] text-gray-300 cursor-pointer select-none shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={clutterEnabled}
+                      onChange={(e) => onClutterEnabledChange(e.target.checked)}
+                      className="w-3 h-3 accent-cyan-500 cursor-pointer"
+                    />
+                    <span>Enabled</span>
+                  </label>
+                </div>
+                <AggressionSlider aggressionIdx={aggressionIdx} onChange={onAggressionIdxChange} enabled={clutterEnabled} />
+                <ClutterStatusChip status={clutterStatus} enabled={clutterEnabled} />
                 <ClassLegend />
               </div>
 

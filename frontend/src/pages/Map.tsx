@@ -343,6 +343,13 @@ export function Map() {
     setCoverageAggressionIdxRaw(idx);
     writeJson(LS_KEYS.coverageAggressionIdx, idx);
   }, []);
+  const [coverageClutterEnabled, setCoverageClutterEnabledRaw] = useState(() =>
+    readJson<boolean>(LS_KEYS.coverageClutterEnabled, true),
+  );
+  const setCoverageClutterEnabled = useCallback((v: boolean) => {
+    setCoverageClutterEnabledRaw(v);
+    writeJson(LS_KEYS.coverageClutterEnabled, v);
+  }, []);
   const [coveragePresetIdx, setCoveragePresetIdx] = useState(0); // MediumFast
   const [coverageCustomSensDbm, setCoverageCustomSensDbm] = useState(-133);
   const coverageSensitivityDbm = MESHTASTIC_PRESETS[coveragePresetIdx].isCustom
@@ -382,6 +389,13 @@ export function Map() {
     setScanAggressionIdxRaw(idx);
     writeJson(LS_KEYS.scanAggressionIdx, idx);
   }, []);
+  const [scanClutterEnabled, setScanClutterEnabledRaw] = useState(() =>
+    readJson<boolean>(LS_KEYS.scanClutterEnabled, true),
+  );
+  const setScanClutterEnabled = useCallback((v: boolean) => {
+    setScanClutterEnabledRaw(v);
+    writeJson(LS_KEYS.scanClutterEnabled, v);
+  }, []);
   const [scanPresetIdx, setScanPresetIdx] = useState(0);
   const [scanCustomSensDbm, setScanCustomSensDbm] = useState(-133);
   const scanSensitivityDbm = MESHTASTIC_PRESETS[scanPresetIdx].isCustom
@@ -398,10 +412,13 @@ export function Map() {
   // low tile-zoom averages terrain away (Mt. Oso reads ~200 m low at 500 km bbox).
   // The sizer can't run the per-pixel clutter model before the bbox exists, so
   // it uses REPRESENTATIVE_CLUTTER_DB scaled by aggression as a sizing heuristic.
+  // When the user disables the model entirely, drop the clutter term to 0.
   const coverageRadiusKm = useMemo(() => {
     const CABLE = 0.5;
     const FADE = 15;
-    const aggression = AGGRESSION_STOPS[coverageAggressionIdx]?.value ?? 1.0;
+    const aggression = coverageClutterEnabled
+      ? (AGGRESSION_STOPS[coverageAggressionIdx]?.value ?? 1.0)
+      : 0;
     const clutter = REPRESENTATIVE_CLUTTER_DB * aggression;
     const budget =
       coverageTxDbm +
@@ -414,7 +431,7 @@ export function Map() {
     const plConstant = 32.45 + 20 * Math.log10(915);
     const maxKm = Math.pow(10, (budget - plConstant) / 20);
     return Math.max(5, Math.min(200, Math.round(maxKm)));
-  }, [coverageAntennaDbi, coverageRxAntennaDbi, coverageTxDbm, coverageEffectiveSensitivityDbm, coverageAggressionIdx]);
+  }, [coverageAntennaDbi, coverageRxAntennaDbi, coverageTxDbm, coverageEffectiveSensitivityDbm, coverageAggressionIdx, coverageClutterEnabled]);
   /** 3D LoS tube layer; created once per map. */
   const losTubeLayerRef = useRef<LosTubeLayer | null>(null);
   /** DOM pin for the Coverage origin (draggable). */
@@ -1465,7 +1482,10 @@ export function Map() {
           rxAntennaDbi: scanRxAntennaDbi,
           rxSensitivityDbm: scanEffectiveSensitivityDbm,
           clutterRaster: scanClutter,
-          clutterAggression: AGGRESSION_STOPS[scanAggressionIdx]?.value ?? 1.0,
+          // aggression = 0 when the user has toggled the model off → ITM-only path loss.
+          clutterAggression: scanClutterEnabled
+            ? (AGGRESSION_STOPS[scanAggressionIdx]?.value ?? 1.0)
+            : 0,
           queryTerrainM: (lng, lat) => {
             const elev = sampleDEMAt(dem, lng, lat);
             return Number.isNaN(elev) ? null : elev;
@@ -1498,7 +1518,7 @@ export function Map() {
     return () => { cancelled = true; };
   }, [activeTool, toolStep, toolFromId, toolVirtualPos, provider, terrain3D, nodes,
       scanTxDbm, scanAntennaDbi, scanRxAntennaDbi, scanEffectiveSensitivityDbm,
-      scanAggressionIdx, scanAntennaHeightM]);
+      scanAggressionIdx, scanClutterEnabled, scanAntennaHeightM]);
 
   // Per-class map visibility filter (compute still runs for hidden classes).
   useEffect(() => {
@@ -1633,7 +1653,9 @@ export function Map() {
       rxSensitivityDbm: coverageEffectiveSensitivityDbm,
       fadeMarginDb: 15,
       cableLossDb: 0.5,
-      clutterAggression: AGGRESSION_STOPS[coverageAggressionIdx]?.value ?? 1.0,
+      clutterAggression: coverageClutterEnabled
+        ? (AGGRESSION_STOPS[coverageAggressionIdx]?.value ?? 1.0)
+        : 0,
       // Continental Temperate + N=301 is the NA Meshtastic default
       climate: 5 /* Climate.ContinentalTemperate */,
       surfaceRefractivityN: 301,
@@ -1861,7 +1883,7 @@ export function Map() {
     return () => {
       cancelled = true;
     };
-  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageRxAntennaDbi, coverageRxHeightM, coverageTxDbm, coverageAggressionIdx, coverageSensitivityDbm, coverageDetail, coverageAntennaHeightM, coverageReliability, provider, terrain3D, nodes, coverageRetryNonce]);
+  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageRxAntennaDbi, coverageRxHeightM, coverageTxDbm, coverageAggressionIdx, coverageClutterEnabled, coverageSensitivityDbm, coverageDetail, coverageAntennaHeightM, coverageReliability, provider, terrain3D, nodes, coverageRetryNonce]);
 
   // Hide coverage raster when leaving tool; sources/layers stay for fast re-entry
   useEffect(() => {
@@ -3991,6 +4013,8 @@ export function Map() {
           onCustomTxDbmChange={setCoverageCustomTxDbm}
           aggressionIdx={coverageAggressionIdx}
           onAggressionIdxChange={setCoverageAggressionIdx}
+          clutterEnabled={coverageClutterEnabled}
+          onClutterEnabledChange={setCoverageClutterEnabled}
           clutterStatus={coverageClutterStatus}
           presetIdx={coveragePresetIdx}
           onPresetIdxChange={setCoveragePresetIdx}
@@ -4098,6 +4122,8 @@ export function Map() {
           onCustomTxDbmChange={setScanCustomTxDbm}
           aggressionIdx={scanAggressionIdx}
           onAggressionIdxChange={setScanAggressionIdx}
+          clutterEnabled={scanClutterEnabled}
+          onClutterEnabledChange={setScanClutterEnabled}
           clutterStatus={scanClutterStatus}
           presetIdx={scanPresetIdx}
           onPresetIdxChange={setScanPresetIdx}

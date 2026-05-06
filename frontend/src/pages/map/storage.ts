@@ -11,6 +11,9 @@ export const LS_KEYS = {
   /** AGGRESSION_STOPS index (0/1/2). Default 1 = calibrated baseline. */
   coverageAggressionIdx: "meshinfo.map.coverageAggressionIdx",
   scanAggressionIdx: "meshinfo.map.scanAggressionIdx",
+  /** Clutter model on/off. Off → aggression = 0, ITM-only path loss. */
+  coverageClutterEnabled: "meshinfo.map.coverageClutterEnabled",
+  scanClutterEnabled: "meshinfo.map.scanClutterEnabled",
 } as const;
 
 export function readJson<T>(key: string, fallback: T): T {

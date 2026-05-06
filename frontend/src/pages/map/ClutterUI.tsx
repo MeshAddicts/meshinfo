@@ -10,18 +10,26 @@ const LEGEND_REF_AGL_M = 2;
 export function AggressionSlider({
   aggressionIdx,
   onChange,
+  enabled = true,
 }: {
   aggressionIdx: number;
   onChange: (idx: number) => void;
+  /** When false, buttons render dimmed and non-interactive. */
+  enabled?: boolean;
 }) {
   return (
-    <div className="flex gap-1 rounded-lg border border-white/10 bg-white/5 p-0.5 text-[10px] font-medium">
+    <div
+      className={`flex gap-1 rounded-lg border border-white/10 bg-white/5 p-0.5 text-[10px] font-medium ${
+        enabled ? "" : "opacity-40 pointer-events-none"
+      }`}
+    >
       {AGGRESSION_STOPS.map((stop, i) => {
         const active = aggressionIdx === i;
         return (
           <button
             key={stop.id}
             type="button"
+            disabled={!enabled}
             onClick={() => onChange(i)}
             title={stop.description}
             className={`flex-1 rounded-md px-1.5 py-1 transition-colors ${
@@ -42,9 +50,20 @@ export function AggressionSlider({
 export interface ClutterStatusChipProps {
   /** Null until first compute. */
   status: { tilesPresent: number; tilesTotal: number } | null;
+  /** When false, the chip overrides any tile state with "Clutter model: off". */
+  enabled?: boolean;
 }
 
-export function ClutterStatusChip({ status }: ClutterStatusChipProps) {
+export function ClutterStatusChip({ status, enabled = true }: ClutterStatusChipProps) {
+  if (!enabled) {
+    return (
+      <div className="flex items-start gap-1.5 text-[10px] leading-snug text-gray-500">
+        <span className="mt-0.5 inline-block w-1.5 h-1.5 rounded-full shrink-0 bg-gray-500/60" aria-hidden />
+        <span>Clutter model: <span className="text-gray-400">off</span> — ITM-only path loss.</span>
+      </div>
+    );
+  }
+
   const fallback = status != null && status.tilesTotal > 0 && status.tilesPresent === 0;
   const partial =
     status != null &&
