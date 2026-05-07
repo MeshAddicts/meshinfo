@@ -13,6 +13,7 @@ See a live instance at [Central Valley Mesh](https://meshinfo.cvme.sh).
 ## Features
 
 - **Interactive Map** -- Node positions on OpenStreetMap or Mapbox with hardware icons
+- **RF Coverage / Best Neighbors** -- Per-pixel RF coverage prediction using ITM (Longley-Rice) over real terrain plus per-pixel ITU-R clutter loss from USGS land cover. See [RF-MODEL.md](RF-MODEL.md).
 - **Chat** -- View and search mesh text messages across channels, with CSV/JSON export
 - **Node Explorer** -- Browse all nodes with filtering by status, hardware, role, and more
 - **Network Graph** -- Visualize mesh topology with adjacency heatmaps and arc diagrams
@@ -108,6 +109,14 @@ The main configuration file is `config.toml`. Key sections:
 See [config.toml.sample](config.toml.sample) for all options with inline documentation.
 
 For PostgreSQL-specific details, see [POSTGRES.md](POSTGRES.md).
+
+For the Coverage and Scan tools' propagation model (ITM + ITU-R clutter), see [RF-MODEL.md](RF-MODEL.md). To enable per-pixel land-cover-aware predictions, run the one-shot tile bake:
+
+```sh
+docker compose --profile bake run --rm landcover-bake
+```
+
+The bake auto-downloads NLCD from MRLC, extracts, and writes tiles to `output/landcover/`. ~15–90 min one-time, no manual download. See [scripts/README-landcover.md](scripts/README-landcover.md) for sub-region or offline options.
 
 ### Caddy / Reverse Proxy
 

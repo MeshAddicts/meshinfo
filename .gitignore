@@ -21,6 +21,7 @@ config.json
 config.toml
 
 .claude/
+docs/
 
 .pnp.*
 .yarn/*

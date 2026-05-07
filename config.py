@@ -130,6 +130,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "max_pool_size": 5,
         },
     },
+    # Per-pixel land-cover clutter for coverage / scan (see RF-MODEL.md).
+    # Tiles are pre-baked via scripts/landcover_tiles.py; absent tile_dir → frontend
+    # falls back to a default class everywhere.
+    "landcover": {
+        "enabled": True,
+        "tile_dir": "output/landcover",
+        "source": "USGS NLCD 2024",
+    },
     "debug": False,
 }
 

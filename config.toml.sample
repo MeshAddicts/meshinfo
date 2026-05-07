@@ -300,6 +300,23 @@ style = "mapbox/dark-v11"
 # style = "mapbox/light-v11"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Land cover — Optional
+# Per-pixel ITU-R clutter loss for the map's coverage and scan tools, sampled
+# from pre-baked NLCD tiles. When tile_dir exists and enabled = true, the API
+# mounts it at /tiles/landcover. Without a bake, the frontend falls back to a
+# default class everywhere — coverage still works, just less accurate.
+#
+# To populate tiles, run scripts/landcover_tiles.py once. See
+# scripts/README-landcover.md for the operator guide and RF-MODEL.md for
+# the RF model.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[landcover]
+enabled = true
+tile_dir = "output/landcover"   # bind-mounted into the meshinfo container
+source = "USGS NLCD 2024"       # surfaced in the map UI attribution chip
+
+# ─────────────────────────────────────────────────────────────────────────────
 # UI Customization — Optional
 # External tools and node detail links shown in the web UI.
 # ─────────────────────────────────────────────────────────────────────────────

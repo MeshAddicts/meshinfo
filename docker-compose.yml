@@ -76,5 +76,14 @@ services:
       - meshinfo
       - frontend
 
+  # `docker compose --profile bake run --rm landcover-bake` — see scripts/README-landcover.md.
+  landcover-bake:
+    profiles: ["bake"]
+    build:
+      context: .
+      dockerfile: Dockerfile.landcover
+    volumes:
+      - ./output:/app/output
+
 volumes:
   meshinfo_pgdata:

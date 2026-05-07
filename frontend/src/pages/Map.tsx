@@ -14,7 +14,7 @@ import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../
 import { type ITraceroutesResponse,NodeRole, roleTitles } from "../types";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { ClusterDonutLayer } from "./map/clusterDonutLayer";
-import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult,effectiveSensitivityDbm, ENVIRONMENTS, MESHTASTIC_PRESETS, reliabilityPreset } from "./map/coverageAnalysis";
+import { AGGRESSION_STOPS, COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, DEFAULT_AGGRESSION_IDX,effectiveSensitivityDbm, MESHTASTIC_PRESETS, reliabilityPreset, REPRESENTATIVE_CLUTTER_DB } from "./map/coverageAnalysis";
 import { type ContourFeatureCollection,extractCoverageContours } from "./map/coverageContours";
 import type { RasterParams } from "./map/coverageRaster";
 import { extractCoverageRays, type VisibilityRayFeatureCollection } from "./map/coverageRays";
@@ -22,6 +22,11 @@ import type { CoverageSliceRequest } from "./map/coverageSliceWorker";
 import { CoverageWorkerPool } from "./map/coverageWorkerPool";
 import { FiltersResetPill } from "./map/FiltersResetPill";
 import { Climate, computeP2PLoss, type ItmContext, loadItmContext, Polarization } from "./map/itm";
+import {
+  buildClutterRaster,
+  type ClutterRaster,
+  downsampleClutterRaster,
+} from "./map/landcoverTiles";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
 import { analyzeLineOfSight, type LoSResult } from "./map/losAnalysis";
 import { losPointsToTubeData, LosTubeLayer, obstructionsToGeoJSON, pickObstructions } from "./map/losTubeLayer";
@@ -87,6 +92,13 @@ function relativeTime(iso: string | null | undefined): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   return `${d}d ago`;
+}
+
+function clampAggressionIdx(idx: number): number {
+  if (!Number.isInteger(idx)) return DEFAULT_AGGRESSION_IDX;
+  if (idx < 0) return 0;
+  if (idx >= AGGRESSION_STOPS.length) return AGGRESSION_STOPS.length - 1;
+  return idx;
 }
 
 /** SVG signal bars (1-4) colored by best SNR. */
@@ -315,6 +327,9 @@ export function Map() {
   // total === 0 means idle / drag preview / terrain fetch
   const [coverageProgress, setCoverageProgress] = useState<{ completed: number; total: number }>({ completed: 0, total: 0 });
   const [coverageDemSource, setCoverageDemSource] = useState<DemSource | null>(null);
+  // Drives the land-cover status chip in each panel.
+  const [coverageClutterStatus, setCoverageClutterStatus] = useState<{ tilesPresent: number; tilesTotal: number } | null>(null);
+  const [scanClutterStatus, setScanClutterStatus] = useState<{ tilesPresent: number; tilesTotal: number } | null>(null);
   // Index into COMMON_ANTENNAS (value-based <select> can't distinguish same-dBi models)
   const [coverageAntennaIdx, setCoverageAntennaIdx] = useState(3);
   const coverageAntennaDbi = COMMON_ANTENNAS[coverageAntennaIdx]?.dbi ?? 3;
@@ -328,7 +343,24 @@ export function Map() {
   const coverageTxDbm = COMMON_HARDWARE[coverageHardwareIdx].isCustom
     ? coverageCustomTxDbm
     : COMMON_HARDWARE[coverageHardwareIdx].txDbm;
-  const [coverageEnvIdx, setCoverageEnvIdx] = useState(0);
+  // Clamp on read so corrupted / out-of-range LS values can't leave the slider
+  // with no active stop (which silently fell back to 1.0× via the AGGRESSION_STOPS
+  // index lookup). Same pattern for scan below.
+  const [coverageAggressionIdx, setCoverageAggressionIdxRaw] = useState(() =>
+    clampAggressionIdx(readJson<number>(LS_KEYS.coverageAggressionIdx, DEFAULT_AGGRESSION_IDX)),
+  );
+  const setCoverageAggressionIdx = useCallback((idx: number) => {
+    const clamped = clampAggressionIdx(idx);
+    setCoverageAggressionIdxRaw(clamped);
+    writeJson(LS_KEYS.coverageAggressionIdx, clamped);
+  }, []);
+  const [coverageClutterEnabled, setCoverageClutterEnabledRaw] = useState(() =>
+    readJson<boolean>(LS_KEYS.coverageClutterEnabled, true),
+  );
+  const setCoverageClutterEnabled = useCallback((v: boolean) => {
+    setCoverageClutterEnabledRaw(v);
+    writeJson(LS_KEYS.coverageClutterEnabled, v);
+  }, []);
   const [coveragePresetIdx, setCoveragePresetIdx] = useState(0); // MediumFast
   const [coverageCustomSensDbm, setCoverageCustomSensDbm] = useState(-133);
   const coverageSensitivityDbm = MESHTASTIC_PRESETS[coveragePresetIdx].isCustom
@@ -361,7 +393,21 @@ export function Map() {
   const scanTxDbm = COMMON_HARDWARE[scanHardwareIdx].isCustom
     ? scanCustomTxDbm
     : COMMON_HARDWARE[scanHardwareIdx].txDbm;
-  const [scanEnvIdx, setScanEnvIdx] = useState(0);
+  const [scanAggressionIdx, setScanAggressionIdxRaw] = useState(() =>
+    clampAggressionIdx(readJson<number>(LS_KEYS.scanAggressionIdx, DEFAULT_AGGRESSION_IDX)),
+  );
+  const setScanAggressionIdx = useCallback((idx: number) => {
+    const clamped = clampAggressionIdx(idx);
+    setScanAggressionIdxRaw(clamped);
+    writeJson(LS_KEYS.scanAggressionIdx, clamped);
+  }, []);
+  const [scanClutterEnabled, setScanClutterEnabledRaw] = useState(() =>
+    readJson<boolean>(LS_KEYS.scanClutterEnabled, true),
+  );
+  const setScanClutterEnabled = useCallback((v: boolean) => {
+    setScanClutterEnabledRaw(v);
+    writeJson(LS_KEYS.scanClutterEnabled, v);
+  }, []);
   const [scanPresetIdx, setScanPresetIdx] = useState(0);
   const [scanCustomSensDbm, setScanCustomSensDbm] = useState(-133);
   const scanSensitivityDbm = MESHTASTIC_PRESETS[scanPresetIdx].isCustom
@@ -376,10 +422,16 @@ export function Map() {
 
   // DEM/raster bbox size from free-space budget. Capped at 200 km — beyond that
   // low tile-zoom averages terrain away (Mt. Oso reads ~200 m low at 500 km bbox).
+  // The sizer can't run the per-pixel clutter model before the bbox exists, so
+  // it uses REPRESENTATIVE_CLUTTER_DB scaled by aggression as a sizing heuristic.
+  // When the user disables the model entirely, drop the clutter term to 0.
   const coverageRadiusKm = useMemo(() => {
     const CABLE = 0.5;
     const FADE = 15;
-    const clutter = ENVIRONMENTS[coverageEnvIdx]?.clutterLossDb ?? 0;
+    const aggression = coverageClutterEnabled
+      ? (AGGRESSION_STOPS[coverageAggressionIdx]?.value ?? 1.0)
+      : 0;
+    const clutter = REPRESENTATIVE_CLUTTER_DB * aggression;
     const budget =
       coverageTxDbm +
       coverageAntennaDbi +
@@ -391,7 +443,7 @@ export function Map() {
     const plConstant = 32.45 + 20 * Math.log10(915);
     const maxKm = Math.pow(10, (budget - plConstant) / 20);
     return Math.max(5, Math.min(200, Math.round(maxKm)));
-  }, [coverageAntennaDbi, coverageRxAntennaDbi, coverageTxDbm, coverageEffectiveSensitivityDbm, coverageEnvIdx]);
+  }, [coverageAntennaDbi, coverageRxAntennaDbi, coverageTxDbm, coverageEffectiveSensitivityDbm, coverageAggressionIdx, coverageClutterEnabled]);
   /** 3D LoS tube layer; created once per map. */
   const losTubeLayerRef = useRef<LosTubeLayer | null>(null);
   /** DOM pin for the Coverage origin (draggable). */
@@ -431,6 +483,9 @@ export function Map() {
   const coverageDemRef = useRef<DEM | null>(null);
   /** 256² downsample of the above; lets drag preview run LR at ~8-12 fps. */
   const coverageDragDemRef = useRef<DEM | null>(null);
+  /** Authoritative + 256² downsampled class-ID rasters; drag preview reuses these. */
+  const coverageClutterRef = useRef<ClutterRaster | null>(null);
+  const coverageDragClutterRef = useRef<ClutterRaster | null>(null);
   /** Latest raster params snapshot (drag preview reuses untouched). */
   const coverageLastRasterParamsRef = useRef<RasterParams | null>(null);
   /** Last origin context (bounds); drag re-samples DEM per move. */
@@ -618,6 +673,8 @@ export function Map() {
    *  Shared by main compute + drag preview. Null = superseded or WASM missing. */
   const renderCoverageToImageSource = useCallback(async (opts: {
     dem: DEM;
+    /** Optional class-ID raster aligned to DEM bounds. Null = workers fall back to default class. */
+    clutter?: ClutterRaster | null;
     origin: [number, number];
     originHeightM: number;
     /** TX antenna AGL (m); ITM wants AGL not MSL. */
@@ -642,7 +699,7 @@ export function Map() {
     outputHeight: number;
     itmUnavailable?: boolean;
   } | null> => {
-    const { dem, origin, originHeightM, originAntennaHeightAboveGroundM, params, requestId, onSliceProgress } = opts;
+    const { dem, clutter, origin, originHeightM, originAntennaHeightAboveGroundM, params, requestId, onSliceProgress } = opts;
     const outputWidth = opts.outputWidth ?? dem.width;
     const outputHeight = opts.outputHeight ?? dem.height;
     const mb = mbMapRef.current;
@@ -674,6 +731,8 @@ export function Map() {
       if (rowStart >= outputHeight) break;
       const rowEnd = Math.min(rowStart + rowsPerTask, outputHeight);
       const demCopy = new Float32Array(dem.data);
+      // Transferable buffers can't be shared across workers; copy per slice.
+      const clutterCopy = clutter ? new Uint8Array(clutter.data) : null;
       const req: CoverageSliceRequest = {
         requestId,
         demBuffer: demCopy.buffer,
@@ -688,9 +747,14 @@ export function Map() {
         outputHeight,
         rowStart,
         rowEnd,
+        clutterBuffer: clutterCopy?.buffer,
+        clutterWidth: clutter?.width,
+        clutterHeight: clutter?.height,
       };
+      const transfer: Transferable[] = [demCopy.buffer];
+      if (clutterCopy) transfer.push(clutterCopy.buffer);
       tasks.push(
-        pool.dispatch(req, [demCopy.buffer]).then((resp) => {
+        pool.dispatch(req, transfer).then((resp) => {
           sliceResponses.push(resp);
           completedSlices += 1;
           if (requestId === coverageRequestIdRef.current) {
@@ -1383,14 +1447,27 @@ export function Map() {
           return;
         }
         const scanBounds = demBoundsAround(origin!, SCAN_RADIUS_KM, 1.05);
-        const { dem, source: demSourceUsedForScan } = await buildDem({
-          bounds: scanBounds,
-          targetWidth: 1024,
-          targetHeight: 1024,
-          token: mapboxToken,
-        });
+        const [{ dem, source: demSourceUsedForScan }, scanClutter] = await Promise.all([
+          buildDem({
+            bounds: scanBounds,
+            targetWidth: 1024,
+            targetHeight: 1024,
+            token: mapboxToken,
+          }),
+          // Skip the clutter fetch when the model is toggled off.
+          scanClutterEnabled
+            ? buildClutterRaster({
+                bounds: scanBounds,
+                targetWidth: 1024,
+                targetHeight: 1024,
+              })
+            : Promise.resolve(null),
+        ]);
         if (cancelled) return;
         setScanDemSource(demSourceUsedForScan);
+        setScanClutterStatus(
+          scanClutter ? { tilesPresent: scanClutter.tilesPresent, tilesTotal: scanClutter.tilesTotal } : null,
+        );
 
         // Override GPS altitude with terrain + configured AGL (matches coverage).
         // Falls back to GPS altitude if DEM sampling fails.
@@ -1421,7 +1498,11 @@ export function Map() {
           txAntennaDbi: scanAntennaDbi,
           rxAntennaDbi: scanRxAntennaDbi,
           rxSensitivityDbm: scanEffectiveSensitivityDbm,
-          clutterLossDb: ENVIRONMENTS[scanEnvIdx]?.clutterLossDb ?? 0,
+          clutterRaster: scanClutter,
+          // aggression = 0 when the user has toggled the model off → ITM-only path loss.
+          clutterAggression: scanClutterEnabled
+            ? (AGGRESSION_STOPS[scanAggressionIdx]?.value ?? 1.0)
+            : 0,
           queryTerrainM: (lng, lat) => {
             const elev = sampleDEMAt(dem, lng, lat);
             return Number.isNaN(elev) ? null : elev;
@@ -1454,7 +1535,7 @@ export function Map() {
     return () => { cancelled = true; };
   }, [activeTool, toolStep, toolFromId, toolVirtualPos, provider, terrain3D, nodes,
       scanTxDbm, scanAntennaDbi, scanRxAntennaDbi, scanEffectiveSensitivityDbm,
-      scanEnvIdx, scanAntennaHeightM]);
+      scanAggressionIdx, scanClutterEnabled, scanAntennaHeightM]);
 
   // Per-class map visibility filter (compute still runs for hidden classes).
   useEffect(() => {
@@ -1579,7 +1660,6 @@ export function Map() {
     // DEM is fixed 2048²; "Detail" only changes OUTPUT_SIZE (paint pixelation, not RF accuracy).
     const DEM_SIZE = 2048;
     const OUTPUT_SIZE = COVERAGE_DETAIL_SIZE[coverageDetail];
-    const envEntry = ENVIRONMENTS[coverageEnvIdx];
     const rel = reliabilityPreset(coverageReliability);
     const rasterParams: RasterParams = {
       freqMhz: 915,
@@ -1590,7 +1670,9 @@ export function Map() {
       rxSensitivityDbm: coverageEffectiveSensitivityDbm,
       fadeMarginDb: 15,
       cableLossDb: 0.5,
-      clutterLossDb: envEntry.clutterLossDb,
+      clutterAggression: coverageClutterEnabled
+        ? (AGGRESSION_STOPS[coverageAggressionIdx]?.value ?? 1.0)
+        : 0,
       // Continental Temperate + N=301 is the NA Meshtastic default
       climate: 5 /* Climate.ContinentalTemperate */,
       surfaceRefractivityN: 301,
@@ -1609,17 +1691,33 @@ export function Map() {
         timings[name] = performance.now() - fromMs;
       };
       try {
-        // 1. Fetch terrain tiles, build full DEM on main thread (Tilezen → Mapbox fallback)
+        // 1. Fetch terrain + (when enabled) land-cover in parallel; both at DEM_SIZE
+        //    so the worker samples DEM and clutter at the same lng/lat indexing.
+        //    Skip the clutter fetch entirely when the model is toggled off — saves
+        //    the network + decode cost.
         const tFetch = performance.now();
         setIsFetchingCoverageTerrain(true);
-        const { dem, source: demSourceUsed } = await buildDem({
-          bounds: demBounds,
-          targetWidth: DEM_SIZE,
-          targetHeight: DEM_SIZE,
-          token: mapboxToken,
-          maxTiles: COVERAGE_DETAIL_MAX_TILES[coverageDetail],
-        });
+        const [{ dem, source: demSourceUsed }, clutter] = await Promise.all([
+          buildDem({
+            bounds: demBounds,
+            targetWidth: DEM_SIZE,
+            targetHeight: DEM_SIZE,
+            token: mapboxToken,
+            maxTiles: COVERAGE_DETAIL_MAX_TILES[coverageDetail],
+          }),
+          coverageClutterEnabled
+            ? buildClutterRaster({
+                bounds: demBounds,
+                targetWidth: DEM_SIZE,
+                targetHeight: DEM_SIZE,
+                maxTiles: COVERAGE_DETAIL_MAX_TILES[coverageDetail],
+              })
+            : Promise.resolve(null),
+        ]);
         setCoverageDemSource(demSourceUsed);
+        setCoverageClutterStatus(
+          clutter ? { tilesPresent: clutter.tilesPresent, tilesTotal: clutter.tilesTotal } : null,
+        );
         mark("demFetchMs", tFetch);
         if (cancelled || requestId !== coverageRequestIdRef.current) {
           setIsFetchingCoverageTerrain(false);
@@ -1679,6 +1777,7 @@ export function Map() {
         const tDispatch = performance.now();
         const rendered = await renderCoverageToImageSource({
           dem,
+          clutter,
           origin: origin!,
           originHeightM,
           originAntennaHeightAboveGroundM: txAboveGroundM,
@@ -1707,9 +1806,11 @@ export function Map() {
           return;
         }
 
-        // 4. Cache full + downsampled DEM for the drag-preview pass.
+        // 4. Cache full + downsampled rasters for the drag-preview pass.
         coverageDemRef.current = dem;
         coverageDragDemRef.current = downsampleDEM(dem, 256, 256);
+        coverageClutterRef.current = clutter;
+        coverageDragClutterRef.current = clutter ? downsampleClutterRaster(clutter, 256, 256) : null;
         coverageLastRasterParamsRef.current = rasterParams;
         coverageLastOriginContextRef.current = { bounds: dem.bounds };
 
@@ -1805,7 +1906,7 @@ export function Map() {
     return () => {
       cancelled = true;
     };
-  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageRxAntennaDbi, coverageRxHeightM, coverageTxDbm, coverageEnvIdx, coverageSensitivityDbm, coverageDetail, coverageAntennaHeightM, coverageReliability, provider, terrain3D, nodes, coverageRetryNonce]);
+  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageRxAntennaDbi, coverageRxHeightM, coverageTxDbm, coverageAggressionIdx, coverageClutterEnabled, coverageSensitivityDbm, coverageDetail, coverageAntennaHeightM, coverageReliability, provider, terrain3D, nodes, coverageRetryNonce]);
 
   // Hide coverage raster when leaving tool; sources/layers stay for fast re-entry
   useEffect(() => {
@@ -1916,6 +2017,7 @@ export function Map() {
           return;
         }
         const dem = coverageDragDemRef.current;
+        const clutter = coverageDragClutterRef.current;
         const params = coverageLastRasterParamsRef.current;
         if (!dem || !params) return;
         dragPreviewBusyRef.current = true;
@@ -1936,6 +2038,7 @@ export function Map() {
           coverageRequestIdRef.current = previewId;
           await renderCoverageToImageSource({
             dem,
+            clutter,
             origin: lngLat,
             originHeightM: originH,
             originAntennaHeightAboveGroundM: txAboveGroundM,
@@ -2327,6 +2430,21 @@ export function Map() {
     });
 
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "top-right");
+    // MapLibre 5 lands compact attributions EXPANDED on first content (sets
+    // `maplibregl-compact-show` + <details open>). MutationObserver beats the
+    // paint — microtask drains before render, so no flicker. once('idle') was
+    // too late: it fires after the browser has already painted the open state.
+    const attribEl = map.getContainer().querySelector<HTMLElement>(".maplibregl-ctrl-attrib");
+    if (attribEl) {
+      const observer = new MutationObserver(() => {
+        if (attribEl.classList.contains("maplibregl-compact-show")) {
+          attribEl.classList.remove("maplibregl-compact-show");
+          attribEl.removeAttribute("open");
+          observer.disconnect();
+        }
+      });
+      observer.observe(attribEl, { attributes: true, attributeFilter: ["class", "open"] });
+    }
 
     mbMapRef.current = map;
 
@@ -3916,8 +4034,11 @@ export function Map() {
           onHardwareIdxChange={setCoverageHardwareIdx}
           customTxDbm={coverageCustomTxDbm}
           onCustomTxDbmChange={setCoverageCustomTxDbm}
-          envIdx={coverageEnvIdx}
-          onEnvIdxChange={setCoverageEnvIdx}
+          aggressionIdx={coverageAggressionIdx}
+          onAggressionIdxChange={setCoverageAggressionIdx}
+          clutterEnabled={coverageClutterEnabled}
+          onClutterEnabledChange={setCoverageClutterEnabled}
+          clutterStatus={coverageClutterStatus}
           presetIdx={coveragePresetIdx}
           onPresetIdxChange={setCoveragePresetIdx}
           customSensitivityDbm={coverageCustomSensDbm}
@@ -4022,8 +4143,11 @@ export function Map() {
           onRxAntennaIdxChange={setScanRxAntennaIdx}
           customTxDbm={scanCustomTxDbm}
           onCustomTxDbmChange={setScanCustomTxDbm}
-          envIdx={scanEnvIdx}
-          onEnvIdxChange={setScanEnvIdx}
+          aggressionIdx={scanAggressionIdx}
+          onAggressionIdxChange={setScanAggressionIdx}
+          clutterEnabled={scanClutterEnabled}
+          onClutterEnabledChange={setScanClutterEnabled}
+          clutterStatus={scanClutterStatus}
           presetIdx={scanPresetIdx}
           onPresetIdxChange={setScanPresetIdx}
           customSensitivityDbm={scanCustomSensDbm}

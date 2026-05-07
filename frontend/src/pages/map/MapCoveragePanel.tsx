@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
-import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult,ENVIRONMENTS, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
+import { AggressionSlider, ClassLegend, ClutterStatusChip } from "./ClutterUI";
+import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
 import type { DemSource } from "./terrainRgb";
 import { useBottomSheetGesture } from "./useBottomSheet";
 
@@ -78,8 +79,11 @@ export function MapCoveragePanel({
   onRxHeightChange,
   customTxDbm,
   onCustomTxDbmChange,
-  envIdx,
-  onEnvIdxChange,
+  aggressionIdx,
+  onAggressionIdxChange,
+  clutterEnabled,
+  onClutterEnabledChange,
+  clutterStatus,
   presetIdx,
   onPresetIdxChange,
   customSensitivityDbm,
@@ -128,8 +132,14 @@ export function MapCoveragePanel({
   onRxHeightChange: (m: number) => void;
   customTxDbm: number;
   onCustomTxDbmChange: (dbm: number) => void;
-  envIdx: number;
-  onEnvIdxChange: (idx: number) => void;
+  /** Index into AGGRESSION_STOPS (0/1/2). Drives the per-pixel ITU clutter scaler. */
+  aggressionIdx: number;
+  onAggressionIdxChange: (idx: number) => void;
+  /** Master on/off for the clutter model. Off → ITM-only path loss. */
+  clutterEnabled: boolean;
+  onClutterEnabledChange: (enabled: boolean) => void;
+  /** Tile-availability telemetry from the most recent compute; null if none yet. */
+  clutterStatus: { tilesPresent: number; tilesTotal: number } | null;
   presetIdx: number;
   onPresetIdxChange: (idx: number) => void;
   customSensitivityDbm: number;
@@ -794,45 +804,31 @@ export function MapCoveragePanel({
                 </div>
               </div>
 
-              {/* Environment (clutter-loss preset). */}
-              <div>
-                <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 flex items-center gap-1">
-                  <span>Environment</span>
-                  <InfoTip align="left">
-                    Flat clutter-loss offset added on top of ITM to
-                    approximate buildings and vegetation. A foliage/building raster is on the roadmap — it will
-                    replace this with a per-path loss based on real canopy
-                    data.
-                  </InfoTip>
-                </label>
-                <div className="flex gap-1 rounded-lg border border-white/10 bg-white/5 p-0.5 text-[10px] font-medium">
-                  {ENVIRONMENTS.map((env, i) => {
-                    const active = envIdx === i;
-                    const shortLabel =
-                      env.id === "open" ? "Open"
-                      : env.id === "mixed" ? "Light"
-                      : env.id === "suburban" ? "Suburb"
-                      : "Urban";
-                    return (
-                      <button
-                        key={i}
-                        type="button"
-                        onClick={() => onEnvIdxChange(i)}
-                        title={env.description}
-                        className={`flex-1 rounded-md px-1.5 py-1 transition-colors ${
-                          active
-                            ? "bg-cyan-500/20 text-cyan-200"
-                            : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
-                        }`}
-                      >
-                        <div>{shortLabel}</div>
-                        <div className="text-[9px] text-gray-500 font-normal">
-                          {env.clutterLossDb === 0 ? "0 dB" : `+${env.clutterLossDb} dB`}
-                        </div>
-                      </button>
-                    );
-                  })}
+              {/* Clutter (per-pixel ITU model + aggression scaler). */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 flex items-center gap-1">
+                    <span>Clutter</span>
+                    <InfoTip align="left">
+                      Per-pixel building / vegetation loss from USGS NLCD land
+                      cover, applied via ITU-R P.452-17 (endpoint clutter) and
+                      P.833-9 (path-traversed vegetation). Toggle off for
+                      ITM-only bare-earth predictions.
+                    </InfoTip>
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[10px] text-gray-300 cursor-pointer select-none shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={clutterEnabled}
+                      onChange={(e) => onClutterEnabledChange(e.target.checked)}
+                      className="w-3 h-3 accent-cyan-500 cursor-pointer"
+                    />
+                    <span>Enabled</span>
+                  </label>
                 </div>
+                <AggressionSlider aggressionIdx={aggressionIdx} onChange={onAggressionIdxChange} enabled={clutterEnabled} />
+                <ClutterStatusChip status={clutterStatus} enabled={clutterEnabled} />
+                <ClassLegend />
               </div>
 
               {/* Reliability (ITM TLS preset) */}

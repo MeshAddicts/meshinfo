@@ -2,8 +2,11 @@
  * Best-neighbors scan: LoS + link budget from origin to each target, classified and ranked.
  * Stays on the main thread with 60 samples/ray.
  */
+import { NLCD_DEFAULT_CLASS_ID } from "./clutterClasses";
+import { computePathClutterLoss, makeClutterScratch } from "./clutterPath";
 import { pathLossDb } from "./coverageAnalysis";
 import { computeP2PLossFast, type ItmContext,ModeOfVariability } from "./itm";
+import { type ClutterRaster, sampleClutterClassAt } from "./landcoverTiles";
 import { analyzeLineOfSight, haversineKm, type TerrainSampler } from "./losAnalysis";
 
 /** Optional ITM config; when provided, ITM replaces FSPL+knife-edge for path loss. */
@@ -61,8 +64,10 @@ export interface ScanInput {
   rxSensitivityDbm?: number;
   fadeMarginDb?: number;
   cableLossDb?: number;
-  /** Flat clutter-loss offset (dB) added on top of path loss — pairs with coverage's Environment preset. */
-  clutterLossDb?: number;
+  /** Optional class-ID raster aligned to bbox; absent → default class everywhere. */
+  clutterRaster?: ClutterRaster | null;
+  /** Scalar on the ITU clutter model output. 1.0 = calibrated baseline. */
+  clutterAggression?: number;
   /** Skip targets farther than this km. Default Infinity. */
   maxDistanceKm?: number;
   /** Use ITM for path loss; LoS/Fresnel classification still comes from analyzeLineOfSight. */
@@ -101,7 +106,8 @@ export function runScan(input: ScanInput): ScanSummary {
     rxSensitivityDbm = -130,
     fadeMarginDb = 15,
     cableLossDb = 0.5,
-    clutterLossDb = 0,
+    clutterRaster = null,
+    clutterAggression = 1.0,
     maxDistanceKm = Infinity,
   } = input;
 
@@ -111,6 +117,8 @@ export function runScan(input: ScanInput): ScanSummary {
   let fresnelCount = 0;
   let diffractedCount = 0;
   let blockedCount = 0;
+
+  const clutterScratch = makeClutterScratch();
 
   for (const t of targets) {
     const d = haversineKm(origin, t.position);
@@ -128,14 +136,45 @@ export function runScan(input: ScanInput): ScanSummary {
       queryTerrainM,
     });
 
+    // LoS points only carry distanceKm; lerp lng/lat ourselves to sample classes.
+    const profileM = new Float64Array(los.points.map((p) => p.ground));
+    const profileClasses = new Uint8Array(profileM.length);
+    if (clutterRaster) {
+      for (let s = 0; s < profileM.length; s++) {
+        const tFrac = profileM.length > 1 ? s / (profileM.length - 1) : 0;
+        const sLng = origin[0] + (t.position[0] - origin[0]) * tFrac;
+        const sLat = origin[1] + (t.position[1] - origin[1]) * tFrac;
+        profileClasses[s] = sampleClutterClassAt(clutterRaster, sLng, sLat);
+      }
+    } else {
+      profileClasses.fill(NLCD_DEFAULT_CLASS_ID);
+    }
+
+    const spacingM = profileM.length > 1 ? (d * 1000) / (profileM.length - 1) : 0;
+    const txAGLm = los.points.length > 0
+      ? Math.max(0.5, los.fromHeightM - los.points[0].ground)
+      : 2;
+    const rxAGLm = los.points.length > 0
+      ? Math.max(0.5, los.toHeightM - los.points[los.points.length - 1].ground)
+      : 2;
+    const clutterLossDb = computePathClutterLoss(
+      profileM,
+      profileClasses,
+      profileM.length,
+      spacingM,
+      txAGLm,
+      rxAGLm,
+      freqMhz,
+      clutterAggression,
+      clutterScratch,
+    );
+
     // Path loss: ITM (terrain-aware) when available, else FSPL + knife-edge
     let totalLossDb: number;
     if (input.itm && los.points.length >= 2) {
-      const profileM = new Float64Array(los.points.map((p) => p.ground));
-      const spacingM = (d * 1000) / (profileM.length - 1);
       const itmLoss = computeP2PLossFast(input.itm.context, {
-        txHeightM: Math.max(0.5, los.fromHeightM - los.points[0].ground),
-        rxHeightM: Math.max(0.5, los.toHeightM - los.points[los.points.length - 1].ground),
+        txHeightM: txAGLm,
+        rxHeightM: rxAGLm,
         profileM,
         pointSpacingM: spacingM,
         climate: input.itm.climate,

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { HardwareModel, roleTitles, type NodeRole } from "../../types";
+import { HardwareModel, type NodeRole,roleTitles } from "../../types";
 import { getElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLinks";
 import { normNodeId } from "./linkFeatures";
 import { TelemetrySection } from "./TelemetrySection";

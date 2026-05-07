@@ -4,12 +4,18 @@
  * Profile length adapts to path length (15-96 samples, ~1.5/km).
  */
 import {
+  computePathClutterLoss,
+  makeClutterScratch,
+} from "./clutterPath";
+import {
   Climate,
   computeP2PLossFast,
   type ItmContext,
   ModeOfVariability,
   Polarization,
 } from "./itm";
+import type { ClutterRaster } from "./landcoverTiles";
+import { sampleClutterClassAt } from "./landcoverTiles";
 import { type DEM, sampleDEMAt } from "./terrainDEM";
 
 const R_EARTH_KM = 6371;
@@ -25,8 +31,8 @@ export interface RasterParams {
   rxSensitivityDbm: number;
   fadeMarginDb: number;
   cableLossDb: number;
-  /** Clutter loss (dB) added on top of ITM (which doesn't model buildings/foliage). */
-  clutterLossDb: number;
+  /** Scalar on the ITU-R clutter model output. 1.0 = calibrated baseline. */
+  clutterAggression: number;
   climate: Climate;
   /** Surface refractivity in N-units (e.g. 301 continental). */
   surfaceRefractivityN: number;
@@ -132,6 +138,8 @@ export function renderCoverageRaster(
   origin: RasterOrigin,
   rowRange?: RowRange,
   output?: OutputGrid,
+  /** Optional class-ID raster aligned to the DEM bounds. Null = treat every sample as default class. */
+  clutter?: ClutterRaster | null,
 ): RasterResult {
   const { bounds } = dem;
   const outputWidth = output?.width ?? dem.width;
@@ -145,7 +153,7 @@ export function renderCoverageRaster(
   marginDbBuf.fill(Number.NaN);
   const {
     freqMhz, txDbm, txAntennaDbi, rxAntennaDbi, rxAntennaHeightAboveGroundM,
-    rxSensitivityDbm, fadeMarginDb, cableLossDb, clutterLossDb,
+    rxSensitivityDbm, fadeMarginDb, cableLossDb, clutterAggression,
     climate, surfaceRefractivityN, polarization,
     groundDielectric, groundConductivity,
     timePct = 50, locationPct = 50, situationPct = 50,
@@ -162,6 +170,8 @@ export function renderCoverageRaster(
   );
   const maxSamples = profileSampleCount(diagonalKm);
   const profileBuf = new Float64Array(maxSamples);
+  const profileClassBuf = new Uint8Array(maxSamples);
+  const clutterScratch = makeClutterScratch();
 
   const [origLng, origLat] = origin.position;
   // Step over OUTPUT grid; terrain via bilinear sampleDEMAt is (lng,lat)-continuous
@@ -229,6 +239,7 @@ export function renderCoverageRaster(
           break;
         }
         profileBuf[s] = elev;
+        profileClassBuf[s] = clutter ? sampleClutterClassAt(clutter, sLng, sLat) : 0;
       }
       if (!validProfile) {
         rgba[outPxIdx * 4 + 3] = 0;
@@ -237,7 +248,8 @@ export function renderCoverageRaster(
 
       // subarray = no-copy view; slice() would allocate
       itmInput.profileM = profileBuf.subarray(0, nSamples);
-      itmInput.pointSpacingM = (distKm * 1000) / (nSamples - 1);
+      const pointSpacingM = (distKm * 1000) / (nSamples - 1);
+      itmInput.pointSpacingM = pointSpacingM;
       itmInput.rxHeightM = receiverAntennaAboveGroundM;
 
       const lossDb = computeP2PLossFast(itm, itmInput);
@@ -247,6 +259,18 @@ export function renderCoverageRaster(
         blockedCount++;
         continue;
       }
+
+      const clutterLossDb = computePathClutterLoss(
+        profileBuf,
+        profileClassBuf,
+        nSamples,
+        pointSpacingM,
+        txHeightAgM,
+        receiverAntennaAboveGroundM,
+        freqMhz,
+        clutterAggression,
+        clutterScratch,
+      );
 
       const totalLossDb = lossDb + clutterLossDb + cableLossDb;
       const rssiDbm = txDbm + txGain + rxGain - totalLossDb;
