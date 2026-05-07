@@ -136,7 +136,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "landcover": {
         "enabled": True,
         "tile_dir": "output/landcover",
-        "source": "USGS NLCD 2021",
+        "source": "USGS NLCD 2024",
     },
     "debug": False,
 }

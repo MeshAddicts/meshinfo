@@ -20,13 +20,14 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 
 
-class ImmutableTileFiles(StaticFiles):
-    """StaticFiles with a 1-year immutable cache header. Tiles are content-addressed
-    by (z,x,y) within a bake; class IDs don't change between bakes."""
+class TileFiles(StaticFiles):
+    """StaticFiles with a 1-day cache header. Re-bakes for a new NLCD vintage
+    propagate to clients within ~24 h; Starlette's built-in ETag handling makes
+    the post-cache revalidation a free 304 when the file hasn't changed."""
     async def get_response(self, path: str, scope):  # type: ignore[override]
         response = await super().get_response(path, scope)
         if isinstance(response, FileResponse):
-            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            response.headers["Cache-Control"] = "public, max-age=86400"
         return response
 
 class API:
@@ -437,7 +438,7 @@ class API:
             if tile_dir.is_dir():
                 app.mount(
                     "/tiles/landcover",
-                    ImmutableTileFiles(directory=str(tile_dir)),
+                    TileFiles(directory=str(tile_dir)),
                     name="landcover_tiles",
                 )
                 logger.info("Mounted land-cover tiles at /tiles/landcover from %s", tile_dir.resolve())

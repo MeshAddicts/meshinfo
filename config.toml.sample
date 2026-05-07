@@ -307,14 +307,14 @@ style = "mapbox/dark-v11"
 # default class everywhere — coverage still works, just less accurate.
 #
 # To populate tiles, run scripts/landcover_tiles.py once. See
-# scripts/README-landcover.md for the operator guide and docs/clutter-design.md
-# for the RF model.
+# scripts/README-landcover.md for the operator guide and RF-MODEL.md for
+# the RF model.
 # ─────────────────────────────────────────────────────────────────────────────
 
 [landcover]
 enabled = true
 tile_dir = "output/landcover"   # bind-mounted into the meshinfo container
-source = "USGS NLCD 2021"       # surfaced in the map UI attribution chip
+source = "USGS NLCD 2024"       # surfaced in the map UI attribution chip
 
 # ─────────────────────────────────────────────────────────────────────────────
 # UI Customization — Optional

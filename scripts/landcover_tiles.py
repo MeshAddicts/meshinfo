@@ -19,7 +19,7 @@ import sys
 import urllib.error
 import urllib.request
 import zipfile
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import dataclass
 from os import cpu_count
 from pathlib import Path
@@ -179,9 +179,30 @@ def _download_with_progress(url: str, dest: Path) -> None:
 
 
 def _extract_zip(zip_path: Path, dest_dir: Path) -> None:
+    """Extracts members one at a time, validating each resolved path stays within
+    dest_dir so a malicious archive can't write outside it (zip-slip)."""
     log.info("Extracting %s ...", zip_path.name)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    resolved_dest = dest_dir.resolve()
     with zipfile.ZipFile(zip_path) as zf:
-        zf.extractall(dest_dir)
+        for member in zf.infolist():
+            target = (dest_dir / member.filename).resolve()
+            try:
+                target.relative_to(resolved_dest)
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"Refusing to extract suspicious archive entry: {member.filename}"
+                ) from exc
+            if member.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(member) as src, target.open("wb") as dst:
+                while True:
+                    chunk = src.read(1 << 20)
+                    if not chunk:
+                        break
+                    dst.write(chunk)
     log.info("Extraction complete")
 
 
@@ -310,26 +331,43 @@ def main() -> int:
     )
 
     counts = {"written": 0, "skipped": 0, "empty": 0, "error": 0}
-
     progress_step = max(1, total // 100)
 
+    # Bounded streaming submission: keep ~2× workers in flight rather than
+    # materializing all `total` futures up front. CONUS at z=8..12 is 318k tiles
+    # (~64 MB of Future objects); a global bake would be 10×+ that.
+    in_flight_target = max(args.workers * 2, args.workers + 1)
+
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
-        futures = {pool.submit(bake_tile, job): None for job in jobs}
-        for i, fut in enumerate(as_completed(futures), 1):
+        pending = set()
+        for _ in range(in_flight_target):
             try:
-                result = fut.result()
-                counts[result] += 1
-            except Exception as exc:
-                counts["error"] += 1
-                log.warning("Tile failed: %s", exc)
-            if i % progress_step == 0 or i == total:
-                pct = 100.0 * i / total if total else 100.0
-                log.info(
-                    "[%5.1f%%] %d/%d  written=%d skipped=%d empty=%d error=%d",
-                    pct, i, total,
-                    counts["written"], counts["skipped"],
-                    counts["empty"], counts["error"],
-                )
+                pending.add(pool.submit(bake_tile, next(jobs)))
+            except StopIteration:
+                break
+
+        completed = 0
+        while pending:
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for fut in done:
+                completed += 1
+                try:
+                    counts[fut.result()] += 1
+                except Exception as exc:
+                    counts["error"] += 1
+                    log.warning("Tile failed: %s", exc)
+                try:
+                    pending.add(pool.submit(bake_tile, next(jobs)))
+                except StopIteration:
+                    pass
+                if completed % progress_step == 0 or completed == total:
+                    pct = 100.0 * completed / total if total else 100.0
+                    log.info(
+                        "[%5.1f%%] %d/%d  written=%d skipped=%d empty=%d error=%d",
+                        pct, completed, total,
+                        counts["written"], counts["skipped"],
+                        counts["empty"], counts["error"],
+                    )
 
     log.info(
         "Done. written=%d skipped=%d empty=%d error=%d",

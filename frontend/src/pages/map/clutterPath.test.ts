@@ -25,10 +25,11 @@ function flatProfile(
 }
 
 describe("makeClutterScratch", () => {
-  it("returns a Float32Array of CLUTTER_SCRATCH_LEN zeros", () => {
+  it("returns a ClutterScratch with zeroed distance + touched buffers of CLUTTER_SCRATCH_LEN", () => {
     const s = makeClutterScratch();
-    expect(s.length).toBe(CLUTTER_SCRATCH_LEN);
-    expect(s.every((v) => v === 0)).toBe(true);
+    expect(s.distances.length).toBe(CLUTTER_SCRATCH_LEN);
+    expect(s.touched.length).toBe(CLUTTER_SCRATCH_LEN);
+    expect(s.distances.every((v) => v === 0)).toBe(true);
   });
 });
 
@@ -168,11 +169,11 @@ describe("computePathClutterLoss — aggression scaler", () => {
 });
 
 describe("computePathClutterLoss — scratch buffer hygiene", () => {
-  it("leaves scratch back at zero after each call", () => {
+  it("leaves the distances buffer back at zero after each call", () => {
     const scratch = makeClutterScratch();
     const { profileM, profileClasses } = flatProfile(80, 42);
     computePathClutterLoss(profileM, profileClasses, 80, 100, 2, 2, F_915, 1.0, scratch);
-    expect(scratch.every((v) => v === 0)).toBe(true);
+    expect(scratch.distances.every((v) => v === 0)).toBe(true);
   });
 
   it("two back-to-back calls with different classes don't leak distance", () => {

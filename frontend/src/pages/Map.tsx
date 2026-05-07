@@ -94,6 +94,13 @@ function relativeTime(iso: string | null | undefined): string {
   return `${d}d ago`;
 }
 
+function clampAggressionIdx(idx: number): number {
+  if (!Number.isInteger(idx)) return DEFAULT_AGGRESSION_IDX;
+  if (idx < 0) return 0;
+  if (idx >= AGGRESSION_STOPS.length) return AGGRESSION_STOPS.length - 1;
+  return idx;
+}
+
 /** SVG signal bars (1-4) colored by best SNR. */
 function signalBarsHtml(snr: number | null): string {
   let bars: number;
@@ -336,12 +343,16 @@ export function Map() {
   const coverageTxDbm = COMMON_HARDWARE[coverageHardwareIdx].isCustom
     ? coverageCustomTxDbm
     : COMMON_HARDWARE[coverageHardwareIdx].txDbm;
+  // Clamp on read so corrupted / out-of-range LS values can't leave the slider
+  // with no active stop (which silently fell back to 1.0× via the AGGRESSION_STOPS
+  // index lookup). Same pattern for scan below.
   const [coverageAggressionIdx, setCoverageAggressionIdxRaw] = useState(() =>
-    readJson<number>(LS_KEYS.coverageAggressionIdx, DEFAULT_AGGRESSION_IDX),
+    clampAggressionIdx(readJson<number>(LS_KEYS.coverageAggressionIdx, DEFAULT_AGGRESSION_IDX)),
   );
   const setCoverageAggressionIdx = useCallback((idx: number) => {
-    setCoverageAggressionIdxRaw(idx);
-    writeJson(LS_KEYS.coverageAggressionIdx, idx);
+    const clamped = clampAggressionIdx(idx);
+    setCoverageAggressionIdxRaw(clamped);
+    writeJson(LS_KEYS.coverageAggressionIdx, clamped);
   }, []);
   const [coverageClutterEnabled, setCoverageClutterEnabledRaw] = useState(() =>
     readJson<boolean>(LS_KEYS.coverageClutterEnabled, true),
@@ -383,11 +394,12 @@ export function Map() {
     ? scanCustomTxDbm
     : COMMON_HARDWARE[scanHardwareIdx].txDbm;
   const [scanAggressionIdx, setScanAggressionIdxRaw] = useState(() =>
-    readJson<number>(LS_KEYS.scanAggressionIdx, DEFAULT_AGGRESSION_IDX),
+    clampAggressionIdx(readJson<number>(LS_KEYS.scanAggressionIdx, DEFAULT_AGGRESSION_IDX)),
   );
   const setScanAggressionIdx = useCallback((idx: number) => {
-    setScanAggressionIdxRaw(idx);
-    writeJson(LS_KEYS.scanAggressionIdx, idx);
+    const clamped = clampAggressionIdx(idx);
+    setScanAggressionIdxRaw(clamped);
+    writeJson(LS_KEYS.scanAggressionIdx, clamped);
   }, []);
   const [scanClutterEnabled, setScanClutterEnabledRaw] = useState(() =>
     readJson<boolean>(LS_KEYS.scanClutterEnabled, true),
@@ -1442,15 +1454,20 @@ export function Map() {
             targetHeight: 1024,
             token: mapboxToken,
           }),
-          buildClutterRaster({
-            bounds: scanBounds,
-            targetWidth: 1024,
-            targetHeight: 1024,
-          }),
+          // Skip the clutter fetch when the model is toggled off.
+          scanClutterEnabled
+            ? buildClutterRaster({
+                bounds: scanBounds,
+                targetWidth: 1024,
+                targetHeight: 1024,
+              })
+            : Promise.resolve(null),
         ]);
         if (cancelled) return;
         setScanDemSource(demSourceUsedForScan);
-        setScanClutterStatus({ tilesPresent: scanClutter.tilesPresent, tilesTotal: scanClutter.tilesTotal });
+        setScanClutterStatus(
+          scanClutter ? { tilesPresent: scanClutter.tilesPresent, tilesTotal: scanClutter.tilesTotal } : null,
+        );
 
         // Override GPS altitude with terrain + configured AGL (matches coverage).
         // Falls back to GPS altitude if DEM sampling fails.
@@ -1674,8 +1691,10 @@ export function Map() {
         timings[name] = performance.now() - fromMs;
       };
       try {
-        // 1. Fetch terrain + land-cover in parallel; both at DEM_SIZE so the worker
-        //    samples DEM and clutter at the same lng/lat indexing.
+        // 1. Fetch terrain + (when enabled) land-cover in parallel; both at DEM_SIZE
+        //    so the worker samples DEM and clutter at the same lng/lat indexing.
+        //    Skip the clutter fetch entirely when the model is toggled off — saves
+        //    the network + decode cost.
         const tFetch = performance.now();
         setIsFetchingCoverageTerrain(true);
         const [{ dem, source: demSourceUsed }, clutter] = await Promise.all([
@@ -1686,15 +1705,19 @@ export function Map() {
             token: mapboxToken,
             maxTiles: COVERAGE_DETAIL_MAX_TILES[coverageDetail],
           }),
-          buildClutterRaster({
-            bounds: demBounds,
-            targetWidth: DEM_SIZE,
-            targetHeight: DEM_SIZE,
-            maxTiles: COVERAGE_DETAIL_MAX_TILES[coverageDetail],
-          }),
+          coverageClutterEnabled
+            ? buildClutterRaster({
+                bounds: demBounds,
+                targetWidth: DEM_SIZE,
+                targetHeight: DEM_SIZE,
+                maxTiles: COVERAGE_DETAIL_MAX_TILES[coverageDetail],
+              })
+            : Promise.resolve(null),
         ]);
         setCoverageDemSource(demSourceUsed);
-        setCoverageClutterStatus({ tilesPresent: clutter.tilesPresent, tilesTotal: clutter.tilesTotal });
+        setCoverageClutterStatus(
+          clutter ? { tilesPresent: clutter.tilesPresent, tilesTotal: clutter.tilesTotal } : null,
+        );
         mark("demFetchMs", tFetch);
         if (cancelled || requestId !== coverageRequestIdRef.current) {
           setIsFetchingCoverageTerrain(false);
@@ -1787,7 +1810,7 @@ export function Map() {
         coverageDemRef.current = dem;
         coverageDragDemRef.current = downsampleDEM(dem, 256, 256);
         coverageClutterRef.current = clutter;
-        coverageDragClutterRef.current = downsampleClutterRaster(clutter, 256, 256);
+        coverageDragClutterRef.current = clutter ? downsampleClutterRaster(clutter, 256, 256) : null;
         coverageLastRasterParamsRef.current = rasterParams;
         coverageLastOriginContextRef.current = { bounds: dem.bounds };
 

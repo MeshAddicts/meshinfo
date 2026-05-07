@@ -1,7 +1,7 @@
 /**
  * Unit tests for ITU-R P.452-17 §4.5.4 endpoint clutter and P.833-9 §4.1 MED
- * vegetation loss. Worked examples in docs/clutter-design.md were derived from
- * the same formulas, so these tests double as a numerical regression suite.
+ * vegetation loss. Worked examples in RF-MODEL.md were derived from the same
+ * formulas, so these tests double as a numerical regression suite.
  *
  * @vitest-environment node
  */
