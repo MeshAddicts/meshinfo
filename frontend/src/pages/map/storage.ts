@@ -14,6 +14,9 @@ export const LS_KEYS = {
   /** Clutter model on/off. Off → aggression = 0, ITM-only path loss. */
   coverageClutterEnabled: "meshinfo.map.coverageClutterEnabled",
   scanClutterEnabled: "meshinfo.map.scanClutterEnabled",
+  /** Canopy-height tier on/off. Off → fall back to class-nominal heights. */
+  coverageCanopyEnabled: "meshinfo.map.coverageCanopyEnabled",
+  scanCanopyEnabled: "meshinfo.map.scanCanopyEnabled",
 } as const;
 
 export function readJson<T>(key: string, fallback: T): T {

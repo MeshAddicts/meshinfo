@@ -5,10 +5,14 @@
  * already covers. z_path is a linear lerp of TX/RX MSL antenna heights.
  *
  * Hot loop is alloc-free — caller allocates ClutterScratch once and reuses
- * across all per-pixel calls.
+ * across all per-pixel calls. When `canopyCtx` is supplied, per-sample
+ * measured ETH heights replace the P.452-Table-4 nominals inside the MED
+ * gate; class-nominal is the fallback.
  */
+import { type CanopyRaster, sampleCanopyAt } from "./canopyTiles";
 import {
   classForId,
+  type ClutterClass,
   endpointClutterDb,
   NLCD_CLASSES,
   vegetationPathLossDb,
@@ -35,6 +39,33 @@ export function makeClutterScratch(): ClutterScratch {
 }
 
 /**
+ * Reuse a single instance and mutate it across pixels — keeps the hot loop
+ * alloc-free at 65k+ computes per coverage frame.
+ */
+export interface CanopyPathContext {
+  raster: CanopyRaster;
+  origLng: number;
+  origLat: number;
+  destLng: number;
+  destLat: number;
+}
+
+/**
+ * σ ≥ height = noisy ETH pixel; blend 50/50 with class-nominal so it can't
+ * solo-drive the MED loop. σ=0 (the no-SD bake) skips the blend, which is
+ * the right behaviour — there's no uncertainty signal to act on.
+ */
+function effectiveCanopyHeightM(cls: ClutterClass, ctx: CanopyPathContext, lng: number, lat: number): number {
+  const sample = sampleCanopyAt(ctx.raster, lng, lat);
+  if (sample === null) return cls.nominalHeightM;
+  if (sample.heightM <= 0) return 0;
+  if (sample.stdM > 0 && sample.stdM >= sample.heightM) {
+    return 0.5 * sample.heightM + 0.5 * cls.nominalHeightM;
+  }
+  return sample.heightM;
+}
+
+/**
  * Total clutter loss in dB for one TX→RX profile.
  *
  * `profileClasses[0]` and `profileClasses[nSamples-1]` are TX/RX endpoints.
@@ -49,6 +80,7 @@ export function computePathClutterLoss(
   freqMhz: number,
   aggression: number,
   scratch: ClutterScratch,
+  canopyCtx?: CanopyPathContext | null,
 ): number {
   if (nSamples < 2 || pointSpacingM <= 0) return 0;
 
@@ -75,7 +107,13 @@ export function computePathClutterLoss(
     const t = s / lastIdx;
     const zPath = txMsl + (rxMsl - txMsl) * t;
     const zTerrain = profileM[s];
-    const canopyTop = zTerrain + cls.nominalHeightM;
+    let canopyHeightM = cls.nominalHeightM;
+    if (canopyCtx) {
+      const sLng = canopyCtx.origLng + (canopyCtx.destLng - canopyCtx.origLng) * t;
+      const sLat = canopyCtx.origLat + (canopyCtx.destLat - canopyCtx.origLat) * t;
+      canopyHeightM = effectiveCanopyHeightM(cls, canopyCtx, sLng, sLat);
+    }
+    const canopyTop = zTerrain + canopyHeightM;
 
     if (zPath >= canopyTop) continue;
     if (zPath < zTerrain) continue;

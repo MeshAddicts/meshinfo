@@ -2,8 +2,9 @@
  * Best-neighbors scan: LoS + link budget from origin to each target, classified and ranked.
  * Stays on the main thread with 60 samples/ray.
  */
+import type { CanopyRaster } from "./canopyTiles";
 import { NLCD_DEFAULT_CLASS_ID } from "./clutterClasses";
-import { computePathClutterLoss, makeClutterScratch } from "./clutterPath";
+import { type CanopyPathContext, computePathClutterLoss, makeClutterScratch } from "./clutterPath";
 import { pathLossDb } from "./coverageAnalysis";
 import { computeP2PLossFast, type ItmContext,ModeOfVariability } from "./itm";
 import { type ClutterRaster, sampleClutterClassAt } from "./landcoverTiles";
@@ -66,6 +67,8 @@ export interface ScanInput {
   cableLossDb?: number;
   /** Optional class-ID raster aligned to bbox; absent → default class everywhere. */
   clutterRaster?: ClutterRaster | null;
+  /** Optional canopy-height raster aligned to bbox; absent → class-nominal heights. */
+  canopyRaster?: CanopyRaster | null;
   /** Scalar on the ITU clutter model output. 1.0 = calibrated baseline. */
   clutterAggression?: number;
   /** Skip targets farther than this km. Default Infinity. */
@@ -107,6 +110,7 @@ export function runScan(input: ScanInput): ScanSummary {
     fadeMarginDb = 15,
     cableLossDb = 0.5,
     clutterRaster = null,
+    canopyRaster = null,
     clutterAggression = 1.0,
     maxDistanceKm = Infinity,
   } = input;
@@ -119,6 +123,9 @@ export function runScan(input: ScanInput): ScanSummary {
   let blockedCount = 0;
 
   const clutterScratch = makeClutterScratch();
+  const canopyCtx: CanopyPathContext | null = canopyRaster
+    ? { raster: canopyRaster, origLng: 0, origLat: 0, destLng: 0, destLat: 0 }
+    : null;
 
   for (const t of targets) {
     const d = haversineKm(origin, t.position);
@@ -157,6 +164,12 @@ export function runScan(input: ScanInput): ScanSummary {
     const rxAGLm = los.points.length > 0
       ? Math.max(0.5, los.toHeightM - los.points[los.points.length - 1].ground)
       : 2;
+    if (canopyCtx) {
+      canopyCtx.origLng = origin[0];
+      canopyCtx.origLat = origin[1];
+      canopyCtx.destLng = t.position[0];
+      canopyCtx.destLat = t.position[1];
+    }
     const clutterLossDb = computePathClutterLoss(
       profileM,
       profileClasses,
@@ -167,6 +180,7 @@ export function runScan(input: ScanInput): ScanSummary {
       freqMhz,
       clutterAggression,
       clutterScratch,
+      canopyCtx,
     );
 
     // Path loss: ITM (terrain-aware) when available, else FSPL + knife-edge

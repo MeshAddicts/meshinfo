@@ -2,6 +2,7 @@
  * Coverage slice worker: runs ITM per pixel over a row range of a shared DEM.
  * Each worker keeps its own ITM WASM context warm across requests.
  */
+import type { CanopyRaster } from "./canopyTiles";
 import {
   type RasterParams,
   renderCoverageRaster,
@@ -37,6 +38,12 @@ export interface CoverageSliceRequest {
   clutterBuffer?: ArrayBuffer;
   clutterWidth?: number;
   clutterHeight?: number;
+  /** Optional canopy-height raster aligned to DEM bounds. Absent → class-nominal heights. */
+  canopyHeightBuffer?: ArrayBuffer;
+  canopyStdBuffer?: ArrayBuffer;
+  canopyMaskBuffer?: ArrayBuffer;
+  canopyWidth?: number;
+  canopyHeight?: number;
 }
 
 export interface CoverageSliceResponse {
@@ -116,6 +123,19 @@ self.onmessage = async (evt: MessageEvent<CoverageSliceRequest>) => {
             tilesTotal: 0,
           }
         : null;
+    const canopy: CanopyRaster | null =
+      msg.canopyHeightBuffer && msg.canopyStdBuffer && msg.canopyMaskBuffer && msg.canopyWidth && msg.canopyHeight
+        ? {
+            heightM: new Float32Array(msg.canopyHeightBuffer),
+            stdM: new Float32Array(msg.canopyStdBuffer),
+            mask: new Float32Array(msg.canopyMaskBuffer),
+            width: msg.canopyWidth,
+            height: msg.canopyHeight,
+            bounds: msg.bounds,
+            tilesPresent: 0,
+            tilesTotal: 0,
+          }
+        : null;
     const rendered = renderCoverageRaster(
       dem,
       msg.params,
@@ -128,6 +148,7 @@ self.onmessage = async (evt: MessageEvent<CoverageSliceRequest>) => {
       { rowStart: msg.rowStart, rowEnd: msg.rowEnd },
       { width: msg.outputWidth, height: msg.outputHeight },
       clutter,
+      canopy,
     );
     post({
       requestId: msg.requestId,

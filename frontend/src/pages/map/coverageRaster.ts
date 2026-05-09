@@ -3,7 +3,9 @@
  * Hot loop is alloc-free (shared Float64 profile buffer, pre-allocated WASM ctx).
  * Profile length adapts to path length (15-96 samples, ~1.5/km).
  */
+import type { CanopyRaster } from "./canopyTiles";
 import {
+  type CanopyPathContext,
   computePathClutterLoss,
   makeClutterScratch,
 } from "./clutterPath";
@@ -140,6 +142,8 @@ export function renderCoverageRaster(
   output?: OutputGrid,
   /** Optional class-ID raster aligned to the DEM bounds. Null = treat every sample as default class. */
   clutter?: ClutterRaster | null,
+  /** Optional canopy-height raster aligned to the DEM bounds. Null = use class-nominal heights. */
+  canopy?: CanopyRaster | null,
 ): RasterResult {
   const { bounds } = dem;
   const outputWidth = output?.width ?? dem.width;
@@ -201,6 +205,11 @@ export function renderCoverageRaster(
   const txGain = txAntennaDbi;
   const rxGain = rxAntennaDbi;
 
+  // Mutated per-pixel rather than reallocated — see CanopyPathContext docstring.
+  const canopyCtx: CanopyPathContext | null = canopy
+    ? { raster: canopy, origLng: 0, origLat: 0, destLng: 0, destLat: 0 }
+    : null;
+
   for (let j = rowStart; j < rowEnd; j++) {
     const lat = bounds.north - j * latStep;
     const outRowOffset = (j - rowStart) * outputWidth;
@@ -260,6 +269,12 @@ export function renderCoverageRaster(
         continue;
       }
 
+      if (canopyCtx) {
+        canopyCtx.origLng = origLng;
+        canopyCtx.origLat = origLat;
+        canopyCtx.destLng = lng;
+        canopyCtx.destLat = lat;
+      }
       const clutterLossDb = computePathClutterLoss(
         profileBuf,
         profileClassBuf,
@@ -270,6 +285,7 @@ export function renderCoverageRaster(
         freqMhz,
         clutterAggression,
         clutterScratch,
+        canopyCtx,
       );
 
       const totalLossDb = lossDb + clutterLossDb + cableLossDb;

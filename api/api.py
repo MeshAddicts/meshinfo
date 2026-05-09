@@ -449,6 +449,26 @@ class API:
                     tile_dir,
                 )
 
+        # Canopy-height tiles for the P.833-9 vegetation loss loop. Pre-baked by
+        # scripts/canopy_tiles.py; missing tiles 404 and the frontend falls back
+        # to class-nominal heights. See RF-MODEL.md.
+        canopy_cfg = self.config.get("canopy", {}) or {}
+        if canopy_cfg.get("enabled", False):
+            tile_dir = Path(canopy_cfg.get("tile_dir", "output/canopy"))
+            if tile_dir.is_dir():
+                app.mount(
+                    "/tiles/canopy",
+                    TileFiles(directory=str(tile_dir)),
+                    name="canopy_tiles",
+                )
+                logger.info("Mounted canopy-height tiles at /tiles/canopy from %s", tile_dir.resolve())
+            else:
+                logger.info(
+                    "Canopy-height tiles enabled but %s does not exist — frontend will use class-nominal heights. "
+                    "Run scripts/canopy_tiles.py to populate.",
+                    tile_dir,
+                )
+
         allow_origins = os.getenv("ALLOW_ORIGINS", "").split(",")
         logger.info("Allowed origins: %s (%d)", allow_origins, len(allow_origins))
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { AggressionSlider, ClassLegend, ClutterStatusChip } from "./ClutterUI";
+import { AggressionSlider, CanopyStatusChip, ClassLegend, ClutterStatusChip } from "./ClutterUI";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
 import type { DemSource } from "./terrainRgb";
 import { useBottomSheetGesture } from "./useBottomSheet";
@@ -84,6 +84,9 @@ export function MapCoveragePanel({
   clutterEnabled,
   onClutterEnabledChange,
   clutterStatus,
+  canopyEnabled,
+  onCanopyEnabledChange,
+  canopyStatus,
   presetIdx,
   onPresetIdxChange,
   customSensitivityDbm,
@@ -140,6 +143,11 @@ export function MapCoveragePanel({
   onClutterEnabledChange: (enabled: boolean) => void;
   /** Tile-availability telemetry from the most recent compute; null if none yet. */
   clutterStatus: { tilesPresent: number; tilesTotal: number } | null;
+  /** Canopy-height tier on/off. Off → class-nominal heights (still under clutter aggression). */
+  canopyEnabled: boolean;
+  onCanopyEnabledChange: (enabled: boolean) => void;
+  /** Canopy tile-availability telemetry; null if no compute yet. */
+  canopyStatus: { tilesPresent: number; tilesTotal: number } | null;
   presetIdx: number;
   onPresetIdxChange: (idx: number) => void;
   customSensitivityDbm: number;
@@ -829,6 +837,27 @@ export function MapCoveragePanel({
                 <AggressionSlider aggressionIdx={aggressionIdx} onChange={onAggressionIdxChange} enabled={clutterEnabled} />
                 <ClutterStatusChip status={clutterStatus} enabled={clutterEnabled} />
                 <ClassLegend />
+                <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-white/5">
+                  <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 flex items-center gap-1">
+                    <span>Canopy heights</span>
+                    <InfoTip align="left">
+                      Per-pixel measured canopy heights from ETH Global Canopy
+                      Height 2020 (Lang et al. 2023, 10 m). Replaces class-nominal
+                      heights in ITU-R P.833-9 vegetation loss for forest classes.
+                      Toggle off to fall back to class-nominal heights everywhere.
+                    </InfoTip>
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[10px] text-gray-300 cursor-pointer select-none shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={canopyEnabled}
+                      onChange={(e) => onCanopyEnabledChange(e.target.checked)}
+                      className="w-3 h-3 accent-cyan-500 cursor-pointer"
+                    />
+                    <span>Enabled</span>
+                  </label>
+                </div>
+                <CanopyStatusChip status={canopyStatus} enabled={canopyEnabled} />
               </div>
 
               {/* Reliability (ITM TLS preset) */}

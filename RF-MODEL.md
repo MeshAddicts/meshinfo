@@ -103,6 +103,23 @@ The full per-class P.452 (hₐ, dₖ) and P.833 (γ, A) parameters are visible i
 
 Outside the United States (or anywhere the NLCD bake doesn't cover), the model falls back to **Mixed Forest** as a conservative default for every pixel. Future work tracks adding ESA WorldCover as a global fallback.
 
+## Per-pixel canopy heights — ETH 10 m (optional)
+
+NLCD tells the model *what kind* of canopy is at a pixel; class-nominal heights from P.452 Table 4 (15 m deciduous, 20 m evergreen, 15 m mixed, 10 m woody-wetland, 2 m emergent-wetland) tell it *how tall* that canopy is. Real canopy varies — a 50 m redwood next to a 5 m madrone in the same NLCD "Evergreen Forest" pixel both got coded as 20 m without measurement.
+
+When canopy tiles are baked from **ETH Global Canopy Height 2020** (Lang et al. 2023, 10 m global, CC BY 4.0), the P.833 MED loop uses the measured height per sample instead of the class-nominal:
+
+- The path-integral gate `zPath < terrain + canopyHeight` evaluates against measured canopy at every profile sample.
+- Where the measured value is 0 (clearings, fire scars, recent logging), MED contributes nothing for that sample — the path is above any canopy.
+- Where the bake doesn't cover a pixel (out-of-bbox / ocean adjacency), the loop falls back to the class-nominal value silently.
+- Endpoint clutter (P.452) still uses class-nominal heights — Tier 3 only refines the path-integrated MED. Endpoint heights are a Tier-2 (per-pixel building heights) refinement.
+
+If the bake includes the optional standard-deviation file (`scripts/canopy_tiles.py --include-stddev`), pixels with σ ≥ height are blended 50/50 with the class-nominal so a single noisy ETH pixel can't dominate the integral.
+
+The "Canopy heights" toggle in the Coverage and Scan settings panels lets operators turn the refinement off (e.g. to compare measured-vs-nominal predictions, or to validate the older behavior). Default is on.
+
+**Operator runbook for the canopy bake:** [scripts/README-canopy.md](scripts/README-canopy.md).
+
 ## Setup — running the bake
 
 NLCD data is not bundled with MeshInfo (it's ~2 GB). Operators run a one-shot bake script after deploying:
@@ -118,6 +135,14 @@ CONUS at full resolution takes 15–90 min depending on CPU. Tiles are bind-moun
 **Full operator runbook:** [scripts/README-landcover.md](scripts/README-landcover.md)
 
 Once tiles exist, the API mounts them at `/tiles/landcover/{z}/{x}/{y}.png` and the frontend fetches them on every coverage compute. The "Land cover: USGS NLCD" status chip in the Coverage panel shows whether tiles are healthy or the model is using the fallback class.
+
+For the optional canopy-height refinement, run the canopy bake separately:
+
+```bash
+docker compose --profile bake run --rm canopy-bake     # CONUS default; --scope global also supported
+```
+
+CONUS canopy bake is ~30 GB of source COGs + ~1–2 GB of output tiles. Time: 1–4 hours depending on the ETH file server and CPU. Without this bake, the model uses class-nominal canopy heights — the coverage tool still works.
 
 ## The aggression scaler
 
@@ -142,7 +167,7 @@ The default (1.0×) reflects ITU-R P.452 / P.833 published values. Don't sit at 
 These are scope limits that affect prediction accuracy in specific scenarios:
 
 - **Indoor receivers (ITU-R P.2109)** — RX inside a building gets +10–20 dB additional loss not modeled. Outdoor-to-outdoor only.
-- **Per-tree / per-building height** — uses class-nominal canopy heights (15 m deciduous, 20 m evergreen, etc.), not measured heights from LIDAR. A single tall redwood next to your antenna isn't picked up.
+- **Per-building height** — uses class-nominal heights (4 / 9 / 15 / 25 m for the four NLCD developed-intensity classes); a single tall office tower next to your antenna isn't picked up. Per-pixel canopy heights from ETH 10 m **are** modeled when the canopy bake is in place — that lifts the per-tree limitation for forest classes; per-building heights are tracked as Tier 2 follow-up.
 - **Seasonal foliage** — deciduous classes assume leaf-on (summer) at 0.5 dB/m. Out-of-leaf is ~0.15 dB/m; not modeled. Future work.
 - **Frequencies other than 915 MHz** — the P.833 specific-attenuation values are calibrated at 915 MHz. Adding 868 MHz (EU) or 433 MHz would need a per-band lookup.
 - **Polarization-dependent vegetation loss** — uses unpolarized averages (the slight per-polarization difference is in the noise floor here).
@@ -156,6 +181,7 @@ These are scope limits that affect prediction accuracy in specific scenarios:
 - ITU-R Rec. **P.2108** — newer clutter-loss recommendation (future migration target)
 - ITU-R Rec. **P.2109** — building entry loss (indoor RX, deferred)
 - USGS NLCD: <https://www.mrlc.gov/data>
+- ETH Global Canopy Height 2020 (Lang et al. 2023): <https://langnico.github.io/globalcanopyheight/>
 - ITM v1.4: <https://github.com/NTIA/itm>
 
 ## How to validate

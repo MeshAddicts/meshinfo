@@ -13,6 +13,7 @@ import { buildMapStyle, ensureTerrain, type OsmBasemap,removeTerrain } from "../
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { type ITraceroutesResponse,NodeRole, roleTitles } from "../types";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
+import { buildCanopyRaster, type CanopyRaster, downsampleCanopyRaster } from "./map/canopyTiles";
 import { ClusterDonutLayer } from "./map/clusterDonutLayer";
 import { AGGRESSION_STOPS, COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, DEFAULT_AGGRESSION_IDX,effectiveSensitivityDbm, MESHTASTIC_PRESETS, reliabilityPreset, REPRESENTATIVE_CLUTTER_DB } from "./map/coverageAnalysis";
 import { type ContourFeatureCollection,extractCoverageContours } from "./map/coverageContours";
@@ -330,6 +331,9 @@ export function Map() {
   // Drives the land-cover status chip in each panel.
   const [coverageClutterStatus, setCoverageClutterStatus] = useState<{ tilesPresent: number; tilesTotal: number } | null>(null);
   const [scanClutterStatus, setScanClutterStatus] = useState<{ tilesPresent: number; tilesTotal: number } | null>(null);
+  // Drives the canopy-height status chip; null until first compute.
+  const [coverageCanopyStatus, setCoverageCanopyStatus] = useState<{ tilesPresent: number; tilesTotal: number } | null>(null);
+  const [scanCanopyStatus, setScanCanopyStatus] = useState<{ tilesPresent: number; tilesTotal: number } | null>(null);
   // Index into COMMON_ANTENNAS (value-based <select> can't distinguish same-dBi models)
   const [coverageAntennaIdx, setCoverageAntennaIdx] = useState(3);
   const coverageAntennaDbi = COMMON_ANTENNAS[coverageAntennaIdx]?.dbi ?? 3;
@@ -360,6 +364,13 @@ export function Map() {
   const setCoverageClutterEnabled = useCallback((v: boolean) => {
     setCoverageClutterEnabledRaw(v);
     writeJson(LS_KEYS.coverageClutterEnabled, v);
+  }, []);
+  const [coverageCanopyEnabled, setCoverageCanopyEnabledRaw] = useState(() =>
+    readJson<boolean>(LS_KEYS.coverageCanopyEnabled, true),
+  );
+  const setCoverageCanopyEnabled = useCallback((v: boolean) => {
+    setCoverageCanopyEnabledRaw(v);
+    writeJson(LS_KEYS.coverageCanopyEnabled, v);
   }, []);
   const [coveragePresetIdx, setCoveragePresetIdx] = useState(0); // MediumFast
   const [coverageCustomSensDbm, setCoverageCustomSensDbm] = useState(-133);
@@ -407,6 +418,13 @@ export function Map() {
   const setScanClutterEnabled = useCallback((v: boolean) => {
     setScanClutterEnabledRaw(v);
     writeJson(LS_KEYS.scanClutterEnabled, v);
+  }, []);
+  const [scanCanopyEnabled, setScanCanopyEnabledRaw] = useState(() =>
+    readJson<boolean>(LS_KEYS.scanCanopyEnabled, true),
+  );
+  const setScanCanopyEnabled = useCallback((v: boolean) => {
+    setScanCanopyEnabledRaw(v);
+    writeJson(LS_KEYS.scanCanopyEnabled, v);
   }, []);
   const [scanPresetIdx, setScanPresetIdx] = useState(0);
   const [scanCustomSensDbm, setScanCustomSensDbm] = useState(-133);
@@ -486,6 +504,9 @@ export function Map() {
   /** Authoritative + 256² downsampled class-ID rasters; drag preview reuses these. */
   const coverageClutterRef = useRef<ClutterRaster | null>(null);
   const coverageDragClutterRef = useRef<ClutterRaster | null>(null);
+  /** Authoritative + 256² downsampled canopy-height rasters; drag preview reuses these. */
+  const coverageCanopyRef = useRef<CanopyRaster | null>(null);
+  const coverageDragCanopyRef = useRef<CanopyRaster | null>(null);
   /** Latest raster params snapshot (drag preview reuses untouched). */
   const coverageLastRasterParamsRef = useRef<RasterParams | null>(null);
   /** Last origin context (bounds); drag re-samples DEM per move. */
@@ -675,6 +696,8 @@ export function Map() {
     dem: DEM;
     /** Optional class-ID raster aligned to DEM bounds. Null = workers fall back to default class. */
     clutter?: ClutterRaster | null;
+    /** Optional canopy-height raster aligned to DEM bounds. Null = workers fall back to class-nominal. */
+    canopy?: CanopyRaster | null;
     origin: [number, number];
     originHeightM: number;
     /** TX antenna AGL (m); ITM wants AGL not MSL. */
@@ -699,7 +722,7 @@ export function Map() {
     outputHeight: number;
     itmUnavailable?: boolean;
   } | null> => {
-    const { dem, clutter, origin, originHeightM, originAntennaHeightAboveGroundM, params, requestId, onSliceProgress } = opts;
+    const { dem, clutter, canopy, origin, originHeightM, originAntennaHeightAboveGroundM, params, requestId, onSliceProgress } = opts;
     const outputWidth = opts.outputWidth ?? dem.width;
     const outputHeight = opts.outputHeight ?? dem.height;
     const mb = mbMapRef.current;
@@ -733,6 +756,9 @@ export function Map() {
       const demCopy = new Float32Array(dem.data);
       // Transferable buffers can't be shared across workers; copy per slice.
       const clutterCopy = clutter ? new Uint8Array(clutter.data) : null;
+      const canopyHeightCopy = canopy ? new Float32Array(canopy.heightM) : null;
+      const canopyStdCopy = canopy ? new Float32Array(canopy.stdM) : null;
+      const canopyMaskCopy = canopy ? new Float32Array(canopy.mask) : null;
       const req: CoverageSliceRequest = {
         requestId,
         demBuffer: demCopy.buffer,
@@ -750,9 +776,17 @@ export function Map() {
         clutterBuffer: clutterCopy?.buffer,
         clutterWidth: clutter?.width,
         clutterHeight: clutter?.height,
+        canopyHeightBuffer: canopyHeightCopy?.buffer,
+        canopyStdBuffer: canopyStdCopy?.buffer,
+        canopyMaskBuffer: canopyMaskCopy?.buffer,
+        canopyWidth: canopy?.width,
+        canopyHeight: canopy?.height,
       };
       const transfer: Transferable[] = [demCopy.buffer];
       if (clutterCopy) transfer.push(clutterCopy.buffer);
+      if (canopyHeightCopy) transfer.push(canopyHeightCopy.buffer);
+      if (canopyStdCopy) transfer.push(canopyStdCopy.buffer);
+      if (canopyMaskCopy) transfer.push(canopyMaskCopy.buffer);
       tasks.push(
         pool.dispatch(req, transfer).then((resp) => {
           sliceResponses.push(resp);
@@ -1447,16 +1481,23 @@ export function Map() {
           return;
         }
         const scanBounds = demBoundsAround(origin!, SCAN_RADIUS_KM, 1.05);
-        const [{ dem, source: demSourceUsedForScan }, scanClutter] = await Promise.all([
+        const [{ dem, source: demSourceUsedForScan }, scanClutter, scanCanopy] = await Promise.all([
           buildDem({
             bounds: scanBounds,
             targetWidth: 1024,
             targetHeight: 1024,
             token: mapboxToken,
           }),
-          // Skip the clutter fetch when the model is toggled off.
+          // Skip the clutter / canopy fetches when their respective models are toggled off.
           scanClutterEnabled
             ? buildClutterRaster({
+                bounds: scanBounds,
+                targetWidth: 1024,
+                targetHeight: 1024,
+              })
+            : Promise.resolve(null),
+          scanCanopyEnabled
+            ? buildCanopyRaster({
                 bounds: scanBounds,
                 targetWidth: 1024,
                 targetHeight: 1024,
@@ -1467,6 +1508,9 @@ export function Map() {
         setScanDemSource(demSourceUsedForScan);
         setScanClutterStatus(
           scanClutter ? { tilesPresent: scanClutter.tilesPresent, tilesTotal: scanClutter.tilesTotal } : null,
+        );
+        setScanCanopyStatus(
+          scanCanopy ? { tilesPresent: scanCanopy.tilesPresent, tilesTotal: scanCanopy.tilesTotal } : null,
         );
 
         // Override GPS altitude with terrain + configured AGL (matches coverage).
@@ -1499,6 +1543,7 @@ export function Map() {
           rxAntennaDbi: scanRxAntennaDbi,
           rxSensitivityDbm: scanEffectiveSensitivityDbm,
           clutterRaster: scanClutter,
+          canopyRaster: scanCanopyEnabled ? scanCanopy : null,
           // aggression = 0 when the user has toggled the model off → ITM-only path loss.
           clutterAggression: scanClutterEnabled
             ? (AGGRESSION_STOPS[scanAggressionIdx]?.value ?? 1.0)
@@ -1535,7 +1580,7 @@ export function Map() {
     return () => { cancelled = true; };
   }, [activeTool, toolStep, toolFromId, toolVirtualPos, provider, terrain3D, nodes,
       scanTxDbm, scanAntennaDbi, scanRxAntennaDbi, scanEffectiveSensitivityDbm,
-      scanAggressionIdx, scanClutterEnabled, scanAntennaHeightM]);
+      scanAggressionIdx, scanClutterEnabled, scanCanopyEnabled, scanAntennaHeightM]);
 
   // Per-class map visibility filter (compute still runs for hidden classes).
   useEffect(() => {
@@ -1691,13 +1736,13 @@ export function Map() {
         timings[name] = performance.now() - fromMs;
       };
       try {
-        // 1. Fetch terrain + (when enabled) land-cover in parallel; both at DEM_SIZE
-        //    so the worker samples DEM and clutter at the same lng/lat indexing.
-        //    Skip the clutter fetch entirely when the model is toggled off — saves
-        //    the network + decode cost.
+        // 1. Fetch terrain + (when enabled) land-cover + canopy in parallel; all at
+        //    DEM_SIZE so the worker samples them at the same lng/lat indexing.
+        //    Skip the clutter / canopy fetches when their respective models are
+        //    toggled off — saves the network + decode cost.
         const tFetch = performance.now();
         setIsFetchingCoverageTerrain(true);
-        const [{ dem, source: demSourceUsed }, clutter] = await Promise.all([
+        const [{ dem, source: demSourceUsed }, clutter, canopy] = await Promise.all([
           buildDem({
             bounds: demBounds,
             targetWidth: DEM_SIZE,
@@ -1713,10 +1758,21 @@ export function Map() {
                 maxTiles: COVERAGE_DETAIL_MAX_TILES[coverageDetail],
               })
             : Promise.resolve(null),
+          coverageCanopyEnabled
+            ? buildCanopyRaster({
+                bounds: demBounds,
+                targetWidth: DEM_SIZE,
+                targetHeight: DEM_SIZE,
+                maxTiles: COVERAGE_DETAIL_MAX_TILES[coverageDetail],
+              })
+            : Promise.resolve(null),
         ]);
         setCoverageDemSource(demSourceUsed);
         setCoverageClutterStatus(
           clutter ? { tilesPresent: clutter.tilesPresent, tilesTotal: clutter.tilesTotal } : null,
+        );
+        setCoverageCanopyStatus(
+          canopy ? { tilesPresent: canopy.tilesPresent, tilesTotal: canopy.tilesTotal } : null,
         );
         mark("demFetchMs", tFetch);
         if (cancelled || requestId !== coverageRequestIdRef.current) {
@@ -1778,6 +1834,8 @@ export function Map() {
         const rendered = await renderCoverageToImageSource({
           dem,
           clutter,
+          // Toggle off → workers fall back to class-nominal canopy heights.
+          canopy: coverageCanopyEnabled ? canopy : null,
           origin: origin!,
           originHeightM,
           originAntennaHeightAboveGroundM: txAboveGroundM,
@@ -1811,6 +1869,8 @@ export function Map() {
         coverageDragDemRef.current = downsampleDEM(dem, 256, 256);
         coverageClutterRef.current = clutter;
         coverageDragClutterRef.current = clutter ? downsampleClutterRaster(clutter, 256, 256) : null;
+        coverageCanopyRef.current = canopy;
+        coverageDragCanopyRef.current = canopy ? downsampleCanopyRaster(canopy, 256, 256) : null;
         coverageLastRasterParamsRef.current = rasterParams;
         coverageLastOriginContextRef.current = { bounds: dem.bounds };
 
@@ -1906,7 +1966,7 @@ export function Map() {
     return () => {
       cancelled = true;
     };
-  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageRxAntennaDbi, coverageRxHeightM, coverageTxDbm, coverageAggressionIdx, coverageClutterEnabled, coverageSensitivityDbm, coverageDetail, coverageAntennaHeightM, coverageReliability, provider, terrain3D, nodes, coverageRetryNonce]);
+  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageRxAntennaDbi, coverageRxHeightM, coverageTxDbm, coverageAggressionIdx, coverageClutterEnabled, coverageCanopyEnabled, coverageSensitivityDbm, coverageDetail, coverageAntennaHeightM, coverageReliability, provider, terrain3D, nodes, coverageRetryNonce]);
 
   // Hide coverage raster when leaving tool; sources/layers stay for fast re-entry
   useEffect(() => {
@@ -2018,6 +2078,7 @@ export function Map() {
         }
         const dem = coverageDragDemRef.current;
         const clutter = coverageDragClutterRef.current;
+        const canopy = coverageDragCanopyRef.current;
         const params = coverageLastRasterParamsRef.current;
         if (!dem || !params) return;
         dragPreviewBusyRef.current = true;
@@ -2039,6 +2100,7 @@ export function Map() {
           await renderCoverageToImageSource({
             dem,
             clutter,
+            canopy,
             origin: lngLat,
             originHeightM: originH,
             originAntennaHeightAboveGroundM: txAboveGroundM,
@@ -4039,6 +4101,9 @@ export function Map() {
           clutterEnabled={coverageClutterEnabled}
           onClutterEnabledChange={setCoverageClutterEnabled}
           clutterStatus={coverageClutterStatus}
+          canopyEnabled={coverageCanopyEnabled}
+          onCanopyEnabledChange={setCoverageCanopyEnabled}
+          canopyStatus={coverageCanopyStatus}
           presetIdx={coveragePresetIdx}
           onPresetIdxChange={setCoveragePresetIdx}
           customSensitivityDbm={coverageCustomSensDbm}
@@ -4148,6 +4213,9 @@ export function Map() {
           clutterEnabled={scanClutterEnabled}
           onClutterEnabledChange={setScanClutterEnabled}
           clutterStatus={scanClutterStatus}
+          canopyEnabled={scanCanopyEnabled}
+          onCanopyEnabledChange={setScanCanopyEnabled}
+          canopyStatus={scanCanopyStatus}
           presetIdx={scanPresetIdx}
           onPresetIdxChange={setScanPresetIdx}
           customSensitivityDbm={scanCustomSensDbm}

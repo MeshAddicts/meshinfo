@@ -1,18 +1,48 @@
 /** @vitest-environment node */
 import { describe, expect, it } from "vitest";
 
+import type { CanopyRaster } from "./canopyTiles";
 import {
   endpointClutterDb,
   NLCD_CLASSES,
   vegetationPathLossDb,
 } from "./clutterClasses";
 import {
+  type CanopyPathContext,
   CLUTTER_SCRATCH_LEN,
   computePathClutterLoss,
   makeClutterScratch,
 } from "./clutterPath";
+import type { DEMBounds } from "./terrainDEM";
 
 const F_915 = 915;
+
+/** Synthetic CanopyRaster with `heightM` everywhere across `bounds`. */
+function uniformCanopy(bounds: DEMBounds, heightM: number, stdM = 0): CanopyRaster {
+  const w = 4, h = 4;
+  return {
+    heightM: Float32Array.from(new Array(w * h).fill(heightM)),
+    stdM: Float32Array.from(new Array(w * h).fill(stdM)),
+    mask: Float32Array.from(new Array(w * h).fill(1)),
+    width: w,
+    height: h,
+    bounds,
+    tilesPresent: 1,
+    tilesTotal: 1,
+  };
+}
+
+/** ctx wrapping a uniform raster for an east-west path inside `bounds`. */
+function uniformCtx(heightM: number, stdM = 0): CanopyPathContext {
+  const bounds: DEMBounds = { west: -120, east: -119, south: 36, north: 37 };
+  return {
+    raster: uniformCanopy(bounds, heightM, stdM),
+    origLng: bounds.west + 0.1,
+    origLat: 36.5,
+    destLng: bounds.east - 0.1,
+    destLat: 36.5,
+  };
+}
 
 function flatProfile(
   n: number,
@@ -225,6 +255,75 @@ describe("computePathClutterLoss — raw nodata id=0 canonicalizes to default cl
       profileM, allMixed, N, 100, 2, 2, F_915, 1.0, scratch,
     );
     expect(lossInterleaved).toBeCloseTo(lossUniform, 5);
+  });
+});
+
+describe("computePathClutterLoss — measured canopy heights override class-nominal", () => {
+  it("matches the no-canopy result when the measured height equals class-nominal", () => {
+    const scratch = makeClutterScratch();
+    const { profileM, profileClasses } = flatProfile(100, 42); // evergreen, nominal 20 m
+    const lossNominal = computePathClutterLoss(
+      profileM, profileClasses, 100, 5000 / 99, 2, 2, F_915, 1.0, scratch,
+    );
+    const lossMeasured = computePathClutterLoss(
+      profileM, profileClasses, 100, 5000 / 99, 2, 2, F_915, 1.0, scratch,
+      uniformCtx(NLCD_CLASSES[42].nominalHeightM),
+    );
+    expect(lossMeasured).toBeCloseTo(lossNominal, 5);
+  });
+
+  it("a measured zero-canopy stretch suppresses MED entirely", () => {
+    // 5 km evergreen path, 2 m antennas. Without measured canopy: ~saturation
+    // ~(2x19.1 + 27) ≈ 65 dB. With measured 0 m everywhere: only the endpoint
+    // formula contributes (still ~38 dB, since the formula uses class-nominal
+    // h_a internally — Tier 3 only refines path-integrated MED).
+    const scratch = makeClutterScratch();
+    const { profileM, profileClasses } = flatProfile(100, 42);
+    const lossWithCanopy = computePathClutterLoss(
+      profileM, profileClasses, 100, 5000 / 99, 2, 2, F_915, 1.0, scratch,
+      uniformCtx(0),
+    );
+    const lossWithoutCanopy = computePathClutterLoss(
+      profileM, profileClasses, 100, 5000 / 99, 2, 2, F_915, 1.0, scratch,
+    );
+    expect(lossWithCanopy).toBeLessThan(lossWithoutCanopy - 20);
+  });
+
+  it("std-dev ≥ height blends 50/50 with class-nominal", () => {
+    const scratch = makeClutterScratch();
+    const { profileM, profileClasses } = flatProfile(100, 42); // evergreen, nominal 20 m
+    // Antennas at 5 m AGL. At 5 m measured canopy with σ=8 (high uncertainty),
+    // the loop should treat effective canopy as (5+20)/2 = 12.5 m, so the 5 m
+    // antenna sits clearly under the 12.5 m canopy and MED accumulates.
+    const lossLowConf = computePathClutterLoss(
+      profileM, profileClasses, 100, 5000 / 99, 5, 5, F_915, 1.0, scratch,
+      uniformCtx(5, 8),
+    );
+    // Compare against fully-trusted measured 5 m: antennas at exactly canopy
+    // top → MED accumulates much less (zPath at 5 m = canopyTop, gate skips).
+    const lossTrusted = computePathClutterLoss(
+      profileM, profileClasses, 100, 5000 / 99, 5, 5, F_915, 1.0, scratch,
+      uniformCtx(5, 0),
+    );
+    expect(lossLowConf).toBeGreaterThan(lossTrusted);
+  });
+
+  it("falls back to class-nominal when canopy raster has no coverage", () => {
+    // Out-of-bbox lng/lat → sampleCanopyAt returns null → class-nominal used.
+    const scratch = makeClutterScratch();
+    const { profileM, profileClasses } = flatProfile(100, 42);
+    const ctx: CanopyPathContext = {
+      raster: uniformCanopy({ west: 0, east: 1, south: 0, north: 1 }, 5),
+      // Path entirely outside the raster's bbox:
+      origLng: -120, origLat: 36.5, destLng: -119, destLat: 36.5,
+    };
+    const lossOutOfBox = computePathClutterLoss(
+      profileM, profileClasses, 100, 5000 / 99, 2, 2, F_915, 1.0, scratch, ctx,
+    );
+    const lossNoRaster = computePathClutterLoss(
+      profileM, profileClasses, 100, 5000 / 99, 2, 2, F_915, 1.0, scratch,
+    );
+    expect(lossOutOfBox).toBeCloseTo(lossNoRaster, 5);
   });
 });
 

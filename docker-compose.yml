@@ -85,5 +85,14 @@ services:
     volumes:
       - ./output:/app/output
 
+  # `docker compose --profile bake run --rm canopy-bake` — see scripts/README-canopy.md.
+  canopy-bake:
+    profiles: ["bake"]
+    build:
+      context: .
+      dockerfile: Dockerfile.canopy
+    volumes:
+      - ./output:/app/output
+
 volumes:
   meshinfo_pgdata:
