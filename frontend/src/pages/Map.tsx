@@ -9,7 +9,7 @@ import { useSearchParams } from "react-router";
 
 import { env } from "../env";
 import { reverseGeocode } from "../maps/geocoder";
-import { buildMapStyle, ensureTerrain, type OsmBasemap,removeTerrain } from "../maps/mapStyle";
+import { buildMapStyle, ensureBuildings3D, ensureTerrain, type OsmBasemap, removeBuildings3D, removeTerrain } from "../maps/mapStyle";
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { type ITraceroutesResponse,NodeRole, roleTitles } from "../types";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
@@ -307,6 +307,8 @@ export function Map() {
   // 3D terrain
   const [terrain3D, setTerrain3D] = useState<boolean>(() => readJson<boolean>(LS_KEYS.terrain3D, true));
   const terrainExaggeration = 1.5;
+  // Cosmetic 3D buildings (OpenFreeMap). Off by default to keep slow devices light.
+  const [buildings3D, setBuildings3D] = useState<boolean>(() => readJson<boolean>(LS_KEYS.buildings3D, false));
   const [losResult, setLosResult] = useState<LoSResult | null>(null);
   /** DEM tile source used for the last LoS compute. */
   const [losDemSource, setLosDemSource] = useState<DemSource | null>(null);
@@ -932,6 +934,7 @@ export function Map() {
   useEffect(() => writeJson(LS_KEYS.myNodeId, myNodeId), [myNodeId]);
   useEffect(() => writeJson(LS_KEYS.settingsPanelOpen, settingsPanelOpen), [settingsPanelOpen]);
   useEffect(() => writeJson(LS_KEYS.terrain3D, terrain3D), [terrain3D]);
+  useEffect(() => writeJson(LS_KEYS.buildings3D, buildings3D), [buildings3D]);
 
   // Obsolete key from the prior exaggeration slider; removeItem is idempotent.
   useEffect(() => {
@@ -1042,6 +1045,7 @@ export function Map() {
 
   const isPickingNode = activeTool != null && toolStep !== "result";
   const terrain3DRef = useRef(terrain3D);
+  const buildings3DRef = useRef(buildings3D);
   const setDetailsDataRef = useRef(setDetailsData);
 
   useEffect(() => {
@@ -1079,6 +1083,9 @@ export function Map() {
   useEffect(() => {
     terrain3DRef.current = terrain3D;
   }, [terrain3D]);
+  useEffect(() => {
+    buildings3DRef.current = buildings3D;
+  }, [buildings3D]);
 
   useEffect(() => {
     const mb = mbMapRef.current;
@@ -3162,6 +3169,13 @@ export function Map() {
           console.warn("[Map] Terrain re-apply failed after style load:", err);
         }
       }
+      if (buildings3DRef.current) {
+        try {
+          ensureBuildings3D(map);
+        } catch (err) {
+          console.warn("[Map] 3D buildings re-apply failed after style load:", err);
+        }
+      }
 
       // Ensure sources have current data (important after style changes)
       refreshMapboxNodeData();
@@ -3845,6 +3859,17 @@ export function Map() {
     }
   }, [terrain3D, provider, mapboxToken, mapboxStyle, osmBasemap]);
 
+  useEffect(() => {
+    const map = mbMapRef.current;
+    if (!map || !styleEverLoadedRef.current) return;
+    try {
+      if (buildings3D) ensureBuildings3D(map);
+      else removeBuildings3D(map);
+    } catch (err) {
+      console.warn("[Map] 3D buildings apply failed:", err);
+    }
+  }, [buildings3D, provider, mapboxToken, mapboxStyle, osmBasemap]);
+
   // Live updates (nodes appear/disappear) via setData()
   useEffect(() => {
     const map = mbMapRef.current;
@@ -3948,6 +3973,8 @@ export function Map() {
         usingMapbox={usingMapbox}
         terrain3D={terrain3D}
         setTerrain3D={setTerrain3D}
+        buildings3D={buildings3D}
+        setBuildings3D={setBuildings3D}
         onExport={handleExport}
         hidden={!!detailsData}
         recentDays={recentDays}

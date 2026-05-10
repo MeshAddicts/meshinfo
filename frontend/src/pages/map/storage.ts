@@ -8,6 +8,8 @@ export const LS_KEYS = {
   linkMode: "meshinfo.map.linkMode",
   myNodeId: "meshinfo.map.myNodeId",
   terrain3D: "meshinfo.map.terrain3D",
+  /** Cosmetic 3D-buildings extrusion (OpenFreeMap vector tiles). RF-independent. */
+  buildings3D: "meshinfo.map.buildings3D",
   /** AGGRESSION_STOPS index (0/1/2). Default 1 = calibrated baseline. */
   coverageAggressionIdx: "meshinfo.map.coverageAggressionIdx",
   scanAggressionIdx: "meshinfo.map.scanAggressionIdx",
