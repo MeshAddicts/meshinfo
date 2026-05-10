@@ -342,10 +342,21 @@ export function Map() {
   const [scanBuildingsStatus, setScanBuildingsStatus] = useState<{ tilesPresent: number; tilesTotal: number } | null>(null);
   // Coverage-merge set is session-only by design — contextual to one analysis.
   const [coverageMergeOrigins, setCoverageMergeOrigins] = useState<MergeOrigin[]>([]);
+  // True while the panel's "Pick on map" button is armed; the next map click
+  // adds a virtual merge origin.
+  const [pickingMergeOrigin, setPickingMergeOrigin] = useState(false);
   const removeCoverageMergeOrigin = useCallback((id: string) => {
     setCoverageMergeOrigins((prev) => prev.filter((o) => o.id !== id));
   }, []);
-  const clearCoverageMergeOrigins = useCallback(() => setCoverageMergeOrigins([]), []);
+  const clearCoverageMergeOrigins = useCallback(() => {
+    setCoverageMergeOrigins([]);
+    setPickingMergeOrigin(false);
+  }, []);
+  const moveCoverageMergeOrigin = useCallback((id: string, position: [number, number]) => {
+    setCoverageMergeOrigins((prev) =>
+      prev.map((o) => (o.id === id ? { ...o, position } : o)),
+    );
+  }, []);
   // Index into COMMON_ANTENNAS (value-based <select> can't distinguish same-dBi models)
   const [coverageAntennaIdx, setCoverageAntennaIdx] = useState(3);
   const coverageAntennaDbi = COMMON_ANTENNAS[coverageAntennaIdx]?.dbi ?? 3;
@@ -495,6 +506,8 @@ export function Map() {
   /** Per-id pins for additional merge origins; amber to distinguish from primary cyan.
    *  globalThis.Map qualifies the constructor — the component itself is named `Map`. */
   const coverageMergeMarkersRef = useRef<Map<string, maplibregl.Marker>>(new globalThis.Map());
+  /** Last origin we recentered on; used to suppress easeTo across pure parameter changes. */
+  const lastRecenteredOriginRef = useRef<[number, number] | null>(null);
   /** Draggable pin at the scan origin. */
   const scanOriginMarkerRef = useRef<maplibregl.Marker | null>(null);
   /** Map view captured when scan starts; restored by the origin row / pin. */
@@ -1732,6 +1745,7 @@ export function Map() {
       setIsFetchingCoverageTerrain(false);
       setCoverageError(null);
       setCoverageProgress({ completed: 0, total: 0 });
+      lastRecenteredOriginRef.current = null;
       return;
     }
     if (!terrain3D) {
@@ -1787,8 +1801,17 @@ export function Map() {
       }
       demBounds = { west, south, east, north };
     }
-    // Recenter on the pin; tile fetch is viewport-independent so we don't need to fly.
-    mb.easeTo({ center: origin, duration: 300 });
+    // Recenter only when the origin actually moved; pure parameter recomputes
+    // (TX power, antenna, clutter on/off, etc.) shouldn't yank the user's view.
+    const prev = lastRecenteredOriginRef.current;
+    const movedSignificantly =
+      !prev ||
+      Math.abs(prev[0] - origin[0]) > 1e-6 ||
+      Math.abs(prev[1] - origin[1]) > 1e-6;
+    if (movedSignificantly) {
+      mb.easeTo({ center: origin, duration: 300 });
+      lastRecenteredOriginRef.current = [origin[0], origin[1]];
+    }
 
     const mapboxToken = env.MAPBOX_TOKEN;
     if (!mapboxToken) {
@@ -2289,6 +2312,47 @@ export function Map() {
     };
   }, []);
 
+  // While picking, the next map click adds a virtual merge origin and exits.
+  // Auto-cancels if the user navigates away from the coverage tool.
+  useEffect(() => {
+    if (pickingMergeOrigin && activeTool !== "coverage") setPickingMergeOrigin(false);
+  }, [activeTool, pickingMergeOrigin]);
+  useEffect(() => {
+    if (!pickingMergeOrigin) return;
+    const mb = mbMapRef.current;
+    if (!mb) return;
+    const canvas = mb.getCanvas();
+    const prevCursor = canvas.style.cursor;
+    canvas.style.cursor = "crosshair";
+    const onClick = (e: maplibregl.MapMouseEvent) => {
+      const lng = e.lngLat.lng;
+      const lat = e.lngLat.lat;
+      // 6-dp coords give ~0.1 m precision and a stable id key.
+      const id = `virtual:${lng.toFixed(6)},${lat.toFixed(6)}`;
+      setCoverageMergeOrigins((prev) =>
+        prev.some((o) => o.id === id)
+          ? prev
+          : [...prev, {
+              id,
+              label: `Pin ${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+              position: [lng, lat],
+              altitudeM: null,
+            }],
+      );
+      setPickingMergeOrigin(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPickingMergeOrigin(false);
+    };
+    mb.on("click", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      mb.off("click", onClick);
+      document.removeEventListener("keydown", onKey);
+      canvas.style.cursor = prevCursor;
+    };
+  }, [pickingMergeOrigin]);
+
   // Cleared when the coverage tool isn't in result mode so amber pins don't linger.
   useEffect(() => {
     const mb = mbMapRef.current;
@@ -2312,14 +2376,21 @@ export function Map() {
       if (existing) {
         existing.setLngLat(o.position);
       } else {
-        const marker = new maplibregl.Marker({ color: "#f59e0b" })
+        const isVirtual = o.id.startsWith("virtual:");
+        const marker = new maplibregl.Marker({ color: "#f59e0b", draggable: isVirtual })
           .setLngLat(o.position)
           .setPopup(new maplibregl.Popup({ closeButton: false, offset: 24 }).setText(o.label))
           .addTo(mb);
+        if (isVirtual) {
+          marker.on("dragend", () => {
+            const ll = marker.getLngLat();
+            moveCoverageMergeOrigin(o.id, [ll.lng, ll.lat]);
+          });
+        }
         markers.set(o.id, marker);
       }
     }
-  }, [coverageMergeOrigins, activeTool, toolStep]);
+  }, [coverageMergeOrigins, activeTool, toolStep, moveCoverageMergeOrigin]);
 
   useEffect(() => {
     const markers = coverageMergeMarkersRef.current;
@@ -4315,6 +4386,9 @@ export function Map() {
           onRemoveMergeOrigin={removeCoverageMergeOrigin}
           onClearMergeOrigins={clearCoverageMergeOrigins}
           mergeNodeOptions={mergeNodeOptions}
+          pickingMergeOrigin={pickingMergeOrigin}
+          onStartPickMergeOrigin={() => setPickingMergeOrigin(true)}
+          onCancelPickMergeOrigin={() => setPickingMergeOrigin(false)}
           presetIdx={coveragePresetIdx}
           onPresetIdxChange={setCoveragePresetIdx}
           customSensitivityDbm={coverageCustomSensDbm}

@@ -101,6 +101,9 @@ export function MapCoveragePanel({
   onRemoveMergeOrigin,
   onClearMergeOrigins,
   mergeNodeOptions,
+  pickingMergeOrigin,
+  onStartPickMergeOrigin,
+  onCancelPickMergeOrigin,
   presetIdx,
   onPresetIdxChange,
   customSensitivityDbm,
@@ -174,6 +177,10 @@ export function MapCoveragePanel({
   onClearMergeOrigins: () => void;
   /** Searchable list of nodes available to add as merge origins. */
   mergeNodeOptions: MergeNodeOption[];
+  /** True while the next map click will drop a virtual merge pin. */
+  pickingMergeOrigin: boolean;
+  onStartPickMergeOrigin: () => void;
+  onCancelPickMergeOrigin: () => void;
   presetIdx: number;
   onPresetIdxChange: (idx: number) => void;
   customSensitivityDbm: number;
@@ -898,13 +905,27 @@ export function MapCoveragePanel({
                     ))}
                   </div>
                 )}
-                <input
-                  type="text"
-                  value={mergeOriginSearch}
-                  onChange={(e) => setMergeOriginSearch(e.target.value)}
-                  placeholder="Search nodes to merge…"
-                  className="w-full px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[10px] text-gray-200 placeholder:text-gray-500 focus:outline-none focus:border-cyan-500/50"
-                />
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={mergeOriginSearch}
+                    onChange={(e) => setMergeOriginSearch(e.target.value)}
+                    placeholder="Search nodes to merge…"
+                    className="flex-1 min-w-0 px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[10px] text-gray-200 placeholder:text-gray-500 focus:outline-none focus:border-cyan-500/50"
+                  />
+                  <button
+                    type="button"
+                    onClick={pickingMergeOrigin ? onCancelPickMergeOrigin : onStartPickMergeOrigin}
+                    title={pickingMergeOrigin ? "Cancel pick (or press Esc)" : "Click on the map to drop a pin"}
+                    className={`px-2 py-1 rounded-md border text-[10px] whitespace-nowrap shrink-0 transition-colors ${
+                      pickingMergeOrigin
+                        ? "bg-amber-500/20 border-amber-500/40 text-amber-200"
+                        : "bg-white/5 border-white/10 text-gray-300 hover:bg-white/10"
+                    }`}
+                  >
+                    {pickingMergeOrigin ? "Click map…" : "+ Pin"}
+                  </button>
+                </div>
                 {mergeOriginSearch.trim() !== "" && (
                   <div className="max-h-32 overflow-y-auto rounded-md bg-black/20 border border-white/5 divide-y divide-white/5">
                     {mergeOriginCandidates.length === 0 ? (
