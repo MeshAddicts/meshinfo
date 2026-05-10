@@ -18,6 +18,15 @@ import {
 import type { ClutterRaster } from "./landcoverTiles";
 import type { DEM, DEMBounds } from "./terrainDEM";
 
+/** Per-origin link-budget inputs; renderCoverageRaster takes max margin across all entries. */
+export interface SliceOrigin {
+  position: [number, number];
+  /** Origin MSL height (m); display/export only — ITM doesn't receive this. */
+  heightM: number;
+  /** TX antenna AGL (m); ITM txHeightM must be AGL, not MSL. */
+  antennaHeightAboveGroundM: number;
+}
+
 export interface CoverageSliceRequest {
   requestId: number;
   /** Transferable DEM buffer (main thread ships a copy per worker). */
@@ -25,10 +34,8 @@ export interface CoverageSliceRequest {
   demWidth: number;
   demHeight: number;
   bounds: DEMBounds;
-  origin: [number, number];
-  originHeightM: number;
-  /** TX antenna AGL (m); ITM txHeightM must be AGL, not MSL. */
-  originAntennaHeightAboveGroundM: number;
+  /** Primary + optional merge origins. */
+  origins: SliceOrigin[];
   params: RasterParams;
   /** rowStart/rowEnd are OUTPUT-grid indices (decoupled from DEM). */
   outputWidth: number;
@@ -158,11 +165,7 @@ self.onmessage = async (evt: MessageEvent<CoverageSliceRequest>) => {
       dem,
       msg.params,
       itm,
-      {
-        position: msg.origin,
-        heightM: msg.originHeightM,
-        antennaHeightAboveGroundM: msg.originAntennaHeightAboveGroundM,
-      },
+      msg.origins,
       { rowStart: msg.rowStart, rowEnd: msg.rowEnd },
       { width: msg.outputWidth, height: msg.outputHeight },
       clutter,

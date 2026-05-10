@@ -1,9 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AggressionSlider, BuildingStatusChip, CanopyStatusChip, ClassLegend, ClutterStatusChip } from "./ClutterUI";
-import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
+import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, type MergeOrigin, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
 import type { DemSource } from "./terrainRgb";
 import { useBottomSheetGesture } from "./useBottomSheet";
+
+interface MergeNodeOption {
+  id: string;
+  shortname?: string;
+  longname?: string;
+}
 
 /** Parse "lat, lng" (Google Maps format) → [lng, lat]. Returns null if invalid. */
 function parseLatLng(input: string): [number, number] | null {
@@ -90,6 +96,11 @@ export function MapCoveragePanel({
   buildingsEnabled,
   onBuildingsEnabledChange,
   buildingsStatus,
+  mergeOrigins,
+  onAddMergeOriginById,
+  onRemoveMergeOrigin,
+  onClearMergeOrigins,
+  mergeNodeOptions,
   presetIdx,
   onPresetIdxChange,
   customSensitivityDbm,
@@ -156,6 +167,13 @@ export function MapCoveragePanel({
   onBuildingsEnabledChange: (enabled: boolean) => void;
   /** Building tile-availability telemetry; null if no compute yet. */
   buildingsStatus: { tilesPresent: number; tilesTotal: number } | null;
+  /** Additional origins layered on top of the primary; per-pixel max margin. */
+  mergeOrigins: MergeOrigin[];
+  onAddMergeOriginById: (nodeId: string) => void;
+  onRemoveMergeOrigin: (id: string) => void;
+  onClearMergeOrigins: () => void;
+  /** Searchable list of nodes available to add as merge origins. */
+  mergeNodeOptions: MergeNodeOption[];
   presetIdx: number;
   onPresetIdxChange: (idx: number) => void;
   customSensitivityDbm: number;
@@ -224,6 +242,23 @@ export function MapCoveragePanel({
     onRxHeightChange(clamped);
     setRxHeightInput(String(clamped));
   };
+
+  // The parent already excludes the primary from `mergeNodeOptions`; we just
+  // filter out IDs already in the merge set on top of that.
+  const [mergeOriginSearch, setMergeOriginSearch] = useState("");
+  const mergeOriginCandidates = useMemo(() => {
+    const q = mergeOriginSearch.trim().toLowerCase();
+    if (!q) return [];
+    const taken = new Set(mergeOrigins.map((o) => o.id));
+    return mergeNodeOptions
+      .filter((n) => !taken.has(n.id))
+      .filter((n) =>
+        (n.shortname?.toLowerCase().includes(q) ?? false) ||
+        (n.longname?.toLowerCase().includes(q) ?? false) ||
+        n.id.toLowerCase().includes(q),
+      )
+      .slice(0, 12);
+  }, [mergeOriginSearch, mergeOrigins, mergeNodeOptions]);
 
   // Lets the header "custom RX" pill open the advanced-settings <details>
   const gearRef = useRef<HTMLDetailsElement>(null);
@@ -818,6 +853,83 @@ export function MapCoveragePanel({
                     <span className="text-[10px] text-gray-500 shrink-0">m</span>
                   </div>
                 </div>
+              </div>
+
+              {/* Multi-origin merge. */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 flex items-center gap-1">
+                    <span>Merged origins{mergeOrigins.length > 0 && ` (${mergeOrigins.length})`}</span>
+                    <InfoTip align="left">
+                      Add other nodes to layer on top of the primary origin —
+                      the painted coverage takes the per-pixel best signal
+                      across all origins. Useful for asking "where can my mesh
+                      reach if any of these nodes works?" without picking
+                      one as primary. Session-only — not persisted.
+                    </InfoTip>
+                  </label>
+                  {mergeOrigins.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={onClearMergeOrigins}
+                      className="text-[10px] text-gray-500 hover:text-red-300"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                {mergeOrigins.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    {mergeOrigins.map((o) => (
+                      <div
+                        key={o.id}
+                        className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/5 text-[10px] text-gray-300"
+                      >
+                        <span className="truncate min-w-0 flex-1">{o.label}</span>
+                        <button
+                          type="button"
+                          onClick={() => onRemoveMergeOrigin(o.id)}
+                          className="text-gray-500 hover:text-red-300 shrink-0"
+                          aria-label={`Remove ${o.label} from merged origins`}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <input
+                  type="text"
+                  value={mergeOriginSearch}
+                  onChange={(e) => setMergeOriginSearch(e.target.value)}
+                  placeholder="Search nodes to merge…"
+                  className="w-full px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[10px] text-gray-200 placeholder:text-gray-500 focus:outline-none focus:border-cyan-500/50"
+                />
+                {mergeOriginSearch.trim() !== "" && (
+                  <div className="max-h-32 overflow-y-auto rounded-md bg-black/20 border border-white/5 divide-y divide-white/5">
+                    {mergeOriginCandidates.length === 0 ? (
+                      <div className="text-[10px] text-gray-500 px-2 py-1.5">No matches.</div>
+                    ) : (
+                      mergeOriginCandidates.map((n) => (
+                        <button
+                          key={n.id}
+                          type="button"
+                          onClick={() => {
+                            onAddMergeOriginById(n.id);
+                            setMergeOriginSearch("");
+                          }}
+                          className="w-full text-left px-2 py-1 text-[10px] text-gray-300 hover:bg-white/5 truncate"
+                        >
+                          <span className="text-cyan-300/80 mr-1">+</span>
+                          {n.shortname ?? n.longname ?? n.id}
+                          {n.shortname && n.longname && (
+                            <span className="text-gray-500 ml-1.5">{n.longname}</span>
+                          )}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Clutter (per-pixel ITU model + aggression scaler). */}

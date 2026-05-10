@@ -16,11 +16,11 @@ import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { buildBuildingRaster, type BuildingRaster, downsampleBuildingRaster } from "./map/buildingTiles";
 import { buildCanopyRaster, type CanopyRaster, downsampleCanopyRaster } from "./map/canopyTiles";
 import { ClusterDonutLayer } from "./map/clusterDonutLayer";
-import { AGGRESSION_STOPS, COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, DEFAULT_AGGRESSION_IDX,effectiveSensitivityDbm, MESHTASTIC_PRESETS, reliabilityPreset, REPRESENTATIVE_CLUTTER_DB } from "./map/coverageAnalysis";
+import { AGGRESSION_STOPS, COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, DEFAULT_AGGRESSION_IDX,effectiveSensitivityDbm, MESHTASTIC_PRESETS, type MergeOrigin, reliabilityPreset, REPRESENTATIVE_CLUTTER_DB } from "./map/coverageAnalysis";
 import { type ContourFeatureCollection,extractCoverageContours } from "./map/coverageContours";
 import type { RasterParams } from "./map/coverageRaster";
 import { extractCoverageRays, type VisibilityRayFeatureCollection } from "./map/coverageRays";
-import type { CoverageSliceRequest } from "./map/coverageSliceWorker";
+import type { CoverageSliceRequest, SliceOrigin } from "./map/coverageSliceWorker";
 import { CoverageWorkerPool } from "./map/coverageWorkerPool";
 import { FiltersResetPill } from "./map/FiltersResetPill";
 import { Climate, computeP2PLoss, type ItmContext, loadItmContext, Polarization } from "./map/itm";
@@ -340,6 +340,12 @@ export function Map() {
   // Drives the building-height status chip; null until first compute.
   const [coverageBuildingsStatus, setCoverageBuildingsStatus] = useState<{ tilesPresent: number; tilesTotal: number } | null>(null);
   const [scanBuildingsStatus, setScanBuildingsStatus] = useState<{ tilesPresent: number; tilesTotal: number } | null>(null);
+  // Coverage-merge set is session-only by design — contextual to one analysis.
+  const [coverageMergeOrigins, setCoverageMergeOrigins] = useState<MergeOrigin[]>([]);
+  const removeCoverageMergeOrigin = useCallback((id: string) => {
+    setCoverageMergeOrigins((prev) => prev.filter((o) => o.id !== id));
+  }, []);
+  const clearCoverageMergeOrigins = useCallback(() => setCoverageMergeOrigins([]), []);
   // Index into COMMON_ANTENNAS (value-based <select> can't distinguish same-dBi models)
   const [coverageAntennaIdx, setCoverageAntennaIdx] = useState(3);
   const coverageAntennaDbi = COMMON_ANTENNAS[coverageAntennaIdx]?.dbi ?? 3;
@@ -486,6 +492,9 @@ export function Map() {
   const losTubeLayerRef = useRef<LosTubeLayer | null>(null);
   /** DOM pin for the Coverage origin (draggable). */
   const coverageOriginMarkerRef = useRef<maplibregl.Marker | null>(null);
+  /** Per-id pins for additional merge origins; amber to distinguish from primary cyan.
+   *  globalThis.Map qualifies the constructor — the component itself is named `Map`. */
+  const coverageMergeMarkersRef = useRef<Map<string, maplibregl.Marker>>(new globalThis.Map());
   /** Draggable pin at the scan origin. */
   const scanOriginMarkerRef = useRef<maplibregl.Marker | null>(null);
   /** Map view captured when scan starts; restored by the origin row / pin. */
@@ -723,10 +732,9 @@ export function Map() {
     canopy?: CanopyRaster | null;
     /** Optional building-height raster aligned to DEM bounds. Null = bare-earth + class-nominal endpoint h_a. */
     buildings?: BuildingRaster | null;
-    origin: [number, number];
-    originHeightM: number;
-    /** TX antenna AGL (m); ITM wants AGL not MSL. */
-    originAntennaHeightAboveGroundM: number;
+    /** Primary + (optional) merge origins. Single-element array preserves the
+     *  pre-merge single-origin compute byte-identically. */
+    origins: SliceOrigin[];
     params: RasterParams;
     requestId: number;
     /** Defaults to DEM dims (drag-preview path where DEM == output == 256²). */
@@ -747,7 +755,7 @@ export function Map() {
     outputHeight: number;
     itmUnavailable?: boolean;
   } | null> => {
-    const { dem, clutter, canopy, buildings, origin, originHeightM, originAntennaHeightAboveGroundM, params, requestId, onSliceProgress } = opts;
+    const { dem, clutter, canopy, buildings, origins, params, requestId, onSliceProgress } = opts;
     const outputWidth = opts.outputWidth ?? dem.width;
     const outputHeight = opts.outputHeight ?? dem.height;
     const mb = mbMapRef.current;
@@ -792,9 +800,7 @@ export function Map() {
         demWidth: dem.width,
         demHeight: dem.height,
         bounds: dem.bounds,
-        origin,
-        originHeightM,
-        originAntennaHeightAboveGroundM,
+        origins,
         params,
         outputWidth,
         outputHeight,
@@ -1029,7 +1035,36 @@ export function Map() {
 
   const [detailsData, setDetailsData] = useState<NodeDetailsData | null>(null);
 
-  // Refs to avoid stale closures in long-lived map event handlers.
+  // Defined here (rather than next to the other coverage-merge state) so the
+  // closure can read the live `nodes` map.
+  const addCoverageMergeOriginById = useCallback((nodeId: string) => {
+    const n = nodes[nodeId] ?? nodes[`!${nodeId}`];
+    const pos = n?.map_position;
+    if (!pos) return;
+    const cleanId = nodeId.startsWith("!") ? nodeId.slice(1) : nodeId;
+    setCoverageMergeOrigins((prev) =>
+      prev.some((o) => o.id === cleanId)
+        ? prev
+        : [...prev, {
+            id: cleanId,
+            label: n?.shortname || n?.longname || cleanId,
+            position: [pos[0], pos[1]],
+            altitudeM: n?.position?.altitude ?? null,
+          }],
+    );
+  }, [nodes]);
+  const mergeNodeOptions = useMemo(() => {
+    const out: Array<{ id: string; shortname?: string; longname?: string }> = [];
+    const primaryId = toolFromId ? (toolFromId.startsWith("!") ? toolFromId.slice(1) : toolFromId) : null;
+    for (const [rawId, n] of Object.entries(nodes)) {
+      if (!n?.map_position) continue;
+      const cleanId = rawId.startsWith("!") ? rawId.slice(1) : rawId;
+      if (primaryId && cleanId === primaryId) continue;
+      out.push({ id: cleanId, shortname: n.shortname, longname: n.longname });
+    }
+    return out;
+  }, [nodes, toolFromId]);
+
   const nodesRef = useRef(nodes);
   const traceroutesRef = useRef(rawTraceroutes);
   const configRef = useRef(config);
@@ -1736,7 +1771,22 @@ export function Map() {
     setCoverageProgress({ completed: 0, total: 0 });
 
     const radKm = coverageRadiusKm;
-    const demBounds = demBoundsAround(origin, radKm, 1.05);
+    // Union bbox over primary + merge origins (all share radiusKm since TX
+    // params are global). Empty merge set collapses to the primary's bbox.
+    const primaryBounds = demBoundsAround(origin, radKm, 1.05);
+    let demBounds = primaryBounds;
+    if (coverageMergeOrigins.length > 0) {
+      let west = primaryBounds.west, south = primaryBounds.south;
+      let east = primaryBounds.east, north = primaryBounds.north;
+      for (const m of coverageMergeOrigins) {
+        const b = demBoundsAround(m.position, radKm, 1.05);
+        if (b.west < west) west = b.west;
+        if (b.south < south) south = b.south;
+        if (b.east > east) east = b.east;
+        if (b.north > north) north = b.north;
+      }
+      demBounds = { west, south, east, north };
+    }
     // Recenter on the pin; tile fetch is viewport-independent so we don't need to fly.
     mb.easeTo({ center: origin, duration: 300 });
 
@@ -1889,6 +1939,27 @@ export function Map() {
           ? originHeightM - originGroundFromDem
           : coverageAntennaHeightM;
 
+        // Sample terrain off the same DEM the workers see so txHeightM (AGL
+        // relative to profile[0]) collapses cleanly to coverageAntennaHeightM
+        // on flat terrain.
+        const mergeOriginsResolved: SliceOrigin[] = [];
+        for (const m of coverageMergeOrigins) {
+          const terrain = sampleDEMAt(dem, m.position[0], m.position[1]);
+          const terrainOk = !Number.isNaN(terrain);
+          const altOk =
+            m.altitudeM != null &&
+            Number.isFinite(m.altitudeM) &&
+            (!terrainOk ||
+              (m.altitudeM >= terrain && m.altitudeM <= terrain + 1000));
+          const baseM = altOk ? (m.altitudeM as number) : (terrainOk ? terrain : 0);
+          const heightM = baseM + coverageAntennaHeightM;
+          mergeOriginsResolved.push({
+            position: m.position,
+            heightM,
+            antennaHeightAboveGroundM: terrainOk ? heightM - terrain : coverageAntennaHeightM,
+          });
+        }
+
         // 3. Dispatch pool; OUTPUT_SIZE decoupled from DEM_SIZE so Detail only changes paint sharpness
         const tDispatch = performance.now();
         const rendered = await renderCoverageToImageSource({
@@ -1896,9 +1967,14 @@ export function Map() {
           clutter,
           canopy,
           buildings,
-          origin: origin!,
-          originHeightM,
-          originAntennaHeightAboveGroundM: txAboveGroundM,
+          origins: [
+            {
+              position: origin!,
+              heightM: originHeightM,
+              antennaHeightAboveGroundM: txAboveGroundM,
+            },
+            ...mergeOriginsResolved,
+          ],
           params: rasterParams,
           requestId,
           outputWidth: OUTPUT_SIZE,
@@ -1988,6 +2064,7 @@ export function Map() {
           originHeightM,
           originIsFallback,
           radiusKm: radKm,
+          mergeOriginCount: coverageMergeOrigins.length,
           clearCount: rendered.clearCount,
           fresnelCount: rendered.fresnelCount,
           blockedCount: rendered.blockedCount,
@@ -2028,7 +2105,7 @@ export function Map() {
     return () => {
       cancelled = true;
     };
-  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageRxAntennaDbi, coverageRxHeightM, coverageTxDbm, coverageAggressionIdx, coverageClutterEnabled, coverageCanopyEnabled, coverageBuildingsEnabled, coverageSensitivityDbm, coverageDetail, coverageAntennaHeightM, coverageReliability, provider, terrain3D, nodes, coverageRetryNonce]);
+  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageRxAntennaDbi, coverageRxHeightM, coverageTxDbm, coverageAggressionIdx, coverageClutterEnabled, coverageCanopyEnabled, coverageBuildingsEnabled, coverageMergeOrigins, coverageSensitivityDbm, coverageDetail, coverageAntennaHeightM, coverageReliability, provider, terrain3D, nodes, coverageRetryNonce]);
 
   // Hide coverage raster when leaving tool; sources/layers stay for fast re-entry
   useEffect(() => {
@@ -2165,9 +2242,11 @@ export function Map() {
             clutter,
             canopy,
             buildings,
-            origin: lngLat,
-            originHeightM: originH,
-            originAntennaHeightAboveGroundM: txAboveGroundM,
+            origins: [{
+              position: lngLat,
+              heightM: originH,
+              antennaHeightAboveGroundM: txAboveGroundM,
+            }],
             params,
             requestId: previewId,
           });
@@ -2207,6 +2286,46 @@ export function Map() {
         coverageOriginMarkerRef.current.remove();
         coverageOriginMarkerRef.current = null;
       }
+    };
+  }, []);
+
+  // Cleared when the coverage tool isn't in result mode so amber pins don't linger.
+  useEffect(() => {
+    const mb = mbMapRef.current;
+    if (!mb) return;
+    const markers = coverageMergeMarkersRef.current;
+    const inCoverageResult = activeTool === "coverage" && toolStep === "result";
+    if (!inCoverageResult) {
+      for (const marker of markers.values()) marker.remove();
+      markers.clear();
+      return;
+    }
+    const wantedIds = new Set(coverageMergeOrigins.map((o) => o.id));
+    for (const [id, marker] of markers) {
+      if (!wantedIds.has(id)) {
+        marker.remove();
+        markers.delete(id);
+      }
+    }
+    for (const o of coverageMergeOrigins) {
+      const existing = markers.get(o.id);
+      if (existing) {
+        existing.setLngLat(o.position);
+      } else {
+        const marker = new maplibregl.Marker({ color: "#f59e0b" })
+          .setLngLat(o.position)
+          .setPopup(new maplibregl.Popup({ closeButton: false, offset: 24 }).setText(o.label))
+          .addTo(mb);
+        markers.set(o.id, marker);
+      }
+    }
+  }, [coverageMergeOrigins, activeTool, toolStep]);
+
+  useEffect(() => {
+    const markers = coverageMergeMarkersRef.current;
+    return () => {
+      for (const marker of markers.values()) marker.remove();
+      markers.clear();
     };
   }, []);
 
@@ -4191,6 +4310,11 @@ export function Map() {
           buildingsEnabled={coverageBuildingsEnabled}
           onBuildingsEnabledChange={setCoverageBuildingsEnabled}
           buildingsStatus={coverageBuildingsStatus}
+          mergeOrigins={coverageMergeOrigins}
+          onAddMergeOriginById={addCoverageMergeOriginById}
+          onRemoveMergeOrigin={removeCoverageMergeOrigin}
+          onClearMergeOrigins={clearCoverageMergeOrigins}
+          mergeNodeOptions={mergeNodeOptions}
           presetIdx={coveragePresetIdx}
           onPresetIdxChange={setCoveragePresetIdx}
           customSensitivityDbm={coverageCustomSensDbm}

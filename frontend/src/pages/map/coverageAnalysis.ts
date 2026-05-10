@@ -138,11 +138,27 @@ export function reliabilityPreset(id: CoverageReliability): ReliabilityPreset {
 }
 
 /** Coverage computation summary (pixel stats + link-budget context). Raster lives on the Mapbox source. */
+/**
+ * Additional origin layered on the primary; painted coverage takes per-pixel
+ * max(margin) across all origins. Session-only — not persisted, since the set
+ * is contextual to one analysis.
+ */
+export interface MergeOrigin {
+  /** Node hex id, or "virtual:<lng>,<lat>" for map-pin origins. */
+  id: string;
+  label: string;
+  position: [number, number];
+  /** GPS altitude if known (node origins); null for virtual pins. */
+  altitudeM: number | null;
+}
+
 export interface CoverageResult {
   origin: [number, number];
   originHeightM: number;
   originIsFallback: boolean;
   radiusKm: number;
+  /** Count of additional merged origins (zero = single-origin compute). */
+  mergeOriginCount?: number;
   /** Pixels passing link budget with full LoS. */
   clearCount: number;
   /** Pixels passing link budget with Fresnel intrusion/diffraction loss. */
