@@ -306,9 +306,10 @@ style = "mapbox/dark-v11"
 # mounts it at /tiles/landcover. Without a bake, the frontend falls back to a
 # default class everywhere — coverage still works, just less accurate.
 #
-# To populate tiles, run scripts/landcover_tiles.py once. See
-# scripts/README-landcover.md for the operator guide and RF-MODEL.md for
-# the RF model.
+# To populate tiles, run the one-time bake (idempotent, safe to re-run):
+#   docker compose --profile bake run --rm landcover-bake
+# See scripts/README-landcover.md for sub-region bakes, disk/time estimates,
+# and the host-Python alternative. RF model details in RF-MODEL.md.
 # ─────────────────────────────────────────────────────────────────────────────
 
 [landcover]
@@ -324,8 +325,10 @@ source = "USGS NLCD 2024"       # surfaced in the map UI attribution chip
 # When tile_dir exists and enabled = true, the API mounts it at /tiles/canopy.
 # Without a bake, the frontend falls back to class-nominal heights.
 #
-# To populate tiles, run scripts/canopy_tiles.py once. See
-# scripts/README-canopy.md for the operator guide.
+# To populate tiles, run the one-time bake (idempotent, safe to re-run):
+#   docker compose --profile bake run --rm canopy-bake
+# See scripts/README-canopy.md for sub-region bakes, disk/time estimates,
+# and the host-Python alternative.
 # ─────────────────────────────────────────────────────────────────────────────
 
 [canopy]
@@ -342,8 +345,10 @@ source = "ETH Global Canopy Height 2020"
 # When tile_dir exists and enabled = true, the API mounts it at /tiles/buildings.
 # Without a bake, the frontend falls back to class-nominal heights.
 #
-# To populate tiles, run scripts/building_tiles.py once. See
-# scripts/README-buildings.md for the operator guide.
+# To populate tiles, run the one-time bake (idempotent, safe to re-run):
+#   docker compose --profile bake run --rm building-bake
+# See scripts/README-buildings.md for sub-region bakes, disk/time estimates,
+# and the host-Python alternative.
 # ─────────────────────────────────────────────────────────────────────────────
 
 [buildings]
