@@ -2,9 +2,10 @@
  * Best-neighbors scan: LoS + link budget from origin to each target, classified and ranked.
  * Stays on the main thread with 60 samples/ray.
  */
+import { type BuildingRaster, sampleBuildingAt } from "./buildingTiles";
 import type { CanopyRaster } from "./canopyTiles";
 import { NLCD_DEFAULT_CLASS_ID } from "./clutterClasses";
-import { type CanopyPathContext, computePathClutterLoss, makeClutterScratch } from "./clutterPath";
+import { type BuildingPathContext, type CanopyPathContext, computePathClutterLoss, makeClutterScratch } from "./clutterPath";
 import { pathLossDb } from "./coverageAnalysis";
 import { computeP2PLossFast, type ItmContext,ModeOfVariability } from "./itm";
 import { type ClutterRaster, sampleClutterClassAt } from "./landcoverTiles";
@@ -69,6 +70,8 @@ export interface ScanInput {
   clutterRaster?: ClutterRaster | null;
   /** Optional canopy-height raster aligned to bbox; absent → class-nominal heights. */
   canopyRaster?: CanopyRaster | null;
+  /** Optional building-height raster aligned to bbox; absent → bare-earth + class-nominal. */
+  buildingRaster?: BuildingRaster | null;
   /** Scalar on the ITU clutter model output. 1.0 = calibrated baseline. */
   clutterAggression?: number;
   /** Skip targets farther than this km. Default Infinity. */
@@ -111,6 +114,7 @@ export function runScan(input: ScanInput): ScanSummary {
     cableLossDb = 0.5,
     clutterRaster = null,
     canopyRaster = null,
+    buildingRaster = null,
     clutterAggression = 1.0,
     maxDistanceKm = Infinity,
   } = input;
@@ -125,6 +129,9 @@ export function runScan(input: ScanInput): ScanSummary {
   const clutterScratch = makeClutterScratch();
   const canopyCtx: CanopyPathContext | null = canopyRaster
     ? { raster: canopyRaster, origLng: 0, origLat: 0, destLng: 0, destLat: 0 }
+    : null;
+  const buildingCtx: BuildingPathContext | null = buildingRaster
+    ? { raster: buildingRaster, origLng: 0, origLat: 0, destLng: 0, destLat: 0 }
     : null;
 
   for (const t of targets) {
@@ -143,18 +150,24 @@ export function runScan(input: ScanInput): ScanSummary {
       queryTerrainM,
     });
 
-    // LoS points only carry distanceKm; lerp lng/lat ourselves to sample classes.
+    // LoS points only carry distanceKm; lerp lng/lat ourselves to sample
+    // raster lookups. DSM endpoint-skip rationale: see coverageRaster.ts.
     const profileM = new Float64Array(los.points.map((p) => p.ground));
     const profileClasses = new Uint8Array(profileM.length);
-    if (clutterRaster) {
-      for (let s = 0; s < profileM.length; s++) {
-        const tFrac = profileM.length > 1 ? s / (profileM.length - 1) : 0;
-        const sLng = origin[0] + (t.position[0] - origin[0]) * tFrac;
-        const sLat = origin[1] + (t.position[1] - origin[1]) * tFrac;
+    const lastPathIdx = profileM.length - 1;
+    for (let s = 0; s < profileM.length; s++) {
+      const tFrac = profileM.length > 1 ? s / lastPathIdx : 0;
+      const sLng = origin[0] + (t.position[0] - origin[0]) * tFrac;
+      const sLat = origin[1] + (t.position[1] - origin[1]) * tFrac;
+      if (clutterRaster) {
         profileClasses[s] = sampleClutterClassAt(clutterRaster, sLng, sLat);
+      } else {
+        profileClasses[s] = NLCD_DEFAULT_CLASS_ID;
       }
-    } else {
-      profileClasses.fill(NLCD_DEFAULT_CLASS_ID);
+      if (buildingRaster && s !== 0 && s !== lastPathIdx) {
+        const sample = sampleBuildingAt(buildingRaster, sLng, sLat);
+        if (sample && sample.heightM > 0) profileM[s] += sample.heightM;
+      }
     }
 
     const spacingM = profileM.length > 1 ? (d * 1000) / (profileM.length - 1) : 0;
@@ -170,6 +183,12 @@ export function runScan(input: ScanInput): ScanSummary {
       canopyCtx.destLng = t.position[0];
       canopyCtx.destLat = t.position[1];
     }
+    if (buildingCtx) {
+      buildingCtx.origLng = origin[0];
+      buildingCtx.origLat = origin[1];
+      buildingCtx.destLng = t.position[0];
+      buildingCtx.destLat = t.position[1];
+    }
     const clutterLossDb = computePathClutterLoss(
       profileM,
       profileClasses,
@@ -181,6 +200,7 @@ export function runScan(input: ScanInput): ScanSummary {
       clutterAggression,
       clutterScratch,
       canopyCtx,
+      buildingCtx,
     );
 
     // Path loss: ITM (terrain-aware) when available, else FSPL + knife-edge

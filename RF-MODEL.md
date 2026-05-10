@@ -103,6 +103,21 @@ The full per-class P.452 (hₐ, dₖ) and P.833 (γ, A) parameters are visible i
 
 Outside the United States (or anywhere the NLCD bake doesn't cover), the model falls back to **Mixed Forest** as a conservative default for every pixel. Future work tracks adding ESA WorldCover as a global fallback.
 
+## Per-pixel building heights — JRC GHS-BUILT-H 100 m (optional)
+
+NLCD's developed-intensity classes (21/22/23/24) ship with class-nominal heights of 4 / 9 / 15 / 25 m from P.452 Table 4. These are continental averages — wrong by ±15 m for any specific neighbourhood. They also can't put real diffractors (apartment blocks, industrial silos, isolated office towers) into the ITM propagation profile.
+
+When building tiles are baked from **JRC GHS-BUILT-H R2023A ANBH** (Average Net Building Height, 100 m global, CC BY 4.0), two integration sites in the model use the measurements:
+
+1. **DSM into the ITM profile.** Mid-path samples become `terrain + measured_building_height` so ITM's diffraction algorithm sees rooftops as actual obstacles. Endpoints (TX and RX) stay bare-earth — your `txHeightM` / `rxHeightM` are AGL above local ground, not on top of a presumed building. Operators with rooftop-mounted antennas should add the building's height to their antenna AGL field manually.
+2. **Measured `h_a` in P.452 endpoint clutter.** For developed-class pixels (21/22/23/24) at TX and RX, the measured ANBH replaces `cls.nominalHeightM` in the height-gain formula. A 2 m handheld in a 100 m cell that ANBH says is 4 m gets the same ~19 dB endpoint loss; in a cell that's actually 14 m, the cell-specific value drives the calculation. Non-developed classes (vegetation, water, etc.) keep their class-nominal heights so trees don't get erased when a forest pixel happens to read ANBH = 0.
+
+**100 m averaging caveats.** ANBH averages over the *built portion* of each 100 m cell, so a neighbourhood of 30% 9 m houses + 5% 25 m apartment block reads as ~11 m — the apartment block is captured as elevated DSM but its sharp edges get smeared. ITM's above-rooftop diffraction (the dominant path at typical link distances) is well-served by this; ground-level street-canyon waveguide effects need ray-tracing, not raster, regardless of resolution.
+
+The "Building heights" toggle in the Coverage and Scan settings panels lets operators turn the refinement off (compare measured-vs-nominal, or use bare-earth ITM for a baseline). Default is on.
+
+**Operator runbook for the building bake:** [scripts/README-buildings.md](scripts/README-buildings.md).
+
 ## Per-pixel canopy heights — ETH 10 m (optional)
 
 NLCD tells the model *what kind* of canopy is at a pixel; class-nominal heights from P.452 Table 4 (15 m deciduous, 20 m evergreen, 15 m mixed, 10 m woody-wetland, 2 m emergent-wetland) tell it *how tall* that canopy is. Real canopy varies — a 50 m redwood next to a 5 m madrone in the same NLCD "Evergreen Forest" pixel both got coded as 20 m without measurement.
@@ -144,6 +159,14 @@ docker compose --profile bake run --rm canopy-bake     # CONUS default; --scope 
 
 CONUS canopy bake is ~30 GB of source COGs + ~1–2 GB of output tiles. Time: 1–4 hours depending on the ETH file server and CPU. Without this bake, the model uses class-nominal canopy heights — the coverage tool still works.
 
+For the optional building-height refinement, run the building bake:
+
+```bash
+docker compose --profile bake run --rm building-bake   # global default; --scope conus also supported
+```
+
+Global building bake is ~1.8 GB of source GeoTIFF + ~1–2 GB of output tiles. Time: 1–3 hours. Without this bake, the model uses class-nominal heights for developed classes and bare-earth ITM — the coverage tool still works.
+
 ## The aggression scaler
 
 Inside the Coverage and Scan panels, the **Clutter** control is a 3-stop slider:
@@ -167,7 +190,7 @@ The default (1.0×) reflects ITU-R P.452 / P.833 published values. Don't sit at 
 These are scope limits that affect prediction accuracy in specific scenarios:
 
 - **Indoor receivers (ITU-R P.2109)** — RX inside a building gets +10–20 dB additional loss not modeled. Outdoor-to-outdoor only.
-- **Per-building height** — uses class-nominal heights (4 / 9 / 15 / 25 m for the four NLCD developed-intensity classes); a single tall office tower next to your antenna isn't picked up. Per-pixel canopy heights from ETH 10 m **are** modeled when the canopy bake is in place — that lifts the per-tree limitation for forest classes; per-building heights are tracked as Tier 2 follow-up.
+- **Per-building height** — when the building bake is in place, JRC GHS-BUILT-H 100 m measurements replace class-nominal heights for developed classes and feed buildings into the ITM DSM. The 100 m averaging captures first-order diffraction physics but smooths individual rooftops; per-building precision (a single tall office tower across the street from your antenna) needs vector pipelines beyond this raster model.
 - **Seasonal foliage** — deciduous classes assume leaf-on (summer) at 0.5 dB/m. Out-of-leaf is ~0.15 dB/m; not modeled. Future work.
 - **Frequencies other than 915 MHz** — the P.833 specific-attenuation values are calibrated at 915 MHz. Adding 868 MHz (EU) or 433 MHz would need a per-band lookup.
 - **Polarization-dependent vegetation loss** — uses unpolarized averages (the slight per-polarization difference is in the noise floor here).
@@ -182,6 +205,7 @@ These are scope limits that affect prediction accuracy in specific scenarios:
 - ITU-R Rec. **P.2109** — building entry loss (indoor RX, deferred)
 - USGS NLCD: <https://www.mrlc.gov/data>
 - ETH Global Canopy Height 2020 (Lang et al. 2023): <https://langnico.github.io/globalcanopyheight/>
+- JRC GHS-BUILT-H R2023A: <https://human-settlement.emergency.copernicus.eu/ghs_buH2023.php>
 - ITM v1.4: <https://github.com/NTIA/itm>
 
 ## How to validate

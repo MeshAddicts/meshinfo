@@ -5,10 +5,13 @@
  * already covers. z_path is a linear lerp of TX/RX MSL antenna heights.
  *
  * Hot loop is alloc-free — caller allocates ClutterScratch once and reuses
- * across all per-pixel calls. When `canopyCtx` is supplied, per-sample
- * measured ETH heights replace the P.452-Table-4 nominals inside the MED
- * gate; class-nominal is the fallback.
+ * across all per-pixel calls. Optional rasters override class-nominal heights:
+ *   - canopyCtx replaces forest h_a inside the MED gate (Tier 3).
+ *   - buildingCtx replaces developed-class h_a in the P.452 endpoint formula
+ *     at TX and RX (Tier 2). Buildings also feed the ITM DSM upstream in
+ *     coverageRaster — that integration is independent of this loop.
  */
+import { type BuildingRaster, sampleBuildingAt } from "./buildingTiles";
 import { type CanopyRaster, sampleCanopyAt } from "./canopyTiles";
 import {
   classForId,
@@ -17,6 +20,9 @@ import {
   NLCD_CLASSES,
   vegetationPathLossDb,
 } from "./clutterClasses";
+
+/** NLCD developed-intensity classes that the building-height raster overrides. */
+const DEVELOPED_CLASS_IDS = new Set([21, 22, 23, 24]);
 
 /** NLCD legend max ID is 95. */
 export const CLUTTER_SCRATCH_LEN = 96;
@@ -50,6 +56,32 @@ export interface CanopyPathContext {
   destLat: number;
 }
 
+/** Same alloc-free pattern as CanopyPathContext; only the endpoints are sampled. */
+export interface BuildingPathContext {
+  raster: BuildingRaster;
+  origLng: number;
+  origLat: number;
+  destLng: number;
+  destLat: number;
+}
+
+/**
+ * Override h_a only for developed classes — replacing forest/shrub class-
+ * nominal with a buildings-raster height (often 0) would erase real
+ * tree/shrub obstruction. ANBH=0 inside a developed cell is a valid
+ * "no buildings here" reading and zeroes endpoint loss accordingly.
+ */
+function endpointHeightOverride(
+  cls: ClutterClass,
+  ctx: BuildingPathContext | null | undefined,
+  lng: number,
+  lat: number,
+): number | undefined {
+  if (!ctx || !DEVELOPED_CLASS_IDS.has(cls.id)) return undefined;
+  const sample = sampleBuildingAt(ctx.raster, lng, lat);
+  return sample === null ? undefined : sample.heightM;
+}
+
 /**
  * σ ≥ height = noisy ETH pixel; blend 50/50 with class-nominal so it can't
  * solo-drive the MED loop. σ=0 (the no-SD bake) skips the blend, which is
@@ -81,14 +113,22 @@ export function computePathClutterLoss(
   aggression: number,
   scratch: ClutterScratch,
   canopyCtx?: CanopyPathContext | null,
+  buildingCtx?: BuildingPathContext | null,
 ): number {
   if (nSamples < 2 || pointSpacingM <= 0) return 0;
 
   const txClass = classForId(profileClasses[0]);
   const rxClass = classForId(profileClasses[nSamples - 1]);
 
-  const aHTx = endpointClutterDb(txClass, txAntennaAGLm, freqMhz);
-  const aHRx = endpointClutterDb(rxClass, rxAntennaAGLm, freqMhz);
+  const txHaOverride = buildingCtx
+    ? endpointHeightOverride(txClass, buildingCtx, buildingCtx.origLng, buildingCtx.origLat)
+    : undefined;
+  const rxHaOverride = buildingCtx
+    ? endpointHeightOverride(rxClass, buildingCtx, buildingCtx.destLng, buildingCtx.destLat)
+    : undefined;
+
+  const aHTx = endpointClutterDb(txClass, txAntennaAGLm, freqMhz, txHaOverride);
+  const aHRx = endpointClutterDb(rxClass, rxAntennaAGLm, freqMhz, rxHaOverride);
 
   const txMsl = profileM[0] + txAntennaAGLm;
   const rxMsl = profileM[nSamples - 1] + rxAntennaAGLm;

@@ -334,6 +334,24 @@ tile_dir = "output/canopy"      # bind-mounted into the meshinfo container
 source = "ETH Global Canopy Height 2020"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Building heights — Optional
+# Per-pixel measured building heights for ITU-R P.452-17 endpoint clutter and
+# the ITM DSM along the propagation path. Replaces class-nominal heights
+# (4/9/15/25 m for the four NLCD developed-intensity classes) with
+# measurements from JRC GHS-BUILT-H ANBH (100 m global, CC-BY-4.0).
+# When tile_dir exists and enabled = true, the API mounts it at /tiles/buildings.
+# Without a bake, the frontend falls back to class-nominal heights.
+#
+# To populate tiles, run scripts/building_tiles.py once. See
+# scripts/README-buildings.md for the operator guide.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[buildings]
+enabled = true
+tile_dir = "output/buildings"   # bind-mounted into the meshinfo container
+source = "JRC GHS-BUILT-H R2023A"
+
+# ─────────────────────────────────────────────────────────────────────────────
 # UI Customization — Optional
 # External tools and node detail links shown in the web UI.
 # ─────────────────────────────────────────────────────────────────────────────

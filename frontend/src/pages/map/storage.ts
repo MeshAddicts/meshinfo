@@ -17,6 +17,9 @@ export const LS_KEYS = {
   /** Canopy-height tier on/off. Off → fall back to class-nominal heights. */
   coverageCanopyEnabled: "meshinfo.map.coverageCanopyEnabled",
   scanCanopyEnabled: "meshinfo.map.scanCanopyEnabled",
+  /** Building-height tier on/off. Off → bare-earth DEM + class-nominal endpoint h_a. */
+  coverageBuildingsEnabled: "meshinfo.map.coverageBuildingsEnabled",
+  scanBuildingsEnabled: "meshinfo.map.scanBuildingsEnabled",
 } as const;
 
 export function readJson<T>(key: string, fallback: T): T {

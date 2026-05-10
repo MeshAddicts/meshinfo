@@ -3,8 +3,10 @@
  * Hot loop is alloc-free (shared Float64 profile buffer, pre-allocated WASM ctx).
  * Profile length adapts to path length (15-96 samples, ~1.5/km).
  */
+import { type BuildingRaster, sampleBuildingAt } from "./buildingTiles";
 import type { CanopyRaster } from "./canopyTiles";
 import {
+  type BuildingPathContext,
   type CanopyPathContext,
   computePathClutterLoss,
   makeClutterScratch,
@@ -144,6 +146,9 @@ export function renderCoverageRaster(
   clutter?: ClutterRaster | null,
   /** Optional canopy-height raster aligned to the DEM bounds. Null = use class-nominal heights. */
   canopy?: CanopyRaster | null,
+  /** Optional building-height raster aligned to the DEM bounds. Drives the ITM
+   *  DSM (mid-path) and P.452 endpoint h_a override. Null = class-nominal. */
+  buildings?: BuildingRaster | null,
 ): RasterResult {
   const { bounds } = dem;
   const outputWidth = output?.width ?? dem.width;
@@ -209,6 +214,9 @@ export function renderCoverageRaster(
   const canopyCtx: CanopyPathContext | null = canopy
     ? { raster: canopy, origLng: 0, origLat: 0, destLng: 0, destLat: 0 }
     : null;
+  const buildingCtx: BuildingPathContext | null = buildings
+    ? { raster: buildings, origLng: 0, origLat: 0, destLng: 0, destLat: 0 }
+    : null;
 
   for (let j = rowStart; j < rowEnd; j++) {
     const lat = bounds.north - j * latStep;
@@ -237,9 +245,10 @@ export function renderCoverageRaster(
 
       // Linear lng/lat interp is within ~1% of great-circle at Meshtastic distances
       const nSamples = profileSampleCount(distKm);
+      const lastIdx = nSamples - 1;
       let validProfile = true;
       for (let s = 0; s < nSamples; s++) {
-        const t = s / (nSamples - 1);
+        const t = s / lastIdx;
         const sLng = origLng + (lng - origLng) * t;
         const sLat = origLat + (lat - origLat) * t;
         const elev = sampleDEMAt(dem, sLng, sLat);
@@ -247,7 +256,14 @@ export function renderCoverageRaster(
           validProfile = false;
           break;
         }
-        profileBuf[s] = elev;
+        // Endpoints stay bare-earth so AGL antenna heights aren't placed on
+        // top of a presumed building — that's captured by P.452 instead.
+        let dsmElev = elev;
+        if (buildings && s !== 0 && s !== lastIdx) {
+          const sample = sampleBuildingAt(buildings, sLng, sLat);
+          if (sample && sample.heightM > 0) dsmElev = elev + sample.heightM;
+        }
+        profileBuf[s] = dsmElev;
         profileClassBuf[s] = clutter ? sampleClutterClassAt(clutter, sLng, sLat) : 0;
       }
       if (!validProfile) {
@@ -275,6 +291,12 @@ export function renderCoverageRaster(
         canopyCtx.destLng = lng;
         canopyCtx.destLat = lat;
       }
+      if (buildingCtx) {
+        buildingCtx.origLng = origLng;
+        buildingCtx.origLat = origLat;
+        buildingCtx.destLng = lng;
+        buildingCtx.destLat = lat;
+      }
       const clutterLossDb = computePathClutterLoss(
         profileBuf,
         profileClassBuf,
@@ -286,6 +308,7 @@ export function renderCoverageRaster(
         clutterAggression,
         clutterScratch,
         canopyCtx,
+        buildingCtx,
       );
 
       const totalLossDb = lossDb + clutterLossDb + cableLossDb;

@@ -2,6 +2,7 @@
  * Coverage slice worker: runs ITM per pixel over a row range of a shared DEM.
  * Each worker keeps its own ITM WASM context warm across requests.
  */
+import type { BuildingRaster } from "./buildingTiles";
 import type { CanopyRaster } from "./canopyTiles";
 import {
   type RasterParams,
@@ -44,6 +45,11 @@ export interface CoverageSliceRequest {
   canopyMaskBuffer?: ArrayBuffer;
   canopyWidth?: number;
   canopyHeight?: number;
+  /** Optional building-height raster aligned to DEM bounds. Absent → bare-earth + class-nominal. */
+  buildingHeightBuffer?: ArrayBuffer;
+  buildingMaskBuffer?: ArrayBuffer;
+  buildingWidth?: number;
+  buildingHeight?: number;
 }
 
 export interface CoverageSliceResponse {
@@ -136,6 +142,18 @@ self.onmessage = async (evt: MessageEvent<CoverageSliceRequest>) => {
             tilesTotal: 0,
           }
         : null;
+    const buildings: BuildingRaster | null =
+      msg.buildingHeightBuffer && msg.buildingMaskBuffer && msg.buildingWidth && msg.buildingHeight
+        ? {
+            heightM: new Float32Array(msg.buildingHeightBuffer),
+            mask: new Float32Array(msg.buildingMaskBuffer),
+            width: msg.buildingWidth,
+            height: msg.buildingHeight,
+            bounds: msg.bounds,
+            tilesPresent: 0,
+            tilesTotal: 0,
+          }
+        : null;
     const rendered = renderCoverageRaster(
       dem,
       msg.params,
@@ -149,6 +167,7 @@ self.onmessage = async (evt: MessageEvent<CoverageSliceRequest>) => {
       { width: msg.outputWidth, height: msg.outputHeight },
       clutter,
       canopy,
+      buildings,
     );
     post({
       requestId: msg.requestId,

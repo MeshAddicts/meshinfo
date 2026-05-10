@@ -1,6 +1,7 @@
 /** @vitest-environment node */
 import { describe, expect, it } from "vitest";
 
+import type { BuildingRaster } from "./buildingTiles";
 import type { CanopyRaster } from "./canopyTiles";
 import {
   endpointClutterDb,
@@ -8,6 +9,7 @@ import {
   vegetationPathLossDb,
 } from "./clutterClasses";
 import {
+  type BuildingPathContext,
   type CanopyPathContext,
   CLUTTER_SCRATCH_LEN,
   computePathClutterLoss,
@@ -37,6 +39,32 @@ function uniformCtx(heightM: number, stdM = 0): CanopyPathContext {
   const bounds: DEMBounds = { west: -120, east: -119, south: 36, north: 37 };
   return {
     raster: uniformCanopy(bounds, heightM, stdM),
+    origLng: bounds.west + 0.1,
+    origLat: 36.5,
+    destLng: bounds.east - 0.1,
+    destLat: 36.5,
+  };
+}
+
+/** Synthetic BuildingRaster with `heightM` everywhere across `bounds`. */
+function uniformBuildings(bounds: DEMBounds, heightM: number): BuildingRaster {
+  const w = 4, h = 4;
+  return {
+    heightM: Float32Array.from(new Array(w * h).fill(heightM)),
+    mask: Float32Array.from(new Array(w * h).fill(1)),
+    width: w,
+    height: h,
+    bounds,
+    tilesPresent: 1,
+    tilesTotal: 1,
+  };
+}
+
+/** Building ctx wrapping a uniform raster covering an east-west path. */
+function uniformBuildingCtx(heightM: number): BuildingPathContext {
+  const bounds: DEMBounds = { west: -120, east: -119, south: 36, north: 37 };
+  return {
+    raster: uniformBuildings(bounds, heightM),
     origLng: bounds.west + 0.1,
     origLat: 36.5,
     destLng: bounds.east - 0.1,
@@ -322,6 +350,70 @@ describe("computePathClutterLoss — measured canopy heights override class-nomi
     );
     const lossNoRaster = computePathClutterLoss(
       profileM, profileClasses, 100, 5000 / 99, 2, 2, F_915, 1.0, scratch,
+    );
+    expect(lossOutOfBox).toBeCloseTo(lossNoRaster, 5);
+  });
+});
+
+describe("computePathClutterLoss — measured building heights override class-nominal h_a", () => {
+  it("matches the no-buildings result when measured height equals class-nominal", () => {
+    const scratch = makeClutterScratch();
+    // Suburban (NLCD 22): nominalHeightM = 9.
+    const { profileM, profileClasses } = flatProfile(80, 22);
+    const lossNominal = computePathClutterLoss(
+      profileM, profileClasses, 80, 100, 2, 2, F_915, 1.0, scratch,
+    );
+    const lossMeasured = computePathClutterLoss(
+      profileM, profileClasses, 80, 100, 2, 2, F_915, 1.0, scratch,
+      null,
+      uniformBuildingCtx(NLCD_CLASSES[22].nominalHeightM),
+    );
+    expect(lossMeasured).toBeCloseTo(lossNominal, 3);
+  });
+
+  it("measured 0 m collapses developed-class endpoint loss to ~0 dB", () => {
+    // Class 22 (h_a=9) at 2 m AGL: A_h ≈ 19 dB. Override h_a = 0 → A_h = 0.
+    const scratch = makeClutterScratch();
+    const { profileM, profileClasses } = flatProfile(80, 22);
+    const loss = computePathClutterLoss(
+      profileM, profileClasses, 80, 100, 2, 2, F_915, 1.0, scratch,
+      null,
+      uniformBuildingCtx(0),
+    );
+    // Loss should be ~0 since h_a=0 zeros both endpoint contributions and
+    // class 22 isn't penetrable (no MED).
+    expect(loss).toBeLessThan(0.1);
+  });
+
+  it("does NOT override h_a for non-developed classes", () => {
+    // Evergreen forest (class 42, h_a=20). Building raster says 0 m, but
+    // we shouldn't replace forest h_a with 0 — trees are still there.
+    const scratch = makeClutterScratch();
+    const { profileM, profileClasses } = flatProfile(80, 42);
+    const lossWithBuildings = computePathClutterLoss(
+      profileM, profileClasses, 80, 100, 2, 2, F_915, 1.0, scratch,
+      null,
+      uniformBuildingCtx(0),
+    );
+    const lossWithoutBuildings = computePathClutterLoss(
+      profileM, profileClasses, 80, 100, 2, 2, F_915, 1.0, scratch,
+    );
+    expect(lossWithBuildings).toBeCloseTo(lossWithoutBuildings, 3);
+  });
+
+  it("falls back to class-nominal when building raster has no coverage", () => {
+    const scratch = makeClutterScratch();
+    const { profileM, profileClasses } = flatProfile(80, 22);
+    // Path entirely outside the raster's bbox.
+    const ctx: BuildingPathContext = {
+      raster: uniformBuildings({ west: 0, east: 1, south: 0, north: 1 }, 25),
+      origLng: -120, origLat: 36.5, destLng: -119, destLat: 36.5,
+    };
+    const lossOutOfBox = computePathClutterLoss(
+      profileM, profileClasses, 80, 100, 2, 2, F_915, 1.0, scratch, null, ctx,
+    );
+    const lossNoRaster = computePathClutterLoss(
+      profileM, profileClasses, 80, 100, 2, 2, F_915, 1.0, scratch,
     );
     expect(lossOutOfBox).toBeCloseTo(lossNoRaster, 5);
   });

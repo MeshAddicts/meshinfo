@@ -469,6 +469,26 @@ class API:
                     tile_dir,
                 )
 
+        # Building-height tiles for the P.452 endpoint formula and ITM DSM.
+        # Pre-baked by scripts/building_tiles.py; missing tiles 404 and the
+        # frontend falls back to class-nominal. See RF-MODEL.md.
+        buildings_cfg = self.config.get("buildings", {}) or {}
+        if buildings_cfg.get("enabled", False):
+            tile_dir = Path(buildings_cfg.get("tile_dir", "output/buildings"))
+            if tile_dir.is_dir():
+                app.mount(
+                    "/tiles/buildings",
+                    TileFiles(directory=str(tile_dir)),
+                    name="building_tiles",
+                )
+                logger.info("Mounted building-height tiles at /tiles/buildings from %s", tile_dir.resolve())
+            else:
+                logger.info(
+                    "Building-height tiles enabled but %s does not exist — frontend will use class-nominal heights. "
+                    "Run scripts/building_tiles.py to populate.",
+                    tile_dir,
+                )
+
         allow_origins = os.getenv("ALLOW_ORIGINS", "").split(",")
         logger.info("Allowed origins: %s (%d)", allow_origins, len(allow_origins))
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { AggressionSlider, CanopyStatusChip, ClassLegend, ClutterStatusChip } from "./ClutterUI";
+import { AggressionSlider, BuildingStatusChip, CanopyStatusChip, ClassLegend, ClutterStatusChip } from "./ClutterUI";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
 import type { DemSource } from "./terrainRgb";
 import { useBottomSheetGesture } from "./useBottomSheet";
@@ -87,6 +87,9 @@ export function MapCoveragePanel({
   canopyEnabled,
   onCanopyEnabledChange,
   canopyStatus,
+  buildingsEnabled,
+  onBuildingsEnabledChange,
+  buildingsStatus,
   presetIdx,
   onPresetIdxChange,
   customSensitivityDbm,
@@ -148,6 +151,11 @@ export function MapCoveragePanel({
   onCanopyEnabledChange: (enabled: boolean) => void;
   /** Canopy tile-availability telemetry; null if no compute yet. */
   canopyStatus: { tilesPresent: number; tilesTotal: number } | null;
+  /** Building-height tier on/off. Off → bare-earth DEM + class-nominal endpoint h_a. */
+  buildingsEnabled: boolean;
+  onBuildingsEnabledChange: (enabled: boolean) => void;
+  /** Building tile-availability telemetry; null if no compute yet. */
+  buildingsStatus: { tilesPresent: number; tilesTotal: number } | null;
   presetIdx: number;
   onPresetIdxChange: (idx: number) => void;
   customSensitivityDbm: number;
@@ -858,6 +866,29 @@ export function MapCoveragePanel({
                   </label>
                 </div>
                 <CanopyStatusChip status={canopyStatus} enabled={canopyEnabled} />
+                <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-white/5">
+                  <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 flex items-center gap-1">
+                    <span>Building heights</span>
+                    <InfoTip align="left">
+                      Per-pixel measured building heights from JRC GHS-BUILT-H
+                      ANBH (100 m global). Adds rooftops as DSM obstacles for
+                      ITM diffraction along the propagation path, and replaces
+                      class-nominal h_a in the ITU-R P.452 endpoint formula for
+                      developed-class pixels. Toggle off for bare-earth DEM and
+                      class-nominal heights.
+                    </InfoTip>
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[10px] text-gray-300 cursor-pointer select-none shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={buildingsEnabled}
+                      onChange={(e) => onBuildingsEnabledChange(e.target.checked)}
+                      className="w-3 h-3 accent-cyan-500 cursor-pointer"
+                    />
+                    <span>Enabled</span>
+                  </label>
+                </div>
+                <BuildingStatusChip status={buildingsStatus} enabled={buildingsEnabled} />
               </div>
 
               {/* Reliability (ITM TLS preset) */}

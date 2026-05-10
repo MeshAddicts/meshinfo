@@ -96,5 +96,14 @@ services:
     volumes:
       - ./output:/app/output
 
+  # `docker compose -f docker-compose-dev.yml --profile bake run --rm building-bake` — see scripts/README-buildings.md.
+  building-bake:
+    profiles: ["bake"]
+    build:
+      context: .
+      dockerfile: Dockerfile.buildings
+    volumes:
+      - ./output:/app/output
+
 volumes:
   meshinfo_pgdata:
