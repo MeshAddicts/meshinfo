@@ -26,7 +26,7 @@ import sys
 import urllib.error
 import urllib.request
 import zipfile
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import dataclass
 from os import cpu_count
 from pathlib import Path
@@ -361,23 +361,41 @@ def main() -> int:
     counts = {"written": 0, "skipped": 0, "empty": 0, "error": 0}
     progress_step = max(1, total // 100)
 
+    # Bounded streaming submission: keep ~2× workers in flight rather than
+    # materializing all futures up front. Default --scope global at z=6..10
+    # is millions of tiles; submitting all up front would burn GBs on Futures.
+    in_flight_target = max(args.workers * 2, args.workers + 1)
+
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
-        futures = {pool.submit(bake_tile, job): None for job in jobs}
-        for i, fut in enumerate(as_completed(futures), 1):
+        pending = set()
+        for _ in range(in_flight_target):
             try:
-                result = fut.result()
-                counts[result] += 1
-            except Exception as exc:
-                counts["error"] += 1
-                log.warning("Tile failed: %s", exc)
-            if i % progress_step == 0 or i == total:
-                pct = 100.0 * i / total if total else 100.0
-                log.info(
-                    "[%5.1f%%] %d/%d  written=%d skipped=%d empty=%d error=%d",
-                    pct, i, total,
-                    counts["written"], counts["skipped"],
-                    counts["empty"], counts["error"],
-                )
+                pending.add(pool.submit(bake_tile, next(jobs)))
+            except StopIteration:
+                break
+
+        completed = 0
+        while pending:
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for fut in done:
+                completed += 1
+                try:
+                    counts[fut.result()] += 1
+                except Exception as exc:
+                    counts["error"] += 1
+                    log.warning("Tile failed: %s", exc)
+                try:
+                    pending.add(pool.submit(bake_tile, next(jobs)))
+                except StopIteration:
+                    pass
+                if completed % progress_step == 0 or completed == total:
+                    pct = 100.0 * completed / total if total else 100.0
+                    log.info(
+                        "[%5.1f%%] %d/%d  written=%d skipped=%d empty=%d error=%d",
+                        pct, completed, total,
+                        counts["written"], counts["skipped"],
+                        counts["empty"], counts["error"],
+                    )
 
     log.info(
         "Done. written=%d skipped=%d empty=%d error=%d",
