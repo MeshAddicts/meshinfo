@@ -2,6 +2,8 @@
  * Coverage slice worker: runs ITM per pixel over a row range of a shared DEM.
  * Each worker keeps its own ITM WASM context warm across requests.
  */
+import type { BuildingRaster } from "./buildingTiles";
+import type { CanopyRaster } from "./canopyTiles";
 import {
   type RasterParams,
   renderCoverageRaster,
@@ -16,6 +18,15 @@ import {
 import type { ClutterRaster } from "./landcoverTiles";
 import type { DEM, DEMBounds } from "./terrainDEM";
 
+/** Per-origin link-budget inputs; renderCoverageRaster takes max margin across all entries. */
+export interface SliceOrigin {
+  position: [number, number];
+  /** Origin MSL height (m); display/export only — ITM doesn't receive this. */
+  heightM: number;
+  /** TX antenna AGL (m); ITM txHeightM must be AGL, not MSL. */
+  antennaHeightAboveGroundM: number;
+}
+
 export interface CoverageSliceRequest {
   requestId: number;
   /** Transferable DEM buffer (main thread ships a copy per worker). */
@@ -23,10 +34,8 @@ export interface CoverageSliceRequest {
   demWidth: number;
   demHeight: number;
   bounds: DEMBounds;
-  origin: [number, number];
-  originHeightM: number;
-  /** TX antenna AGL (m); ITM txHeightM must be AGL, not MSL. */
-  originAntennaHeightAboveGroundM: number;
+  /** Primary + optional merge origins. */
+  origins: SliceOrigin[];
   params: RasterParams;
   /** rowStart/rowEnd are OUTPUT-grid indices (decoupled from DEM). */
   outputWidth: number;
@@ -37,6 +46,17 @@ export interface CoverageSliceRequest {
   clutterBuffer?: ArrayBuffer;
   clutterWidth?: number;
   clutterHeight?: number;
+  /** Optional canopy-height raster aligned to DEM bounds. Absent → class-nominal heights. */
+  canopyHeightBuffer?: ArrayBuffer;
+  canopyStdBuffer?: ArrayBuffer;
+  canopyMaskBuffer?: ArrayBuffer;
+  canopyWidth?: number;
+  canopyHeight?: number;
+  /** Optional building-height raster aligned to DEM bounds. Absent → bare-earth + class-nominal. */
+  buildingHeightBuffer?: ArrayBuffer;
+  buildingMaskBuffer?: ArrayBuffer;
+  buildingWidth?: number;
+  buildingHeight?: number;
 }
 
 export interface CoverageSliceResponse {
@@ -116,18 +136,41 @@ self.onmessage = async (evt: MessageEvent<CoverageSliceRequest>) => {
             tilesTotal: 0,
           }
         : null;
+    const canopy: CanopyRaster | null =
+      msg.canopyHeightBuffer && msg.canopyStdBuffer && msg.canopyMaskBuffer && msg.canopyWidth && msg.canopyHeight
+        ? {
+            heightM: new Float32Array(msg.canopyHeightBuffer),
+            stdM: new Float32Array(msg.canopyStdBuffer),
+            mask: new Float32Array(msg.canopyMaskBuffer),
+            width: msg.canopyWidth,
+            height: msg.canopyHeight,
+            bounds: msg.bounds,
+            tilesPresent: 0,
+            tilesTotal: 0,
+          }
+        : null;
+    const buildings: BuildingRaster | null =
+      msg.buildingHeightBuffer && msg.buildingMaskBuffer && msg.buildingWidth && msg.buildingHeight
+        ? {
+            heightM: new Float32Array(msg.buildingHeightBuffer),
+            mask: new Float32Array(msg.buildingMaskBuffer),
+            width: msg.buildingWidth,
+            height: msg.buildingHeight,
+            bounds: msg.bounds,
+            tilesPresent: 0,
+            tilesTotal: 0,
+          }
+        : null;
     const rendered = renderCoverageRaster(
       dem,
       msg.params,
       itm,
-      {
-        position: msg.origin,
-        heightM: msg.originHeightM,
-        antennaHeightAboveGroundM: msg.originAntennaHeightAboveGroundM,
-      },
+      msg.origins,
       { rowStart: msg.rowStart, rowEnd: msg.rowEnd },
       { width: msg.outputWidth, height: msg.outputHeight },
       clutter,
+      canopy,
+      buildings,
     );
     post({
       requestId: msg.requestId,

@@ -1,7 +1,11 @@
 # One-shot bake image. Run via `docker compose --profile bake run --rm landcover-bake`.
-# Kept separate from the prod image to keep that image lean. rasterio ships GDAL
-# wheels on PyPI, so no system GDAL install is needed.
+# rasterio's manylinux wheels link against libexpat which python:slim variants
+# don't bundle — install it explicitly.
 FROM python:3.14-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libexpat1 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

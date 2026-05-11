@@ -1,9 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { AggressionSlider, ClassLegend, ClutterStatusChip } from "./ClutterUI";
-import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
+import { AggressionSlider, BuildingStatusChip, CanopyStatusChip, ClassLegend, ClutterStatusChip } from "./ClutterUI";
+import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, type MergeOrigin, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
 import type { DemSource } from "./terrainRgb";
 import { useBottomSheetGesture } from "./useBottomSheet";
+
+interface MergeNodeOption {
+  id: string;
+  shortname?: string;
+  longname?: string;
+}
 
 /** Parse "lat, lng" (Google Maps format) → [lng, lat]. Returns null if invalid. */
 function parseLatLng(input: string): [number, number] | null {
@@ -84,6 +90,20 @@ export function MapCoveragePanel({
   clutterEnabled,
   onClutterEnabledChange,
   clutterStatus,
+  canopyEnabled,
+  onCanopyEnabledChange,
+  canopyStatus,
+  buildingsEnabled,
+  onBuildingsEnabledChange,
+  buildingsStatus,
+  mergeOrigins,
+  onAddMergeOriginById,
+  onRemoveMergeOrigin,
+  onClearMergeOrigins,
+  mergeNodeOptions,
+  pickingMergeOrigin,
+  onStartPickMergeOrigin,
+  onCancelPickMergeOrigin,
   presetIdx,
   onPresetIdxChange,
   customSensitivityDbm,
@@ -140,6 +160,27 @@ export function MapCoveragePanel({
   onClutterEnabledChange: (enabled: boolean) => void;
   /** Tile-availability telemetry from the most recent compute; null if none yet. */
   clutterStatus: { tilesPresent: number; tilesTotal: number } | null;
+  /** Canopy-height tier on/off. Off → class-nominal heights (still under clutter aggression). */
+  canopyEnabled: boolean;
+  onCanopyEnabledChange: (enabled: boolean) => void;
+  /** Canopy tile-availability telemetry; null if no compute yet. */
+  canopyStatus: { tilesPresent: number; tilesTotal: number } | null;
+  /** Building-height tier on/off. Off → bare-earth DEM + class-nominal endpoint h_a. */
+  buildingsEnabled: boolean;
+  onBuildingsEnabledChange: (enabled: boolean) => void;
+  /** Building tile-availability telemetry; null if no compute yet. */
+  buildingsStatus: { tilesPresent: number; tilesTotal: number } | null;
+  /** Additional origins layered on top of the primary; per-pixel max margin. */
+  mergeOrigins: MergeOrigin[];
+  onAddMergeOriginById: (nodeId: string) => void;
+  onRemoveMergeOrigin: (id: string) => void;
+  onClearMergeOrigins: () => void;
+  /** Searchable list of nodes available to add as merge origins. */
+  mergeNodeOptions: MergeNodeOption[];
+  /** True while the next map click will drop a virtual merge pin. */
+  pickingMergeOrigin: boolean;
+  onStartPickMergeOrigin: () => void;
+  onCancelPickMergeOrigin: () => void;
   presetIdx: number;
   onPresetIdxChange: (idx: number) => void;
   customSensitivityDbm: number;
@@ -208,6 +249,23 @@ export function MapCoveragePanel({
     onRxHeightChange(clamped);
     setRxHeightInput(String(clamped));
   };
+
+  // The parent already excludes the primary from `mergeNodeOptions`; we just
+  // filter out IDs already in the merge set on top of that.
+  const [mergeOriginSearch, setMergeOriginSearch] = useState("");
+  const mergeOriginCandidates = useMemo(() => {
+    const q = mergeOriginSearch.trim().toLowerCase();
+    if (!q) return [];
+    const taken = new Set(mergeOrigins.map((o) => o.id));
+    return mergeNodeOptions
+      .filter((n) => !taken.has(n.id))
+      .filter((n) =>
+        (n.shortname?.toLowerCase().includes(q) ?? false) ||
+        (n.longname?.toLowerCase().includes(q) ?? false) ||
+        n.id.toLowerCase().includes(q),
+      )
+      .slice(0, 12);
+  }, [mergeOriginSearch, mergeOrigins, mergeNodeOptions]);
 
   // Lets the header "custom RX" pill open the advanced-settings <details>
   const gearRef = useRef<HTMLDetailsElement>(null);
@@ -804,6 +862,97 @@ export function MapCoveragePanel({
                 </div>
               </div>
 
+              {/* Multi-origin merge. */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 flex items-center gap-1">
+                    <span>Merged origins{mergeOrigins.length > 0 && ` (${mergeOrigins.length})`}</span>
+                    <InfoTip align="left">
+                      Add other nodes to layer on top of the primary origin —
+                      the painted coverage takes the per-pixel best signal
+                      across all origins. Useful for asking "where can my mesh
+                      reach if any of these nodes works?" without picking
+                      one as primary. Session-only — not persisted.
+                    </InfoTip>
+                  </label>
+                  {mergeOrigins.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={onClearMergeOrigins}
+                      className="text-[10px] text-gray-500 hover:text-red-300"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                {mergeOrigins.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    {mergeOrigins.map((o) => (
+                      <div
+                        key={o.id}
+                        className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/5 text-[10px] text-gray-300"
+                      >
+                        <span className="truncate min-w-0 flex-1">{o.label}</span>
+                        <button
+                          type="button"
+                          onClick={() => onRemoveMergeOrigin(o.id)}
+                          className="text-gray-500 hover:text-red-300 shrink-0"
+                          aria-label={`Remove ${o.label} from merged origins`}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={mergeOriginSearch}
+                    onChange={(e) => setMergeOriginSearch(e.target.value)}
+                    placeholder="Search nodes to merge…"
+                    className="flex-1 min-w-0 px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[10px] text-gray-200 placeholder:text-gray-500 focus:outline-none focus:border-cyan-500/50"
+                  />
+                  <button
+                    type="button"
+                    onClick={pickingMergeOrigin ? onCancelPickMergeOrigin : onStartPickMergeOrigin}
+                    title={pickingMergeOrigin ? "Cancel pick (or press Esc)" : "Click on the map to drop a pin"}
+                    className={`px-2 py-1 rounded-md border text-[10px] whitespace-nowrap shrink-0 transition-colors ${
+                      pickingMergeOrigin
+                        ? "bg-amber-500/20 border-amber-500/40 text-amber-200"
+                        : "bg-white/5 border-white/10 text-gray-300 hover:bg-white/10"
+                    }`}
+                  >
+                    {pickingMergeOrigin ? "Click map…" : "+ Pin"}
+                  </button>
+                </div>
+                {mergeOriginSearch.trim() !== "" && (
+                  <div className="max-h-32 overflow-y-auto rounded-md bg-black/20 border border-white/5 divide-y divide-white/5">
+                    {mergeOriginCandidates.length === 0 ? (
+                      <div className="text-[10px] text-gray-500 px-2 py-1.5">No matches.</div>
+                    ) : (
+                      mergeOriginCandidates.map((n) => (
+                        <button
+                          key={n.id}
+                          type="button"
+                          onClick={() => {
+                            onAddMergeOriginById(n.id);
+                            setMergeOriginSearch("");
+                          }}
+                          className="w-full text-left px-2 py-1 text-[10px] text-gray-300 hover:bg-white/5 truncate"
+                        >
+                          <span className="text-cyan-300/80 mr-1">+</span>
+                          {n.shortname ?? n.longname ?? n.id}
+                          {n.shortname && n.longname && (
+                            <span className="text-gray-500 ml-1.5">{n.longname}</span>
+                          )}
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* Clutter (per-pixel ITU model + aggression scaler). */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between gap-2">
@@ -829,6 +978,50 @@ export function MapCoveragePanel({
                 <AggressionSlider aggressionIdx={aggressionIdx} onChange={onAggressionIdxChange} enabled={clutterEnabled} />
                 <ClutterStatusChip status={clutterStatus} enabled={clutterEnabled} />
                 <ClassLegend />
+                <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-white/5">
+                  <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 flex items-center gap-1">
+                    <span>Canopy heights</span>
+                    <InfoTip align="left">
+                      Per-pixel measured canopy heights from ETH Global Canopy
+                      Height 2020 (Lang et al. 2023, 10 m). Replaces class-nominal
+                      heights in ITU-R P.833-9 vegetation loss for forest classes.
+                      Toggle off to fall back to class-nominal heights everywhere.
+                    </InfoTip>
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[10px] text-gray-300 cursor-pointer select-none shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={canopyEnabled}
+                      onChange={(e) => onCanopyEnabledChange(e.target.checked)}
+                      className="w-3 h-3 accent-cyan-500 cursor-pointer"
+                    />
+                    <span>Enabled</span>
+                  </label>
+                </div>
+                <CanopyStatusChip status={canopyStatus} enabled={canopyEnabled} />
+                <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-white/5">
+                  <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 flex items-center gap-1">
+                    <span>Building heights</span>
+                    <InfoTip align="left">
+                      Per-pixel measured building heights from JRC GHS-BUILT-H
+                      ANBH (100 m global). Adds rooftops as DSM obstacles for
+                      ITM diffraction along the propagation path, and replaces
+                      class-nominal h_a in the ITU-R P.452 endpoint formula for
+                      developed-class pixels. Toggle off for bare-earth DEM and
+                      class-nominal heights.
+                    </InfoTip>
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[10px] text-gray-300 cursor-pointer select-none shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={buildingsEnabled}
+                      onChange={(e) => onBuildingsEnabledChange(e.target.checked)}
+                      className="w-3 h-3 accent-cyan-500 cursor-pointer"
+                    />
+                    <span>Enabled</span>
+                  </label>
+                </div>
+                <BuildingStatusChip status={buildingsStatus} enabled={buildingsEnabled} />
               </div>
 
               {/* Reliability (ITM TLS preset) */}

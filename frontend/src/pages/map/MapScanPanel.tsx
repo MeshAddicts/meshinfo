@@ -1,7 +1,7 @@
 /** Scan-results panel: ranked LoS from origin to every node in view. */
 import { useEffect, useMemo, useState } from "react";
 
-import { AggressionSlider, ClassLegend, ClutterStatusChip } from "./ClutterUI";
+import { AggressionSlider, BuildingStatusChip, CanopyStatusChip, ClassLegend, ClutterStatusChip } from "./ClutterUI";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, MESHTASTIC_PRESETS } from "./coverageAnalysis";
 import type { ScanClass, ScanResult,ScanSummary } from "./scanAnalysis";
 import type { DemSource } from "./terrainRgb";
@@ -44,6 +44,12 @@ export function MapScanPanel({
   clutterEnabled,
   onClutterEnabledChange,
   clutterStatus,
+  canopyEnabled,
+  onCanopyEnabledChange,
+  canopyStatus,
+  buildingsEnabled,
+  onBuildingsEnabledChange,
+  buildingsStatus,
   presetIdx,
   onPresetIdxChange,
   customSensitivityDbm,
@@ -85,6 +91,16 @@ export function MapScanPanel({
   onClutterEnabledChange: (enabled: boolean) => void;
   /** Tile-availability telemetry from the most recent scan; null until first run. */
   clutterStatus: { tilesPresent: number; tilesTotal: number } | null;
+  /** Canopy-height tier on/off. Off → class-nominal heights. */
+  canopyEnabled: boolean;
+  onCanopyEnabledChange: (enabled: boolean) => void;
+  /** Canopy tile-availability telemetry; null until first scan. */
+  canopyStatus: { tilesPresent: number; tilesTotal: number } | null;
+  /** Building-height tier on/off. Off → bare-earth + class-nominal endpoint h_a. */
+  buildingsEnabled: boolean;
+  onBuildingsEnabledChange: (enabled: boolean) => void;
+  /** Building tile-availability telemetry; null until first scan. */
+  buildingsStatus: { tilesPresent: number; tilesTotal: number } | null;
   presetIdx: number;
   onPresetIdxChange: (idx: number) => void;
   customSensitivityDbm: number;
@@ -431,6 +447,36 @@ export function MapScanPanel({
                 <AggressionSlider aggressionIdx={aggressionIdx} onChange={onAggressionIdxChange} enabled={clutterEnabled} />
                 <ClutterStatusChip status={clutterStatus} enabled={clutterEnabled} />
                 <ClassLegend />
+                <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-white/5">
+                  <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 block">
+                    Canopy heights
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[10px] text-gray-300 cursor-pointer select-none shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={canopyEnabled}
+                      onChange={(e) => onCanopyEnabledChange(e.target.checked)}
+                      className="w-3 h-3 accent-cyan-500 cursor-pointer"
+                    />
+                    <span>Enabled</span>
+                  </label>
+                </div>
+                <CanopyStatusChip status={canopyStatus} enabled={canopyEnabled} />
+                <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-white/5">
+                  <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 block">
+                    Building heights
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[10px] text-gray-300 cursor-pointer select-none shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={buildingsEnabled}
+                      onChange={(e) => onBuildingsEnabledChange(e.target.checked)}
+                      className="w-3 h-3 accent-cyan-500 cursor-pointer"
+                    />
+                    <span>Enabled</span>
+                  </label>
+                </div>
+                <BuildingStatusChip status={buildingsStatus} enabled={buildingsEnabled} />
               </div>
 
               <div className="pt-2 border-t border-white/5 text-[10px] text-gray-500 leading-relaxed">

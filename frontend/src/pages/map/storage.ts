@@ -8,12 +8,20 @@ export const LS_KEYS = {
   linkMode: "meshinfo.map.linkMode",
   myNodeId: "meshinfo.map.myNodeId",
   terrain3D: "meshinfo.map.terrain3D",
+  /** Cosmetic 3D-buildings extrusion (OpenFreeMap vector tiles). RF-independent. */
+  buildings3D: "meshinfo.map.buildings3D",
   /** AGGRESSION_STOPS index (0/1/2). Default 1 = calibrated baseline. */
   coverageAggressionIdx: "meshinfo.map.coverageAggressionIdx",
   scanAggressionIdx: "meshinfo.map.scanAggressionIdx",
   /** Clutter model on/off. Off → aggression = 0, ITM-only path loss. */
   coverageClutterEnabled: "meshinfo.map.coverageClutterEnabled",
   scanClutterEnabled: "meshinfo.map.scanClutterEnabled",
+  /** Canopy-height tier on/off. Off → fall back to class-nominal heights. */
+  coverageCanopyEnabled: "meshinfo.map.coverageCanopyEnabled",
+  scanCanopyEnabled: "meshinfo.map.scanCanopyEnabled",
+  /** Building-height tier on/off. Off → bare-earth DEM + class-nominal endpoint h_a. */
+  coverageBuildingsEnabled: "meshinfo.map.coverageBuildingsEnabled",
+  scanBuildingsEnabled: "meshinfo.map.scanBuildingsEnabled",
 } as const;
 
 export function readJson<T>(key: string, fallback: T): T {

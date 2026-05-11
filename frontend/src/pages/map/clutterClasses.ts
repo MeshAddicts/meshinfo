@@ -81,10 +81,13 @@ export function endpointClutterDb(
   cls: ClutterClass,
   antennaAGLm: number,
   freqMhz: number,
+  /** Override h_a (e.g. from a measured-height raster); falls back to cls.nominalHeightM. */
+  overrideHeightM?: number,
 ): number {
-  if (cls.nominalHeightM <= 0) return 0;
+  const haM = overrideHeightM ?? cls.nominalHeightM;
+  if (haM <= 0) return 0;
   const h = Math.max(0, antennaAGLm);
-  const ratio = h / cls.nominalHeightM;
+  const ratio = h / haM;
   const fc = freqFactor(freqMhz);
   const a =
     10.25 * fc * Math.exp(-cls.nominalDistanceKm) *

@@ -1,0 +1,11 @@
+# Dependencies for scripts/canopy_tiles.py.
+# Same dep set as scripts/requirements-landcover.txt — kept separate so the two
+# bakes can be installed independently without pulling unused tooling.
+#
+# rasterio bundles its own GDAL wheels on PyPI (Linux/macOS/Windows), so no
+# system GDAL install is required for typical runs.
+
+rasterio>=1.3,<2
+mercantile>=1.2,<2
+numpy>=1.24
+Pillow>=10

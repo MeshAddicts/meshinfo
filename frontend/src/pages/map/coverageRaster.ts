@@ -3,7 +3,11 @@
  * Hot loop is alloc-free (shared Float64 profile buffer, pre-allocated WASM ctx).
  * Profile length adapts to path length (15-96 samples, ~1.5/km).
  */
+import { type BuildingRaster, sampleBuildingAt } from "./buildingTiles";
+import type { CanopyRaster } from "./canopyTiles";
 import {
+  type BuildingPathContext,
+  type CanopyPathContext,
   computePathClutterLoss,
   makeClutterScratch,
 } from "./clutterPath";
@@ -130,16 +134,22 @@ export interface OutputGrid {
   height: number;
 }
 
-/** Paint `rowRange` (or full grid) of the output raster via ITM. */
+/** Paint `rowRange` (or full grid) of the output raster via ITM. With multiple
+ *  origins, each pixel keeps the max margin across all of them. */
 export function renderCoverageRaster(
   dem: DEM,
   params: RasterParams,
   itm: ItmContext,
-  origin: RasterOrigin,
+  origins: RasterOrigin[],
   rowRange?: RowRange,
   output?: OutputGrid,
   /** Optional class-ID raster aligned to the DEM bounds. Null = treat every sample as default class. */
   clutter?: ClutterRaster | null,
+  /** Optional canopy-height raster aligned to the DEM bounds. Null = use class-nominal heights. */
+  canopy?: CanopyRaster | null,
+  /** Optional building-height raster aligned to the DEM bounds. Drives the ITM
+   *  DSM (mid-path) and P.452 endpoint h_a override. Null = class-nominal. */
+  buildings?: BuildingRaster | null,
 ): RasterResult {
   const { bounds } = dem;
   const outputWidth = output?.width ?? dem.width;
@@ -173,16 +183,24 @@ export function renderCoverageRaster(
   const profileClassBuf = new Uint8Array(maxSamples);
   const clutterScratch = makeClutterScratch();
 
-  const [origLng, origLat] = origin.position;
+  // Pre-clamp + flatten origins so the inner loop touches Float64Arrays only.
+  const originLngs = new Float64Array(origins.length);
+  const originLats = new Float64Array(origins.length);
+  const txHeights = new Float64Array(origins.length);
+  for (let k = 0; k < origins.length; k++) {
+    originLngs[k] = origins[k].position[0];
+    originLats[k] = origins[k].position[1];
+    txHeights[k] = Math.max(0.5, Math.min(3000, origins[k].antennaHeightAboveGroundM));
+  }
+
   // Step over OUTPUT grid; terrain via bilinear sampleDEMAt is (lng,lat)-continuous
   const lonStep = (bounds.east - bounds.west) / (outputWidth - 1);
   const latStep = (bounds.north - bounds.south) / (outputHeight - 1);
 
   // Reusable input object (65k+ computes per frame → don't allocate). ITM wants AGL, clamped [0.5, 3000].
-  const txHeightAgM = Math.max(0.5, Math.min(3000, origin.antennaHeightAboveGroundM));
   const itmInput = {
-    txHeightM: txHeightAgM,
-    rxHeightM: 0, // set per-pixel
+    txHeightM: 0,
+    rxHeightM: 0,
     profileM: profileBuf,
     pointSpacingM: 0,
     climate,
@@ -201,6 +219,14 @@ export function renderCoverageRaster(
   const txGain = txAntennaDbi;
   const rxGain = rxAntennaDbi;
 
+  // Mutated per-pixel rather than reallocated — see CanopyPathContext docstring.
+  const canopyCtx: CanopyPathContext | null = canopy
+    ? { raster: canopy, origLng: 0, origLat: 0, destLng: 0, destLat: 0 }
+    : null;
+  const buildingCtx: BuildingPathContext | null = buildings
+    ? { raster: buildings, origLng: 0, origLat: 0, destLng: 0, destLat: 0 }
+    : null;
+
   for (let j = rowStart; j < rowEnd; j++) {
     const lat = bounds.north - j * latStep;
     const outRowOffset = (j - rowStart) * outputWidth;
@@ -212,87 +238,120 @@ export function renderCoverageRaster(
         rgba[outPxIdx * 4 + 3] = 0;
         continue;
       }
-      const distKm = haversineKm(origLng, origLat, lng, lat);
 
-      // Origin pixel — paint max-margin color
-      if (distKm < 0.01) {
-        const [r, g, b, a] = gradient(50);
-        rgba[outPxIdx * 4] = r;
-        rgba[outPxIdx * 4 + 1] = g;
-        rgba[outPxIdx * 4 + 2] = b;
-        rgba[outPxIdx * 4 + 3] = a;
-        clearCount++;
-        if (50 > maxMarginDb) maxMarginDb = 50;
-        continue;
-      }
+      let bestMargin = Number.NEGATIVE_INFINITY;
+      let anyOriginValid = false;
+      // Whether any origin built a usable terrain profile (passed DEM check) — gates
+      // blockedCount so DEM-NaN holes stay transparent rather than counted as blocked.
+      let anyOriginItmAttempted = false;
 
-      // Linear lng/lat interp is within ~1% of great-circle at Meshtastic distances
-      const nSamples = profileSampleCount(distKm);
-      let validProfile = true;
-      for (let s = 0; s < nSamples; s++) {
-        const t = s / (nSamples - 1);
-        const sLng = origLng + (lng - origLng) * t;
-        const sLat = origLat + (lat - origLat) * t;
-        const elev = sampleDEMAt(dem, sLng, sLat);
-        if (Number.isNaN(elev)) {
-          validProfile = false;
-          break;
+      for (let k = 0; k < origins.length; k++) {
+        const origLng = originLngs[k];
+        const origLat = originLats[k];
+        const txHeightAgM = txHeights[k];
+        const distKm = haversineKm(origLng, origLat, lng, lat);
+
+        // Origin pixel — short-circuit to max margin (50 dB).
+        if (distKm < 0.01) {
+          if (50 > bestMargin) bestMargin = 50;
+          anyOriginValid = true;
+          continue;
         }
-        profileBuf[s] = elev;
-        profileClassBuf[s] = clutter ? sampleClutterClassAt(clutter, sLng, sLat) : 0;
+
+        // Linear lng/lat interp is within ~1% of great-circle at Meshtastic distances
+        const nSamples = profileSampleCount(distKm);
+        const lastIdx = nSamples - 1;
+        let validProfile = true;
+        for (let s = 0; s < nSamples; s++) {
+          const t = s / lastIdx;
+          const sLng = origLng + (lng - origLng) * t;
+          const sLat = origLat + (lat - origLat) * t;
+          const elev = sampleDEMAt(dem, sLng, sLat);
+          if (Number.isNaN(elev)) {
+            validProfile = false;
+            break;
+          }
+          // Endpoints stay bare-earth so AGL antenna heights aren't placed on
+          // top of a presumed building — that's captured by P.452 instead.
+          let dsmElev = elev;
+          if (buildings && s !== 0 && s !== lastIdx) {
+            const sample = sampleBuildingAt(buildings, sLng, sLat);
+            if (sample && sample.heightM > 0) dsmElev = elev + sample.heightM;
+          }
+          profileBuf[s] = dsmElev;
+          profileClassBuf[s] = clutter ? sampleClutterClassAt(clutter, sLng, sLat) : 0;
+        }
+        if (!validProfile) continue;
+        anyOriginItmAttempted = true;
+
+        // subarray = no-copy view; slice() would allocate
+        itmInput.profileM = profileBuf.subarray(0, nSamples);
+        const pointSpacingM = (distKm * 1000) / (nSamples - 1);
+        itmInput.pointSpacingM = pointSpacingM;
+        itmInput.rxHeightM = receiverAntennaAboveGroundM;
+        itmInput.txHeightM = txHeightAgM;
+
+        const lossDb = computeP2PLossFast(itm, itmInput);
+        if (!Number.isFinite(lossDb) || lossDb <= 0) continue;
+
+        if (canopyCtx) {
+          canopyCtx.origLng = origLng;
+          canopyCtx.origLat = origLat;
+          canopyCtx.destLng = lng;
+          canopyCtx.destLat = lat;
+        }
+        if (buildingCtx) {
+          buildingCtx.origLng = origLng;
+          buildingCtx.origLat = origLat;
+          buildingCtx.destLng = lng;
+          buildingCtx.destLat = lat;
+        }
+        const clutterLossDb = computePathClutterLoss(
+          profileBuf,
+          profileClassBuf,
+          nSamples,
+          pointSpacingM,
+          txHeightAgM,
+          receiverAntennaAboveGroundM,
+          freqMhz,
+          clutterAggression,
+          clutterScratch,
+          canopyCtx,
+          buildingCtx,
+        );
+
+        const totalLossDb = lossDb + clutterLossDb + cableLossDb;
+        const rssiDbm = txDbm + txGain + rxGain - totalLossDb;
+        const marginDb = rssiDbm - rxSensitivityDbm - fadeMarginDb;
+        if (marginDb > bestMargin) bestMargin = marginDb;
+        anyOriginValid = true;
       }
-      if (!validProfile) {
+
+      if (!anyOriginValid) {
+        // Distinguish "ITM rejected every origin's path" (count as blocked)
+        // from "no DEM data here" (just leave transparent).
         rgba[outPxIdx * 4 + 3] = 0;
+        if (anyOriginItmAttempted) blockedCount++;
         continue;
       }
-
-      // subarray = no-copy view; slice() would allocate
-      itmInput.profileM = profileBuf.subarray(0, nSamples);
-      const pointSpacingM = (distKm * 1000) / (nSamples - 1);
-      itmInput.pointSpacingM = pointSpacingM;
-      itmInput.rxHeightM = receiverAntennaAboveGroundM;
-
-      const lossDb = computeP2PLossFast(itm, itmInput);
-      if (!Number.isFinite(lossDb) || lossDb <= 0) {
-        // ITM failure — transparent rather than garbage color
-        rgba[outPxIdx * 4 + 3] = 0;
-        blockedCount++;
-        continue;
-      }
-
-      const clutterLossDb = computePathClutterLoss(
-        profileBuf,
-        profileClassBuf,
-        nSamples,
-        pointSpacingM,
-        txHeightAgM,
-        receiverAntennaAboveGroundM,
-        freqMhz,
-        clutterAggression,
-        clutterScratch,
-      );
-
-      const totalLossDb = lossDb + clutterLossDb + cableLossDb;
-      const rssiDbm = txDbm + txGain + rxGain - totalLossDb;
-      const marginDb = rssiDbm - rxSensitivityDbm - fadeMarginDb;
 
       // Record margin for blocked pixels too — contour extraction needs both sides of 0 dB
-      marginDbBuf[outPxIdx] = marginDb;
+      marginDbBuf[outPxIdx] = bestMargin;
 
-      if (marginDb < 0) {
+      if (bestMargin < 0) {
         blockedCount++;
         rgba[outPxIdx * 4 + 3] = 0;
         continue;
       }
 
-      if (marginDb >= 15) {
+      if (bestMargin >= 15) {
         clearCount++;
       } else {
         fresnelCount++;
       }
-      if (marginDb > maxMarginDb) maxMarginDb = marginDb;
+      if (bestMargin > maxMarginDb) maxMarginDb = bestMargin;
 
-      const [r, g, b, a] = gradient(marginDb);
+      const [r, g, b, a] = gradient(bestMargin);
       const o = outPxIdx * 4;
       rgba[o] = r;
       rgba[o + 1] = g;

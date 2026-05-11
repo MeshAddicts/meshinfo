@@ -9,16 +9,18 @@ import { useSearchParams } from "react-router";
 
 import { env } from "../env";
 import { reverseGeocode } from "../maps/geocoder";
-import { buildMapStyle, ensureTerrain, type OsmBasemap,removeTerrain } from "../maps/mapStyle";
+import { buildMapStyle, ensureBuildings3D, ensureTerrain, type OsmBasemap, removeBuildings3D, removeTerrain } from "../maps/mapStyle";
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { type ITraceroutesResponse,NodeRole, roleTitles } from "../types";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
+import { buildBuildingRaster, type BuildingRaster, downsampleBuildingRaster } from "./map/buildingTiles";
+import { buildCanopyRaster, type CanopyRaster, downsampleCanopyRaster } from "./map/canopyTiles";
 import { ClusterDonutLayer } from "./map/clusterDonutLayer";
-import { AGGRESSION_STOPS, COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, DEFAULT_AGGRESSION_IDX,effectiveSensitivityDbm, MESHTASTIC_PRESETS, reliabilityPreset, REPRESENTATIVE_CLUTTER_DB } from "./map/coverageAnalysis";
+import { AGGRESSION_STOPS, COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, DEFAULT_AGGRESSION_IDX,effectiveSensitivityDbm, MESHTASTIC_PRESETS, type MergeOrigin, reliabilityPreset, REPRESENTATIVE_CLUTTER_DB } from "./map/coverageAnalysis";
 import { type ContourFeatureCollection,extractCoverageContours } from "./map/coverageContours";
 import type { RasterParams } from "./map/coverageRaster";
 import { extractCoverageRays, type VisibilityRayFeatureCollection } from "./map/coverageRays";
-import type { CoverageSliceRequest } from "./map/coverageSliceWorker";
+import type { CoverageSliceRequest, SliceOrigin } from "./map/coverageSliceWorker";
 import { CoverageWorkerPool } from "./map/coverageWorkerPool";
 import { FiltersResetPill } from "./map/FiltersResetPill";
 import { Climate, computeP2PLoss, type ItmContext, loadItmContext, Polarization } from "./map/itm";
@@ -305,6 +307,8 @@ export function Map() {
   // 3D terrain
   const [terrain3D, setTerrain3D] = useState<boolean>(() => readJson<boolean>(LS_KEYS.terrain3D, true));
   const terrainExaggeration = 1.5;
+  // Cosmetic 3D buildings (OpenFreeMap). Off by default to keep slow devices light.
+  const [buildings3D, setBuildings3D] = useState<boolean>(() => readJson<boolean>(LS_KEYS.buildings3D, false));
   const [losResult, setLosResult] = useState<LoSResult | null>(null);
   /** DEM tile source used for the last LoS compute. */
   const [losDemSource, setLosDemSource] = useState<DemSource | null>(null);
@@ -330,6 +334,29 @@ export function Map() {
   // Drives the land-cover status chip in each panel.
   const [coverageClutterStatus, setCoverageClutterStatus] = useState<{ tilesPresent: number; tilesTotal: number } | null>(null);
   const [scanClutterStatus, setScanClutterStatus] = useState<{ tilesPresent: number; tilesTotal: number } | null>(null);
+  // Drives the canopy-height status chip; null until first compute.
+  const [coverageCanopyStatus, setCoverageCanopyStatus] = useState<{ tilesPresent: number; tilesTotal: number } | null>(null);
+  const [scanCanopyStatus, setScanCanopyStatus] = useState<{ tilesPresent: number; tilesTotal: number } | null>(null);
+  // Drives the building-height status chip; null until first compute.
+  const [coverageBuildingsStatus, setCoverageBuildingsStatus] = useState<{ tilesPresent: number; tilesTotal: number } | null>(null);
+  const [scanBuildingsStatus, setScanBuildingsStatus] = useState<{ tilesPresent: number; tilesTotal: number } | null>(null);
+  // Coverage-merge set is session-only by design — contextual to one analysis.
+  const [coverageMergeOrigins, setCoverageMergeOrigins] = useState<MergeOrigin[]>([]);
+  // True while the panel's "Pick on map" button is armed; the next map click
+  // adds a virtual merge origin.
+  const [pickingMergeOrigin, setPickingMergeOrigin] = useState(false);
+  const removeCoverageMergeOrigin = useCallback((id: string) => {
+    setCoverageMergeOrigins((prev) => prev.filter((o) => o.id !== id));
+  }, []);
+  const clearCoverageMergeOrigins = useCallback(() => {
+    setCoverageMergeOrigins([]);
+    setPickingMergeOrigin(false);
+  }, []);
+  const moveCoverageMergeOrigin = useCallback((id: string, position: [number, number]) => {
+    setCoverageMergeOrigins((prev) =>
+      prev.map((o) => (o.id === id ? { ...o, position } : o)),
+    );
+  }, []);
   // Index into COMMON_ANTENNAS (value-based <select> can't distinguish same-dBi models)
   const [coverageAntennaIdx, setCoverageAntennaIdx] = useState(3);
   const coverageAntennaDbi = COMMON_ANTENNAS[coverageAntennaIdx]?.dbi ?? 3;
@@ -360,6 +387,20 @@ export function Map() {
   const setCoverageClutterEnabled = useCallback((v: boolean) => {
     setCoverageClutterEnabledRaw(v);
     writeJson(LS_KEYS.coverageClutterEnabled, v);
+  }, []);
+  const [coverageCanopyEnabled, setCoverageCanopyEnabledRaw] = useState(() =>
+    readJson<boolean>(LS_KEYS.coverageCanopyEnabled, true),
+  );
+  const setCoverageCanopyEnabled = useCallback((v: boolean) => {
+    setCoverageCanopyEnabledRaw(v);
+    writeJson(LS_KEYS.coverageCanopyEnabled, v);
+  }, []);
+  const [coverageBuildingsEnabled, setCoverageBuildingsEnabledRaw] = useState(() =>
+    readJson<boolean>(LS_KEYS.coverageBuildingsEnabled, true),
+  );
+  const setCoverageBuildingsEnabled = useCallback((v: boolean) => {
+    setCoverageBuildingsEnabledRaw(v);
+    writeJson(LS_KEYS.coverageBuildingsEnabled, v);
   }, []);
   const [coveragePresetIdx, setCoveragePresetIdx] = useState(0); // MediumFast
   const [coverageCustomSensDbm, setCoverageCustomSensDbm] = useState(-133);
@@ -408,6 +449,20 @@ export function Map() {
     setScanClutterEnabledRaw(v);
     writeJson(LS_KEYS.scanClutterEnabled, v);
   }, []);
+  const [scanCanopyEnabled, setScanCanopyEnabledRaw] = useState(() =>
+    readJson<boolean>(LS_KEYS.scanCanopyEnabled, true),
+  );
+  const setScanCanopyEnabled = useCallback((v: boolean) => {
+    setScanCanopyEnabledRaw(v);
+    writeJson(LS_KEYS.scanCanopyEnabled, v);
+  }, []);
+  const [scanBuildingsEnabled, setScanBuildingsEnabledRaw] = useState(() =>
+    readJson<boolean>(LS_KEYS.scanBuildingsEnabled, true),
+  );
+  const setScanBuildingsEnabled = useCallback((v: boolean) => {
+    setScanBuildingsEnabledRaw(v);
+    writeJson(LS_KEYS.scanBuildingsEnabled, v);
+  }, []);
   const [scanPresetIdx, setScanPresetIdx] = useState(0);
   const [scanCustomSensDbm, setScanCustomSensDbm] = useState(-133);
   const scanSensitivityDbm = MESHTASTIC_PRESETS[scanPresetIdx].isCustom
@@ -448,6 +503,11 @@ export function Map() {
   const losTubeLayerRef = useRef<LosTubeLayer | null>(null);
   /** DOM pin for the Coverage origin (draggable). */
   const coverageOriginMarkerRef = useRef<maplibregl.Marker | null>(null);
+  /** Per-id pins for additional merge origins; amber to distinguish from primary cyan.
+   *  globalThis.Map qualifies the constructor — the component itself is named `Map`. */
+  const coverageMergeMarkersRef = useRef<Map<string, maplibregl.Marker>>(new globalThis.Map());
+  /** Last origin we recentered on; used to suppress easeTo across pure parameter changes. */
+  const lastRecenteredOriginRef = useRef<[number, number] | null>(null);
   /** Draggable pin at the scan origin. */
   const scanOriginMarkerRef = useRef<maplibregl.Marker | null>(null);
   /** Map view captured when scan starts; restored by the origin row / pin. */
@@ -486,6 +546,12 @@ export function Map() {
   /** Authoritative + 256² downsampled class-ID rasters; drag preview reuses these. */
   const coverageClutterRef = useRef<ClutterRaster | null>(null);
   const coverageDragClutterRef = useRef<ClutterRaster | null>(null);
+  /** Authoritative + 256² downsampled canopy-height rasters; drag preview reuses these. */
+  const coverageCanopyRef = useRef<CanopyRaster | null>(null);
+  const coverageDragCanopyRef = useRef<CanopyRaster | null>(null);
+  /** Authoritative + 256² downsampled building-height rasters; drag preview reuses these. */
+  const coverageBuildingsRef = useRef<BuildingRaster | null>(null);
+  const coverageDragBuildingsRef = useRef<BuildingRaster | null>(null);
   /** Latest raster params snapshot (drag preview reuses untouched). */
   const coverageLastRasterParamsRef = useRef<RasterParams | null>(null);
   /** Last origin context (bounds); drag re-samples DEM per move. */
@@ -675,10 +741,13 @@ export function Map() {
     dem: DEM;
     /** Optional class-ID raster aligned to DEM bounds. Null = workers fall back to default class. */
     clutter?: ClutterRaster | null;
-    origin: [number, number];
-    originHeightM: number;
-    /** TX antenna AGL (m); ITM wants AGL not MSL. */
-    originAntennaHeightAboveGroundM: number;
+    /** Optional canopy-height raster aligned to DEM bounds. Null = workers fall back to class-nominal. */
+    canopy?: CanopyRaster | null;
+    /** Optional building-height raster aligned to DEM bounds. Null = bare-earth + class-nominal endpoint h_a. */
+    buildings?: BuildingRaster | null;
+    /** Primary + (optional) merge origins. Single-element array preserves the
+     *  pre-merge single-origin compute byte-identically. */
+    origins: SliceOrigin[];
     params: RasterParams;
     requestId: number;
     /** Defaults to DEM dims (drag-preview path where DEM == output == 256²). */
@@ -699,7 +768,7 @@ export function Map() {
     outputHeight: number;
     itmUnavailable?: boolean;
   } | null> => {
-    const { dem, clutter, origin, originHeightM, originAntennaHeightAboveGroundM, params, requestId, onSliceProgress } = opts;
+    const { dem, clutter, canopy, buildings, origins, params, requestId, onSliceProgress } = opts;
     const outputWidth = opts.outputWidth ?? dem.width;
     const outputHeight = opts.outputHeight ?? dem.height;
     const mb = mbMapRef.current;
@@ -733,15 +802,18 @@ export function Map() {
       const demCopy = new Float32Array(dem.data);
       // Transferable buffers can't be shared across workers; copy per slice.
       const clutterCopy = clutter ? new Uint8Array(clutter.data) : null;
+      const canopyHeightCopy = canopy ? new Float32Array(canopy.heightM) : null;
+      const canopyStdCopy = canopy ? new Float32Array(canopy.stdM) : null;
+      const canopyMaskCopy = canopy ? new Float32Array(canopy.mask) : null;
+      const buildingHeightCopy = buildings ? new Float32Array(buildings.heightM) : null;
+      const buildingMaskCopy = buildings ? new Float32Array(buildings.mask) : null;
       const req: CoverageSliceRequest = {
         requestId,
         demBuffer: demCopy.buffer,
         demWidth: dem.width,
         demHeight: dem.height,
         bounds: dem.bounds,
-        origin,
-        originHeightM,
-        originAntennaHeightAboveGroundM,
+        origins,
         params,
         outputWidth,
         outputHeight,
@@ -750,9 +822,23 @@ export function Map() {
         clutterBuffer: clutterCopy?.buffer,
         clutterWidth: clutter?.width,
         clutterHeight: clutter?.height,
+        canopyHeightBuffer: canopyHeightCopy?.buffer,
+        canopyStdBuffer: canopyStdCopy?.buffer,
+        canopyMaskBuffer: canopyMaskCopy?.buffer,
+        canopyWidth: canopy?.width,
+        canopyHeight: canopy?.height,
+        buildingHeightBuffer: buildingHeightCopy?.buffer,
+        buildingMaskBuffer: buildingMaskCopy?.buffer,
+        buildingWidth: buildings?.width,
+        buildingHeight: buildings?.height,
       };
       const transfer: Transferable[] = [demCopy.buffer];
       if (clutterCopy) transfer.push(clutterCopy.buffer);
+      if (canopyHeightCopy) transfer.push(canopyHeightCopy.buffer);
+      if (canopyStdCopy) transfer.push(canopyStdCopy.buffer);
+      if (canopyMaskCopy) transfer.push(canopyMaskCopy.buffer);
+      if (buildingHeightCopy) transfer.push(buildingHeightCopy.buffer);
+      if (buildingMaskCopy) transfer.push(buildingMaskCopy.buffer);
       tasks.push(
         pool.dispatch(req, transfer).then((resp) => {
           sliceResponses.push(resp);
@@ -867,6 +953,7 @@ export function Map() {
   useEffect(() => writeJson(LS_KEYS.myNodeId, myNodeId), [myNodeId]);
   useEffect(() => writeJson(LS_KEYS.settingsPanelOpen, settingsPanelOpen), [settingsPanelOpen]);
   useEffect(() => writeJson(LS_KEYS.terrain3D, terrain3D), [terrain3D]);
+  useEffect(() => writeJson(LS_KEYS.buildings3D, buildings3D), [buildings3D]);
 
   // Obsolete key from the prior exaggeration slider; removeItem is idempotent.
   useEffect(() => {
@@ -961,7 +1048,36 @@ export function Map() {
 
   const [detailsData, setDetailsData] = useState<NodeDetailsData | null>(null);
 
-  // Refs to avoid stale closures in long-lived map event handlers.
+  // Defined here (rather than next to the other coverage-merge state) so the
+  // closure can read the live `nodes` map.
+  const addCoverageMergeOriginById = useCallback((nodeId: string) => {
+    const n = nodes[nodeId] ?? nodes[`!${nodeId}`];
+    const pos = n?.map_position;
+    if (!pos) return;
+    const cleanId = nodeId.startsWith("!") ? nodeId.slice(1) : nodeId;
+    setCoverageMergeOrigins((prev) =>
+      prev.some((o) => o.id === cleanId)
+        ? prev
+        : [...prev, {
+            id: cleanId,
+            label: n?.shortname || n?.longname || cleanId,
+            position: [pos[0], pos[1]],
+            altitudeM: n?.position?.altitude ?? null,
+          }],
+    );
+  }, [nodes]);
+  const mergeNodeOptions = useMemo(() => {
+    const out: Array<{ id: string; shortname?: string; longname?: string }> = [];
+    const primaryId = toolFromId ? (toolFromId.startsWith("!") ? toolFromId.slice(1) : toolFromId) : null;
+    for (const [rawId, n] of Object.entries(nodes)) {
+      if (!n?.map_position) continue;
+      const cleanId = rawId.startsWith("!") ? rawId.slice(1) : rawId;
+      if (primaryId && cleanId === primaryId) continue;
+      out.push({ id: cleanId, shortname: n.shortname, longname: n.longname });
+    }
+    return out;
+  }, [nodes, toolFromId]);
+
   const nodesRef = useRef(nodes);
   const traceroutesRef = useRef(rawTraceroutes);
   const configRef = useRef(config);
@@ -977,6 +1093,7 @@ export function Map() {
 
   const isPickingNode = activeTool != null && toolStep !== "result";
   const terrain3DRef = useRef(terrain3D);
+  const buildings3DRef = useRef(buildings3D);
   const setDetailsDataRef = useRef(setDetailsData);
 
   useEffect(() => {
@@ -1014,6 +1131,9 @@ export function Map() {
   useEffect(() => {
     terrain3DRef.current = terrain3D;
   }, [terrain3D]);
+  useEffect(() => {
+    buildings3DRef.current = buildings3D;
+  }, [buildings3D]);
 
   useEffect(() => {
     const mb = mbMapRef.current;
@@ -1447,16 +1567,30 @@ export function Map() {
           return;
         }
         const scanBounds = demBoundsAround(origin!, SCAN_RADIUS_KM, 1.05);
-        const [{ dem, source: demSourceUsedForScan }, scanClutter] = await Promise.all([
+        const [{ dem, source: demSourceUsedForScan }, scanClutter, scanCanopy, scanBuildings] = await Promise.all([
           buildDem({
             bounds: scanBounds,
             targetWidth: 1024,
             targetHeight: 1024,
             token: mapboxToken,
           }),
-          // Skip the clutter fetch when the model is toggled off.
+          // Skip individual fetches when their respective models are toggled off.
           scanClutterEnabled
             ? buildClutterRaster({
+                bounds: scanBounds,
+                targetWidth: 1024,
+                targetHeight: 1024,
+              })
+            : Promise.resolve(null),
+          scanCanopyEnabled
+            ? buildCanopyRaster({
+                bounds: scanBounds,
+                targetWidth: 1024,
+                targetHeight: 1024,
+              })
+            : Promise.resolve(null),
+          scanBuildingsEnabled
+            ? buildBuildingRaster({
                 bounds: scanBounds,
                 targetWidth: 1024,
                 targetHeight: 1024,
@@ -1467,6 +1601,12 @@ export function Map() {
         setScanDemSource(demSourceUsedForScan);
         setScanClutterStatus(
           scanClutter ? { tilesPresent: scanClutter.tilesPresent, tilesTotal: scanClutter.tilesTotal } : null,
+        );
+        setScanCanopyStatus(
+          scanCanopy ? { tilesPresent: scanCanopy.tilesPresent, tilesTotal: scanCanopy.tilesTotal } : null,
+        );
+        setScanBuildingsStatus(
+          scanBuildings ? { tilesPresent: scanBuildings.tilesPresent, tilesTotal: scanBuildings.tilesTotal } : null,
         );
 
         // Override GPS altitude with terrain + configured AGL (matches coverage).
@@ -1499,6 +1639,8 @@ export function Map() {
           rxAntennaDbi: scanRxAntennaDbi,
           rxSensitivityDbm: scanEffectiveSensitivityDbm,
           clutterRaster: scanClutter,
+          canopyRaster: scanCanopy,
+          buildingRaster: scanBuildings,
           // aggression = 0 when the user has toggled the model off → ITM-only path loss.
           clutterAggression: scanClutterEnabled
             ? (AGGRESSION_STOPS[scanAggressionIdx]?.value ?? 1.0)
@@ -1535,7 +1677,7 @@ export function Map() {
     return () => { cancelled = true; };
   }, [activeTool, toolStep, toolFromId, toolVirtualPos, provider, terrain3D, nodes,
       scanTxDbm, scanAntennaDbi, scanRxAntennaDbi, scanEffectiveSensitivityDbm,
-      scanAggressionIdx, scanClutterEnabled, scanAntennaHeightM]);
+      scanAggressionIdx, scanClutterEnabled, scanCanopyEnabled, scanBuildingsEnabled, scanAntennaHeightM]);
 
   // Per-class map visibility filter (compute still runs for hidden classes).
   useEffect(() => {
@@ -1603,6 +1745,7 @@ export function Map() {
       setIsFetchingCoverageTerrain(false);
       setCoverageError(null);
       setCoverageProgress({ completed: 0, total: 0 });
+      lastRecenteredOriginRef.current = null;
       return;
     }
     if (!terrain3D) {
@@ -1642,9 +1785,33 @@ export function Map() {
     setCoverageProgress({ completed: 0, total: 0 });
 
     const radKm = coverageRadiusKm;
-    const demBounds = demBoundsAround(origin, radKm, 1.05);
-    // Recenter on the pin; tile fetch is viewport-independent so we don't need to fly.
-    mb.easeTo({ center: origin, duration: 300 });
+    // Union bbox over primary + merge origins (all share radiusKm since TX
+    // params are global). Empty merge set collapses to the primary's bbox.
+    const primaryBounds = demBoundsAround(origin, radKm, 1.05);
+    let demBounds = primaryBounds;
+    if (coverageMergeOrigins.length > 0) {
+      let west = primaryBounds.west, south = primaryBounds.south;
+      let east = primaryBounds.east, north = primaryBounds.north;
+      for (const m of coverageMergeOrigins) {
+        const b = demBoundsAround(m.position, radKm, 1.05);
+        if (b.west < west) west = b.west;
+        if (b.south < south) south = b.south;
+        if (b.east > east) east = b.east;
+        if (b.north > north) north = b.north;
+      }
+      demBounds = { west, south, east, north };
+    }
+    // Recenter only when the origin actually moved; pure parameter recomputes
+    // (TX power, antenna, clutter on/off, etc.) shouldn't yank the user's view.
+    const prev = lastRecenteredOriginRef.current;
+    const movedSignificantly =
+      !prev ||
+      Math.abs(prev[0] - origin[0]) > 1e-6 ||
+      Math.abs(prev[1] - origin[1]) > 1e-6;
+    if (movedSignificantly) {
+      mb.easeTo({ center: origin, duration: 300 });
+      lastRecenteredOriginRef.current = [origin[0], origin[1]];
+    }
 
     const mapboxToken = env.MAPBOX_TOKEN;
     if (!mapboxToken) {
@@ -1691,13 +1858,13 @@ export function Map() {
         timings[name] = performance.now() - fromMs;
       };
       try {
-        // 1. Fetch terrain + (when enabled) land-cover in parallel; both at DEM_SIZE
-        //    so the worker samples DEM and clutter at the same lng/lat indexing.
-        //    Skip the clutter fetch entirely when the model is toggled off — saves
-        //    the network + decode cost.
+        // 1. Fetch terrain + (when enabled) land-cover + canopy + buildings in
+        //    parallel; all at DEM_SIZE so the worker samples them at the same
+        //    lng/lat indexing. Skip individual fetches when their respective
+        //    models are toggled off — saves the network + decode cost.
         const tFetch = performance.now();
         setIsFetchingCoverageTerrain(true);
-        const [{ dem, source: demSourceUsed }, clutter] = await Promise.all([
+        const [{ dem, source: demSourceUsed }, clutter, canopy, buildings] = await Promise.all([
           buildDem({
             bounds: demBounds,
             targetWidth: DEM_SIZE,
@@ -1713,10 +1880,32 @@ export function Map() {
                 maxTiles: COVERAGE_DETAIL_MAX_TILES[coverageDetail],
               })
             : Promise.resolve(null),
+          coverageCanopyEnabled
+            ? buildCanopyRaster({
+                bounds: demBounds,
+                targetWidth: DEM_SIZE,
+                targetHeight: DEM_SIZE,
+                maxTiles: COVERAGE_DETAIL_MAX_TILES[coverageDetail],
+              })
+            : Promise.resolve(null),
+          coverageBuildingsEnabled
+            ? buildBuildingRaster({
+                bounds: demBounds,
+                targetWidth: DEM_SIZE,
+                targetHeight: DEM_SIZE,
+                maxTiles: COVERAGE_DETAIL_MAX_TILES[coverageDetail],
+              })
+            : Promise.resolve(null),
         ]);
         setCoverageDemSource(demSourceUsed);
         setCoverageClutterStatus(
           clutter ? { tilesPresent: clutter.tilesPresent, tilesTotal: clutter.tilesTotal } : null,
+        );
+        setCoverageCanopyStatus(
+          canopy ? { tilesPresent: canopy.tilesPresent, tilesTotal: canopy.tilesTotal } : null,
+        );
+        setCoverageBuildingsStatus(
+          buildings ? { tilesPresent: buildings.tilesPresent, tilesTotal: buildings.tilesTotal } : null,
         );
         mark("demFetchMs", tFetch);
         if (cancelled || requestId !== coverageRequestIdRef.current) {
@@ -1773,14 +1962,42 @@ export function Map() {
           ? originHeightM - originGroundFromDem
           : coverageAntennaHeightM;
 
+        // Sample terrain off the same DEM the workers see so txHeightM (AGL
+        // relative to profile[0]) collapses cleanly to coverageAntennaHeightM
+        // on flat terrain.
+        const mergeOriginsResolved: SliceOrigin[] = [];
+        for (const m of coverageMergeOrigins) {
+          const terrain = sampleDEMAt(dem, m.position[0], m.position[1]);
+          const terrainOk = !Number.isNaN(terrain);
+          const altOk =
+            m.altitudeM != null &&
+            Number.isFinite(m.altitudeM) &&
+            (!terrainOk ||
+              (m.altitudeM >= terrain && m.altitudeM <= terrain + 1000));
+          const baseM = altOk ? (m.altitudeM as number) : (terrainOk ? terrain : 0);
+          const heightM = baseM + coverageAntennaHeightM;
+          mergeOriginsResolved.push({
+            position: m.position,
+            heightM,
+            antennaHeightAboveGroundM: terrainOk ? heightM - terrain : coverageAntennaHeightM,
+          });
+        }
+
         // 3. Dispatch pool; OUTPUT_SIZE decoupled from DEM_SIZE so Detail only changes paint sharpness
         const tDispatch = performance.now();
         const rendered = await renderCoverageToImageSource({
           dem,
           clutter,
-          origin: origin!,
-          originHeightM,
-          originAntennaHeightAboveGroundM: txAboveGroundM,
+          canopy,
+          buildings,
+          origins: [
+            {
+              position: origin!,
+              heightM: originHeightM,
+              antennaHeightAboveGroundM: txAboveGroundM,
+            },
+            ...mergeOriginsResolved,
+          ],
           params: rasterParams,
           requestId,
           outputWidth: OUTPUT_SIZE,
@@ -1811,6 +2028,10 @@ export function Map() {
         coverageDragDemRef.current = downsampleDEM(dem, 256, 256);
         coverageClutterRef.current = clutter;
         coverageDragClutterRef.current = clutter ? downsampleClutterRaster(clutter, 256, 256) : null;
+        coverageCanopyRef.current = canopy;
+        coverageDragCanopyRef.current = canopy ? downsampleCanopyRaster(canopy, 256, 256) : null;
+        coverageBuildingsRef.current = buildings;
+        coverageDragBuildingsRef.current = buildings ? downsampleBuildingRaster(buildings, 256, 256) : null;
         coverageLastRasterParamsRef.current = rasterParams;
         coverageLastOriginContextRef.current = { bounds: dem.bounds };
 
@@ -1906,7 +2127,7 @@ export function Map() {
     return () => {
       cancelled = true;
     };
-  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageRxAntennaDbi, coverageRxHeightM, coverageTxDbm, coverageAggressionIdx, coverageClutterEnabled, coverageSensitivityDbm, coverageDetail, coverageAntennaHeightM, coverageReliability, provider, terrain3D, nodes, coverageRetryNonce]);
+  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageRxAntennaDbi, coverageRxHeightM, coverageTxDbm, coverageAggressionIdx, coverageClutterEnabled, coverageCanopyEnabled, coverageBuildingsEnabled, coverageMergeOrigins, coverageSensitivityDbm, coverageDetail, coverageAntennaHeightM, coverageReliability, provider, terrain3D, nodes, coverageRetryNonce]);
 
   // Hide coverage raster when leaving tool; sources/layers stay for fast re-entry
   useEffect(() => {
@@ -2018,6 +2239,8 @@ export function Map() {
         }
         const dem = coverageDragDemRef.current;
         const clutter = coverageDragClutterRef.current;
+        const canopy = coverageDragCanopyRef.current;
+        const buildings = coverageDragBuildingsRef.current;
         const params = coverageLastRasterParamsRef.current;
         if (!dem || !params) return;
         dragPreviewBusyRef.current = true;
@@ -2039,9 +2262,13 @@ export function Map() {
           await renderCoverageToImageSource({
             dem,
             clutter,
-            origin: lngLat,
-            originHeightM: originH,
-            originAntennaHeightAboveGroundM: txAboveGroundM,
+            canopy,
+            buildings,
+            origins: [{
+              position: lngLat,
+              heightM: originH,
+              antennaHeightAboveGroundM: txAboveGroundM,
+            }],
             params,
             requestId: previewId,
           });
@@ -2081,6 +2308,94 @@ export function Map() {
         coverageOriginMarkerRef.current.remove();
         coverageOriginMarkerRef.current = null;
       }
+    };
+  }, []);
+
+  // While picking, the next map click adds a virtual merge origin and exits.
+  // Auto-cancels if the user navigates away from the coverage tool.
+  useEffect(() => {
+    if (pickingMergeOrigin && activeTool !== "coverage") setPickingMergeOrigin(false);
+  }, [activeTool, pickingMergeOrigin]);
+  useEffect(() => {
+    if (!pickingMergeOrigin) return;
+    const mb = mbMapRef.current;
+    if (!mb) return;
+    const canvas = mb.getCanvas();
+    const prevCursor = canvas.style.cursor;
+    canvas.style.cursor = "crosshair";
+    const onClick = (e: maplibregl.MapMouseEvent) => {
+      const lng = e.lngLat.lng;
+      const lat = e.lngLat.lat;
+      // 6-dp coords give ~0.1 m precision and a stable id key.
+      const id = `virtual:${lng.toFixed(6)},${lat.toFixed(6)}`;
+      setCoverageMergeOrigins((prev) =>
+        prev.some((o) => o.id === id)
+          ? prev
+          : [...prev, {
+              id,
+              label: `Pin ${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+              position: [lng, lat],
+              altitudeM: null,
+            }],
+      );
+      setPickingMergeOrigin(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPickingMergeOrigin(false);
+    };
+    mb.on("click", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      mb.off("click", onClick);
+      document.removeEventListener("keydown", onKey);
+      canvas.style.cursor = prevCursor;
+    };
+  }, [pickingMergeOrigin]);
+
+  // Cleared when the coverage tool isn't in result mode so amber pins don't linger.
+  useEffect(() => {
+    const mb = mbMapRef.current;
+    if (!mb) return;
+    const markers = coverageMergeMarkersRef.current;
+    const inCoverageResult = activeTool === "coverage" && toolStep === "result";
+    if (!inCoverageResult) {
+      for (const marker of markers.values()) marker.remove();
+      markers.clear();
+      return;
+    }
+    const wantedIds = new Set(coverageMergeOrigins.map((o) => o.id));
+    for (const [id, marker] of markers) {
+      if (!wantedIds.has(id)) {
+        marker.remove();
+        markers.delete(id);
+      }
+    }
+    for (const o of coverageMergeOrigins) {
+      const existing = markers.get(o.id);
+      if (existing) {
+        existing.setLngLat(o.position);
+      } else {
+        const isVirtual = o.id.startsWith("virtual:");
+        const marker = new maplibregl.Marker({ color: "#f59e0b", draggable: isVirtual })
+          .setLngLat(o.position)
+          .setPopup(new maplibregl.Popup({ closeButton: false, offset: 24 }).setText(o.label))
+          .addTo(mb);
+        if (isVirtual) {
+          marker.on("dragend", () => {
+            const ll = marker.getLngLat();
+            moveCoverageMergeOrigin(o.id, [ll.lng, ll.lat]);
+          });
+        }
+        markers.set(o.id, marker);
+      }
+    }
+  }, [coverageMergeOrigins, activeTool, toolStep, moveCoverageMergeOrigin]);
+
+  useEffect(() => {
+    const markers = coverageMergeMarkersRef.current;
+    return () => {
+      for (const marker of markers.values()) marker.remove();
+      markers.clear();
     };
   }, []);
 
@@ -3043,6 +3358,13 @@ export function Map() {
           console.warn("[Map] Terrain re-apply failed after style load:", err);
         }
       }
+      if (buildings3DRef.current) {
+        try {
+          ensureBuildings3D(map);
+        } catch (err) {
+          console.warn("[Map] 3D buildings re-apply failed after style load:", err);
+        }
+      }
 
       // Ensure sources have current data (important after style changes)
       refreshMapboxNodeData();
@@ -3726,6 +4048,17 @@ export function Map() {
     }
   }, [terrain3D, provider, mapboxToken, mapboxStyle, osmBasemap]);
 
+  useEffect(() => {
+    const map = mbMapRef.current;
+    if (!map || !styleEverLoadedRef.current) return;
+    try {
+      if (buildings3D) ensureBuildings3D(map);
+      else removeBuildings3D(map);
+    } catch (err) {
+      console.warn("[Map] 3D buildings apply failed:", err);
+    }
+  }, [buildings3D, provider, mapboxToken, mapboxStyle, osmBasemap]);
+
   // Live updates (nodes appear/disappear) via setData()
   useEffect(() => {
     const map = mbMapRef.current;
@@ -3829,6 +4162,8 @@ export function Map() {
         usingMapbox={usingMapbox}
         terrain3D={terrain3D}
         setTerrain3D={setTerrain3D}
+        buildings3D={buildings3D}
+        setBuildings3D={setBuildings3D}
         onExport={handleExport}
         hidden={!!detailsData}
         recentDays={recentDays}
@@ -4039,6 +4374,20 @@ export function Map() {
           clutterEnabled={coverageClutterEnabled}
           onClutterEnabledChange={setCoverageClutterEnabled}
           clutterStatus={coverageClutterStatus}
+          canopyEnabled={coverageCanopyEnabled}
+          onCanopyEnabledChange={setCoverageCanopyEnabled}
+          canopyStatus={coverageCanopyStatus}
+          buildingsEnabled={coverageBuildingsEnabled}
+          onBuildingsEnabledChange={setCoverageBuildingsEnabled}
+          buildingsStatus={coverageBuildingsStatus}
+          mergeOrigins={coverageMergeOrigins}
+          onAddMergeOriginById={addCoverageMergeOriginById}
+          onRemoveMergeOrigin={removeCoverageMergeOrigin}
+          onClearMergeOrigins={clearCoverageMergeOrigins}
+          mergeNodeOptions={mergeNodeOptions}
+          pickingMergeOrigin={pickingMergeOrigin}
+          onStartPickMergeOrigin={() => setPickingMergeOrigin(true)}
+          onCancelPickMergeOrigin={() => setPickingMergeOrigin(false)}
           presetIdx={coveragePresetIdx}
           onPresetIdxChange={setCoveragePresetIdx}
           customSensitivityDbm={coverageCustomSensDbm}
@@ -4148,6 +4497,12 @@ export function Map() {
           clutterEnabled={scanClutterEnabled}
           onClutterEnabledChange={setScanClutterEnabled}
           clutterStatus={scanClutterStatus}
+          canopyEnabled={scanCanopyEnabled}
+          onCanopyEnabledChange={setScanCanopyEnabled}
+          canopyStatus={scanCanopyStatus}
+          buildingsEnabled={scanBuildingsEnabled}
+          onBuildingsEnabledChange={setScanBuildingsEnabled}
+          buildingsStatus={scanBuildingsStatus}
           presetIdx={scanPresetIdx}
           onPresetIdxChange={setScanPresetIdx}
           customSensitivityDbm={scanCustomSensDbm}

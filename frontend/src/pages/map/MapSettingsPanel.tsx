@@ -174,6 +174,8 @@ export function MapSettingsPanel({
   usingMapbox,
   terrain3D,
   setTerrain3D,
+  buildings3D,
+  setBuildings3D,
   onExport,
   hidden = false,
 
@@ -215,6 +217,8 @@ export function MapSettingsPanel({
   usingMapbox: boolean;
   terrain3D: boolean;
   setTerrain3D: Dispatch<SetStateAction<boolean>>;
+  buildings3D: boolean;
+  setBuildings3D: Dispatch<SetStateAction<boolean>>;
   onExport?: () => void;
   hidden?: boolean;
 
@@ -434,7 +438,11 @@ export function MapSettingsPanel({
               )}
             </Section>
 
-            <Section id="terrain" title="3D Terrain" subtitle={terrain3D ? "On" : "Off"}>
+            <Section
+              id="terrain"
+              title="3D Layers"
+              subtitle={[terrain3D && "Terrain", buildings3D && "Buildings"].filter(Boolean).join(" + ") || "Off"}
+            >
                 <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5">
                   <div className="flex flex-col">
                     <label htmlFor="terrain-3d-checkbox" className="text-sm font-medium text-gray-300">
@@ -451,6 +459,25 @@ export function MapSettingsPanel({
                     onChange={(e) => setTerrain3D(e.target.checked)}
                     className="h-4 w-4 rounded-sm border-gray-600 bg-gray-700 text-cyan-500 focus:ring-cyan-500"
                     aria-label="Toggle 3D terrain"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5">
+                  <div className="flex flex-col">
+                    <label htmlFor="buildings-3d-checkbox" className="text-sm font-medium text-gray-300">
+                      Enable 3D Buildings
+                    </label>
+                    <p className="text-[11px] text-gray-500 mt-0.5">
+                      Cosmetic OpenFreeMap extrusions (visible at zoom ≥ 14)
+                    </p>
+                  </div>
+                  <input
+                    id="buildings-3d-checkbox"
+                    type="checkbox"
+                    checked={buildings3D}
+                    onChange={(e) => setBuildings3D(e.target.checked)}
+                    className="h-4 w-4 rounded-sm border-gray-600 bg-gray-700 text-cyan-500 focus:ring-cyan-500"
+                    aria-label="Toggle 3D buildings"
                   />
                 </div>
 

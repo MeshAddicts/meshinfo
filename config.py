@@ -138,6 +138,22 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "tile_dir": "output/landcover",
         "source": "USGS NLCD 2024",
     },
+    # Per-pixel measured canopy heights for the P.833 vegetation loss loop.
+    # Tiles are pre-baked via scripts/canopy_tiles.py; absent tile_dir → frontend
+    # falls back to class-nominal heights.
+    "canopy": {
+        "enabled": True,
+        "tile_dir": "output/canopy",
+        "source": "ETH Global Canopy Height 2020",
+    },
+    # Per-pixel measured building heights for P.452 endpoint clutter and the
+    # ITM DSM. Tiles are pre-baked via scripts/building_tiles.py; absent
+    # tile_dir → frontend falls back to class-nominal heights.
+    "buildings": {
+        "enabled": True,
+        "tile_dir": "output/buildings",
+        "source": "JRC GHS-BUILT-H R2023A",
+    },
     "debug": False,
 }
 

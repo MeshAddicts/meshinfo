@@ -1,0 +1,21 @@
+# One-shot bake image. Run via `docker compose --profile bake run --rm building-bake`.
+# rasterio's manylinux wheels link against libexpat which python:slim variants
+# don't bundle — install it explicitly.
+FROM python:3.14-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libexpat1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Cap GDAL's per-process cache. Default 5% of RAM × N workers blows past
+# Docker Desktop's 16 GB ceiling and OOMs mid-bake.
+ENV GDAL_CACHEMAX=64
+
+WORKDIR /app
+
+COPY scripts/requirements-buildings.txt scripts/
+RUN pip install --no-cache-dir -r scripts/requirements-buildings.txt
+
+COPY scripts/building_tiles.py scripts/
+
+CMD ["python", "scripts/building_tiles.py"]

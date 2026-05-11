@@ -23,6 +23,11 @@ const ATTRIB_MAPBOX =
 const TERRAIN_SOURCE_ID = "terrain-dem";
 const BASE_SOURCE_ID = "base";
 const BASE_LAYER_ID = "base";
+const BUILDINGS_3D_SOURCE_ID = "buildings-3d";
+const BUILDINGS_3D_LAYER_ID = "buildings-3d";
+
+const ATTRIB_OPENFREEMAP =
+  '© <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> · <a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap</a>';
 
 const SKY_SPEC: SkySpecification = {
   "sky-color": "#7fb3d5",
@@ -163,8 +168,52 @@ export function removeTerrain(map: MlMap): void {
   try { map.triggerRepaint(); } catch {}
 }
 
+/** Cosmetic 3D buildings via OpenFreeMap vector tiles — paint-only, independent
+ *  of the RF building-height raster. minzoom=14 because OpenFreeMap doesn't
+ *  ship buildings below z13 and z13 is too distant to be visually useful.
+ *  Idempotent — safe to re-call after style reloads. */
+export function ensureBuildings3D(map: MlMap): void {
+  if (!map.getSource(BUILDINGS_3D_SOURCE_ID)) {
+    map.addSource(BUILDINGS_3D_SOURCE_ID, {
+      type: "vector",
+      url: "https://tiles.openfreemap.org/planet",
+      attribution: ATTRIB_OPENFREEMAP,
+    });
+  }
+  if (!map.getLayer(BUILDINGS_3D_LAYER_ID)) {
+    map.addLayer({
+      id: BUILDINGS_3D_LAYER_ID,
+      type: "fill-extrusion",
+      source: BUILDINGS_3D_SOURCE_ID,
+      "source-layer": "building",
+      minzoom: 14,
+      // OpenMapTiles schema opt-out flag.
+      filter: ["!=", ["get", "hide_3d"], true],
+      paint: {
+        // Low opacity so basemap labels under tall buildings stay readable.
+        "fill-extrusion-color": [
+          "interpolate", ["linear"], ["get", "render_height"],
+          0, "#a8b5c4",
+          50, "#8a98aa",
+          200, "#6e7d92",
+        ],
+        "fill-extrusion-height": ["coalesce", ["get", "render_height"], 0],
+        "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
+        "fill-extrusion-opacity": 0.65,
+      },
+    });
+  }
+}
+
+export function removeBuildings3D(map: MlMap): void {
+  try { if (map.getLayer(BUILDINGS_3D_LAYER_ID)) map.removeLayer(BUILDINGS_3D_LAYER_ID); } catch {}
+  try { if (map.getSource(BUILDINGS_3D_SOURCE_ID)) map.removeSource(BUILDINGS_3D_SOURCE_ID); } catch {}
+}
+
 export const MAP_STYLE_IDS = {
   baseSource: BASE_SOURCE_ID,
   baseLayer: BASE_LAYER_ID,
   terrainSource: TERRAIN_SOURCE_ID,
+  buildings3DSource: BUILDINGS_3D_SOURCE_ID,
+  buildings3DLayer: BUILDINGS_3D_LAYER_ID,
 } as const;

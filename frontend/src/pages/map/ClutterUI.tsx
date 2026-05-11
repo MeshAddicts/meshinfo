@@ -54,6 +54,104 @@ export interface ClutterStatusChipProps {
   enabled?: boolean;
 }
 
+export interface BuildingStatusChipProps {
+  /** Null until first compute. */
+  status: { tilesPresent: number; tilesTotal: number } | null;
+  /** When false, the chip overrides any tile state with "Building heights: off". */
+  enabled?: boolean;
+}
+
+export function BuildingStatusChip({ status, enabled = true }: BuildingStatusChipProps) {
+  if (!enabled) {
+    return (
+      <div className="flex items-start gap-1.5 text-[10px] leading-snug text-gray-500">
+        <span className="mt-0.5 inline-block w-1.5 h-1.5 rounded-full shrink-0 bg-gray-500/60" aria-hidden />
+        <span>Building heights: <span className="text-gray-400">off</span> — bare-earth DEM + class-nominal h_a.</span>
+      </div>
+    );
+  }
+  const fallback = status != null && status.tilesTotal > 0 && status.tilesPresent === 0;
+  const partial =
+    status != null && status.tilesPresent > 0 && status.tilesPresent < status.tilesTotal;
+  return (
+    <div className="flex items-start gap-1.5 text-[10px] leading-snug text-gray-500">
+      <span
+        className={`mt-0.5 inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
+          fallback ? "bg-amber-400/80" : "bg-emerald-400/70"
+        }`}
+        aria-hidden
+      />
+      <span>
+        {fallback ? (
+          <>
+            <span className="text-amber-300/90">Class-nominal buildings</span>
+            <span className="text-gray-500"> — no building tiles for this region. Run the bake (see scripts/README-buildings.md).</span>
+          </>
+        ) : (
+          <>
+            Buildings: <span className="text-gray-300">JRC GHS-BUILT-H 100 m</span>
+            {partial && (
+              <span className="text-amber-400/80">
+                {" "}
+                · partial coverage ({status?.tilesPresent}/{status?.tilesTotal} tiles)
+              </span>
+            )}
+          </>
+        )}
+      </span>
+    </div>
+  );
+}
+
+export interface CanopyStatusChipProps {
+  /** Null until first compute. */
+  status: { tilesPresent: number; tilesTotal: number } | null;
+  /** When false, the chip overrides any tile state with "Canopy heights: off". */
+  enabled?: boolean;
+}
+
+export function CanopyStatusChip({ status, enabled = true }: CanopyStatusChipProps) {
+  if (!enabled) {
+    return (
+      <div className="flex items-start gap-1.5 text-[10px] leading-snug text-gray-500">
+        <span className="mt-0.5 inline-block w-1.5 h-1.5 rounded-full shrink-0 bg-gray-500/60" aria-hidden />
+        <span>Canopy heights: <span className="text-gray-400">off</span> — class-nominal heights only.</span>
+      </div>
+    );
+  }
+  const fallback = status != null && status.tilesTotal > 0 && status.tilesPresent === 0;
+  const partial =
+    status != null && status.tilesPresent > 0 && status.tilesPresent < status.tilesTotal;
+  return (
+    <div className="flex items-start gap-1.5 text-[10px] leading-snug text-gray-500">
+      <span
+        className={`mt-0.5 inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
+          fallback ? "bg-amber-400/80" : "bg-emerald-400/70"
+        }`}
+        aria-hidden
+      />
+      <span>
+        {fallback ? (
+          <>
+            <span className="text-amber-300/90">Class-nominal canopy</span>
+            <span className="text-gray-500"> — no canopy tiles for this region. Run the bake (see scripts/README-canopy.md).</span>
+          </>
+        ) : (
+          <>
+            Canopy: <span className="text-gray-300">ETH 10 m</span>
+            {partial && (
+              <span className="text-amber-400/80">
+                {" "}
+                · partial coverage ({status?.tilesPresent}/{status?.tilesTotal} tiles)
+              </span>
+            )}
+          </>
+        )}
+      </span>
+    </div>
+  );
+}
+
 export function ClutterStatusChip({ status, enabled = true }: ClutterStatusChipProps) {
   if (!enabled) {
     return (
@@ -155,6 +253,9 @@ export function ClassLegend() {
           <div className="px-1.5 py-1 text-[9px] text-gray-500 border-t border-white/5 leading-snug">
             <span className="text-gray-400">@ 2 m</span> = ITU-R P.452-17 endpoint clutter at 2 m AGL, 915 MHz.
             Penetrable classes also accumulate ITU-R P.833-9 vegetation loss along the path.
+            Forest classes use ETH measured canopy heights, and developed classes use JRC
+            measured building heights, when the respective bakes are available
+            (heights shown above are class-nominal fallbacks).
           </div>
         </div>
       )}
