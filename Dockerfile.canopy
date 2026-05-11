@@ -1,7 +1,7 @@
 # One-shot bake image. Run via `docker compose --profile bake run --rm canopy-bake`.
-# rasterio's manylinux wheels link against libexpat which python:3.12-slim
-# doesn't bundle — install it explicitly.
-FROM python:3.12-slim
+# rasterio's manylinux wheels link against libexpat which python:slim variants
+# don't bundle — install it explicitly.
+FROM python:3.14-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libexpat1 \
