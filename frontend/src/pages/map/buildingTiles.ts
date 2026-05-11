@@ -16,7 +16,8 @@ import type { DEMBounds } from "./terrainDEM";
 
 const TILE_SIZE = 256;
 const MIN_ZOOM = 0;
-/** Matches the bake's default ceiling; z=10 ~= 38 m/px at lat 37, GHS-BUILT-H is 100 m native. */
+/** Matches the bake's default ceiling. GHS-BUILT-H source is 100 m native; z=10 is
+ *  ~122 m/px at lat 37, so tiles are near source resolution (no oversampling). */
 const MAX_ZOOM = 10;
 const DEFAULT_MAX_TILES_PER_REQUEST = 256;
 
@@ -108,6 +109,22 @@ class BuildingTileLRU {
 // 256 tiles × 256² × (2 + 1) ≈ 48 MB worst case (height u16 + mask u8).
 const tileCache = new BuildingTileLRU(256);
 
+/** R/G = uint16 ANBH metres (R=high byte), B reserved (no std-dev), A = mask. */
+function decodeBuildingPixels(
+  px: Uint8ClampedArray,
+  n: number,
+): { height: Uint16Array; mask: Uint8Array } {
+  const height = new Uint16Array(n);
+  const mask = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const o = i * 4;
+    const valid = px[o + 3] !== 0;
+    mask[i] = valid ? 255 : 0;
+    if (valid) height[i] = (px[o] << 8) | px[o + 1];
+  }
+  return { height, mask };
+}
+
 export async function fetchBuildingTile(
   z: number,
   x: number,
@@ -140,16 +157,7 @@ export async function fetchBuildingTile(
     if (!ctx) throw new Error("OffscreenCanvas 2d context unavailable");
     ctx.drawImage(bitmap, 0, 0);
     const img = ctx.getImageData(0, 0, w, h);
-    const px = img.data;
-    const n = w * h;
-    const height = new Uint16Array(n);
-    const mask = new Uint8Array(n);
-    for (let i = 0; i < n; i++) {
-      const o = i * 4;
-      const valid = px[o + 3] !== 0;
-      mask[i] = valid ? 255 : 0;
-      if (valid) height[i] = (px[o] << 8) | px[o + 1];
-    }
+    const { height, mask } = decodeBuildingPixels(img.data, w * h);
     const tile: CachedBuildingTile = { height, mask, size: w };
     tileCache.set(key, tile);
     return tile;
@@ -373,4 +381,22 @@ export function downsampleBuildingRaster(
 /** Test-only. */
 export function _resetBuildingCacheForTests(): void {
   (tileCache as unknown as { cache: Map<string, unknown> }).cache.clear();
+}
+
+/** Test-only. */
+export function _buildingCacheSizeForTests(): number {
+  return (tileCache as unknown as { cache: Map<string, unknown> }).cache.size;
+}
+
+/** Test-only. Inject a cached tile without going through fetch/Canvas. */
+export function _putBuildingTileForTests(z: number, x: number, y: number, tile: CachedBuildingTile): void {
+  tileCache.set(`${z}/${x}/${y}`, tile);
+}
+
+/** Test-only. Direct byte-decode access for round-trip pixel tests. */
+export function _decodeBuildingPixelsForTests(
+  px: Uint8ClampedArray,
+  n: number,
+): { height: Uint16Array; mask: Uint8Array } {
+  return decodeBuildingPixels(px, n);
 }

@@ -5,9 +5,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  _buildingCacheSizeForTests,
+  _decodeBuildingPixelsForTests,
+  _putBuildingTileForTests,
   _resetBuildingCacheForTests,
   buildBuildingRaster,
   type BuildingRaster,
+  type CachedBuildingTile,
   downsampleBuildingRaster,
   sampleBuildingAt,
   selectBuildingZoom,
@@ -118,6 +122,68 @@ describe("downsampleBuildingRaster", () => {
     expect(ds.height).toBe(2);
     for (let i = 0; i < 4; i++) expect(ds.heightM[i]).toBeCloseTo(15, 5);
     for (let i = 0; i < 4; i++) expect(ds.mask[i]).toBe(1);
+  });
+});
+
+describe("decodeBuildingPixels — RGBA byte unpack", () => {
+  it("decodes R/G as uint16 height with R as high byte", () => {
+    // R=0x00, G=0x18 → height = 24 m (typical urban). B reserved (0). A=255.
+    const px = new Uint8ClampedArray([0x00, 0x18, 0, 255]);
+    const { height, mask } = _decodeBuildingPixelsForTests(px, 1);
+    expect(height[0]).toBe(24);
+    expect(mask[0]).toBe(255);
+  });
+
+  it("A=0 zeroes height and marks mask", () => {
+    const px = new Uint8ClampedArray([99, 99, 99, 0]);
+    const { height, mask } = _decodeBuildingPixelsForTests(px, 1);
+    expect(height[0]).toBe(0);
+    expect(mask[0]).toBe(0);
+  });
+
+  it("decodes max height 65535 m without truncation", () => {
+    const px = new Uint8ClampedArray([0xFF, 0xFF, 0, 255]);
+    const { height } = _decodeBuildingPixelsForTests(px, 1);
+    expect(height[0]).toBe(65535);
+  });
+
+  it("decodes a 2-pixel buffer end-to-end", () => {
+    const px = new Uint8ClampedArray([
+      0, 5, 0, 255,
+      77, 88, 99, 0,
+    ]);
+    const r = _decodeBuildingPixelsForTests(px, 2);
+    expect(Array.from(r.height)).toEqual([5, 0]);
+    expect(Array.from(r.mask)).toEqual([255, 0]);
+  });
+});
+
+describe("BuildingTileLRU — eviction", () => {
+  beforeEach(() => {
+    _resetBuildingCacheForTests();
+  });
+
+  function makeTile(h: number): CachedBuildingTile {
+    return {
+      height: Uint16Array.from([h]),
+      mask: Uint8Array.from([255]),
+      size: 1,
+    };
+  }
+
+  it("evicts the oldest entry once maxEntries (256) is exceeded", () => {
+    for (let i = 0; i < 256; i++) {
+      _putBuildingTileForTests(0, i, 0, makeTile(i));
+    }
+    expect(_buildingCacheSizeForTests()).toBe(256);
+    _putBuildingTileForTests(0, 256, 0, makeTile(256));
+    expect(_buildingCacheSizeForTests()).toBe(256);
+  });
+
+  it("re-inserting the same key does not grow the cache", () => {
+    _putBuildingTileForTests(0, 1, 0, makeTile(1));
+    _putBuildingTileForTests(0, 1, 0, makeTile(2));
+    expect(_buildingCacheSizeForTests()).toBe(1);
   });
 });
 

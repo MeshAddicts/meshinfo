@@ -2087,7 +2087,6 @@ export function Map() {
           originHeightM,
           originIsFallback,
           radiusKm: radKm,
-          mergeOriginCount: coverageMergeOrigins.length,
           clearCount: rendered.clearCount,
           fresnelCount: rendered.fresnelCount,
           blockedCount: rendered.blockedCount,

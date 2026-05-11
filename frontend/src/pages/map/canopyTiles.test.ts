@@ -5,8 +5,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  _canopyCacheSizeForTests,
+  _decodeCanopyPixelsForTests,
+  _putCanopyTileForTests,
   _resetCanopyCacheForTests,
   buildCanopyRaster,
+  type CachedCanopyTile,
   type CanopyRaster,
   downsampleCanopyRaster,
   sampleCanopyAt,
@@ -129,6 +133,80 @@ describe("downsampleCanopyRaster", () => {
     expect(ds.height).toBe(2);
     for (let i = 0; i < 4; i++) expect(ds.heightM[i]).toBeCloseTo(10, 5);
     for (let i = 0; i < 4; i++) expect(ds.mask[i]).toBe(1);
+  });
+});
+
+describe("decodeCanopyPixels — RGBA byte unpack", () => {
+  it("decodes R/G as uint16 height with R as high byte", () => {
+    // 1 pixel: R=0x01, G=0x2C → height = 0x012C = 300 m. B=5, A=255.
+    const px = new Uint8ClampedArray([0x01, 0x2C, 5, 255]);
+    const { height, std, mask } = _decodeCanopyPixelsForTests(px, 1);
+    expect(height[0]).toBe(300);
+    expect(std[0]).toBe(5);
+    expect(mask[0]).toBe(255);
+  });
+
+  it("uses B channel for std-dev metres", () => {
+    const px = new Uint8ClampedArray([0, 50, 12, 255]); // height 50, std 12
+    const { std } = _decodeCanopyPixelsForTests(px, 1);
+    expect(std[0]).toBe(12);
+  });
+
+  it("A=0 zeroes height/std and marks mask", () => {
+    // Real PNG bytes can carry junk in RGB when A=0; ensure we don't read them.
+    const px = new Uint8ClampedArray([99, 99, 99, 0]);
+    const { height, std, mask } = _decodeCanopyPixelsForTests(px, 1);
+    expect(height[0]).toBe(0);
+    expect(std[0]).toBe(0);
+    expect(mask[0]).toBe(0);
+  });
+
+  it("decodes max height 65535 m (R=0xFF, G=0xFF) without truncation", () => {
+    const px = new Uint8ClampedArray([0xFF, 0xFF, 0, 255]);
+    const { height } = _decodeCanopyPixelsForTests(px, 1);
+    expect(height[0]).toBe(65535);
+  });
+
+  it("decodes a 2-pixel buffer end-to-end", () => {
+    // px0: height=10, std=2, valid. px1: nodata.
+    const px = new Uint8ClampedArray([
+      0, 10, 2, 255,
+      77, 88, 99, 0,
+    ]);
+    const r = _decodeCanopyPixelsForTests(px, 2);
+    expect(Array.from(r.height)).toEqual([10, 0]);
+    expect(Array.from(r.mask)).toEqual([255, 0]);
+  });
+});
+
+describe("CanopyTileLRU — eviction", () => {
+  beforeEach(() => {
+    _resetCanopyCacheForTests();
+  });
+
+  function makeTile(h: number): CachedCanopyTile {
+    return {
+      height: Uint16Array.from([h]),
+      std: Uint8Array.from([0]),
+      mask: Uint8Array.from([255]),
+      size: 1,
+    };
+  }
+
+  it("evicts the oldest entry once maxEntries (256) is exceeded", () => {
+    for (let i = 0; i < 256; i++) {
+      _putCanopyTileForTests(0, i, 0, makeTile(i));
+    }
+    expect(_canopyCacheSizeForTests()).toBe(256);
+    _putCanopyTileForTests(0, 256, 0, makeTile(256));
+    // Size stays capped.
+    expect(_canopyCacheSizeForTests()).toBe(256);
+  });
+
+  it("re-inserting the same key does not grow the cache", () => {
+    _putCanopyTileForTests(0, 1, 0, makeTile(1));
+    _putCanopyTileForTests(0, 1, 0, makeTile(2));
+    expect(_canopyCacheSizeForTests()).toBe(1);
   });
 });
 

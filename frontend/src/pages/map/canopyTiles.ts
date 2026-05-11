@@ -15,7 +15,9 @@ import type { DEMBounds } from "./terrainDEM";
 
 const TILE_SIZE = 256;
 const MIN_ZOOM = 0;
-/** Matches the bake's default ceiling; z=12 ~= 10 m/px at lat 37, ETH is 10 m native. */
+/** Matches the bake's default ceiling. ETH source is 10 m native; z=12 is ~30 m/px
+ *  at lat 37, so tiles are ~3× downsampled. Higher max-zoom = exponentially more
+ *  disk; bump together with the bake's --zooms ceiling if you need native detail. */
 const MAX_ZOOM = 12;
 const DEFAULT_MAX_TILES_PER_REQUEST = 256;
 
@@ -110,6 +112,26 @@ class CanopyTileLRU {
 // 256 tiles × 256² × (2 + 1 + 1) ≈ 64 MB worst case (height u16 + std u8 + mask u8).
 const tileCache = new CanopyTileLRU(256);
 
+/** R/G = uint16 height (R=high byte), B = uint8 std-dev, A = mask. */
+function decodeCanopyPixels(
+  px: Uint8ClampedArray,
+  n: number,
+): { height: Uint16Array; std: Uint8Array; mask: Uint8Array } {
+  const height = new Uint16Array(n);
+  const std = new Uint8Array(n);
+  const mask = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const o = i * 4;
+    const valid = px[o + 3] !== 0;
+    mask[i] = valid ? 255 : 0;
+    if (valid) {
+      height[i] = (px[o] << 8) | px[o + 1];
+      std[i] = px[o + 2];
+    }
+  }
+  return { height, std, mask };
+}
+
 export async function fetchCanopyTile(
   z: number,
   x: number,
@@ -142,20 +164,7 @@ export async function fetchCanopyTile(
     if (!ctx) throw new Error("OffscreenCanvas 2d context unavailable");
     ctx.drawImage(bitmap, 0, 0);
     const img = ctx.getImageData(0, 0, w, h);
-    const px = img.data;
-    const n = w * h;
-    const height = new Uint16Array(n);
-    const std = new Uint8Array(n);
-    const mask = new Uint8Array(n);
-    for (let i = 0; i < n; i++) {
-      const o = i * 4;
-      const valid = px[o + 3] !== 0;
-      mask[i] = valid ? 255 : 0;
-      if (valid) {
-        height[i] = (px[o] << 8) | px[o + 1];
-        std[i] = px[o + 2];
-      }
-    }
+    const { height, std, mask } = decodeCanopyPixels(img.data, w * h);
     const tile: CachedCanopyTile = { height, std, mask, size: w };
     tileCache.set(key, tile);
     return tile;
@@ -391,4 +400,22 @@ export function downsampleCanopyRaster(
 /** Test-only. */
 export function _resetCanopyCacheForTests(): void {
   (tileCache as unknown as { cache: Map<string, unknown> }).cache.clear();
+}
+
+/** Test-only. */
+export function _canopyCacheSizeForTests(): number {
+  return (tileCache as unknown as { cache: Map<string, unknown> }).cache.size;
+}
+
+/** Test-only. Inject a cached tile without going through fetch/Canvas. */
+export function _putCanopyTileForTests(z: number, x: number, y: number, tile: CachedCanopyTile): void {
+  tileCache.set(`${z}/${x}/${y}`, tile);
+}
+
+/** Test-only. Direct byte-decode access for round-trip pixel tests. */
+export function _decodeCanopyPixelsForTests(
+  px: Uint8ClampedArray,
+  n: number,
+): { height: Uint16Array; std: Uint8Array; mask: Uint8Array } {
+  return decodeCanopyPixels(px, n);
 }

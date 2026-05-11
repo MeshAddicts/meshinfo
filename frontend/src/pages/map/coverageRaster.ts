@@ -241,7 +241,9 @@ export function renderCoverageRaster(
 
       let bestMargin = Number.NEGATIVE_INFINITY;
       let anyOriginValid = false;
-      let allItmFailed = true;
+      // Whether any origin built a usable terrain profile (passed DEM check) — gates
+      // blockedCount so DEM-NaN holes stay transparent rather than counted as blocked.
+      let anyOriginItmAttempted = false;
 
       for (let k = 0; k < origins.length; k++) {
         const origLng = originLngs[k];
@@ -253,7 +255,6 @@ export function renderCoverageRaster(
         if (distKm < 0.01) {
           if (50 > bestMargin) bestMargin = 50;
           anyOriginValid = true;
-          allItmFailed = false;
           continue;
         }
 
@@ -281,6 +282,7 @@ export function renderCoverageRaster(
           profileClassBuf[s] = clutter ? sampleClutterClassAt(clutter, sLng, sLat) : 0;
         }
         if (!validProfile) continue;
+        anyOriginItmAttempted = true;
 
         // subarray = no-copy view; slice() would allocate
         itmInput.profileM = profileBuf.subarray(0, nSamples);
@@ -291,7 +293,6 @@ export function renderCoverageRaster(
 
         const lossDb = computeP2PLossFast(itm, itmInput);
         if (!Number.isFinite(lossDb) || lossDb <= 0) continue;
-        allItmFailed = false;
 
         if (canopyCtx) {
           canopyCtx.origLng = origLng;
@@ -330,7 +331,7 @@ export function renderCoverageRaster(
         // Distinguish "ITM rejected every origin's path" (count as blocked)
         // from "no DEM data here" (just leave transparent).
         rgba[outPxIdx * 4 + 3] = 0;
-        if (allItmFailed && origins.length > 0) blockedCount++;
+        if (anyOriginItmAttempted) blockedCount++;
         continue;
       }
 

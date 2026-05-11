@@ -157,8 +157,6 @@ export interface CoverageResult {
   originHeightM: number;
   originIsFallback: boolean;
   radiusKm: number;
-  /** Count of additional merged origins (zero = single-origin compute). */
-  mergeOriginCount?: number;
   /** Pixels passing link budget with full LoS. */
   clearCount: number;
   /** Pixels passing link budget with Fresnel intrusion/diffraction loss. */

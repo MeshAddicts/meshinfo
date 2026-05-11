@@ -89,7 +89,7 @@ The frontend fetches via the Caddy `/api/*` proxy:
 /api/tiles/canopy/{z}/{x}/{y}.png   →   meshinfo:9000/tiles/canopy/{z}/{x}/{y}.png
 ```
 
-Tiles respond with `Cache-Control: public, max-age=31536000, immutable`.
+Tiles respond with `Cache-Control: public, max-age=86400` (1 day).
 
 ## Troubleshooting
 
