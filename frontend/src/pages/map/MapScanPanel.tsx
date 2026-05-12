@@ -1,11 +1,53 @@
 /** Scan-results panel: ranked LoS from origin to every node in view. */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AggressionSlider, BuildingStatusChip, CanopyStatusChip, ClassLegend, ClutterStatusChip } from "./ClutterUI";
-import { COMMON_ANTENNAS, COMMON_HARDWARE, MESHTASTIC_PRESETS } from "./coverageAnalysis";
+import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
 import type { ScanClass, ScanResult,ScanSummary } from "./scanAnalysis";
 import type { DemSource } from "./terrainRgb";
 import { useBottomSheetGesture } from "./useBottomSheet";
+
+/** Collapsible settings row: header summarizes current state, body holds inline editors. */
+function SettingsRow({
+  title,
+  summary,
+  expanded,
+  onToggle,
+  children,
+}: {
+  title: string;
+  summary: React.ReactNode;
+  expanded: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-lg bg-white/5 border border-white/5 overflow-hidden">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        className="w-full flex items-center gap-2 px-2.5 py-2 hover:bg-white/3 transition-colors text-left"
+      >
+        <span className="text-[10px] font-medium uppercase tracking-wider text-gray-400 shrink-0">{title}</span>
+        <span className="text-[10px] text-gray-500 truncate flex-1 min-w-0 text-right">{summary}</span>
+        <svg
+          className={`w-3.5 h-3.5 text-gray-500 transition-transform shrink-0 ${expanded ? "rotate-90" : ""}`}
+          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+      </button>
+      {expanded && (
+        <div className="px-2.5 pb-2.5 pt-2 border-t border-white/5 space-y-2.5">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+type SettingsRowKey = "tx" | "rx" | "env" | "acc";
 
 const CLASS_STYLES: Record<ScanClass, { bg: string; text: string; border: string; label: string }> = {
   clear:      { bg: "bg-cyan-500/15",    text: "text-cyan-300",    border: "border-cyan-500/30",    label: "Clear" },
@@ -54,6 +96,8 @@ export function MapScanPanel({
   onPresetIdxChange,
   customSensitivityDbm,
   onCustomSensitivityChange,
+  reliability,
+  onReliabilityChange,
 }: {
   summary: ScanSummary | null;
   originLabel: string;
@@ -105,6 +149,11 @@ export function MapScanPanel({
   onPresetIdxChange: (idx: number) => void;
   customSensitivityDbm: number;
   onCustomSensitivityChange: (dbm: number) => void;
+  /** ITM reliability preset (time/location/situation %). Matches coverage's
+   *  control so a scan from coverage's origin uses the same statistical
+   *  threshold the painted prediction does. */
+  reliability: CoverageReliability;
+  onReliabilityChange: (r: CoverageReliability) => void;
 }) {
   if (terrainNeeded && onEnableTerrain) {
     return (
@@ -138,6 +187,28 @@ export function MapScanPanel({
   const [filter, setFilter] = useState<ScanClass | null>(null);
   const toggleFilter = (cls: ScanClass) =>
     setFilter((prev) => (prev === cls ? null : cls));
+
+  const [expandedSettingsRow, setExpandedSettingsRow] = useState<SettingsRowKey | null>(null);
+  const toggleSettingsRow = (k: SettingsRowKey) =>
+    setExpandedSettingsRow((cur) => (cur === k ? null : k));
+
+  const [minimized, setMinimized] = useState(false);
+
+  // Auto-minimize on the first result for each new origin so the user can see
+  // their hits on the map. Recomputes for the same origin leave panel state
+  // alone so the user keeps seeing results they're tweaking against.
+  const lastAutoMinKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!summary) return;
+    if (lastAutoMinKeyRef.current !== originLabel) {
+      lastAutoMinKeyRef.current = originLabel;
+      setMinimized(true);
+    }
+  }, [summary, originLabel]);
+
+  // Without a snapshot, unchecking "Same as transmitter" would be a visual
+  // no-op — rxMatchesTx is derived, so the values still match TX.
+  const rxSnapshotRef = useRef<{ hw: number; ant: number } | null>(null);
 
   const sheet = useBottomSheetGesture(onClose);
   const isCustomHardware = COMMON_HARDWARE[hardwareIdx]?.isCustom ?? false;
@@ -174,6 +245,29 @@ export function MapScanPanel({
     ? summary.clearCount + summary.fresnelCount + summary.diffractedCount
     : 0;
 
+  // Derived summaries for collapsed settings-row headers
+  const txHardware = COMMON_HARDWARE[hardwareIdx]?.label ?? "Custom";
+  const txAntDbi = COMMON_ANTENNAS[antennaIdx]?.dbi ?? 0;
+  const txPreset = MESHTASTIC_PRESETS[presetIdx]?.label ?? "Custom";
+  const rxMatchesTx = rxHardwareIdx === hardwareIdx && rxAntennaIdx === antennaIdx;
+  const rxHardware = COMMON_HARDWARE[rxHardwareIdx]?.label ?? "Custom";
+  const rxAntDbi = COMMON_ANTENNAS[rxAntennaIdx]?.dbi ?? 0;
+
+  const txSummaryStr = `${txHardware} · ${txAntDbi} dBi · ${antennaHeightM}m · ${txPreset}`;
+  const rxSummaryStr = rxMatchesTx ? "Same as TX" : `${rxHardware} · ${rxAntDbi} dBi`;
+  const envParts: string[] = [];
+  if (clutterEnabled) envParts.push("clutter");
+  if (canopyEnabled) envParts.push("canopy");
+  if (buildingsEnabled) envParts.push("buildings");
+  const envSummaryStr = envParts.length === 0 ? "All off · bare earth" : envParts.join(" · ");
+
+  const reliabilityLabel = RELIABILITY_PRESETS.find((p) => p.id === reliability)?.label ?? "Typical";
+  const reliabilityPctStr = (() => {
+    const r = RELIABILITY_PRESETS.find((p) => p.id === reliability);
+    return r ? `${r.time}/${r.location}/${r.situation}` : "";
+  })();
+  const accSummaryStr = `${reliabilityLabel} · ${reliabilityPctStr}`;
+
   const displayResults: ScanResult[] = useMemo(() => {
     if (!summary) return [];
     const filtered = filter
@@ -185,12 +279,13 @@ export function MapScanPanel({
   return (
     <div
       ref={sheet.sheetRef}
-      className="fixed z-1050 shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl flex flex-col
+      className={`fixed z-1050 shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl flex flex-col
         inset-x-0 bottom-0 rounded-t-2xl max-h-[78dvh]
         animate-[slideInUp_200ms_ease-out]
-        sm:inset-x-auto sm:left-3 sm:top-16 sm:bottom-16 sm:w-85 sm:max-w-[calc(100vw-1.5rem)]
+        sm:inset-x-auto sm:left-3 sm:top-16 sm:w-85 sm:max-w-[calc(100vw-1.5rem)]
         sm:rounded-xl sm:max-h-none
-        sm:animate-[slideInLeft_220ms_ease-out]"
+        sm:animate-[slideInLeft_220ms_ease-out]
+        ${minimized ? "sm:bottom-auto" : "sm:bottom-16"}`}
       onClick={(e) => {
         const target = e.target as Node;
         const openDetails = e.currentTarget.querySelectorAll<HTMLDetailsElement>("details[open]");
@@ -234,6 +329,22 @@ export function MapScanPanel({
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={() => setMinimized((m) => !m)}
+            className="p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors"
+            aria-label={minimized ? "Expand panel" : "Minimize panel"}
+            aria-expanded={!minimized}
+            title={minimized ? "Expand — scan tool is still running" : "Minimize — keep tool running, hide results"}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              {minimized ? (
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+              ) : (
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 9l7 7 7-7" />
+              )}
+            </svg>
+          </button>
           <details className="text-[10px] text-gray-400 relative">
             <summary
               className="cursor-pointer list-none p-1 rounded-md hover:text-gray-200 hover:bg-white/5 transition-colors"
@@ -246,176 +357,96 @@ export function MapScanPanel({
               </svg>
             </summary>
             {/* Fixed so it escapes the side-panel's overflow. */}
-            <div className="fixed z-1060 overflow-y-auto p-3 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl space-y-3
+            <div className="fixed z-1060 overflow-y-auto p-2 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl space-y-2
               inset-x-3 top-4 bottom-4 w-auto max-w-none
               sm:inset-auto sm:top-16 sm:left-90 sm:w-90 sm:max-h-[calc(100vh-8rem)]">
-              <div className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">
+              <div className="text-[10px] uppercase tracking-wider text-gray-500 font-medium px-0.5 pb-0.5">
                 Scan settings
               </div>
 
-              {/* TX block */}
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label htmlFor="scan-hardware" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
-                    TX Hardware
-                  </label>
-                  <div className="flex gap-1">
-                    <select
-                      id="scan-hardware"
-                      value={hardwareIdx}
-                      onChange={(e) => onHardwareIdxChange(Number(e.target.value))}
-                      className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
-                        focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
-                        [&>option]:bg-gray-800 [&>option]:text-gray-200"
-                    >
-                      {COMMON_HARDWARE.map((h, i) => (
-                        <option key={i} value={i}>
-                          {h.label}{h.isCustom ? "" : ` (${h.txDbm} dBm)`}
-                        </option>
-                      ))}
-                    </select>
-                    {isCustomHardware && (
-                      <input
-                        type="number"
-                        value={customTxDbm}
-                        onChange={(e) => onCustomTxDbmChange(Number(e.target.value))}
-                        min={10} max={35} step={1}
-                        aria-label="Custom TX power (dBm)"
-                        title="TX power in dBm"
-                        className="w-12 rounded-lg border border-white/10 bg-white/5 px-1 py-1 text-xs text-gray-200 text-center
-                          focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50"
-                      />
-                    )}
+              <SettingsRow
+                title="Transmitter"
+                summary={txSummaryStr}
+                expanded={expandedSettingsRow === "tx"}
+                onToggle={() => toggleSettingsRow("tx")}
+              >
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label htmlFor="scan-hardware" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
+                      Hardware
+                    </label>
+                    <div className="flex gap-1">
+                      <select
+                        id="scan-hardware"
+                        value={hardwareIdx}
+                        onChange={(e) => onHardwareIdxChange(Number(e.target.value))}
+                        className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
+                          focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
+                          [&>option]:bg-gray-800 [&>option]:text-gray-200"
+                      >
+                        {COMMON_HARDWARE.map((h, i) => (
+                          <option key={i} value={i}>
+                            {h.label}{h.isCustom ? "" : ` (${h.txDbm} dBm)`}
+                          </option>
+                        ))}
+                      </select>
+                      {isCustomHardware && (
+                        <input
+                          type="number"
+                          value={customTxDbm}
+                          onChange={(e) => onCustomTxDbmChange(Number(e.target.value))}
+                          min={10} max={35} step={1}
+                          aria-label="Custom TX power (dBm)"
+                          title="TX power in dBm"
+                          className="w-12 rounded-lg border border-white/10 bg-white/5 px-1 py-1 text-xs text-gray-200 text-center
+                            focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50"
+                        />
+                      )}
+                    </div>
                   </div>
-                </div>
-                <div>
-                  <label htmlFor="scan-antenna" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
-                    TX Antenna
-                  </label>
-                  <select
-                    id="scan-antenna"
-                    value={antennaIdx}
-                    onChange={(e) => onAntennaIdxChange(Number(e.target.value))}
-                    className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
-                      focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
-                      [&>option]:bg-gray-800 [&>option]:text-gray-200"
-                  >
-                    {COMMON_ANTENNAS.map((a, i) => (
-                      <option key={i} value={i}>{a.label}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* TX antenna height AGL — overrides GPS altitude. */}
-              <div>
-                <label htmlFor="scan-tx-height" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
-                  TX Antenna Height
-                </label>
-                <div className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 w-20">
-                  <input
-                    id="scan-tx-height"
-                    type="text"
-                    inputMode="decimal"
-                    value={heightInput}
-                    onChange={(e) => setHeightInput(e.target.value)}
-                    onBlur={commitHeight}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        (e.currentTarget as HTMLInputElement).blur();
-                      } else if (e.key === "Escape") {
-                        setHeightInput(String(antennaHeightM));
-                        (e.currentTarget as HTMLInputElement).blur();
-                      }
-                    }}
-                    aria-label="TX antenna height above the origin (meters)"
-                    title="TX antenna height above the origin terrain (m). Blank = 2 m default."
-                    className="min-w-0 flex-1 bg-transparent text-xs text-gray-200 text-center focus:outline-hidden"
-                  />
-                  <span className="text-[10px] text-gray-500 shrink-0">m</span>
-                </div>
-              </div>
-
-              {/* Modem preset */}
-              <div>
-                <label htmlFor="scan-preset" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
-                  Modem Preset
-                </label>
-                <div className="flex gap-1">
-                  <select
-                    id="scan-preset"
-                    value={presetIdx}
-                    onChange={(e) => onPresetIdxChange(Number(e.target.value))}
-                    className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
-                      focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
-                      [&>option]:bg-gray-800 [&>option]:text-gray-200"
-                  >
-                    {MESHTASTIC_PRESETS.map((p, i) => (
-                      <option key={i} value={i}>
-                        {p.label}{p.isCustom ? "" : ` · ${p.sensitivityDbm} dBm`}
-                      </option>
-                    ))}
-                  </select>
-                  {isCustomPreset && (
-                    <input
-                      type="number"
-                      value={customSensitivityDbm}
-                      onChange={(e) => onCustomSensitivityChange(Number(e.target.value))}
-                      min={-150} max={-100} step={1}
-                      aria-label="Custom RX sensitivity (dBm)"
-                      title="RX sensitivity in dBm"
-                      className="w-14 rounded-lg border border-white/10 bg-white/5 px-1 py-1 text-xs text-gray-200 text-center
-                        focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50"
-                    />
-                  )}
-                </div>
-              </div>
-
-              {/* RX block */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">
-                    <span>Receiver (modeled)</span>
+                  <div>
+                    <label htmlFor="scan-preset" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
+                      Modem Preset
+                    </label>
+                    <div className="flex gap-1">
+                      <select
+                        id="scan-preset"
+                        value={presetIdx}
+                        onChange={(e) => onPresetIdxChange(Number(e.target.value))}
+                        className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
+                          focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
+                          [&>option]:bg-gray-800 [&>option]:text-gray-200"
+                      >
+                        {MESHTASTIC_PRESETS.map((p, i) => (
+                          <option key={i} value={i}>
+                            {p.label}{p.isCustom ? "" : ` · ${p.sensitivityDbm} dBm`}
+                          </option>
+                        ))}
+                      </select>
+                      {isCustomPreset && (
+                        <input
+                          type="number"
+                          value={customSensitivityDbm}
+                          onChange={(e) => onCustomSensitivityChange(Number(e.target.value))}
+                          min={-150} max={-100} step={1}
+                          aria-label="Custom RX sensitivity (dBm)"
+                          title="RX sensitivity in dBm"
+                          className="w-14 rounded-lg border border-white/10 bg-white/5 px-1 py-1 text-xs text-gray-200 text-center
+                            focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50"
+                        />
+                      )}
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onRxHardwareIdxChange(4); // Heltec V3
-                      onRxAntennaIdxChange(0);  // rubber duck
-                    }}
-                    className="text-[9px] text-cyan-400/70 hover:text-cyan-300 transition-colors"
-                    title="Reset RX to stock handheld (Heltec V3, rubber duck)"
-                  >
-                    Reset to handheld
-                  </button>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label htmlFor="scan-rx-hw" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
-                      Hardware
-                    </label>
-                    <select
-                      id="scan-rx-hw"
-                      value={rxHardwareIdx}
-                      onChange={(e) => onRxHardwareIdxChange(Number(e.target.value))}
-                      className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
-                        focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
-                        [&>option]:bg-gray-800 [&>option]:text-gray-200"
-                    >
-                      {COMMON_HARDWARE.map((h, i) => (
-                        <option key={i} value={i}>{h.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label htmlFor="scan-rx-ant" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
+                    <label htmlFor="scan-antenna" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
                       Antenna
                     </label>
                     <select
-                      id="scan-rx-ant"
-                      value={rxAntennaIdx}
-                      onChange={(e) => onRxAntennaIdxChange(Number(e.target.value))}
+                      id="scan-antenna"
+                      value={antennaIdx}
+                      onChange={(e) => onAntennaIdxChange(Number(e.target.value))}
                       className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
                         focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
                         [&>option]:bg-gray-800 [&>option]:text-gray-200"
@@ -425,61 +456,224 @@ export function MapScanPanel({
                       ))}
                     </select>
                   </div>
+                  <div>
+                    <label htmlFor="scan-tx-height" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
+                      Antenna Height
+                    </label>
+                    <div className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 w-20">
+                      <input
+                        id="scan-tx-height"
+                        type="text"
+                        inputMode="decimal"
+                        value={heightInput}
+                        onChange={(e) => setHeightInput(e.target.value)}
+                        onBlur={commitHeight}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            (e.currentTarget as HTMLInputElement).blur();
+                          } else if (e.key === "Escape") {
+                            setHeightInput(String(antennaHeightM));
+                            (e.currentTarget as HTMLInputElement).blur();
+                          }
+                        }}
+                        aria-label="TX antenna height above the origin (meters)"
+                        title="TX antenna height above the origin terrain (m). Blank = 2 m default."
+                        className="min-w-0 flex-1 bg-transparent text-xs text-gray-200 text-center focus:outline-hidden"
+                      />
+                      <span className="text-[10px] text-gray-500 shrink-0">m</span>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              </SettingsRow>
 
-              {/* Clutter (per-pixel ITU model + aggression scaler). */}
-              <div className="space-y-1.5">
+              <SettingsRow
+                title="Receiver"
+                summary={rxMatchesTx ? rxSummaryStr : <span className="text-cyan-300">{rxSummaryStr}</span>}
+                expanded={expandedSettingsRow === "rx"}
+                onToggle={() => toggleSettingsRow("rx")}
+              >
                 <div className="flex items-center justify-between gap-2">
-                  <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 block">
-                    Clutter
-                  </label>
-                  <label className="flex items-center gap-1.5 text-[10px] text-gray-300 cursor-pointer select-none shrink-0">
+                  {/* px/-mx pair gives the active-flash some real estate without
+                      changing the rendered layout. */}
+                  <label className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer select-none px-1.5 py-0.5 -mx-1.5 -my-0.5 rounded transition-colors active:bg-cyan-500/20">
                     <input
                       type="checkbox"
-                      checked={clutterEnabled}
-                      onChange={(e) => onClutterEnabledChange(e.target.checked)}
-                      className="w-3 h-3 accent-cyan-500 cursor-pointer"
+                      checked={rxMatchesTx}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          rxSnapshotRef.current = { hw: rxHardwareIdx, ant: rxAntennaIdx };
+                          onRxHardwareIdxChange(hardwareIdx);
+                          onRxAntennaIdxChange(antennaIdx);
+                        } else {
+                          const snap = rxSnapshotRef.current;
+                          if (snap) {
+                            onRxHardwareIdxChange(snap.hw);
+                            onRxAntennaIdxChange(snap.ant);
+                          } else {
+                            onRxHardwareIdxChange(4); // Heltec V3
+                            onRxAntennaIdxChange(0);  // rubber duck
+                          }
+                        }
+                      }}
+                      className="w-3.5 h-3.5 accent-cyan-500 cursor-pointer"
                     />
-                    <span>Enabled</span>
+                    <span>Same as transmitter</span>
                   </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onRxHardwareIdxChange(4); // Heltec V3
+                      onRxAntennaIdxChange(0);  // rubber duck
+                    }}
+                    className="text-[10px] text-cyan-400/70 hover:text-cyan-300 transition-colors"
+                    title="Set RX to a stock handheld (Heltec V3, rubber duck) — typical 'who can hear me?' setup"
+                  >
+                    Use handheld
+                  </button>
                 </div>
-                <AggressionSlider aggressionIdx={aggressionIdx} onChange={onAggressionIdxChange} enabled={clutterEnabled} />
-                <ClutterStatusChip status={clutterStatus} enabled={clutterEnabled} />
-                <ClassLegend />
-                <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-white/5">
-                  <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 block">
-                    Canopy heights
-                  </label>
-                  <label className="flex items-center gap-1.5 text-[10px] text-gray-300 cursor-pointer select-none shrink-0">
-                    <input
-                      type="checkbox"
-                      checked={canopyEnabled}
-                      onChange={(e) => onCanopyEnabledChange(e.target.checked)}
-                      className="w-3 h-3 accent-cyan-500 cursor-pointer"
-                    />
-                    <span>Enabled</span>
-                  </label>
-                </div>
-                <CanopyStatusChip status={canopyStatus} enabled={canopyEnabled} />
-                <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-white/5">
-                  <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 block">
-                    Building heights
-                  </label>
-                  <label className="flex items-center gap-1.5 text-[10px] text-gray-300 cursor-pointer select-none shrink-0">
-                    <input
-                      type="checkbox"
-                      checked={buildingsEnabled}
-                      onChange={(e) => onBuildingsEnabledChange(e.target.checked)}
-                      className="w-3 h-3 accent-cyan-500 cursor-pointer"
-                    />
-                    <span>Enabled</span>
-                  </label>
-                </div>
-                <BuildingStatusChip status={buildingsStatus} enabled={buildingsEnabled} />
-              </div>
+                {!rxMatchesTx && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label htmlFor="scan-rx-hw" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
+                        Hardware
+                      </label>
+                      <select
+                        id="scan-rx-hw"
+                        value={rxHardwareIdx}
+                        onChange={(e) => onRxHardwareIdxChange(Number(e.target.value))}
+                        className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
+                          focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
+                          [&>option]:bg-gray-800 [&>option]:text-gray-200"
+                      >
+                        {COMMON_HARDWARE.map((h, i) => (
+                          <option key={i} value={i}>{h.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label htmlFor="scan-rx-ant" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
+                        Antenna
+                      </label>
+                      <select
+                        id="scan-rx-ant"
+                        value={rxAntennaIdx}
+                        onChange={(e) => onRxAntennaIdxChange(Number(e.target.value))}
+                        className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
+                          focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
+                          [&>option]:bg-gray-800 [&>option]:text-gray-200"
+                      >
+                        {COMMON_ANTENNAS.map((a, i) => (
+                          <option key={i} value={i}>{a.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                )}
+              </SettingsRow>
 
-              <div className="pt-2 border-t border-white/5 text-[10px] text-gray-500 leading-relaxed">
+              <SettingsRow
+                title="Environment"
+                summary={envSummaryStr}
+                expanded={expandedSettingsRow === "env"}
+                onToggle={() => toggleSettingsRow("env")}
+              >
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 block">
+                      Clutter (NLCD)
+                    </label>
+                    <label className="flex items-center gap-1.5 text-[10px] text-gray-300 cursor-pointer select-none shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={clutterEnabled}
+                        onChange={(e) => onClutterEnabledChange(e.target.checked)}
+                        className="w-3 h-3 accent-cyan-500 cursor-pointer"
+                      />
+                      <span>Enabled</span>
+                    </label>
+                  </div>
+                  <AggressionSlider aggressionIdx={aggressionIdx} onChange={onAggressionIdxChange} enabled={clutterEnabled} />
+                  <ClutterStatusChip status={clutterStatus} enabled={clutterEnabled} />
+                  <ClassLegend />
+                </div>
+                <div className="space-y-1.5 pt-1.5 border-t border-white/5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 block">
+                      Canopy heights (ETH)
+                    </label>
+                    <label className="flex items-center gap-1.5 text-[10px] text-gray-300 cursor-pointer select-none shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={canopyEnabled}
+                        onChange={(e) => onCanopyEnabledChange(e.target.checked)}
+                        className="w-3 h-3 accent-cyan-500 cursor-pointer"
+                      />
+                      <span>Enabled</span>
+                    </label>
+                  </div>
+                  <CanopyStatusChip status={canopyStatus} enabled={canopyEnabled} />
+                </div>
+                <div className="space-y-1.5 pt-1.5 border-t border-white/5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 block">
+                      Building heights (JRC)
+                    </label>
+                    <label className="flex items-center gap-1.5 text-[10px] text-gray-300 cursor-pointer select-none shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={buildingsEnabled}
+                        onChange={(e) => onBuildingsEnabledChange(e.target.checked)}
+                        className="w-3 h-3 accent-cyan-500 cursor-pointer"
+                      />
+                      <span>Enabled</span>
+                    </label>
+                  </div>
+                  <BuildingStatusChip status={buildingsStatus} enabled={buildingsEnabled} />
+                </div>
+              </SettingsRow>
+
+              <SettingsRow
+                title="Accuracy"
+                summary={accSummaryStr}
+                expanded={expandedSettingsRow === "acc"}
+                onToggle={() => toggleSettingsRow("acc")}
+              >
+                <div>
+                  <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
+                    Reliability
+                  </label>
+                  <div className="flex gap-1 rounded-lg border border-white/10 bg-white/5 p-0.5 text-[10px] font-medium">
+                    {RELIABILITY_PRESETS.map((p) => {
+                      const active = reliability === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => onReliabilityChange(p.id)}
+                          title={p.desc}
+                          className={`flex-1 rounded-md px-1.5 py-1 transition-colors ${
+                            active
+                              ? "bg-cyan-500/20 text-cyan-200"
+                              : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
+                          }`}
+                        >
+                          <div>{p.label}</div>
+                          <div className="text-[9px] text-gray-500 font-normal">
+                            {p.time}/{p.location}/{p.situation}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="text-[9px] text-gray-500 mt-1 leading-relaxed">
+                    Higher = "works most of the time" instead of "works half the time."
+                    Typical (90/50/70) matches the coverage panel default.
+                  </div>
+                </div>
+              </SettingsRow>
+
+              <div className="pt-1.5 px-0.5 text-[10px] text-gray-500 leading-relaxed">
                 <span className="font-medium text-gray-400">Terrain data:</span>{" "}
                 {demSource === "tilezen"
                   ? "Tilezen terrarium (USGS 3DEP / SRTM) via AWS Open Data"
@@ -501,7 +695,7 @@ export function MapScanPanel({
         </div>
       </div>
 
-      <div className="overflow-y-auto overscroll-contain flex-1">
+      <div className={`overflow-y-auto overscroll-contain flex-1 ${minimized ? "hidden" : ""}`}>
         {isScanning && (
           <div className="px-3 py-6 text-center text-[11px] text-gray-400">
             <div className="inline-flex items-center gap-2">
