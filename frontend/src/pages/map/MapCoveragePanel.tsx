@@ -165,6 +165,8 @@ export function MapCoveragePanel({
   onShowRaysChange,
   onExport,
   onOriginChange,
+  onScanFromHere,
+  overlayMode = false,
 }: {
   result: CoverageResult | null;
   originLabel: string;
@@ -244,6 +246,13 @@ export function MapCoveragePanel({
   onExport: (format: "geojson" | "kml") => void;
   /** Custom coord typed into the origin label. Caller detaches any anchor and moves the pin. */
   onOriginChange?: (lngLat: [number, number]) => void;
+  /** Desktop-only: open the Scan tool with the same origin + settings, leaving the
+   *  coverage paint visible underneath as a sanity check against real nodes in view. */
+  onScanFromHere?: () => void;
+  /** True while the Scan-from-here overlay owns the screen — the panel still
+   *  renders so the user knows coverage is paused (not closed), but is forced
+   *  minimized to keep the map clear. */
+  overlayMode?: boolean;
 }) {
   const isCustomHardware = COMMON_HARDWARE[hardwareIdx]?.isCustom ?? false;
   const isCustomPreset = MESHTASTIC_PRESETS[presetIdx]?.isCustom ?? false;
@@ -334,6 +343,18 @@ export function MapCoveragePanel({
       setMinimized(true);
     }
   }, [result]);
+
+  // Force minimize on entering Scan-from-here overlay so the map stays clear.
+  const prevOverlayRef = useRef(overlayMode);
+  useEffect(() => {
+    if (overlayMode && !prevOverlayRef.current) setMinimized(true);
+    prevOverlayRef.current = overlayMode;
+  }, [overlayMode]);
+
+  // Snapshot of pre-check RX values so unchecking "Same as transmitter" can
+  // restore whatever the user had before. Without this the uncheck looks like
+  // a no-op because rxMatchesTx is derived from the values still matching.
+  const rxSnapshotRef = useRef<{ hw: number; ant: number; height: number } | null>(null);
 
   const sheet = useBottomSheetGesture(onClose);
 
@@ -760,7 +781,20 @@ export function MapCoveragePanel({
                 <span className="text-gray-500 tabular-nums">
                   ({Math.round(pct)}% of {fmt(scannedKm2)} km²)
                 </span>
-                <span className="ml-auto">
+                <span className="ml-auto inline-flex items-center gap-1.5">
+                  {onScanFromHere && (
+                    <button
+                      type="button"
+                      onClick={onScanFromHere}
+                      className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-cyan-500/30 bg-cyan-500/10 text-[10px] font-medium text-cyan-300 hover:bg-cyan-500/20 hover:border-cyan-500/50 transition-colors"
+                      title="Run a Line-of-Sight scan against every node in range from this same origin — coverage paint stays visible underneath"
+                    >
+                      <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M7 12h10M10 18h4" />
+                      </svg>
+                      Scan nodes
+                    </button>
+                  )}
                   <details className="text-[10px] text-gray-500 relative">
                     <summary className="cursor-pointer hover:text-gray-300 select-none list-none inline-flex items-center" title="What does this mean?">
                       <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1154,11 +1188,30 @@ export function MapCoveragePanel({
                 checked={rxMatchesTx}
                 onChange={(e) => {
                   if (e.target.checked) {
+                    // Save the current RX so unchecking can restore it.
+                    rxSnapshotRef.current = {
+                      hw: rxHardwareIdx,
+                      ant: rxAntennaIdx,
+                      height: rxHeightM,
+                    };
                     onRxHardwareIdxChange(hardwareIdx);
                     onRxAntennaIdxChange(antennaIdx);
                     onRxHeightChange(antennaHeightM);
+                  } else {
+                    // Restore the previous RX. If there isn't one (RX was
+                    // already matching when the panel opened), fall back to
+                    // the stock handheld so the toggle is at least meaningful.
+                    const snap = rxSnapshotRef.current;
+                    if (snap) {
+                      onRxHardwareIdxChange(snap.hw);
+                      onRxAntennaIdxChange(snap.ant);
+                      onRxHeightChange(snap.height);
+                    } else {
+                      onRxHardwareIdxChange(4); // Heltec V3
+                      onRxAntennaIdxChange(0);  // rubber duck
+                      onRxHeightChange(2);
+                    }
                   }
-                  // unchecking: keep current RX values; user will edit below
                 }}
                 className="w-3.5 h-3.5 accent-cyan-500 cursor-pointer"
               />

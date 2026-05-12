@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AggressionSlider, BuildingStatusChip, CanopyStatusChip, ClassLegend, ClutterStatusChip } from "./ClutterUI";
-import { COMMON_ANTENNAS, COMMON_HARDWARE, MESHTASTIC_PRESETS } from "./coverageAnalysis";
+import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
 import type { ScanClass, ScanResult,ScanSummary } from "./scanAnalysis";
 import type { DemSource } from "./terrainRgb";
 import { useBottomSheetGesture } from "./useBottomSheet";
@@ -47,7 +47,7 @@ function SettingsRow({
   );
 }
 
-type SettingsRowKey = "tx" | "rx" | "env";
+type SettingsRowKey = "tx" | "rx" | "env" | "acc";
 
 const CLASS_STYLES: Record<ScanClass, { bg: string; text: string; border: string; label: string }> = {
   clear:      { bg: "bg-cyan-500/15",    text: "text-cyan-300",    border: "border-cyan-500/30",    label: "Clear" },
@@ -96,6 +96,8 @@ export function MapScanPanel({
   onPresetIdxChange,
   customSensitivityDbm,
   onCustomSensitivityChange,
+  reliability,
+  onReliabilityChange,
 }: {
   summary: ScanSummary | null;
   originLabel: string;
@@ -147,6 +149,11 @@ export function MapScanPanel({
   onPresetIdxChange: (idx: number) => void;
   customSensitivityDbm: number;
   onCustomSensitivityChange: (dbm: number) => void;
+  /** ITM reliability preset (time/location/situation %). Matches coverage's
+   *  control so a scan from coverage's origin uses the same statistical
+   *  threshold the painted prediction does. */
+  reliability: CoverageReliability;
+  onReliabilityChange: (r: CoverageReliability) => void;
 }) {
   if (terrainNeeded && onEnableTerrain) {
     return (
@@ -202,6 +209,11 @@ export function MapScanPanel({
     }
   }, [summary, originLabel]);
 
+  // Snapshot of pre-check RX so unchecking "Same as transmitter" restores
+  // whatever the user had before, instead of being a no-op (rxMatchesTx is
+  // derived from the values still matching, so no state change = no UI change).
+  const rxSnapshotRef = useRef<{ hw: number; ant: number } | null>(null);
+
   const sheet = useBottomSheetGesture(onClose);
   const isCustomHardware = COMMON_HARDWARE[hardwareIdx]?.isCustom ?? false;
   const isCustomPreset = MESHTASTIC_PRESETS[presetIdx]?.isCustom ?? false;
@@ -252,6 +264,13 @@ export function MapScanPanel({
   if (canopyEnabled) envParts.push("canopy");
   if (buildingsEnabled) envParts.push("buildings");
   const envSummaryStr = envParts.length === 0 ? "All off · bare earth" : envParts.join(" · ");
+
+  const reliabilityLabel = RELIABILITY_PRESETS.find((p) => p.id === reliability)?.label ?? "Typical";
+  const reliabilityPctStr = (() => {
+    const r = RELIABILITY_PRESETS.find((p) => p.id === reliability);
+    return r ? `${r.time}/${r.location}/${r.situation}` : "";
+  })();
+  const accSummaryStr = `${reliabilityLabel} · ${reliabilityPctStr}`;
 
   const displayResults: ScanResult[] = useMemo(() => {
     if (!summary) return [];
@@ -487,10 +506,19 @@ export function MapScanPanel({
                       checked={rxMatchesTx}
                       onChange={(e) => {
                         if (e.target.checked) {
+                          rxSnapshotRef.current = { hw: rxHardwareIdx, ant: rxAntennaIdx };
                           onRxHardwareIdxChange(hardwareIdx);
                           onRxAntennaIdxChange(antennaIdx);
+                        } else {
+                          const snap = rxSnapshotRef.current;
+                          if (snap) {
+                            onRxHardwareIdxChange(snap.hw);
+                            onRxAntennaIdxChange(snap.ant);
+                          } else {
+                            onRxHardwareIdxChange(4); // Heltec V3
+                            onRxAntennaIdxChange(0);  // rubber duck
+                          }
                         }
-                        // unchecking: keep current RX values; user will edit below
                       }}
                       className="w-3.5 h-3.5 accent-cyan-500 cursor-pointer"
                     />
@@ -607,6 +635,47 @@ export function MapScanPanel({
                     </label>
                   </div>
                   <BuildingStatusChip status={buildingsStatus} enabled={buildingsEnabled} />
+                </div>
+              </SettingsRow>
+
+              {/* Accuracy row (ITM reliability — time/location/situation %) */}
+              <SettingsRow
+                title="Accuracy"
+                summary={accSummaryStr}
+                expanded={expandedSettingsRow === "acc"}
+                onToggle={() => toggleSettingsRow("acc")}
+              >
+                <div>
+                  <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
+                    Reliability
+                  </label>
+                  <div className="flex gap-1 rounded-lg border border-white/10 bg-white/5 p-0.5 text-[10px] font-medium">
+                    {RELIABILITY_PRESETS.map((p) => {
+                      const active = reliability === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => onReliabilityChange(p.id)}
+                          title={p.desc}
+                          className={`flex-1 rounded-md px-1.5 py-1 transition-colors ${
+                            active
+                              ? "bg-cyan-500/20 text-cyan-200"
+                              : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
+                          }`}
+                        >
+                          <div>{p.label}</div>
+                          <div className="text-[9px] text-gray-500 font-normal">
+                            {p.time}/{p.location}/{p.situation}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="text-[9px] text-gray-500 mt-1 leading-relaxed">
+                    Higher = "works most of the time" instead of "works half the time."
+                    Typical (90/50/70) matches the coverage panel default.
+                  </div>
                 </div>
               </SettingsRow>
 
