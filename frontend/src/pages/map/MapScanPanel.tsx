@@ -188,18 +188,15 @@ export function MapScanPanel({
   const toggleFilter = (cls: ScanClass) =>
     setFilter((prev) => (prev === cls ? null : cls));
 
-  // Single-expand settings rows inside the gear popover
   const [expandedSettingsRow, setExpandedSettingsRow] = useState<SettingsRowKey | null>(null);
   const toggleSettingsRow = (k: SettingsRowKey) =>
     setExpandedSettingsRow((cur) => (cur === k ? null : k));
 
-  // Minimized = header-only. Scan keeps running in the background; user can
-  // restore to inspect results or tweak settings.
   const [minimized, setMinimized] = useState(false);
 
-  // Auto-minimize on the FIRST scan result for each new origin (so the user
-  // can see their hits on the map). Recomputes for the same origin leave the
-  // panel alone so the user keeps seeing results they're tweaking against.
+  // Auto-minimize on the first result for each new origin so the user can see
+  // their hits on the map. Recomputes for the same origin leave panel state
+  // alone so the user keeps seeing results they're tweaking against.
   const lastAutoMinKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!summary) return;
@@ -209,9 +206,8 @@ export function MapScanPanel({
     }
   }, [summary, originLabel]);
 
-  // Snapshot of pre-check RX so unchecking "Same as transmitter" restores
-  // whatever the user had before, instead of being a no-op (rxMatchesTx is
-  // derived from the values still matching, so no state change = no UI change).
+  // Without a snapshot, unchecking "Same as transmitter" would be a visual
+  // no-op — rxMatchesTx is derived, so the values still match TX.
   const rxSnapshotRef = useRef<{ hw: number; ant: number } | null>(null);
 
   const sheet = useBottomSheetGesture(onClose);
@@ -368,7 +364,6 @@ export function MapScanPanel({
                 Scan settings
               </div>
 
-              {/* Transmitter row */}
               <SettingsRow
                 title="Transmitter"
                 summary={txSummaryStr}
@@ -492,7 +487,6 @@ export function MapScanPanel({
                 </div>
               </SettingsRow>
 
-              {/* Receiver row — defaults to Same as TX, single toggle to customize */}
               <SettingsRow
                 title="Receiver"
                 summary={rxMatchesTx ? rxSummaryStr : <span className="text-cyan-300">{rxSummaryStr}</span>}
@@ -578,7 +572,6 @@ export function MapScanPanel({
                 )}
               </SettingsRow>
 
-              {/* Environment row (clutter + canopy + buildings) */}
               <SettingsRow
                 title="Environment"
                 summary={envSummaryStr}
@@ -640,7 +633,6 @@ export function MapScanPanel({
                 </div>
               </SettingsRow>
 
-              {/* Accuracy row (ITM reliability — time/location/situation %) */}
               <SettingsRow
                 title="Accuracy"
                 summary={accSummaryStr}

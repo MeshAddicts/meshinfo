@@ -331,8 +331,8 @@ export function Map() {
   // total === 0 means idle / drag preview / terrain fetch
   const [coverageProgress, setCoverageProgress] = useState<{ completed: number; total: number }>({ completed: 0, total: 0 });
   const [coverageDemSource, setCoverageDemSource] = useState<DemSource | null>(null);
-  // True while a "Scan visible nodes" overlay is active from the coverage panel —
-  // keeps the coverage paint visible even though activeTool has switched to "scan".
+  // Keeps the coverage paint up across the activeTool flip when the user
+  // launches a Scan-from-here overlay from the coverage panel.
   const [keepCoveragePaint, setKeepCoveragePaint] = useState(false);
   // Drives the land-cover status chip in each panel.
   const [coverageClutterStatus, setCoverageClutterStatus] = useState<{ tilesPresent: number; tilesTotal: number } | null>(null);
@@ -528,8 +528,8 @@ export function Map() {
   const [scanDemSource, setScanDemSource] = useState<DemSource | null>(null);
   /** Monotonic request id — stale worker replies are dropped. */
   const coverageRequestIdRef = useRef(0);
-  // Set on overlay enter/exit so the coverage compute effect doesn't kick off
-  // a redundant recompute when activeTool flips but the params are unchanged.
+  // Suppresses the redundant coverage recompute the activeTool flip would
+  // otherwise trigger on Scan-from-here overlay enter/exit.
   const skipNextCoverageComputeRef = useRef(false);
   /** Lazily-created coverage worker pool; terminated on unmount. */
   const coveragePoolRef = useRef<CoverageWorkerPool | null>(null);
@@ -1575,9 +1575,8 @@ export function Map() {
           return;
         }
         const scanBounds = demBoundsAround(origin!, SCAN_RADIUS_KM, 1.05);
-        // Match coverage's 2048² DEM (~97 m/px over 200 km) so per-target ITM
-        // sees the same terrain detail the painted prediction does. Same goes
-        // for the clutter/canopy/building rasters.
+        // 2048² rasters match coverage's resolution so per-target ITM sees
+        // the same terrain detail the painted prediction does.
         const [{ dem, source: demSourceUsedForScan }, scanClutter, scanCanopy, scanBuildings] = await Promise.all([
           buildDem({
             bounds: scanBounds,
@@ -1668,9 +1667,8 @@ export function Map() {
                 polarization: 1 /* Vertical */,
                 groundDielectric: 15,
                 groundConductivity: 0.005,
-                // Match coverage's reliability semantics. Without these, the
-                // scan defaulted to 50/50/50 (median), which was ~10–15 dB
-                // more optimistic than the user's painted prediction.
+                // Without these, scanAnalysis falls back to 50/50/50 — much
+                // more optimistic than coverage's 90/50/70 default.
                 timePct: reliabilityPreset(scanReliability).time,
                 locationPct: reliabilityPreset(scanReliability).location,
                 situationPct: reliabilityPreset(scanReliability).situation,
@@ -1754,14 +1752,12 @@ export function Map() {
     }
   }, [scanHoverId, scanSummary]);
 
-  // Coverage prediction — runs when Coverage tool reaches result step, OR
-  // while a Scan-from-here overlay is active (so coverage-setting tweaks made
-  // through the minimized coverage panel still trigger a fresh paint).
+  // Coverage prediction — also runs while a Scan-from-here overlay is active
+  // so coverage-setting tweaks through the minimized panel still recompute.
   useEffect(() => {
     if ((activeTool !== "coverage" && !keepCoveragePaint) || toolStep !== "result") {
-      // Scan-from-here overlay holds onto the result so the painted layer
-      // stays visible and the minimized coverage panel keeps showing the
-      // reachable summary instead of flipping back into the loading state.
+      // Overlay holds onto the result so the paint stays up and the
+      // minimized panel keeps showing the reachable summary.
       if (!keepCoveragePaint) setCoverageResult(null);
       setIsComputingCoverage(false);
       setIsFetchingCoverageTerrain(false);
@@ -1770,9 +1766,7 @@ export function Map() {
       lastRecenteredOriginRef.current = null;
       return;
     }
-    // Skip recomputes triggered solely by overlay enter/exit transitions —
-    // the params are unchanged so the result would be identical (and the
-    // brief "Recomputing…" pill feels like a glitch).
+    // Suppress the redundant recompute on overlay enter/exit (params unchanged).
     if (skipNextCoverageComputeRef.current) {
       skipNextCoverageComputeRef.current = false;
       return;
@@ -2158,10 +2152,8 @@ export function Map() {
     };
   }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, coverageAntennaDbi, coverageRxAntennaDbi, coverageRxHeightM, coverageTxDbm, coverageAggressionIdx, coverageClutterEnabled, coverageCanopyEnabled, coverageBuildingsEnabled, coverageMergeOrigins, coverageSensitivityDbm, coverageDetail, coverageAntennaHeightM, coverageReliability, provider, terrain3D, nodes, coverageRetryNonce, keepCoveragePaint]);
 
-  // Hide coverage raster when leaving tool; sources/layers stay for fast re-entry.
-  // When keepCoveragePaint is set (Scan-from-here overlay), leave the paint
-  // visible across the activeTool switch so the user sees both the coverage
-  // raster and the scan-link overlay together.
+  // Hide coverage layers when leaving tool; sources/layers stay for fast
+  // re-entry. keepCoveragePaint exempts the Scan-from-here overlay.
   useEffect(() => {
     const mb = mbMapRef.current;
     if (!mb) return;
@@ -4353,8 +4345,8 @@ export function Map() {
         />
       )}
 
-      {/* Floating Coverage panel — also stays mounted (forced-minimized) during a
-           Scan-from-here overlay so the user knows coverage is paused, not closed. */}
+      {/* Stays mounted (force-minimized) during a Scan-from-here overlay so
+          the user knows coverage is paused, not closed. */}
       {((activeTool === "coverage") || keepCoveragePaint) && toolStep === "result" && (toolFromId || toolVirtualPos) && (
         <MapCoveragePanel
           overlayMode={keepCoveragePaint}
@@ -4446,9 +4438,9 @@ export function Map() {
             mbMapRef.current?.easeTo({ center: lngLat, duration: 600 });
           }}
           onScanFromHere={() => {
-            // Mirror coverage's RF settings into scan so the scan results match
-            // the painted prediction the user is looking at. toolFromId /
-            // toolVirtualPos are shared, so the origin already lines up.
+            // Mirror coverage's RF settings so the scan results match the
+            // painted prediction. Origin (toolFromId / toolVirtualPos) is
+            // already shared between the tools.
             setScanHardwareIdx(coverageHardwareIdx);
             setScanAntennaIdx(coverageAntennaIdx);
             setScanAntennaHeightM(coverageAntennaHeightM);
@@ -4462,8 +4454,6 @@ export function Map() {
             setScanCanopyEnabled(coverageCanopyEnabled);
             setScanBuildingsEnabled(coverageBuildingsEnabled);
             setScanReliability(coverageReliability);
-            // Coverage params didn't change — skip the recompute the
-            // activeTool flip would otherwise trigger.
             skipNextCoverageComputeRef.current = true;
             setKeepCoveragePaint(true);
             setActiveTool("scan");
@@ -4502,13 +4492,9 @@ export function Map() {
           terrainNeeded={!terrain3D}
           onEnableTerrain={() => setTerrain3D(true)}
           onClose={() => {
-            // If scan was opened as an overlay from the coverage panel,
-            // closing it returns the user to the coverage view (paint stays
-            // visible because keepCoveragePaint kept it through the switch).
-            // Otherwise it's a standalone scan and full reset is correct.
+            // Overlay close returns to the coverage view; standalone close
+            // does a full reset.
             if (keepCoveragePaint) {
-              // Coverage params didn't change while in overlay — skip the
-              // recompute the activeTool flip would otherwise trigger.
               skipNextCoverageComputeRef.current = true;
               setKeepCoveragePaint(false);
               setActiveTool("coverage");

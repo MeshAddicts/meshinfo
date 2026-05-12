@@ -246,12 +246,11 @@ export function MapCoveragePanel({
   onExport: (format: "geojson" | "kml") => void;
   /** Custom coord typed into the origin label. Caller detaches any anchor and moves the pin. */
   onOriginChange?: (lngLat: [number, number]) => void;
-  /** Desktop-only: open the Scan tool with the same origin + settings, leaving the
-   *  coverage paint visible underneath as a sanity check against real nodes in view. */
+  /** Desktop-only: open the Scan tool against the same origin + settings,
+   *  leaving the coverage paint visible underneath. */
   onScanFromHere?: () => void;
-  /** True while the Scan-from-here overlay owns the screen — the panel still
-   *  renders so the user knows coverage is paused (not closed), but is forced
-   *  minimized to keep the map clear. */
+  /** True while a Scan-from-here overlay is active. Forces the panel to
+   *  stay minimized so the map stays clear. */
   overlayMode?: boolean;
 }) {
   const isCustomHardware = COMMON_HARDWARE[hardwareIdx]?.isCustom ?? false;
@@ -321,19 +320,14 @@ export function MapCoveragePanel({
       .slice(0, 12);
   }, [mergeOriginSearch, mergeOrigins, mergeNodeOptions]);
 
-  // Single-expand accordion. Auto-expand RX whenever it becomes asymmetric so
-  // the user can see what changed; never auto-collapse.
   const [expandedRow, setExpandedRow] = useState<RowKey | null>(null);
   const toggleRow = (k: RowKey) => setExpandedRow((cur) => (cur === k ? null : k));
 
-  // Minimized = header-only. Tool keeps computing in the background; the
-  // user can restore to inspect or tweak. Mobile drag-handle still works.
   const [minimized, setMinimized] = useState(false);
 
-  // Auto-minimize on the FIRST result for each new origin (so the user can see
-  // the painted coverage on the map). Recomputes for the same origin — e.g.,
-  // changing detail or hardware — leave the panel alone so the user keeps
-  // seeing what they're tweaking.
+  // Auto-minimize on the first result for each new origin so the painted
+  // coverage is visible on the map. Recomputes for the same origin leave
+  // the panel state alone so the user keeps seeing what they're tweaking.
   const lastAutoMinKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!result) return;
@@ -344,16 +338,15 @@ export function MapCoveragePanel({
     }
   }, [result]);
 
-  // Force minimize on entering Scan-from-here overlay so the map stays clear.
+  // Force-minimize on entering Scan-from-here overlay so the map stays clear.
   const prevOverlayRef = useRef(overlayMode);
   useEffect(() => {
     if (overlayMode && !prevOverlayRef.current) setMinimized(true);
     prevOverlayRef.current = overlayMode;
   }, [overlayMode]);
 
-  // Snapshot of pre-check RX values so unchecking "Same as transmitter" can
-  // restore whatever the user had before. Without this the uncheck looks like
-  // a no-op because rxMatchesTx is derived from the values still matching.
+  // Without a snapshot, unchecking "Same as transmitter" would be a visual
+  // no-op — rxMatchesTx is derived, so the values still match TX.
   const rxSnapshotRef = useRef<{ hw: number; ant: number; height: number } | null>(null);
 
   const sheet = useBottomSheetGesture(onClose);
@@ -602,7 +595,6 @@ export function MapCoveragePanel({
         );
       })()}
 
-      {/* Header: badge · origin editor · ⋯ menu · close */}
       <div
         className="flex items-center justify-between gap-3 px-3 py-2 border-b border-white/5 shrink-0 max-sm:touch-none"
         onTouchStart={sheet.onTouchStart}
@@ -646,9 +638,8 @@ export function MapCoveragePanel({
                   }
                 }}
                 onBlur={() => {
-                  // Commit silently if valid, otherwise just close. A
-                  // bad value on blur is treated as a cancel so an
-                  // accidental click-away doesn't blow up.
+                  // Treat a bad value on blur as a cancel so a click-away
+                  // doesn't reset the pin to nonsense.
                   const parsed = parseLatLng(originDraft);
                   setEditingOrigin(false);
                   setOriginDraftError(false);
@@ -665,8 +656,6 @@ export function MapCoveragePanel({
               <button
                 type="button"
                 onClick={() => {
-                  // Pre-fill with current pin coordinates (works whether the
-                  // origin is a node anchor or a virtual placement).
                   const [lng, lat] = result.origin;
                   setOriginDraft(`${lat.toFixed(5)}, ${lng.toFixed(5)}`);
                   setEditingOrigin(true);
@@ -700,7 +689,6 @@ export function MapCoveragePanel({
               )}
             </svg>
           </button>
-          {/* ⋯ menu: export options */}
           <details className="text-[10px] text-gray-400 relative">
             <summary
               className="cursor-pointer list-none p-1 rounded-md hover:text-gray-200 hover:bg-white/5 transition-colors flex items-center"
@@ -755,9 +743,7 @@ export function MapCoveragePanel({
         </div>
       </div>
 
-      {/* Body: result strip + accordion rows. Hidden when minimized. */}
       <div className={`p-3 pb-5 space-y-2 overflow-y-auto overscroll-contain min-h-0 flex-1 sm:pb-3 ${minimized ? "hidden" : ""}`}>
-        {/* Reachability summary + RSSI gradient legend + diagnostics + help */}
         {(() => {
           const reachablePx = result.clearCount + result.fresnelCount;
           const totalPx = reachablePx + result.blockedCount;
@@ -944,7 +930,6 @@ export function MapCoveragePanel({
           );
         })()}
 
-        {/* Transmitter row */}
         <Row
           icon={
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1082,7 +1067,6 @@ export function MapCoveragePanel({
             </div>
           </div>
 
-          {/* Additional origins (multi-origin merge) */}
           <div className="space-y-1.5 pt-1 border-t border-white/5">
             <div className="flex items-center justify-between gap-2">
               <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 flex items-center gap-1">
@@ -1174,7 +1158,6 @@ export function MapCoveragePanel({
           </div>
         </Row>
 
-        {/* Receiver row — defaults to Same as TX, single toggle to customize */}
         <Row
           icon={
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1196,7 +1179,6 @@ export function MapCoveragePanel({
                 checked={rxMatchesTx}
                 onChange={(e) => {
                   if (e.target.checked) {
-                    // Save the current RX so unchecking can restore it.
                     rxSnapshotRef.current = {
                       hw: rxHardwareIdx,
                       ant: rxAntennaIdx,
@@ -1206,15 +1188,15 @@ export function MapCoveragePanel({
                     onRxAntennaIdxChange(antennaIdx);
                     onRxHeightChange(antennaHeightM);
                   } else {
-                    // Restore the previous RX. If there isn't one (RX was
-                    // already matching when the panel opened), fall back to
-                    // the stock handheld so the toggle is at least meaningful.
                     const snap = rxSnapshotRef.current;
                     if (snap) {
                       onRxHardwareIdxChange(snap.hw);
                       onRxAntennaIdxChange(snap.ant);
                       onRxHeightChange(snap.height);
                     } else {
+                      // No snapshot = RX already matched TX when the panel
+                      // opened. Fall back to handheld so the toggle isn't a
+                      // no-op.
                       onRxHardwareIdxChange(4); // Heltec V3
                       onRxAntennaIdxChange(0);  // rubber duck
                       onRxHeightChange(2);
@@ -1321,7 +1303,6 @@ export function MapCoveragePanel({
           )}
         </Row>
 
-        {/* Environment row (clutter + canopy + buildings) */}
         <Row
           icon={
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1408,7 +1389,6 @@ export function MapCoveragePanel({
           </div>
         </Row>
 
-        {/* Accuracy row (reliability + detail) */}
         <Row
           icon={
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1496,7 +1476,6 @@ export function MapCoveragePanel({
           </div>
         </Row>
 
-        {/* Overlays row (contours + rays) */}
         <Row
           icon={
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
