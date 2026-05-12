@@ -500,7 +500,9 @@ export function MapScanPanel({
                 onToggle={() => toggleSettingsRow("rx")}
               >
                 <div className="flex items-center justify-between gap-2">
-                  <label className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer select-none">
+                  {/* px/-mx pair gives the active-flash some real estate without
+                      changing the rendered layout. */}
+                  <label className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer select-none px-1.5 py-0.5 -mx-1.5 -my-0.5 rounded transition-colors active:bg-cyan-500/20">
                     <input
                       type="checkbox"
                       checked={rxMatchesTx}

@@ -772,15 +772,21 @@ export function MapCoveragePanel({
           const noTerrainData = terrainCoverage < 0.05;
           const noLinkBudget = !noTerrainData && reachablePx === 0;
           return (
-            <div className="px-2.5 py-2 rounded-lg bg-white/5">
+            <div className={`px-2.5 py-2 rounded-lg bg-white/5 transition-shadow ${isComputing ? "shadow-[inset_0_0_0_1px_rgba(34,211,238,0.45)]" : ""}`}>
               <div className="flex items-center gap-2 text-[10px]">
                 <span className="text-gray-500 uppercase tracking-wider">Reachable</span>
-                <span className="text-emerald-300 font-medium tabular-nums">
+                <span className={`text-emerald-300 font-medium tabular-nums transition-opacity ${isComputing ? "opacity-50" : ""}`}>
                   ~{fmt(reachableKm2)} km²
                 </span>
-                <span className="text-gray-500 tabular-nums">
+                <span className={`text-gray-500 tabular-nums transition-opacity ${isComputing ? "opacity-50" : ""}`}>
                   ({Math.round(pct)}% of {fmt(scannedKm2)} km²)
                 </span>
+                {isComputing && (
+                  <span className="inline-flex items-center gap-1 text-cyan-300 font-medium">
+                    <span className="w-2 h-2 border border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                    Updating…
+                  </span>
+                )}
                 <span className="ml-auto inline-flex items-center gap-1.5">
                   {onScanFromHere && (
                     <button
@@ -1182,7 +1188,9 @@ export function MapCoveragePanel({
           onToggle={() => toggleRow("rx")}
         >
           <div className="flex items-center justify-between gap-2">
-            <label className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer select-none">
+            {/* px/-mx pair gives the active-flash some real estate without
+                changing the rendered layout. */}
+            <label className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer select-none px-1.5 py-0.5 -mx-1.5 -my-0.5 rounded transition-colors active:bg-cyan-500/20">
               <input
                 type="checkbox"
                 checked={rxMatchesTx}
