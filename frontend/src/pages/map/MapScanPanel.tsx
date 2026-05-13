@@ -194,18 +194,6 @@ export function MapScanPanel({
 
   const [minimized, setMinimized] = useState(false);
 
-  // Auto-minimize on the first result for each new origin so the user can see
-  // their hits on the map. Recomputes for the same origin leave panel state
-  // alone so the user keeps seeing results they're tweaking against.
-  const lastAutoMinKeyRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!summary) return;
-    if (lastAutoMinKeyRef.current !== originLabel) {
-      lastAutoMinKeyRef.current = originLabel;
-      setMinimized(true);
-    }
-  }, [summary, originLabel]);
-
   // Without a snapshot, unchecking "Same as transmitter" would be a visual
   // no-op — rxMatchesTx is derived, so the values still match TX.
   const rxSnapshotRef = useRef<{ hw: number; ant: number } | null>(null);
