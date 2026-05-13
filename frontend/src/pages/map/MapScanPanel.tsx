@@ -304,7 +304,10 @@ export function MapScanPanel({
             </svg>
             Scan
           </span>
-          <div className="text-[11px] text-gray-300 truncate">
+          <div
+            className="text-[11px] text-gray-300 truncate"
+            title={summary ? `From ${originLabel} · ${reachable} reachable / ${total}` : `From ${originLabel}`}
+          >
             From <span className="font-medium text-gray-100">{originLabel}</span>
             {summary && (
               <>
