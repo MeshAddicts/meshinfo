@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import asyncio
-import copy
 from datetime import datetime, timedelta
 import logging
 from zoneinfo import ZoneInfo
@@ -24,7 +23,6 @@ class MemoryDataStore:
             'messages': []
         }
     }
-    self.graph: dict|None = {}
     self.messages: list = []
     self.mqtt_messages: list = []
     self.mqtt_connect_time: datetime = self.config['server']['start_time']
@@ -40,46 +38,6 @@ class MemoryDataStore:
 
     # Initialize Postgres storage
     self.pg_storage = PostgresStorage(config)
-
-  def __deepcopy__(self, memo):
-    """
-    Custom deepcopy to avoid copying non-copyable runtime objects (e.g., asyncpg buffers
-    held by PostgresStorage / pools / connections). Renderers only need the in-memory
-    data snapshot, not the live DB connection.
-    """
-    cls = self.__class__
-    result = cls.__new__(cls)
-    memo[id(self)] = result
-
-    for k, v in self.__dict__.items():
-      # Never deepcopy PostgresStorage (it can contain asyncpg internals)
-      if k == "pg_storage":
-        setattr(result, k, None)
-        continue
-
-      # Skip deepcopy for asyncpg internals if they somehow land on the store
-      mod = type(v).__module__
-      if isinstance(mod, str) and mod.startswith("asyncpg"):
-        setattr(result, k, None)
-        continue
-
-      # Skip common non-copyable runtime objects
-      try:
-        if isinstance(v, (asyncio.Lock, asyncio.Event, asyncio.Task, asyncio.Queue, logging.Logger)):
-          setattr(result, k, v)
-          continue
-      except Exception as exc:
-        # If runtime/types differ, don't block deepcopy.
-        logger.debug(
-          "MemoryDataStore.__deepcopy__: isinstance() guard failed for key %r (type=%s): %s",
-          k, type(v),
-          exc,
-          exc_info=True,
-        )
-
-      setattr(result, k, copy.deepcopy(v, memo))
-
-    return result
 
   def update(self, key, value):
     self.__dict__[key] = value
@@ -185,9 +143,8 @@ class MemoryDataStore:
 
     if since_last_data >= self.config['server']['intervals']['data_save']:
         end = datetime.now(ZoneInfo(self.config['server']['timezone']))
-        logger.debug("Rebuilt graph in %.2f seconds", end.timestamp() - save_start.timestamp())
+        logger.debug("Periodic save tick in %.2f seconds", end.timestamp() - save_start.timestamp())
         self.config['server']['last_data_save'] = end
-        self.graph = self.graph_node(self.config['server']['node_id'])
 
   ### helpers
 
@@ -246,7 +203,7 @@ class MemoryDataStore:
   def find_node_by_int_id(self, id: int):
     return self.nodes.get(utils.convert_node_id_from_int_to_hex(id), None)
 
-  def find_node_by_hex_id(self, id: str, include_neighbors: bool = False):
+  def find_node_by_hex_id(self, id: str):
     if not isinstance(id, str) or len(id) != 8 or not all(c in '0123456789abcdefABCDEF' for c in id):
       return None
 
@@ -254,27 +211,7 @@ class MemoryDataStore:
     if n is None:
       return None
 
-    node = n.copy()
-
-    if include_neighbors:
-      neighbors_heard = []
-      if 'neighborinfo' in node and node['neighborinfo'] is not None and  'neighbors' in node['neighborinfo'] and len(node['neighborinfo']['neighbors']) > 0:
-        for neighbor in node['neighborinfo']['neighbors']:
-          nn = self.find_node_by_hex_id(utils.convert_node_id_from_int_to_hex(neighbor["node_id"]), include_neighbors=False)
-          if nn is not None:
-            neighbors_heard.append(nn.copy())
-
-      neighbors_heard_by = []
-      for nid, n in self.nodes.items():
-        if 'neighborinfo' in n and n['neighborinfo'] is not None and 'neighbors' in n['neighborinfo'] and len(n['neighborinfo']['neighbors']) > 0:
-          if id in n['neighborinfo']['neighbors']:
-            nn = self.find_node_by_hex_id(utils.convert_node_id_from_int_to_hex(nid), include_neighbors=False)
-            if nn is not None:
-              neighbors_heard_by.append(nn.copy())
-
-      node['neighbors_heard'] = neighbors_heard
-      node['neighbors_heard_by'] = neighbors_heard_by
-    return node
+    return n.copy()
 
   def find_node_by_short_name(self, sn: str):
     for _id, node in self.nodes.items():
@@ -287,39 +224,3 @@ class MemoryDataStore:
       if node['longname'] == ln:
         return node
     return None
-
-  def graph_node(self, node_id: str) -> dict|None:
-    logger.debug("Graphing node: %s", node_id)
-
-    visited = set()  # Set to keep track of visited nodes
-
-    def recursive_graph_node(node_id, start_id="", level=0) -> dict|None:
-        node = self.find_node_by_hex_id(node_id, include_neighbors=True)
-        if node is None:
-            return None
-
-        if level > 1 and node_id in visited:
-            return node  # Return the node if it has already been visited
-
-        logger.debug("%s - %s", "  " * level, node_id)
-
-        visited.add(node_id)  # Mark the node as visited
-
-        neighbors_heard = []
-        neighbors_heard_by = []
-
-        if node['neighborinfo'] and node['neighborinfo']['neighbors']:
-            for neighbor in node['neighborinfo']['neighbors']:
-                nid = utils.convert_node_id_from_int_to_hex(neighbor["node_id"])
-                if start_id is not None and start_id == nid or (self.config['server']['graph']['max_depth'] is not None and level >= self.config['server']['graph']['max_depth']):
-                    continue
-                nn = recursive_graph_node(nid, start_id=start_id, level=level+1)
-                if nn is not None:
-                    neighbors_heard.append(nn.copy())
-
-        node['neighbors_heard'] = neighbors_heard
-        node['neighbors_heard_by'] = neighbors_heard_by
-
-        return node
-
-    return recursive_graph_node(node_id, start_id=node_id)

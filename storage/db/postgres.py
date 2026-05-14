@@ -1968,14 +1968,26 @@ class PostgresStorage:
                 stats["total_telemetry"] = await conn.fetchval("SELECT COUNT(*) FROM telemetry")
                 stats["total_traceroutes"] = await conn.fetchval("SELECT COUNT(*) FROM traceroutes")
 
-                # Messages and MQTT messages not stored in Postgres (in-memory only)
-                stats["total_messages"] = 0
-                stats["total_mqtt_messages"] = 0
+                # mqtt_messages can be huge and is under constant write load — an exact
+                # COUNT(*) can be slow enough to hit statement_timeout. The planner
+                # estimate is instant and accurate to within a few percent, which is
+                # plenty for a stats counter. Isolate so a failure here can't blank
+                # the rest of the response.
+                try:
+                    approx = await conn.fetchval(
+                        "SELECT reltuples::bigint FROM pg_class WHERE relname = 'mqtt_messages'"
+                    )
+                    mqtt_count = max(0, int(approx or 0))
+                except Exception as e:
+                    logger.warning("Failed to estimate mqtt_messages count: %s", e, exc_info=True)
+                    mqtt_count = 0
+                stats["total_messages"] = mqtt_count
+                stats["total_mqtt_messages"] = mqtt_count
 
                 return stats
 
         except Exception as e:
-            logger.error(f"Failed to query stats from PostgreSQL: {e}")
+            logger.error("Failed to query stats from PostgreSQL: %s", e, exc_info=True)
             return {}
 
     # ───────────────────────────────────────────────────────────────────

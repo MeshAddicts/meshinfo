@@ -375,9 +375,6 @@ class API:
         async def stats(request: Request) -> JSONResponse:
             if self.read_from_postgres:
                 stats = await self.data.pg_storage.query_stats()
-                # Add in-memory only data
-                stats['total_messages'] = len(self.data.messages)
-                stats['total_mqtt_messages'] = len(self.data.mqtt_messages)
                 return jsonable_encoder({"stats": stats})
             else:
                 stats = {

@@ -36,6 +36,11 @@ class MQTT:
         self.username = config['broker']['username']
         self.password = config['broker']['password']
 
+        # When the API serves from Postgres, the in-memory message/chat/telemetry/traceroute
+        # lists are never read. Skipping the appends here is the OOM fix — those lists used
+        # to grow unbounded and the `insert(0, ...)` pattern was also O(n) per packet.
+        self._skip_memory_lists = config.get('storage', {}).get('read_from') == 'postgres'
+
     ### actions
 
     async def connect(self):
@@ -374,13 +379,13 @@ class MQTT:
         topic = msg['topic'] if 'topic' in msg else 'unknown'
         logger.debug("MQTT >> %s -- %s", topic, msg)
 
-        self.data.mqtt_messages.append(msg)
-
         clean_msg = msg.copy()
         clean_msg.pop("decoded", None)
         clean_msg.pop("encrypted", None)
 
-        self.data.messages.append(clean_msg)
+        if not self._skip_memory_lists:
+            self.data.mqtt_messages.append(msg)
+            self.data.messages.append(clean_msg)
 
         # Real-time write to Postgres if enabled (raw MQTT log table)
         if 'postgres' in self.config.get('storage', {}).get('write_to', []):
@@ -527,12 +532,12 @@ class MQTT:
         self.data.update_node(id, node)
         logger.debug("Node %s updated with telemetry (variant=%s)", id, telemetry_type)
 
-        if id not in self.data.telemetry_by_node:
-            self.data.telemetry_by_node[id] = []
-
         if payload is not None:
-            self.data.telemetry.insert(0, msg)
-            self.data.telemetry_by_node[id].insert(0, msg)
+            if not self._skip_memory_lists:
+                if id not in self.data.telemetry_by_node:
+                    self.data.telemetry_by_node[id] = []
+                self.data.telemetry.insert(0, msg)
+                self.data.telemetry_by_node[id].insert(0, msg)
 
             # Real-time write to Postgres if enabled
             if 'postgres' in self.config.get('storage', {}).get('write_to', []):
@@ -569,12 +574,6 @@ class MQTT:
         if 'channel' not in msg:
             msg['channel'] = "0"
 
-        if str(msg['channel']) not in self.data.chat['channels']:
-            self.data.chat['channels'][str(msg['channel'])] = {
-                'name': f'Channel {msg["channel"]}',
-                'messages': []
-            }
-
         chat = {
             'id': msg['id'],
             'from': msg['from'],
@@ -588,7 +587,14 @@ class MQTT:
         }
         if 'sender' in msg:
             chat['sender'] = msg['sender']
-        self.data.chat['channels'][str(msg['channel'])]['messages'].insert(0, chat)
+
+        if not self._skip_memory_lists:
+            if str(msg['channel']) not in self.data.chat['channels']:
+                self.data.chat['channels'][str(msg['channel'])] = {
+                    'name': f'Channel {msg["channel"]}',
+                    'messages': []
+                }
+            self.data.chat['channels'][str(msg['channel'])]['messages'].insert(0, chat)
         
         # Real-time write to Postgres if enabled
         if 'postgres' in self.config.get('storage', {}).get('write_to', []):
@@ -636,11 +642,12 @@ class MQTT:
                 msg['route_ids'].append(r)
 
         id = msg['from']
-        if id in self.data.traceroutes_by_node:
-            self.data.traceroutes_by_node[id].insert(0, msg)
-        else:
-            self.data.traceroutes_by_node[id] = [msg]
-        self.data.traceroutes.insert(0, msg)
+        if not self._skip_memory_lists:
+            if id in self.data.traceroutes_by_node:
+                self.data.traceroutes_by_node[id].insert(0, msg)
+            else:
+                self.data.traceroutes_by_node[id] = [msg]
+            self.data.traceroutes.insert(0, msg)
         
         # Real-time write to Postgres if enabled
         if 'postgres' in self.config.get('storage', {}).get('write_to', []):
