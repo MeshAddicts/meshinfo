@@ -5,6 +5,15 @@
 http://localhost {
 	encode gzip
 
+	# Tile API (land-cover / canopy / buildings)
+	handle_path /api/tiles/* {
+		rewrite * /tiles{uri}
+		reverse_proxy meshinfo:9000
+	}
+	handle /tiles/* {
+		reverse_proxy meshinfo:9000
+	}
+
 	handle_path /api/* {
 		reverse_proxy meshinfo:9000
 	}
