@@ -7,6 +7,7 @@ import json
 import logging
 import time
 import traceback
+from typing import Optional
 from zoneinfo import ZoneInfo
 import aiomqtt
 from meshtastic import mesh_pb2, mqtt_pb2, portnums_pb2, telemetry_pb2
@@ -21,9 +22,22 @@ import utils
 
 logger = logging.getLogger(__name__)
 
-key = "AQ=="
-key_hash = "1PG7OiApB1nwvP+rz05pAQ==" # AQ==
-key_bytes = base64.b64decode(key_hash.encode('ascii'))
+
+def _normalize_node_id(value) -> Optional[str]:
+    """Coerce a node id (int from protobuf or str from JSON) to canonical 8-char lowercase hex.
+
+    Returns None if value is missing or not a valid id. Tolerates an optional leading '!'.
+    """
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return utils.convert_node_id_from_int_to_hex(value)
+    if isinstance(value, str):
+        s = value.replace('!', '').lower()
+        if 1 <= len(s) <= 8 and all(c in '0123456789abcdef' for c in s):
+            # Left-pad to 8 chars so equality holds across publishers.
+            return s.rjust(8, '0')
+    return None
 
 class MQTT:
     def __init__(self, config, data):
@@ -88,15 +102,21 @@ class MQTT:
                         if len(gw) <= 8:
                             outs['sender'] = gw
                     logger.debug("Decoded protobuf message: %s", outs)
-                except Exception as _:
-                    pass
+                except DecodeError as e:
+                    logger.warning("Discarding malformed protobuf ServiceEnvelope on %s: %s", msg.topic.value, e)
+                    return
+                except Exception as e:
+                    # Don't process a packet we couldn't parse — empty outs/default mp downstream
+                    # produces noisy type='unknown' rows in mqtt_messages and can mask real failures.
+                    logger.exception("Unexpected error decoding protobuf envelope on %s: %s", msg.topic.value, e)
+                    return
 
                 if mp.HasField("encrypted") and not mp.HasField("decoded"):
                     is_encrypted = True
                     for key_item in self.config['broker']['channels']['encryption']:
                         key_bytes = base64.b64decode(key_item['key'].encode('ascii'))
                         try:
-                            logger.debug("Attempting decryption with key: %s", key)
+                            logger.debug("Attempting decryption with key: %s", key_item.get('name', '<unnamed>'))
                             nonce_packet_id = getattr(mp, "id").to_bytes(8, "little")
                             nonce_from_node = getattr(mp, "from").to_bytes(8, "little")
                             nonce = nonce_packet_id + nonce_from_node
@@ -151,8 +171,6 @@ class MQTT:
                         outs["type"] = "text"
                         outs["payload"] = {"text": text}
                         logger.debug("Decoded protobuf message: text: %s", outs)
-                        await self.handle_text(outs)
-
                     except UnicodeDecodeError:
                         outs["type"] = "text_binary"
                         outs["payload"] = {
@@ -160,8 +178,9 @@ class MQTT:
                             "len": len(payload_bytes),
                         }
                         logger.debug("Decoded protobuf message: text_binary: %s", outs)
-                        # log it, but don't treat as chat text
-                        await self.handle_log(outs)
+                    # Route text payloads through the chat handler; binary payloads only get logged.
+                    if outs.get("type") == "text":
+                        await self._safe_handle("handle_text", self.handle_text(outs))
 
                 elif mp.decoded.portnum == portnums_pb2.MAP_REPORT_APP:
                     try:
@@ -183,28 +202,30 @@ class MQTT:
                         outs["type"] = "neighborinfo"
                         outs["payload"] = out
                         logger.debug("Decoded protobuf message: neighborinfo: %s", outs)
-                        await self.handle_neighborinfo(outs)
                     except UnicodeDecodeError as e:
                         logger.debug("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
                         logger.debug("Protobuf decode error: text: %s", e)
+                    else:
+                        await self._safe_handle("handle_neighborinfo", self.handle_neighborinfo(outs))
 
                 elif mp.decoded.portnum == portnums_pb2.NODEINFO_APP:
                     try:
                         info = mesh_pb2.User().FromString(mp.decoded.payload)
                         out = json.loads(MessageToJson(info, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
-                        # Fall back to MeshPacket `from` when User.id is unset.
-                        nid = out.get('id', outs.get('from'))
+                        # Fall back to MeshPacket `from` when User.id is unset (eb7c421).
+                        # Normalize via _normalize_node_id so both protobuf ints and pre-stringified ids land canonical.
+                        nid = _normalize_node_id(out.get('id'))
+                        if nid is None:
+                            nid = _normalize_node_id(outs.get('from'))
                         if nid is None:
                             logger.debug("NODEINFO packet missing identity; skipping: %s", out)
                         else:
-                            if isinstance(nid, int):
-                                nid = utils.convert_node_id_from_int_to_hex(nid)
-                            out["id"] = str(nid).replace('!', '')
+                            out["id"] = nid
                             outs["type"] = "nodeinfo"
                             outs["payload"] = out
                             logger.debug("Decoded protobuf message: nodeinfo: %s", outs)
-                            await self.handle_nodeinfo(outs)
+                            await self._safe_handle("handle_nodeinfo", self.handle_nodeinfo(outs))
                     except UnicodeDecodeError as e:
                         logger.debug("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
@@ -225,22 +246,18 @@ class MQTT:
 
                 elif mp.decoded.portnum == portnums_pb2.TRACEROUTE_APP:
                     try:
-                        route = mesh_pb2.RouteDiscovery().FromString(mp.decoded.payload)
-                        out = json.loads(MessageToJson(route, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
-                        if 'route' in out:
-                            route = []
-                            for r in out['route']:
-                                id = utils.convert_node_id_from_int_to_hex(int(r))
-                                route.append(id)
-                            outs["route"] = route
+                        route_msg = mesh_pb2.RouteDiscovery().FromString(mp.decoded.payload)
+                        out = json.loads(MessageToJson(route_msg, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
                         outs["type"] = "traceroute"
                         outs["payload"] = out
                         logger.debug("Decoded protobuf message: traceroute: %s", outs)
-                        await self.handle_traceroute(outs)
                     except UnicodeDecodeError as e:
                         logger.debug("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
                         logger.debug("Protobuf decode error: text: %s", e)
+                    else:
+                        # handle_traceroute owns route normalization (handles int + str entries).
+                        await self._safe_handle("handle_traceroute", self.handle_traceroute(outs))
 
                 elif mp.decoded.portnum == portnums_pb2.POSITION_APP:
                     try:
@@ -249,11 +266,12 @@ class MQTT:
                         outs["type"] = "position"
                         outs["payload"] = out
                         logger.debug("Decoded protobuf message: position: %s", outs)
-                        await self.handle_position(outs)
                     except UnicodeDecodeError as e:
                         logger.debug("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
                         logger.debug("Protobuf decode error: text: %s", e)
+                    else:
+                        await self._safe_handle("handle_position", self.handle_position(outs))
 
                 elif mp.decoded.portnum == portnums_pb2.TELEMETRY_APP:
                     try:
@@ -285,13 +303,14 @@ class MQTT:
                             logger.debug("Telemetry with unrecognized variant=%s: %s", variant, out)
 
                         logger.debug("Decoded protobuf message: telemetry (variant=%s): %s", variant, outs)
-                        await self.handle_telemetry(outs)
                     except UnicodeDecodeError as e:
                         logger.debug("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
                         logger.debug("Protobuf decode error: text: %s", e)
                     except Exception as e:
-                        logger.error("Telemetry processing error: %s", e)
+                        logger.exception("Telemetry decoding error: %s", e)
+                    else:
+                        await self._safe_handle("handle_telemetry", self.handle_telemetry(outs))
 
                 else:
                     logger.debug("Received an unknown protobuf message: %s", mp)
@@ -330,28 +349,21 @@ class MQTT:
 
                     await self.handle_log(j)
 
-                    if j['type'] == "neighborinfo":
-                        await self.handle_neighborinfo(j)
-                    if j['type'] == "nodeinfo":
-                        await self.handle_nodeinfo(j)
-                    if j['type'] == "position":
-                        await self.handle_position(j)
-                    if j['type'] == "telemetry":
-                        await self.handle_telemetry(j)
-                    if j['type'] == "text":
-                        await self.handle_text(j)
-                    if j['type'] == "traceroute":
-                        if 'route' in j['payload']:
-                            route = []
-                            for r in j['payload']['route']:
-                                node = await self.data.pg_storage.find_node_by_longname(r)
-                                if node is not None:
-                                    id = node['id']
-                                else:
-                                    id = None
-                                route.append(id)
-                            j['route'] = route
-                        await self.handle_traceroute(j)
+                    # Per-handler safe dispatch so one malformed packet can't kill the loop.
+                    # handle_traceroute already normalizes route entries (str/int) internally.
+                    msg_type = j.get('type')
+                    if msg_type == "neighborinfo":
+                        await self._safe_handle("handle_neighborinfo", self.handle_neighborinfo(j))
+                    elif msg_type == "nodeinfo":
+                        await self._safe_handle("handle_nodeinfo", self.handle_nodeinfo(j))
+                    elif msg_type == "position":
+                        await self._safe_handle("handle_position", self.handle_position(j))
+                    elif msg_type == "telemetry":
+                        await self._safe_handle("handle_telemetry", self.handle_telemetry(j))
+                    elif msg_type == "text":
+                        await self._safe_handle("handle_text", self.handle_text(j))
+                    elif msg_type == "traceroute":
+                        await self._safe_handle("handle_traceroute", self.handle_traceroute(j))
                     await self.prune_expired_nodes()
                 except Exception as e:
                     logger.error("JSON message processing error: %s", e, exc_info=True)
@@ -375,6 +387,42 @@ class MQTT:
 
     ### message handlers
 
+    async def _safe_handle(self, label: str, coro) -> None:
+        """Run a handler coroutine; log + swallow exceptions.
+
+        Without this wrap, a KeyError or TypeError inside a handler propagates up
+        through process_mqtt_msg / the aiomqtt message loop, kills the connection,
+        and any in-flight messages (potentially including the corrective NODEINFO
+        for an 'Unknown' node) are dropped during the reconnect window.
+        """
+        try:
+            await coro
+        except Exception as e:
+            logger.exception("%s failed: %s", label, e)
+
+    def _normalize_msg_addrs(self, msg: dict) -> Optional[str]:
+        """Normalize msg['from'/'to'/'sender'] in-place; return canonical 'from' or None.
+
+        Handlers previously did `utils.convert_node_id_from_int_to_hex(msg["from"])`
+        which KeyError'd on missing 'from' and TypeError'd if the JSON publisher sent
+        a hex string instead of an int. The new normalizer accepts either and skips
+        malformed packets cleanly.
+        """
+        from_id = _normalize_node_id(msg.get("from"))
+        if from_id is None:
+            return None
+        msg['from'] = from_id
+        if 'to' in msg:
+            to_id = _normalize_node_id(msg['to'])
+            if to_id is not None:
+                msg['to'] = to_id
+            else:
+                msg.pop('to', None)
+        sender = msg.get('sender')
+        if isinstance(sender, str):
+            msg['sender'] = sender.replace('!', '')
+        return from_id
+
     async def handle_log(self, msg):
         topic = msg['topic'] if 'topic' in msg else 'unknown'
         logger.debug("MQTT >> %s -- %s", topic, msg)
@@ -392,17 +440,19 @@ class MQTT:
 
 
     async def handle_neighborinfo(self, msg):
-        msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
-        if 'to' in msg:
-            msg['to'] = utils.convert_node_id_from_int_to_hex(msg["to"])
-        if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
-            msg['sender'] = msg['sender'].replace('!', '')
+        id = self._normalize_msg_addrs(msg)
+        if id is None:
+            logger.debug("handle_neighborinfo: missing/invalid 'from'; skipping: %s", msg)
+            return
+        payload = msg.get('payload')
+        if not isinstance(payload, dict):
+            logger.debug("handle_neighborinfo: missing/invalid payload for %s; skipping", id)
+            return
 
-        id = msg['from']
         node = await self.data.pg_storage.get_node_cached(id)
         if node is None:
             node = Node.default_node(id)
-        node['neighborinfo'] = msg['payload']
+        node['neighborinfo'] = payload
         if msg.get('sender'):
             node['gateway'] = msg['sender']
         await self.data.update_node(id, node)
@@ -410,13 +460,20 @@ class MQTT:
         await self.data.save()
 
     async def handle_nodeinfo(self, msg):
-        msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
-        if 'to' in msg:
-            msg['to'] = utils.convert_node_id_from_int_to_hex(msg["to"])
-        if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
-            msg['sender'] = msg['sender'].replace('!', '')
+        from_id = self._normalize_msg_addrs(msg)
+        payload = msg.get('payload')
+        if not isinstance(payload, dict):
+            logger.debug("handle_nodeinfo: missing/invalid payload; skipping: %s", msg)
+            return
 
-        id = msg['payload']['id']
+        # Pick the canonical node id: prefer payload.id (the User.id from the protobuf),
+        # fall back to MeshPacket 'from'. Either may arrive as int (protobuf/JSON publisher)
+        # or hex string. Normalizing both makes node identity stable across decoders.
+        id = _normalize_node_id(payload.get('id')) or from_id
+        if id is None:
+            logger.debug("handle_nodeinfo: no usable node id (payload.id and from both missing/invalid); skipping: %s", msg)
+            return
+
         node = await self.data.pg_storage.get_node_cached(id)
         if node is None:
             node = Node.default_node(id)
@@ -424,23 +481,25 @@ class MQTT:
         else:
             logger.debug("Updating node %s", id)
 
-        if 'hardware' in msg['payload']:
-            node['hardware'] = msg['payload']['hardware']
-        elif 'hw_model' in msg['payload']:
-            node['hardware'] = msg['payload']['hw_model']
+        # NODEINFO is the only path that fills in real shortname/longname/hardware;
+        # accept either snake_case or camelCase (different decoders emit different keys).
+        if 'hardware' in payload:
+            node['hardware'] = payload['hardware']
+        elif 'hw_model' in payload:
+            node['hardware'] = payload['hw_model']
 
-        if 'longname' in msg['payload']:
-            node['longname'] = msg['payload']['longname']
-        elif 'long_name' in msg['payload']:
-            node['longname'] = msg['payload']['long_name']
+        if 'longname' in payload:
+            node['longname'] = payload['longname']
+        elif 'long_name' in payload:
+            node['longname'] = payload['long_name']
 
-        if 'shortname' in msg['payload']:
-            node['shortname'] = msg['payload']['shortname']
-        elif 'short_name' in msg['payload']:
-            node['shortname'] = msg['payload']['short_name']
+        if 'shortname' in payload:
+            node['shortname'] = payload['shortname']
+        elif 'short_name' in payload:
+            node['shortname'] = payload['short_name']
 
-        if 'role' in msg['payload']:
-            node['role'] = msg['payload']['role']
+        if 'role' in payload:
+            node['role'] = payload['role']
         else:
             node['role'] = 0
 
@@ -454,19 +513,17 @@ class MQTT:
         await self.data.save()
 
     async def handle_position(self, msg):
-        msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
-        if 'to' in msg:
-            msg['to'] = utils.convert_node_id_from_int_to_hex(msg["to"])
-        if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
-            msg['sender'] = msg['sender'].replace('!', '')
+        id = self._normalize_msg_addrs(msg)
+        if id is None:
+            logger.debug("handle_position: missing/invalid 'from'; skipping: %s", msg)
+            return
 
-        id = msg['from']
         node = await self.data.pg_storage.get_node_cached(id)
         if node is None:
             node = Node.default_node(id)
             logger.debug("Node %s skeleton added with position", id)
 
-        node['position'] = msg['payload'] if 'payload' in msg else None
+        node['position'] = msg.get('payload')
 
         if 'channel' in msg:
             node['last_channel'] = str(msg['channel'])
@@ -486,13 +543,10 @@ class MQTT:
         await self.data.save()
 
     async def handle_telemetry(self, msg):
-        msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
-        if 'to' in msg:
-            msg['to'] = utils.convert_node_id_from_int_to_hex(msg["to"])
-        if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
-            msg['sender'] = msg['sender'].replace('!', '')
-
-        id = msg['from']
+        id = self._normalize_msg_addrs(msg)
+        if id is None:
+            logger.debug("handle_telemetry: missing/invalid 'from'; skipping: %s", msg)
+            return
         telemetry_type = msg.get('telemetry_type')
         payload = msg.get('payload')
 
@@ -535,34 +589,45 @@ class MQTT:
         await self.data.save()
 
     async def handle_text(self, msg):
-        msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
-        if 'to' in msg:
-            msg['to'] = utils.convert_node_id_from_int_to_hex(msg["to"])
-        if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
-            msg['sender'] = msg['sender'].replace('!', '')
+        from_id = self._normalize_msg_addrs(msg)
+        if from_id is None:
+            logger.debug("handle_text: missing/invalid 'from'; skipping: %s", msg)
+            return
         if 'channel' not in msg:
             msg['channel'] = "0"
 
+        payload = msg.get('payload')
+        text = payload.get('text') if isinstance(payload, dict) else None
+        if not isinstance(text, str):
+            logger.debug("handle_text: missing payload.text for %s; skipping", from_id)
+            return
+
+        msg_id = msg.get('id')
+        timestamp = msg.get('timestamp')
+        if msg_id is None or timestamp is None:
+            logger.debug("handle_text: missing id/timestamp for %s; skipping", from_id)
+            return
+
         chat = {
-            'id': msg['id'],
-            'from': msg['from'],
-            'to': msg['to'],
+            'id': msg_id,
+            'from': from_id,
+            'to': msg.get('to'),
             'channel': str(msg['channel']),
-            'text': msg['payload']['text'],
-            'timestamp': msg['timestamp'],
-            'hops_away': msg['hops_away'] if 'hops_away' in msg else None,
-            'rssi': msg['rssi'] if 'rssi' in msg else None,
-            'snr': msg['snr'] if 'snr' in msg else None,
+            'text': text,
+            'timestamp': timestamp,
+            'hops_away': msg.get('hops_away'),
+            'rssi': msg.get('rssi'),
+            'snr': msg.get('snr'),
         }
         if 'sender' in msg:
             chat['sender'] = msg['sender']
 
-        await self.data.pg_storage.write_chat_message(chat['from'], chat)
+        await self.data.pg_storage.write_chat_message(from_id, chat)
 
-        node = await self.data.pg_storage.get_node_cached(msg['from'])
+        node = await self.data.pg_storage.get_node_cached(from_id)
         # TODO: Replace with something more configurable
         if node:
-            if 'TC' in chat['text'] and 'BBS' in chat['text'] and 'Commands' in chat['text']:
+            if 'TC' in text and 'BBS' in text and 'Commands' in text:
                 node['tc2_bbs'] = True
             node['last_channel'] = str(msg['channel'])
             await self.data.update_node(node['id'], node)
@@ -580,17 +645,24 @@ class MQTT:
         await self.data.save()
 
     async def handle_traceroute(self, msg):
-        msg['from'] = utils.convert_node_id_from_int_to_hex(msg["from"])
-        if 'to' in msg:
-            msg['to'] = utils.convert_node_id_from_int_to_hex(msg["to"])
-        if 'sender' in msg and msg['sender'] and isinstance(msg['sender'], str):
-            msg['sender'] = msg['sender'].replace('!', '')
-        msg['route'] = msg['payload']['route']
+        id = self._normalize_msg_addrs(msg)
+        if id is None:
+            logger.debug("handle_traceroute: missing/invalid 'from'; skipping: %s", msg)
+            return
+        payload = msg.get('payload')
+        route = payload.get('route') if isinstance(payload, dict) else None
+        if not isinstance(route, list):
+            logger.debug("handle_traceroute: missing payload.route for %s; skipping", id)
+            return
+
+        msg['route'] = route
         msg['route_ids'] = []
-        for r in msg['route']:
+        for r in route:
             if isinstance(r, str):
+                # JSON publisher path: route entries arrive as longnames.
                 node = await self.data.pg_storage.find_node_by_longname(r)
             elif isinstance(r, int):
+                # Protobuf path: route entries are uint32 node ids.
                 node = await self.data.pg_storage.get_node_cached(utils.convert_node_id_from_int_to_hex(r))
             else:
                 node = None
@@ -600,9 +672,7 @@ class MQTT:
             else:
                 msg['route_ids'].append(r)
 
-        id = msg['from']
         await self.data.pg_storage.write_traceroute(id, msg)
-
         await self.data.save()
 
     ### helpers
