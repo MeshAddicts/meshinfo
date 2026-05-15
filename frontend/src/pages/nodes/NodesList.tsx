@@ -267,7 +267,7 @@ const NodeRow = memo(function NodeRow({
     >
       <div className="flex items-center gap-3">
         <div className="shrink-0">
-          <Avatar id={item.id} size={10} />
+          <Avatar id={item.id} size={16} />
         </div>
 
         <div className="min-w-0 flex-1">
