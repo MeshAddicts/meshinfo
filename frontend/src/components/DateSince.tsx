@@ -1,16 +1,21 @@
 import { useMemo } from "react";
 
+import { useTimeTicker } from "./TimeTickerContext";
+
 export const DateToSince = ({
   date,
-  currentDate = new Date(),
+  currentDate,
 }: {
   date: string | Date;
+  /** Optional override. If omitted, falls back to the TimeTickerContext so
+   * rendering inside a memoized row doesn't require currentDate as a prop. */
   currentDate?: Date;
 }) => {
+  const tickerDate = useTimeTicker();
+  const effectiveDate = currentDate ?? tickerDate;
   const interval = useMemo(
-    () =>
-      currentDate.getTime() - new Date(date).getTime(),
-    [currentDate, date]
+    () => effectiveDate.getTime() - new Date(date).getTime(),
+    [effectiveDate, date],
   );
   return (
     <span title={`${date}`}>

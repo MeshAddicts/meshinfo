@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
 import { Avatar } from "../../components/Avatar";
 import { DateToSince } from "../../components/DateSince";
 import { HardwareImg } from "../../components/HardwareImg";
+import { TimeTickerProvider } from "../../components/TimeTickerContext";
 import { HardwareModel, INode } from "../../types";
 import { getTelemetrySnapshot, roleLabel } from "./nodesUtils";
 
@@ -58,12 +59,9 @@ export function NodesList({
 }) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
 
-  // Keep the "Seen X sec" counters smooth without re-rendering the entire page.
-  const [currentDate, setCurrentDate] = useState(() => new Date());
-  useEffect(() => {
-    const t = window.setInterval(() => setCurrentDate(new Date()), 1000);
-    return () => window.clearInterval(t);
-  }, []);
+  // The "Seen X sec" counters tick via TimeTickerProvider below; consuming it
+  // in DateToSince via context means only the date span re-renders each second,
+  // not the whole memoized row.
 
   // Track whether we're at the top of the list
   const [atTop, setAtTop] = useState(true);
@@ -208,115 +206,131 @@ export function NodesList({
           </div>
         )}
 
-        <Virtuoso
-          ref={virtuosoRef}
-          style={{ flex: 1, minHeight: 0, height: "100%" }}
-          data={displayItems}
-          computeItemKey={(_index, item) => item.id}
-          overscan={600}
-          rangeChanged={handleRangeChanged}
-          itemContent={(_index, item) => {
-            const n: any = item.node as any;
-            const telem = getTelemetrySnapshot(item.node);
-
-            const short = String(n?.shortname ?? "UNK");
-            const long = String(n?.longname ?? "");
-            const role = n?.role;
-            const hw = n?.hardware;
-
-            const isSelected = !!selectedId && item.id === selectedId;
-            const isFlashing = !!flashId && item.id === flashId;
-
-            return (
-              <button
-                type="button"
-                data-node-id={item.id}
-                onClick={() => onSelect(item.id)}
-                className={[
-                  "w-full text-left px-4 py-3 border-b border-gray-200 dark:border-gray-800 transition",
-                  "hover:bg-gray-50/70 dark:hover:bg-gray-900/40",
-                  isFlashing
-                    ? "animate-pulse ring-2 ring-indigo-400/50 bg-indigo-50/60 dark:bg-indigo-900/20"
-                    : isSelected
-                      ? "bg-indigo-50/50 dark:bg-indigo-900/15"
-                      : "bg-transparent",
-                ].join(" ")}
-              >
-                <div className="flex items-center gap-3">
-                  <div className="shrink-0">
-                    <Avatar id={item.id} size={10} />
-                  </div>
-
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div className="font-semibold text-gray-900 dark:text-gray-100 truncate">
-                        {short}
-                      </div>
-
-                      <span className={pillClass(item.online)}>
-                        {item.online ? "Online" : "Offline"}
-                      </span>
-
-                      {typeof role === "number" ? (
-                        <span className="hidden sm:inline-flex items-center rounded-full px-2 py-0.5 text-[11px] border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200">
-                          {roleLabel(role)}
-                        </span>
-                      ) : null}
-
-                      <div className="ml-auto hidden sm:flex items-center gap-2">
-                        {typeof telem.batteryPct === "number" ? (
-                          <span className="text-xs text-gray-600 dark:text-gray-400 tabular-nums">
-                            🔋 {Math.round(telem.batteryPct)}%
-                          </span>
-                        ) : null}
-                        {typeof telem.voltage === "number" ? (
-                          <span className="text-xs text-gray-600 dark:text-gray-400 tabular-nums">
-                            ⚡ {telem.voltage.toFixed(2)}V
-                          </span>
-                        ) : null}
-                        {item.dxKm != null ? (
-                          <span className="text-xs text-gray-600 dark:text-gray-400 tabular-nums">
-                            📡 {item.dxKm.toFixed(1)} km
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-
-                    <div className="mt-1 flex items-center gap-2 min-w-0">
-                      <div className="text-sm text-gray-600 dark:text-gray-400 truncate">
-                        {long || <span className="opacity-60">no longname</span>}
-                      </div>
-
-                      {hw != null && HardwareModel[hw] ? (
-                        <span className="ml-auto hidden md:inline-flex items-center">
-                          <HardwareImg model={hw} />
-                        </span>
-                      ) : null}
-                    </div>
-
-                    <div className="mt-2 flex items-center gap-3 text-xs text-gray-600 dark:text-gray-400">
-                      <span className="tabular-nums">
-                        Seen{" "}
-                        <DateToSince
-                          date={(n as any)?.last_seen}
-                          currentDate={currentDate}
-                        />
-                      </span>
-
-                      {item.hasPosition ? (
-                        <span className="opacity-80">📍 has position</span>
-                      ) : (
-                        <span className="opacity-50">no position</span>
-                      )}
-
-                    </div>
-                  </div>
-                </div>
-              </button>
-            );
-          }}
-        />
+        <TimeTickerProvider>
+          <Virtuoso
+            ref={virtuosoRef}
+            style={{ flex: 1, minHeight: 0, height: "100%" }}
+            data={displayItems}
+            computeItemKey={(_index, item) => item.id}
+            overscan={600}
+            rangeChanged={handleRangeChanged}
+            itemContent={(_index, item) => (
+              <NodeRow
+                item={item}
+                isSelected={!!selectedId && item.id === selectedId}
+                isFlashing={!!flashId && item.id === flashId}
+                onSelect={onSelect}
+              />
+            )}
+          />
+        </TimeTickerProvider>
       </div>
     </div>
   );
 }
+
+// Memoized so the per-second TimeTickerProvider re-render only invalidates the
+// DateToSince span (which subscribes to context), not the whole row's DOM.
+const NodeRow = memo(function NodeRow({
+  item,
+  isSelected,
+  isFlashing,
+  onSelect,
+}: {
+  item: NodeListItem;
+  isSelected: boolean;
+  isFlashing: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const n: any = item.node as any;
+  const telem = getTelemetrySnapshot(item.node);
+
+  const short = String(n?.shortname ?? "UNK");
+  const long = String(n?.longname ?? "");
+  const role = n?.role;
+  const hw = n?.hardware;
+
+  return (
+    <button
+      type="button"
+      data-node-id={item.id}
+      onClick={() => onSelect(item.id)}
+      className={[
+        "w-full text-left px-4 py-3 border-b border-gray-200 dark:border-gray-800 transition",
+        "hover:bg-gray-50/70 dark:hover:bg-gray-900/40",
+        isFlashing
+          ? "animate-pulse ring-2 ring-indigo-400/50 bg-indigo-50/60 dark:bg-indigo-900/20"
+          : isSelected
+            ? "bg-indigo-50/50 dark:bg-indigo-900/15"
+            : "bg-transparent",
+      ].join(" ")}
+    >
+      <div className="flex items-center gap-3">
+        <div className="shrink-0">
+          <Avatar id={item.id} size={10} />
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="font-semibold text-gray-900 dark:text-gray-100 truncate">
+              {short}
+            </div>
+
+            <span className={pillClass(item.online)}>
+              {item.online ? "Online" : "Offline"}
+            </span>
+
+            {typeof role === "number" ? (
+              <span className="hidden sm:inline-flex items-center rounded-full px-2 py-0.5 text-[11px] border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200">
+                {roleLabel(role)}
+              </span>
+            ) : null}
+
+            <div className="ml-auto hidden sm:flex items-center gap-2">
+              {typeof telem.batteryPct === "number" ? (
+                <span className="text-xs text-gray-600 dark:text-gray-400 tabular-nums">
+                  🔋 {Math.round(telem.batteryPct)}%
+                </span>
+              ) : null}
+              {typeof telem.voltage === "number" ? (
+                <span className="text-xs text-gray-600 dark:text-gray-400 tabular-nums">
+                  ⚡ {telem.voltage.toFixed(2)}V
+                </span>
+              ) : null}
+              {item.dxKm != null ? (
+                <span className="text-xs text-gray-600 dark:text-gray-400 tabular-nums">
+                  📡 {item.dxKm.toFixed(1)} km
+                </span>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="mt-1 flex items-center gap-2 min-w-0">
+            <div className="text-sm text-gray-600 dark:text-gray-400 truncate">
+              {long || <span className="opacity-60">no longname</span>}
+            </div>
+
+            {hw != null && HardwareModel[hw] ? (
+              <span className="ml-auto hidden md:inline-flex items-center">
+                <HardwareImg model={hw} />
+              </span>
+            ) : null}
+          </div>
+
+          <div className="mt-2 flex items-center gap-3 text-xs text-gray-600 dark:text-gray-400">
+            <span className="tabular-nums">
+              Seen <DateToSince date={(n as any)?.last_seen} />
+            </span>
+
+            {item.hasPosition ? (
+              <span className="opacity-80">📍 has position</span>
+            ) : (
+              <span className="opacity-50">no position</span>
+            )}
+
+          </div>
+        </div>
+      </div>
+    </button>
+  );
+});
