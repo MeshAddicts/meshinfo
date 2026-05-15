@@ -2124,6 +2124,28 @@ class PostgresStorage:
                 stats["total_messages"] = mqtt_count
                 stats["total_mqtt_messages"] = mqtt_count
 
+                # Topic-preset split over the last 24h. The Meshtastic topic format is
+                # `msh/<region(s)>/2/e/<preset>/!<node>`, so the preset is the segment
+                # immediately after `/2/e/`. Isolated try so a failure can't blank stats.
+                preset_split: Dict[str, int] = {}
+                try:
+                    rows = await conn.fetch(
+                        """
+                        SELECT substring(topic from '/2/e/([^/]+)/') AS preset,
+                               COUNT(*)::bigint                       AS n
+                          FROM mqtt_messages
+                         WHERE created_at > NOW() - INTERVAL '24 hours'
+                           AND topic LIKE '%/2/e/%/!%'
+                         GROUP BY preset
+                        HAVING substring(topic from '/2/e/([^/]+)/') IS NOT NULL
+                        ORDER BY n DESC
+                        """
+                    )
+                    preset_split = {row["preset"]: int(row["n"]) for row in rows if row["preset"]}
+                except Exception as e:
+                    logger.warning("Failed to compute preset split: %s", e, exc_info=True)
+                stats["session_by_modem_preset"] = preset_split
+
                 return stats
 
         except Exception as e:

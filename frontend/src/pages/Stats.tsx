@@ -237,12 +237,12 @@ export const Stats = () => {
       ["total_chat", safeNum(stats.total_chat)],
       ["total_telemetry", safeNum(stats.total_telemetry)],
       ["total_traceroutes", safeNum(stats.total_traceroutes)],
-      ["total_messages", safeNum(stats.total_messages)],
+      ["total_mqtt_messages", safeNum(stats.total_messages)],
     ];
 
     if (derived.hasPresetSplit) {
-      rows.push(["session_mediumfast", derived.mediumFast]);
-      rows.push(["session_longfast", derived.longFast]);
+      rows.push(["mediumfast_24h", derived.mediumFast]);
+      rows.push(["longfast_24h", derived.longFast]);
     }
 
     const csv =
@@ -262,38 +262,29 @@ export const Stats = () => {
       tone?: "good" | "warn" | "info";
     }> = [];
 
-    // Active ratio
+    // Active ratio. The "known" count includes nodes only ever seen as stubs
+    // (gateways/recipients), so a healthy mesh routinely sits in the 25–50% band.
     if (derived.nodes > 0) {
       const pct = Math.round(derived.activeRatio * 100);
-      if (pct >= 65) {
+      if (pct >= 50) {
         items.push({
           title: "Healthy presence",
-          detail: `${pct}% of known nodes are active right now.`,
+          detail: `${pct}% of known nodes have been active in the last 3 days.`,
           tone: "good",
         });
-      } else if (pct >= 35) {
+      } else if (pct >= 20) {
         items.push({
-          title: "Mixed activity",
-          detail: `${pct}% of known nodes are active. Consider widening your time range on Nodes for context.`,
+          title: "Typical activity",
+          detail: `${pct}% of known nodes have been active in the last 3 days.`,
           tone: "info",
         });
       } else {
         items.push({
           title: "Low activity",
-          detail: `${pct}% of known nodes are active. Check gateways, power, and coverage.`,
+          detail: `${pct}% of known nodes have been active recently. Worth checking gateways or coverage.`,
           tone: "warn",
         });
       }
-    }
-
-    // Session traffic
-    if (derived.session > 0 && derived.active > 0) {
-      const per = Math.round(derived.msgsPerActive);
-      items.push({
-        title: "Session chatter",
-        detail: `~${per} session messages per active node.`,
-        tone: per >= 10 ? "good" : "info",
-      });
     }
 
     // Preset split
@@ -302,15 +293,14 @@ export const Stats = () => {
       const lfPct = Math.round((derived.longFast / derived.presetTotal) * 100);
       const dominant = derived.mediumFast >= derived.longFast ? "MediumFast" : "LongFast";
       items.push({
-        title: "Traffic split",
+        title: "Traffic split (24h)",
         detail: `MediumFast ${mfPct}% • LongFast ${lfPct}% (dominant: ${dominant}).`,
         tone: "info",
       });
     } else {
       items.push({
         title: "Traffic split",
-        detail:
-          "Add session_by_modem_preset to /stats to unlock MediumFast vs LongFast insights.",
+        detail: "No MQTT traffic recorded in the last 24 hours — preset split unavailable.",
         tone: "info",
       });
     }
@@ -544,9 +534,9 @@ export const Stats = () => {
 
                     <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <KpiCard
-                        title="Session messages"
+                        title="Logged packets"
                         value={derived.session}
-                        subtitle="since backend restart"
+                        subtitle="all-time MQTT messages"
                         icon={<Icon name="inbox" />}
                         compact
                       />
@@ -600,9 +590,9 @@ export const Stats = () => {
                 <KpiCard
                   title="Active nodes"
                   value={derived.active}
-                  subtitle="currently online"
+                  subtitle="heard in last 3 days"
                   icon={<Icon name="signal" />}
-                  hint="Online/active status derived by backend."
+                  hint="Nodes with a last_seen newer than the configured prune threshold (default 3 days)."
                 />
                 <KpiCard
                   title="Chat messages"
@@ -643,16 +633,16 @@ export const Stats = () => {
                           </span>
                         </div>
                         <div className="text-xs text-gray-400 dark:text-gray-500">
-                          this session (topic preset)
+                          last 24h (topic preset)
                         </div>
                       </div>
                     ) : (
-                      <span className="text-gray-400 dark:text-gray-500">Add preset counts</span>
+                      <span className="text-gray-400 dark:text-gray-500">No traffic in 24h</span>
                     )
                   }
-                  subtitle={derived.hasPresetSplit ? undefined : "backend enhancement"}
+                  subtitle={derived.hasPresetSplit ? undefined : "topic preset split"}
                   icon={<Icon name="signal" />}
-                  hint="Requires /stats to include session_by_modem_preset."
+                  hint="MediumFast vs LongFast packets seen on MQTT topics in the last 24 hours."
                 />
               </>
             )}
@@ -708,21 +698,21 @@ export const Stats = () => {
                             label="MediumFast"
                             value={derived.presetTotal > 0 ? derived.mediumFast / derived.presetTotal : 0}
                             leftValue={derived.mediumFast}
-                            rightHint="of session"
+                            rightHint="of last 24h"
                           />
                           <BarMeter
                             label="LongFast"
                             value={derived.presetTotal > 0 ? derived.longFast / derived.presetTotal : 0}
                             leftValue={derived.longFast}
-                            rightHint="of session"
+                            rightHint="of last 24h"
                           />
                           <div className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-                            Total: {derived.presetTotal.toLocaleString()}
+                            Total: {derived.presetTotal.toLocaleString()} packets in 24h
                           </div>
                         </div>
                       ) : (
                         <div className="mt-2 text-xs text-gray-400 dark:text-gray-500">
-                          Add <span className="text-gray-700 dark:text-gray-300">session_by_modem_preset</span> to /stats.
+                          No MQTT traffic recorded in the last 24 hours.
                         </div>
                       )}
                     </Panel>
@@ -771,9 +761,10 @@ export const Stats = () => {
               </div>
 
               <div className="mt-5 rounded-xl border border-gray-200 dark:border-gray-800/60 bg-gray-50 dark:bg-gray-950/30 p-3">
-                <div className="text-xs font-medium text-gray-800 dark:text-gray-200">Pro tip</div>
+                <div className="text-xs font-medium text-gray-800 dark:text-gray-200">Tip</div>
                 <div className="mt-1 text-xs text-gray-600 dark:text-gray-400">
-                  change this to something meaningful
+                  For per-node detail, drill into the Nodes page. Stats here are global rollups —
+                  useful for spotting trends, less so for chasing individual nodes.
                 </div>
               </div>
             </Panel>
