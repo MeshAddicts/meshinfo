@@ -71,6 +71,28 @@ def _read_json_file(path: str) -> dict | None:
         return None
 
 
+PRUNE_INTERVAL_SEC = 60.0
+
+
+async def prune_loop(config, data, interval_seconds: float = PRUNE_INTERVAL_SEC) -> None:
+    """Periodically mark nodes inactive past the activity threshold.
+
+    Previously this ran inside every MQTT message handler (one bulk UPDATE per packet).
+    Under load that's pure waste; activity windows are measured in days, not packets.
+    """
+    threshold = config['server']['node_activity_prune_threshold']
+    while True:
+        try:
+            pruned = await data.pg_storage.mark_nodes_inactive_by_age(threshold)
+            if pruned:
+                logger.debug("Pruned %d node(s) inactive for >= %ds", pruned, threshold)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Prune loop iteration failed")
+        await asyncio.sleep(interval_seconds)
+
+
 async def supervise(
     name: str,
     factory: Callable[[], Awaitable[None]],
@@ -168,6 +190,11 @@ async def main() -> None:
         background_tasks.append(asyncio.create_task(supervise("MQTT", mqtt.connect)))
     else:
         logger.info("MQTT disabled in config")
+
+    # Periodic node-activity prune (replaces the per-packet UPDATE that used to fire from MQTT handlers).
+    background_tasks.append(
+        asyncio.create_task(supervise("Prune", lambda: prune_loop(config, data)))
+    )
 
     # Discord
     if config["integrations"]["discord"]["enabled"]:

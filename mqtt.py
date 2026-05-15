@@ -53,35 +53,37 @@ class MQTT:
     ### actions
 
     async def connect(self):
+        # Single attempt: on MqttError, raise out to main.py's supervise() which owns the
+        # restart loop with exponential backoff. Two retry policies stacked silently broke
+        # backoff (the inner flat 5 s sleep meant the supervisor never got to act).
         logger.info("Connecting to MQTT broker at %s:%d", self.config['broker']['host'], self.config['broker']['port'])
-        while True:
-            try:
-                async with aiomqtt.Client(
-                    hostname = self.config["broker"]["host"],
-                    port = self.config["broker"]["port"],
-                    identifier = self.config["broker"]["client_id"],
-                    username = self.config["broker"]["username"],
-                    password = self.config["broker"]["password"],
-                ) as client:
-                    logger.info("Connected to MQTT broker at %s:%d", self.config["broker"]["host"], self.config["broker"]["port"])
-                    if "topics" in self.config["broker"] and self.config["broker"]["topics"] is not None and isinstance(self.config["broker"]["topics"], list):
-                        for topic in self.config["broker"]["topics"]:
-                            await client.subscribe(topic)
-                    elif "topic" in self.config["broker"] and self.config["broker"]["topic"] is not None and isinstance(self.config["broker"]["topic"], str):
-                        await client.subscribe(self.config["broker"]["topic"])
-                    else:
-                        raise RuntimeError("No MQTT topics to subscribe to defined in config broker.topics or broker.topic")
+        try:
+            async with aiomqtt.Client(
+                hostname = self.config["broker"]["host"],
+                port = self.config["broker"]["port"],
+                identifier = self.config["broker"]["client_id"],
+                username = self.config["broker"]["username"],
+                password = self.config["broker"]["password"],
+            ) as client:
+                logger.info("Connected to MQTT broker at %s:%d", self.config["broker"]["host"], self.config["broker"]["port"])
+                if "topics" in self.config["broker"] and self.config["broker"]["topics"] is not None and isinstance(self.config["broker"]["topics"], list):
+                    for topic in self.config["broker"]["topics"]:
+                        await client.subscribe(topic)
+                elif "topic" in self.config["broker"] and self.config["broker"]["topic"] is not None and isinstance(self.config["broker"]["topic"], str):
+                    await client.subscribe(self.config["broker"]["topic"])
+                else:
+                    raise RuntimeError("No MQTT topics to subscribe to defined in config broker.topics or broker.topic")
 
-                    self.data.mqtt_connect_time = datetime.datetime.now(ZoneInfo(self.config['server']['timezone']))
-                    async for msg in client.messages:
-                        # paho adds a timestamp to messages which is not in
-                        # aiomqtt. We will do that ourself here so it is compatible.
-                        msg.timestamp = time.monotonic() # type: ignore
-                        await self.process_mqtt_msg(client, msg)
-            except aiomqtt.MqttError as err:
-                logger.warning("Disconnected from MQTT broker: %s", err)
-                logger.info("Reconnecting...")
-                await asyncio.sleep(5)
+                self.data.mqtt_connect_time = datetime.datetime.now(ZoneInfo(self.config['server']['timezone']))
+                async for msg in client.messages:
+                    # paho adds a timestamp to messages which is not in
+                    # aiomqtt. We will do that ourself here so it is compatible.
+                    msg.timestamp = time.monotonic() # type: ignore
+                    await self.process_mqtt_msg(client, msg)
+        except aiomqtt.MqttError as err:
+            # Friendly log before re-raising; supervise() will log the traceback at restart.
+            logger.warning("Disconnected from MQTT broker: %s", err)
+            raise
 
     async def process_mqtt_msg(self, client, msg):
         if self.config['broker']['decoders']['protobuf']['enabled']:
@@ -329,7 +331,6 @@ class MQTT:
 
                 logger.debug("Processed message: %s", outs)
                 await self.handle_log(outs)
-                await self.prune_expired_nodes()
 
         elif self.config['broker']['decoders']['json']['enabled']:
             if '/2/json' in msg.topic.value:
@@ -364,7 +365,6 @@ class MQTT:
                         await self._safe_handle("handle_text", self.handle_text(j))
                     elif msg_type == "traceroute":
                         await self._safe_handle("handle_traceroute", self.handle_traceroute(j))
-                    await self.prune_expired_nodes()
                 except Exception as e:
                     logger.error("JSON message processing error: %s", e, exc_info=True)
 
@@ -674,11 +674,3 @@ class MQTT:
 
         await self.data.pg_storage.write_traceroute(id, msg)
         await self.data.save()
-
-    ### helpers
-
-    async def prune_expired_nodes(self):
-        threshold = self.config['server']['node_activity_prune_threshold']
-        pruned = await self.data.pg_storage.mark_nodes_inactive_by_age(threshold)
-        if pruned:
-            logger.debug("Pruned %d node(s) inactive for >= %ds", pruned, threshold)

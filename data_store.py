@@ -48,7 +48,15 @@ class DataStore:
       if lat_i is not None and lon_i is not None:
         if pos['geocoded'] is None or last_geo is None or last_geo < datetime.now().astimezone(ZoneInfo(self.config['server']['timezone'])) - timedelta(minutes=60):
           try:
-            geocoded = utils.geocode_position(self.config['integrations']['geocoding']['geocode.maps.co']['api_key'], lat_i / 10000000, lon_i / 10000000)
+            # geocode_position uses blocking `requests.get` with a 5 s timeout; running it
+            # inline stalled the entire asyncio loop (MQTT ingest, API, Discord) on every
+            # position from a new-or-stale-geocode node. Offload to a worker thread.
+            geocoded = await asyncio.to_thread(
+              utils.geocode_position,
+              self.config['integrations']['geocoding']['geocode.maps.co']['api_key'],
+              lat_i / 10000000,
+              lon_i / 10000000,
+            )
             if geocoded is not None:
               pos['geocoded'] = geocoded
               pos['last_geocoding'] = datetime.now().astimezone(ZoneInfo(self.config['server']['timezone']))
