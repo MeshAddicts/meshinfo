@@ -193,8 +193,7 @@ class MQTT:
                     try:
                         info = mesh_pb2.User().FromString(mp.decoded.payload)
                         out = json.loads(MessageToJson(info, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
-                        # Some senders broadcast NODEINFO without setting User.id;
-                        # the MeshPacket `from` field identifies the same node.
+                        # Fall back to MeshPacket `from` when User.id is unset.
                         nid = out.get('id', outs.get('from'))
                         if nid is None:
                             logger.debug("NODEINFO packet missing identity; skipping: %s", out)

@@ -39,8 +39,7 @@ class DataStore:
       lat_i = pos.get('latitude_i')
       lon_i = pos.get('longitude_i')
       last_geo = pos.get('last_geocoding')
-      # last_geocoding can be a datetime (just set in memory) or an ISO string
-      # (loaded from Postgres). Normalize before the freshness comparison.
+      # Normalize ISO-string last_geocoding (from DB) to datetime for comparison.
       if isinstance(last_geo, str):
         try:
           last_geo = datetime.fromisoformat(last_geo).astimezone(ZoneInfo(self.config['server']['timezone']))
@@ -57,6 +56,7 @@ class DataStore:
             logger.warning("Failed to geocode position: %s", e)
 
     # Any update reactivates the node, so a previously-pruned node comes back online.
+    # Any packet reactivates the node.
     n['active'] = True
     if isinstance(n.get('last_seen'), str):
       n['last_seen'] = datetime.fromisoformat(n['last_seen']).astimezone(ZoneInfo(self.config['server']['timezone']))
@@ -68,8 +68,7 @@ class DataStore:
     if self.pg_storage is not None and getattr(self.pg_storage, "enabled", False) and getattr(self.pg_storage, "pool", None) is not None:
       try:
         await self.pg_storage.write_node(id, n)
-        # Only refresh the cache on a confirmed successful write so a failed
-        # write doesn't leave the cache ahead of the DB.
+        # Refresh cache only after a confirmed write.
         self.pg_storage.cache_node_set(id, n)
       except Exception as e:
         logger.error("Failed to write node %s to Postgres: %s", id, e)
@@ -168,9 +167,7 @@ class DataStore:
     node = await self.pg_storage.get_node_cached(node_id)
     if node is None:
       return
-    # Enrichment is a name lookup, not a packet from the node — don't go
-    # through update_node, which would force `active=True` and reset
-    # `last_seen`. Persist only the name fields.
+    # Bypass update_node to avoid touching active/last_seen on a name lookup.
     if short:
       node['shortname'] = short
     if long_:

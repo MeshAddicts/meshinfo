@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, DEFAULT_AGGRESSION_IDX, effectiveSensitivityDbm, MESHTASTIC_PRESETS } from "./coverageAnalysis";
+import type { CoverageDetail } from "./coverageDetail";
 import { clampAggressionIdx } from "./helpers";
-import type { CoverageDetail } from "./MapCoveragePanel";
 import { LS_KEYS, readJson, writeJson } from "./storage";
 import type { DemSource } from "./terrainRgb";
 
