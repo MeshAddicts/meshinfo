@@ -34,7 +34,6 @@ class API:
     def __init__(self, config, data):
         self.config = config
         self.data = data
-        self.read_from_postgres = config.get('storage', {}).get('read_from') == 'postgres'
 
     @staticmethod
     def _parse_range(value: str | None) -> int | None:
@@ -66,132 +65,58 @@ class API:
 
         @app.get("/v1/nodes")
         async def nodes(request: Request) -> JSONResponse:
-            if self.read_from_postgres:
-                # Query directly from PostgreSQL
-                days_to_limit = 7
-                if "days" in request.query_params.keys():
-                    days_param: str|None = request.query_params.get("days")
-                    if days_param is not None:
-                        days_to_limit = int(days_param)
-                if days_to_limit < 1:
-                    days_to_limit = 1
+            days_to_limit = 7
+            if "days" in request.query_params.keys():
+                days_param: str|None = request.query_params.get("days")
+                if days_param is not None:
+                    days_to_limit = int(days_param)
+            if days_to_limit < 1:
+                days_to_limit = 1
 
-                # Parse node IDs filter
-                node_ids = None
-                if "ids" in request.query_params.keys():
-                    ids_param: str|None = request.query_params.get("ids")
+            node_ids = None
+            if "ids" in request.query_params.keys():
+                ids_param: str|None = request.query_params.get("ids")
+                if ids_param:
+                    ids_param = ids_param.strip()
                     if ids_param:
-                        ids_param = ids_param.strip()
-                        if ids_param:
-                            node_ids = []
-                            for id in ids_param.split(","):
-                                try:
-                                    node_id = int(id)
-                                    node_id = utils.convert_node_id_from_int_to_hex(node_id)
-                                except ValueError:
-                                    node_id = id
-                                node_ids.append(node_id)
+                        node_ids = []
+                        for id in ids_param.split(","):
+                            try:
+                                node_id = int(id)
+                                node_id = utils.convert_node_id_from_int_to_hex(node_id)
+                            except ValueError:
+                                node_id = id
+                            node_ids.append(node_id)
 
-                # Parse filters
-                longname_filter = None
-                if "long_name" in request.query_params.keys():
-                    ln = request.query_params.get("long_name")
-                    if ln:
-                        longname_filter = ln.strip()
+            longname_filter = None
+            if "long_name" in request.query_params.keys():
+                ln = request.query_params.get("long_name")
+                if ln:
+                    longname_filter = ln.strip()
 
-                shortname_filter = None
-                if "short_name" in request.query_params.keys():
-                    sn = request.query_params.get("short_name")
-                    if sn:
-                        shortname_filter = sn.strip()
+            shortname_filter = None
+            if "short_name" in request.query_params.keys():
+                sn = request.query_params.get("short_name")
+                if sn:
+                    shortname_filter = sn.strip()
 
-                status_filter = None
-                if "status" in request.query_params.keys():
-                    st = request.query_params.get("status")
-                    if st:
-                        st = st.strip()
-                        if st in ["online", "offline"]:
-                            status_filter = st
+            status_filter = None
+            if "status" in request.query_params.keys():
+                st = request.query_params.get("status")
+                if st:
+                    st = st.strip()
+                    if st in ["online", "offline"]:
+                        status_filter = st
 
-                # Query from Postgres
-                nodes = await self.data.pg_storage.query_nodes_filtered(
-                    days_limit=days_to_limit,
-                    node_ids=node_ids,
-                    longname_filter=longname_filter,
-                    shortname_filter=shortname_filter,
-                    status_filter=status_filter
-                )
+            nodes = await self.data.pg_storage.query_nodes_filtered(
+                days_limit=days_to_limit,
+                node_ids=node_ids,
+                longname_filter=longname_filter,
+                shortname_filter=shortname_filter,
+                status_filter=status_filter
+            )
 
-                return jsonable_encoder({ "nodes": nodes, "count": len(nodes) })
-            else:
-                # Use in-memory data (JSON mode)
-                days_to_limit = 7
-                if "days" in request.query_params.keys():
-                    days_param: str|None = request.query_params.get("days")
-                    if days_param is not None:
-                        days_to_limit = int(days_param)
-                if days_to_limit < 1:
-                    days_to_limit = 1
-
-                nodes = { k: v for k, v in self.data.nodes.items() if utils.days_since_datetime(v["last_seen"]) <= days_to_limit }
-
-                # filter nodes by query parameters
-                if "ids" in request.query_params.keys():
-                    ids: str|None = request.query_params.get("ids")
-                    if ids is not None:
-                        ids = ids.strip()
-                        if ids != "":
-                            nodes_to_keep = []
-                            for id in ids.split(","):
-                                try:
-                                    node_id = int(id)
-                                    node_id = utils.convert_node_id_from_int_to_hex(node_id)
-                                except ValueError:
-                                    node_id = id
-                                if id in self.data.nodes:
-                                    nodes_to_keep.append(node_id)
-                            nodes = { k: v for k, v in nodes.items() if k in nodes_to_keep }
-
-                if "long_name" in request.query_params.keys():
-                    longname: str|None = request.query_params.get("long_name")
-                    if longname is not None:
-                        longname = longname.strip()
-                        if longname != "":
-                            nodes_to_keep = []
-                            for id in nodes:
-                                if longname.lower() in nodes[id]["longname"].lower():
-                                    nodes_to_keep.append(id)
-                            nodes = { k: v for k, v in nodes.items() if k in nodes_to_keep }
-
-                if "short_name" in request.query_params.keys():
-                    shortname: str|None = request.query_params.get("short_name")
-                    if shortname is not None:
-                        shortname = shortname.strip()
-                        if shortname != "":
-                            nodes_to_keep = []
-                            for id in nodes:
-                                if shortname.lower() in nodes[id]["shortname"].lower():
-                                    nodes_to_keep.append(id)
-                            nodes = { k: v for k, v in nodes.items() if k in nodes_to_keep }
-
-                if "status" in request.query_params.keys():
-                    status: str|None = request.query_params.get("status")
-                    if status is not None:
-                        status = status.strip()
-                        if status == "online":
-                            nodes_to_keep = []
-                            for id in nodes:
-                                if nodes[id]["active"]:
-                                    nodes_to_keep.append(id)
-                            nodes = { k: v for k, v in nodes.items() if k in nodes_to_keep }
-                        elif status == "offline":
-                            nodes_to_keep = []
-                            for id in nodes:
-                                if not nodes[id]["active"]:
-                                    nodes_to_keep.append(id)
-                            nodes = { k: v for k, v in nodes.items() if k in nodes_to_keep }
-
-                return jsonable_encoder({ "nodes": nodes, "count": len(nodes) })
+            return jsonable_encoder({ "nodes": nodes, "count": len(nodes) })
 
         @app.get("/v1/nodes/{id}")
         async def node(request: Request, id: str) -> JSONResponse:
@@ -201,17 +126,10 @@ class API:
             except ValueError:
                 node_id = id
 
-            if self.read_from_postgres:
-                node_data = await self.data.pg_storage.query_node_by_id(node_id)
-                if node_data:
-                    return jsonable_encoder({ "node": node_data })
-                else:
-                    return JSONResponse(status_code=404, content={"error": "node not found"})
-            else:
-                if node_id in self.data.nodes:
-                    return jsonable_encoder({ "node": self.data.nodes[node_id] })
-                else:
-                    return JSONResponse(status_code=404, content={"error": "node not found"})
+            node_data = await self.data.pg_storage.query_node_by_id(node_id)
+            if node_data:
+                return jsonable_encoder({ "node": node_data })
+            return JSONResponse(status_code=404, content={"error": "node not found"})
 
         @app.get("/v1/nodes/{id}/telemetry")
         async def node_telemetry(request: Request, id: str) -> JSONResponse:
@@ -221,17 +139,10 @@ class API:
             except ValueError:
                 node_id = id
 
-            if self.read_from_postgres:
-                telemetry_data = await self.data.pg_storage.query_node_telemetry(node_id)
-                if telemetry_data:
-                    return jsonable_encoder({ "telemetry": telemetry_data })
-                else:
-                    return JSONResponse(status_code=404, content={"error": "telemetry not found"})
-            else:
-                if node_id in self.data.telemetry_by_node:
-                    return jsonable_encoder({ "telemetry": self.data.telemetry_by_node[node_id] })
-                else:
-                    return JSONResponse(status_code=404, content={"error": "telemetry not found"})
+            telemetry_data = await self.data.pg_storage.query_node_telemetry(node_id)
+            if telemetry_data:
+                return jsonable_encoder({ "telemetry": telemetry_data })
+            return JSONResponse(status_code=404, content={"error": "telemetry not found"})
 
         @app.get("/v1/nodes/{id}/texts")
         async def node_text(request: Request, id: str) -> JSONResponse:
@@ -241,16 +152,8 @@ class API:
             except ValueError:
                 node_id = id
 
-            if self.read_from_postgres:
-                texts = await self.data.pg_storage.query_node_texts(node_id)
-                return jsonable_encoder({ "texts": texts })
-            else:
-                texts = []
-                for channel in self.data.chat['channels'].keys():
-                    for message in self.data.chat['channels'][channel]['messages']:
-                        if message['from'] == node_id or message['to'] == node_id:
-                            texts.append(message)
-                return jsonable_encoder({ "texts": texts })
+            texts = await self.data.pg_storage.query_node_texts(node_id)
+            return jsonable_encoder({ "texts": texts })
 
         @app.get("/v1/nodes/{id}/packets")
         async def node_packets(request: Request, id: str) -> JSONResponse:
@@ -266,25 +169,8 @@ class API:
                 limit = 50
             limit = max(1, min(limit, 200))
 
-            if self.read_from_postgres:
-                packets = await self.data.pg_storage.query_node_mqtt_messages(node_id, limit=limit)
-                return jsonable_encoder({"packets": packets})
-            else:
-                # In-memory fallback: filter mqtt_messages by from/to
-                packets = []
-                for msg in reversed(self.data.mqtt_messages):
-                    msg_from = msg.get("from")
-                    msg_to = msg.get("to")
-                    # Compare as hex string or int
-                    if isinstance(msg_from, int):
-                        msg_from = utils.convert_node_id_from_int_to_hex(msg_from)
-                    if isinstance(msg_to, int):
-                        msg_to = utils.convert_node_id_from_int_to_hex(msg_to)
-                    if msg_from == node_id or msg_to == node_id:
-                        packets.append(msg)
-                        if len(packets) >= limit:
-                            break
-                return jsonable_encoder({"packets": packets})
+            packets = await self.data.pg_storage.query_node_mqtt_messages(node_id, limit=limit)
+            return jsonable_encoder({"packets": packets})
 
         @app.get("/v1/nodes/{id}/traceroutes")
         async def node_traceroutes(request: Request, id: str) -> JSONResponse:
@@ -294,103 +180,65 @@ class API:
             except ValueError:
                 node_id = id
 
-            if self.read_from_postgres:
-                traceroutes = await self.data.pg_storage.query_node_traceroutes(node_id)
-                return jsonable_encoder({ "traceroutes": traceroutes })
-            else:
-                traceroutes = []
-                for traceroute in self.data.traceroutes:
-                    if traceroute['from'] == node_id or traceroute['to'] == node_id:
-                        traceroutes.append(traceroute)
-                return jsonable_encoder({ "traceroutes": traceroutes })
+            traceroutes = await self.data.pg_storage.query_node_traceroutes(node_id)
+            return jsonable_encoder({ "traceroutes": traceroutes })
 
         @app.get("/v1/chat")
         async def chat(request: Request) -> JSONResponse:
-            if self.read_from_postgres:
-                # Parse query params
-                channel = request.query_params.get("channel") or "0"  # e.g. "8", "0"
-                range_param = request.query_params.get("range", "24h")  # "1h","24h","7d","all"
+            channel = request.query_params.get("channel") or "0"  # e.g. "8", "0"
+            range_param = request.query_params.get("range", "24h")  # "1h","24h","7d","all"
 
-                range_map = {
-                    "1h": 3600,
-                    "24h": 86400,
-                    "7d": 604800,
-                    "all": None,
-                }
-                range_seconds = range_map.get(range_param)
-                # If range_param is unrecognized, default to 24h
-                if range_param not in range_map:
-                    range_seconds = 86400
+            range_map = {
+                "1h": 3600,
+                "24h": 86400,
+                "7d": 604800,
+                "all": None,
+            }
+            range_seconds = range_map.get(range_param)
+            if range_param not in range_map:
+                range_seconds = 86400
 
-                chat_data = await self.data.pg_storage.query_chat_filtered(
-                    channel_id=channel,
-                    range_seconds=range_seconds,
-                )
-                return jsonable_encoder(chat_data)
-            else:
-                return jsonable_encoder(self.data.chat)
+            chat_data = await self.data.pg_storage.query_chat_filtered(
+                channel_id=channel,
+                range_seconds=range_seconds,
+            )
+            return jsonable_encoder(chat_data)
 
         @app.get("/v1/telemetry")
         async def telemetry(request: Request) -> JSONResponse:
-            if self.read_from_postgres:
-                telemetry_data = await self.data.pg_storage.query_all_telemetry()
-                return jsonable_encoder(telemetry_data)
-            else:
-                return jsonable_encoder(self.data.telemetry[:1000])
+            telemetry_data = await self.data.pg_storage.query_all_telemetry()
+            return jsonable_encoder(telemetry_data)
 
         @app.get("/v1/traceroutes")
         async def traceroutes(request: Request) -> JSONResponse:
-            if self.read_from_postgres:
-                traceroutes_data = await self.data.pg_storage.query_all_traceroutes()
-                return jsonable_encoder(traceroutes_data)
-            else:
-                return jsonable_encoder(self.data.traceroutes[:1000])
+            traceroutes_data = await self.data.pg_storage.query_all_traceroutes()
+            return jsonable_encoder(traceroutes_data)
 
         @app.get("/v1/messages")
         async def messages(request: Request) -> JSONResponse:
             search = request.query_params.get("q")
             range_seconds = self._parse_range(request.query_params.get("range"))
-            if self.read_from_postgres:
-                limit = int(request.query_params.get("limit", 5000))
-                limit = max(1, min(limit, 50000))
-                results = await self.data.pg_storage.query_mqtt_messages(
-                    limit=limit, search=search, range_seconds=range_seconds,
-                )
-                return jsonable_encoder(results)
-            return jsonable_encoder(self.data.messages[:1000])
+            limit = int(request.query_params.get("limit", 5000))
+            limit = max(1, min(limit, 50000))
+            results = await self.data.pg_storage.query_mqtt_messages(
+                limit=limit, search=search, range_seconds=range_seconds,
+            )
+            return jsonable_encoder(results)
 
         @app.get("/v1/mqtt_messages")
         async def mqtt_messages(request: Request) -> JSONResponse:
             range_seconds = self._parse_range(request.query_params.get("range"))
-            if self.read_from_postgres:
-                limit = int(request.query_params.get("limit", 5000))
-                limit = max(1, min(limit, 50000))
-                results = await self.data.pg_storage.query_mqtt_messages(
-                    limit=limit, range_seconds=range_seconds,
-                )
-                return jsonable_encoder(results)
-            return jsonable_encoder(self.data.mqtt_messages[:1000])
+            limit = int(request.query_params.get("limit", 5000))
+            limit = max(1, min(limit, 50000))
+            results = await self.data.pg_storage.query_mqtt_messages(
+                limit=limit, range_seconds=range_seconds,
+            )
+            return jsonable_encoder(results)
 
         @app.get("/v1/stats")
         async def stats(request: Request) -> JSONResponse:
-            if self.read_from_postgres:
-                stats = await self.data.pg_storage.query_stats()
-                return jsonable_encoder({"stats": stats})
-            else:
-                stats = {
-                    'active_nodes': 0,
-                    'total_chat': len(self.data.chat['channels']['0']['messages']),
-                    'total_nodes': len(self.data.nodes),
-                    'total_messages': len(self.data.messages),
-                    'total_mqtt_messages': len(self.data.mqtt_messages),
-                    'total_telemetry': len(self.data.telemetry),
-                    'total_traceroutes': len(self.data.traceroutes),
-                }
-                for _, node in self.data.nodes.items():
-                    if 'active' in node and node['active']:
-                        stats['active_nodes'] += 1
-
-                return jsonable_encoder({"stats": stats})
+            stats = await self.data.pg_storage.query_stats()
+            return jsonable_encoder({"stats": stats})
 
         @app.get("/v1/static-map")
         async def static_map(request: Request) -> Response:

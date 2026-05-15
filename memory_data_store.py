@@ -16,80 +16,66 @@ logger = logging.getLogger(__name__)
 class MemoryDataStore:
   def __init__(self, config):
     self.config = config
-    self.chat: dict = {}
-    self.chat['channels'] = {
-        '0': {
-            'name': 'General',
-            'messages': []
-        }
-    }
-    self.messages: list = []
-    self.mqtt_messages: list = []
     self.mqtt_connect_time: datetime = self.config['server']['start_time']
-    self.nodes: dict = {}
-    self.telemetry: list = []
-    self.telemetry_by_node: dict = {}
-    self.traceroutes: list = []
-    self.traceroutes_by_node: dict = {}
 
-    # Event queue for Discord bridge (MQTT -> Discord)
-    # Bounded to prevent unbounded memory growth if the consumer is slow/stopped.
+    # Bounded asyncio queue used by the Discord bridge (MQTT -> Discord).
+    # Capacity caps producer pressure if the consumer stalls.
     self.discord_event_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
 
-    # Initialize Postgres storage
     self.pg_storage = PostgresStorage(config)
 
   def update(self, key, value):
     self.__dict__[key] = value
 
-  def update_node(self, id: str, node):
+  async def update_node(self, id: str, node):
+    """Persist a node update.
+
+    Callers assemble the node dict (typically by reading from `pg_storage.get_node_cached`
+    and mutating fields). This method handles the common tail: geocoding, freshness
+    metadata, the DB write, and refreshing the cache.
+    """
     n = node.copy()
-    if n['position'] is None:
+    if n.get('position') is None:
       n['position'] = {}
 
     if self.config['integrations']['geocoding']['enabled']:
-      if 'geocoded' not in n['position']:
-        n['position']['geocoded'] = None
-      if 'latitude_i' in n['position'] and 'longitude_i' in n['position'] and n['position']['latitude_i'] is not None and n['position']['longitude_i'] is not None:
-        if n['position']['geocoded'] is None or n['position']['last_geocoding'] is None or n['position']['last_geocoding'] < datetime.now().astimezone(ZoneInfo(self.config['server']['timezone'])) - timedelta(minutes=60):
+      pos = n['position']
+      if 'geocoded' not in pos:
+        pos['geocoded'] = None
+      lat_i = pos.get('latitude_i')
+      lon_i = pos.get('longitude_i')
+      last_geo = pos.get('last_geocoding')
+      if lat_i is not None and lon_i is not None:
+        if pos['geocoded'] is None or last_geo is None or last_geo < datetime.now().astimezone(ZoneInfo(self.config['server']['timezone'])) - timedelta(minutes=60):
           try:
-            geocoded = utils.geocode_position(self.config['integrations']['geocoding']['geocode.maps.co']['api_key'], n['position']['latitude_i'] / 10000000, n['position']['longitude_i'] / 10000000)
+            geocoded = utils.geocode_position(self.config['integrations']['geocoding']['geocode.maps.co']['api_key'], lat_i / 10000000, lon_i / 10000000)
             if geocoded is not None:
-              n['position']['geocoded'] = geocoded
-              n['position']['last_geocoding'] = datetime.now().astimezone(ZoneInfo(self.config['server']['timezone']))
+              pos['geocoded'] = geocoded
+              pos['last_geocoding'] = datetime.now().astimezone(ZoneInfo(self.config['server']['timezone']))
           except Exception as e:
             logger.warning("Failed to geocode position: %s", e)
 
     n['active'] = True
-    if 'last_seen' in n and n['last_seen'] is not None and isinstance(n['last_seen'], str):
+    if isinstance(n.get('last_seen'), str):
       n['last_seen'] = datetime.fromisoformat(n['last_seen']).astimezone(ZoneInfo(self.config['server']['timezone']))
-    n['since'] = datetime.now().astimezone(ZoneInfo(self.config['server']['timezone'])) - n['last_seen']
-    n['last_seen'] = datetime.now().astimezone(ZoneInfo(self.config['server']['timezone']))
-    self.nodes[id] = n
+    now_local = datetime.now().astimezone(ZoneInfo(self.config['server']['timezone']))
+    if isinstance(n.get('last_seen'), datetime):
+      n['since'] = now_local - n['last_seen']
+    n['last_seen'] = now_local
 
-    # Real-time write to Postgres (non-blocking)
-    if (
-      'postgres' in self.config.get('storage', {}).get('write_to', [])
-      and self.pg_storage is not None
-      and getattr(self.pg_storage, "enabled", False)
-      and getattr(self.pg_storage, "pool", None) is not None
-    ):
+    if self.pg_storage is not None and getattr(self.pg_storage, "enabled", False) and getattr(self.pg_storage, "pool", None) is not None:
       try:
-        try:
-          loop = asyncio.get_running_loop()
-          loop.create_task(self.pg_storage.write_node(id, n))
-        except RuntimeError:
-          # No running loop in this thread/context
-          asyncio.run(self.pg_storage.write_node(id, n))
+        await self.pg_storage.write_node(id, n)
       except Exception as e:
-        logger.error("Failed to write node %s to Postgres (non-blocking): %s", id, e)
+        logger.error("Failed to write node %s to Postgres: %s", id, e)
+      self.pg_storage.cache_node_set(id, n)
 
   async def load(self):
     logger.info("Loading data from PostgreSQL")
     await self._load_from_postgres()
 
   async def _load_from_postgres(self):
-    """Initialize PostgreSQL connection and prepare postgres-backed mode."""
+    """Open the Postgres pool and ensure the default node rows exist."""
     try:
       ok = await self.pg_storage.connect()
       if not ok:
@@ -97,26 +83,16 @@ class MemoryDataStore:
 
       await self.pg_storage.ensure_schema()
 
-      # NOTE: your current code intentionally does NOT load rows into memory.
-      # If your API still reads from self.nodes/chat/telemetry, you'll get empty results.
-      self.nodes = {}
-      self.chat = {'channels': {'0': {'name': 'General', 'messages': []}}}
-      self.telemetry = []
-      self.telemetry_by_node = {}
-      self.traceroutes = []
-      self.traceroutes_by_node = {}
-
-      # Ensure default nodes exist in Postgres
       default_id = self.config['server']['node_id']
       default_node = Node.default_node(default_id)
-      self.nodes[default_id] = default_node
       await self.pg_storage.write_node(default_id, default_node)
+      self.pg_storage.cache_node_set(default_id, default_node)
 
       broadcast_node = Node.default_node('ffffffff')
-      self.nodes['ffffffff'] = broadcast_node
       await self.pg_storage.write_node('ffffffff', broadcast_node)
+      self.pg_storage.cache_node_set('ffffffff', broadcast_node)
 
-      logger.info("PostgreSQL mode: Data will be queried directly from database")
+      logger.info("PostgreSQL mode: data is queried directly from the database")
 
     except Exception as e:
       logger.exception("Failed to initialize PostgreSQL connection: %s", e)
@@ -149,12 +125,9 @@ class MemoryDataStore:
   ### helpers
 
   async def backfill_node_infos(self):
-    nodes_needing_enrichment = {}
-    for id, node in self.nodes.items():
-      if 'shortname' not in node or 'longname' not in node or node['shortname'] == 'UNK' or node['longname'] == 'Unknown':
-        nodes_needing_enrichment[id] = node
+    nodes_needing_enrichment = await self.pg_storage.find_nodes_needing_enrichment(limit=200)
     logger.info("Nodes needing enrichment: %d", len(nodes_needing_enrichment))
-    if len(nodes_needing_enrichment) > 0:
+    if nodes_needing_enrichment:
       await self.enrich_nodes(nodes_needing_enrichment)
 
   async def enrich_nodes(self, node_to_enrich):
@@ -169,14 +142,8 @@ class MemoryDataStore:
               async with session.get(url) as response:
                 if response.status == 200:
                   data = await response.json()
-                  for node_id, node_info in data.items():
-                    logger.debug("Got info for %s", node_id)
-                    if node_id in self.nodes:
-                      logger.debug("Enriched %s", node_id)
-                      node = self.nodes[node_id]
-                      node['shortname'] = node_info['shortName']
-                      node['longname'] = node_info['longName']
-                      self.nodes[node_id] = node
+                  for nid, info in data.items():
+                    await self._apply_enrichment(nid, info)
                 else:
                     logger.warning("Failed to get info for %s", node_id)
             except Exception as e:
@@ -187,40 +154,41 @@ class MemoryDataStore:
             async with session.get(url) as response:
               if response.status == 200:
                 data = await response.json()
-                for node_id, node_info in data.items():
-                  logger.debug("Got info for %s", node_id)
-                  if node_id in self.nodes:
-                    logger.debug("Enriched %s", node_id)
-                    node = self.nodes[node_id]
-                    node['shortname'] = node_info['shortName']
-                    node['longname'] = node_info['longName']
-                    self.nodes[node_id] = node
+                for nid, info in data.items():
+                  await self._apply_enrichment(nid, info)
               else:
                   logger.warning("Failed to get info for %d nodes: HTTP %d", len(node_ids), response.status)
           except Exception as e:
             logger.warning("Failed to get info for %d nodes: %s", len(node_ids), e)
 
-  def find_node_by_int_id(self, id: int):
-    return self.nodes.get(utils.convert_node_id_from_int_to_hex(id), None)
+  async def _apply_enrichment(self, node_id: str, info: dict):
+    node = await self.pg_storage.get_node_cached(node_id)
+    if node is None:
+      return
+    short = info.get('shortName')
+    long_ = info.get('longName')
+    if short:
+      node['shortname'] = short
+    if long_:
+      node['longname'] = long_
+    logger.debug("Enriched %s", node_id)
+    await self.update_node(node_id, node)
 
-  def find_node_by_hex_id(self, id: str):
+  def find_node_by_int_id(self, id: int):
+    """Synchronous shim retained for callers that still use it.
+
+    Returns None when the node isn't cached. Callers that need a guaranteed
+    lookup should `await pg_storage.get_node_cached(hex_id)` directly.
+    """
+    return self.pg_storage._node_lru.get(utils.convert_node_id_from_int_to_hex(id))
+
+  async def find_node_by_hex_id(self, id: str):
     if not isinstance(id, str) or len(id) != 8 or not all(c in '0123456789abcdefABCDEF' for c in id):
       return None
+    return await self.pg_storage.get_node_cached(id)
 
-    n = self.nodes.get(id, None)
-    if n is None:
-      return None
+  async def find_node_by_short_name(self, sn: str):
+    return await self.pg_storage.find_node_by_shortname(sn)
 
-    return n.copy()
-
-  def find_node_by_short_name(self, sn: str):
-    for _id, node in self.nodes.items():
-      if node['shortname'] == sn:
-        return node
-    return None
-
-  def find_node_by_longname(self, ln: str):
-    for _id, node in self.nodes.items():
-      if node['longname'] == ln:
-        return node
-    return None
+  async def find_node_by_longname(self, ln: str):
+    return await self.pg_storage.find_node_by_longname(ln)

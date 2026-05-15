@@ -11,6 +11,7 @@ import datetime
 import json
 import logging
 import base64
+from collections import OrderedDict
 from typing import Any, Dict, Optional, List, Tuple
 from zoneinfo import ZoneInfo
 
@@ -82,6 +83,13 @@ class PostgresStorage:
 
         # Optional: enable to make migrations "honest" (fail fast / count failures correctly)
         self.raise_on_write_error = bool(self.pg_config.get("raise_on_write_error", False))
+
+        # Node read cache. Stores live references to node dicts — callers that
+        # mutate the returned dict (the MQTT handlers do; that's the read-modify-
+        # write pattern) directly update the cache. Writes via `cache_node_set`
+        # keep cache and DB in lockstep. Eviction is LRU by insertion/access order.
+        self._node_lru: "OrderedDict[str, dict]" = OrderedDict()
+        self._node_lru_max = int(self.pg_config.get("node_cache_size", 10000))
 
     async def connect(self) -> bool:
         """
@@ -1578,9 +1586,141 @@ class PostgresStorage:
             return {}
 
     async def query_node_by_id(self, node_id: str) -> Optional[Dict[str, Any]]:
-        """Query a single node by ID directly from PostgreSQL."""
+        """Query a single node by ID directly from PostgreSQL (uncached)."""
         nodes = await self.query_nodes_filtered(days_limit=None, node_ids=[node_id])
         return nodes.get(node_id)
+
+    # ───────────────────────────────────────────────────────────────────
+    # Node cache (replaces the old in-memory `data.nodes` dict)
+    # ───────────────────────────────────────────────────────────────────
+
+    def cache_node_set(self, node_id: str, node: Optional[Dict[str, Any]]) -> None:
+        """Insert/update a node in the LRU cache. Called after a successful write."""
+        if node is None:
+            self._node_lru.pop(node_id, None)
+            return
+        self._node_lru[node_id] = node
+        self._node_lru.move_to_end(node_id)
+        while len(self._node_lru) > self._node_lru_max:
+            self._node_lru.popitem(last=False)
+
+    def cache_node_invalidate(self, node_id: str) -> None:
+        self._node_lru.pop(node_id, None)
+
+    def cache_node_clear(self) -> None:
+        self._node_lru.clear()
+
+    async def get_node_cached(self, node_id: str) -> Optional[Dict[str, Any]]:
+        """Get a single node, hitting LRU cache first then PostgreSQL.
+
+        Returns the live cache reference — callers that mutate the dict directly
+        update the cache. Pair mutations with a `write_node` + `cache_node_set`
+        so the persisted state matches.
+        """
+        cached = self._node_lru.get(node_id)
+        if cached is not None:
+            self._node_lru.move_to_end(node_id)
+            return cached
+        node = await self.query_node_by_id(node_id)
+        if node is not None:
+            self.cache_node_set(node_id, node)
+        return node
+
+    async def find_node_by_longname(self, longname: str) -> Optional[Dict[str, Any]]:
+        """Find a single node by exact (case-insensitive) longname match."""
+        if not self._ready("find_node_by_longname") or not longname:
+            return None
+        try:
+            async with self.pool.acquire() as conn:
+                nid = await conn.fetchval(
+                    "SELECT id FROM nodes WHERE LOWER(longname) = LOWER($1) ORDER BY last_seen DESC NULLS LAST LIMIT 1",
+                    longname,
+                )
+            if not nid:
+                return None
+            return await self.get_node_cached(nid)
+        except Exception as e:
+            logger.error("find_node_by_longname failed for %r: %s", longname, e)
+            return None
+
+    async def find_node_by_shortname(self, shortname: str) -> Optional[Dict[str, Any]]:
+        """Find a single node by exact (case-insensitive) shortname match."""
+        if not self._ready("find_node_by_shortname") or not shortname:
+            return None
+        try:
+            async with self.pool.acquire() as conn:
+                nid = await conn.fetchval(
+                    "SELECT id FROM nodes WHERE LOWER(shortname) = LOWER($1) ORDER BY last_seen DESC NULLS LAST LIMIT 1",
+                    shortname,
+                )
+            if not nid:
+                return None
+            return await self.get_node_cached(nid)
+        except Exception as e:
+            logger.error("find_node_by_shortname failed for %r: %s", shortname, e)
+            return None
+
+    async def find_nodes_needing_enrichment(self, limit: int = 200) -> Dict[str, Dict[str, Any]]:
+        """Return nodes whose name fields look unenriched (Unknown/UNK or NULL).
+
+        Replaces the old in-memory walk of `data.nodes`. Cached via `get_node_cached`.
+        """
+        if not self._ready("find_nodes_needing_enrichment"):
+            return {}
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT id FROM nodes
+                    WHERE longname IS NULL
+                       OR shortname IS NULL
+                       OR longname = 'Unknown'
+                       OR shortname = 'UNK'
+                    ORDER BY last_seen DESC NULLS LAST
+                    LIMIT $1
+                    """,
+                    limit,
+                )
+        except Exception as e:
+            logger.error("find_nodes_needing_enrichment failed: %s", e)
+            return {}
+
+        result: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            n = await self.get_node_cached(row["id"])
+            if n is not None:
+                result[row["id"]] = n
+        return result
+
+    async def mark_nodes_inactive_by_age(self, threshold_seconds: int) -> int:
+        """Bulk-mark stale nodes as inactive. Returns the number of rows updated.
+
+        Replaces the per-node dict walk in `mqtt.prune_expired_nodes`. Affected
+        node entries are evicted from the cache so the next read sees the new
+        `active=False` state.
+        """
+        if not self._ready("mark_nodes_inactive_by_age") or threshold_seconds <= 0:
+            return 0
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    UPDATE nodes
+                       SET active = FALSE
+                     WHERE active = TRUE
+                       AND last_seen IS NOT NULL
+                       AND last_seen < NOW() - ($1::int * INTERVAL '1 second')
+                     RETURNING id
+                    """,
+                    threshold_seconds,
+                )
+        except Exception as e:
+            logger.error("mark_nodes_inactive_by_age failed: %s", e)
+            return 0
+
+        for row in rows:
+            self.cache_node_invalidate(row["id"])
+        return len(rows)
 
     async def query_node_telemetry(self, node_id: str, limit: int = 1000) -> List[Dict[str, Any]]:
         """Query telemetry for a specific node."""
