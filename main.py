@@ -4,6 +4,7 @@ import datetime
 import json
 import logging
 import os
+import random
 import time
 from typing import Awaitable, Callable, Tuple
 from zoneinfo import ZoneInfo
@@ -93,11 +94,15 @@ async def prune_loop(config, data, interval_seconds: float = PRUNE_INTERVAL_SEC)
         await asyncio.sleep(interval_seconds)
 
 
+ENRICHMENT_JITTER_FRAC = 0.1
+
+
 async def enrichment_loop(config, data) -> None:
     """Periodically backfill node names/hardware from external enrichment APIs.
 
     Replaces the per-packet `data.save()` tick that previously gated enrichment.
-    The interval comes from config (server.enrich.interval, seconds).
+    Sleeps `interval ± 10%` between cycles so multiple MeshInfo deployments
+    pointed at the same provider don't synchronize their hits.
     """
     interval = float(config['server']['enrich'].get('interval', 600))
     while True:
@@ -107,7 +112,8 @@ async def enrichment_loop(config, data) -> None:
             raise
         except Exception:
             logger.exception("Enrichment loop iteration failed")
-        await asyncio.sleep(interval)
+        jitter = random.uniform(-interval * ENRICHMENT_JITTER_FRAC, interval * ENRICHMENT_JITTER_FRAC)
+        await asyncio.sleep(max(1.0, interval + jitter))
 
 
 async def supervise(

@@ -1402,24 +1402,41 @@ class PostgresStorage:
             logger.error("find_node_by_shortname failed for %r: %s", shortname, e)
             return None
 
-    async def find_nodes_needing_enrichment(self, limit: int = 200) -> Dict[str, Dict[str, Any]]:
-        """Return nodes whose name fields look unenriched (Unknown/UNK or NULL)."""
+    async def find_nodes_needing_enrichment(self, limit: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
+        """Return nodes whose name fields look unenriched (Unknown/UNK or NULL).
+
+        Pass limit=None (default) for all matching rows — enrichment paces itself
+        per-request to avoid hammering upstreams, so the cap should no longer be a
+        client-side concern. Pass an int to cap if needed.
+        """
         if not self._ready("find_nodes_needing_enrichment"):
             return {}
         try:
             async with self.pool.acquire() as conn:
-                rows = await conn.fetch(
-                    """
-                    SELECT id FROM nodes
-                    WHERE longname IS NULL
-                       OR shortname IS NULL
-                       OR longname = 'Unknown'
-                       OR shortname = 'UNK'
-                    ORDER BY last_seen DESC NULLS LAST
-                    LIMIT $1
-                    """,
-                    limit,
-                )
+                if limit is None:
+                    rows = await conn.fetch(
+                        """
+                        SELECT id FROM nodes
+                        WHERE longname IS NULL
+                           OR shortname IS NULL
+                           OR longname = 'Unknown'
+                           OR shortname = 'UNK'
+                        ORDER BY last_seen DESC NULLS LAST
+                        """
+                    )
+                else:
+                    rows = await conn.fetch(
+                        """
+                        SELECT id FROM nodes
+                        WHERE longname IS NULL
+                           OR shortname IS NULL
+                           OR longname = 'Unknown'
+                           OR shortname = 'UNK'
+                        ORDER BY last_seen DESC NULLS LAST
+                        LIMIT $1
+                        """,
+                        limit,
+                    )
         except Exception as e:
             logger.error("find_nodes_needing_enrichment failed: %s", e)
             return {}

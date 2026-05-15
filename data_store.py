@@ -13,6 +13,68 @@ import utils
 
 logger = logging.getLogger(__name__)
 
+# Named provider presets. URL templates substitute {ids} with a comma-joined id list
+# (or a single id when single_id_per_request=True). Add new presets here as their APIs
+# are confirmed; users can also drop arbitrary URL templates into config.enrich.providers.
+_PROVIDER_PRESETS: dict = {
+    "bayme": {
+        "url_template": "https://data.bayme.sh/api/node/infos?ids={ids}",
+        "single_id_per_request": True,  # bayme's API rejects multi-id requests
+    },
+}
+
+# Throttle within a single provider's batch so we don't hammer the upstream API.
+_PER_REQUEST_DELAY_SEC = 0.1
+
+
+def _resolve_providers(config) -> list:
+  """Turn config.server.enrich.providers (or legacy 'provider') into a runtime list.
+
+  Accepts entries shaped as either a preset name (e.g. "bayme") or a dict with at
+  least a `url` template for a generic MeshInfo-instance endpoint. Legacy
+  `provider = "world.meshinfo.network"` is silently dropped (the upstream is dead);
+  legacy `provider = "bayme"` is upgraded to ["bayme"].
+  """
+  cfg = config.get('server', {}).get('enrich', {}) or {}
+  raw = cfg.get('providers')
+  if raw is None and cfg.get('provider') is not None:
+    legacy = cfg['provider']
+    if legacy == 'world.meshinfo.network':
+      logger.warning(
+        "server.enrich.provider='world.meshinfo.network' is no longer reachable; "
+        "configure providers=[\"bayme\"] (or another MeshInfo URL) to re-enable enrichment"
+      )
+      raw = []
+    else:
+      raw = [legacy]
+  if not raw:
+    return []
+  result = []
+  for entry in raw:
+    if isinstance(entry, str):
+      preset = _PROVIDER_PRESETS.get(entry)
+      if preset is None:
+        # Treat bare strings that look like URLs as generic templates (with {ids} placeholder).
+        if entry.startswith(('http://', 'https://')) and '{ids}' in entry:
+          result.append({
+            "name": entry,
+            "url_template": entry,
+            "single_id_per_request": False,
+          })
+        else:
+          logger.warning("Unknown enrichment provider %r; skipping", entry)
+      else:
+        result.append({"name": entry, **preset})
+    elif isinstance(entry, dict) and entry.get("url"):
+      result.append({
+        "name": entry.get("name", entry["url"]),
+        "url_template": entry["url"],
+        "single_id_per_request": bool(entry.get("single_id_per_request", False)),
+      })
+    else:
+      logger.warning("Invalid enrichment provider entry %r; skipping", entry)
+  return result
+
 
 class DataStore:
   def __init__(self, config):
@@ -112,58 +174,88 @@ class DataStore:
   ### helpers
 
   async def backfill_node_infos(self):
-    nodes_needing_enrichment = await self.pg_storage.find_nodes_needing_enrichment(limit=200)
+    """Query every configured enrichment provider for unknown node names.
+
+    Unbounded: the previous limit=200 left the long tail permanently unnamed.
+    The supervised enrichment_loop paces invocations between full cycles.
+    """
+    nodes_needing_enrichment = await self.pg_storage.find_nodes_needing_enrichment()
+    if not nodes_needing_enrichment:
+      return
     logger.info("Nodes needing enrichment: %d", len(nodes_needing_enrichment))
-    if nodes_needing_enrichment:
-      await self.enrich_nodes(nodes_needing_enrichment)
+    await self.enrich_nodes(nodes_needing_enrichment)
 
   async def enrich_nodes(self, node_to_enrich):
+    """Iterate providers, ask each for the remaining unknowns, apply what comes back."""
+    providers = _resolve_providers(self.config)
+    if not providers:
+      logger.debug("No enrichment providers configured")
+      return
+    pending: set = set(node_to_enrich.keys())
     async with aiohttp.ClientSession() as session:
-        node_ids = list(node_to_enrich.keys())
-        logger.debug("Enriching nodes: %s", ','.join(node_ids))
-        if self.config['server']['enrich']['provider'] == 'bayme':
-          for node_id in node_ids:
-            logger.debug("Enriching %s", node_id)
-            url = f"https://data.bayme.sh/api/node/infos?ids={node_id}"
-            try:
-              async with session.get(url) as response:
-                if response.status == 200:
-                  data = await response.json()
-                  for nid, info in data.items():
-                    await self._apply_enrichment(nid, info)
-                else:
-                    logger.warning("Failed to get info for %s", node_id)
-            except Exception as e:
-              logger.warning("Failed to get info for %s: %s", node_id, e)
-        elif self.config['server']['enrich']['provider'] == 'world.meshinfo.network':
-          url = f"https://world.meshinfo.network/api/v1/nodes?ids={','.join(node_ids)}"
-          try:
-            async with session.get(url) as response:
-              if response.status == 200:
-                data = await response.json()
-                for nid, info in data.items():
-                  await self._apply_enrichment(nid, info)
-              else:
-                  logger.warning("Failed to get info for %d nodes: HTTP %d", len(node_ids), response.status)
-          except Exception as e:
-            logger.warning("Failed to get info for %d nodes: %s", len(node_ids), e)
+      for prov in providers:
+        if not pending:
+          break
+        named = await self._enrich_via_provider(session, prov, sorted(pending))
+        if named:
+          logger.info("%s: enriched %d/%d unknown name(s)", prov["name"], len(named), len(pending))
+        pending -= named
+    if pending:
+      logger.debug("After all providers, %d node(s) remain unnamed", len(pending))
 
-  async def _apply_enrichment(self, node_id: str, info: dict):
+  async def _enrich_via_provider(self, session, prov: dict, node_ids: list) -> set:
+    """Query a single provider for the given ids; return ids it could name."""
+    named: set = set()
+    if prov["single_id_per_request"]:
+      # bayme.sh's API only accepts one id per call. Pace requests so we don't hammer it.
+      for node_id in node_ids:
+        data = await self._fetch_provider(session, prov, [node_id])
+        if data:
+          for nid, info in data.items():
+            if await self._apply_enrichment(nid, info):
+              named.add(nid)
+        await asyncio.sleep(_PER_REQUEST_DELAY_SEC)
+    else:
+      # Generic MeshInfo-instance template — comma-join the ids into one call.
+      data = await self._fetch_provider(session, prov, node_ids)
+      if data:
+        for nid, info in data.items():
+          if await self._apply_enrichment(nid, info):
+            named.add(nid)
+    return named
+
+  async def _fetch_provider(self, session, prov: dict, ids: list) -> dict | None:
+    """One GET against `prov`. Returns the parsed JSON dict, or None on any failure."""
+    url = prov["url_template"].format(ids=",".join(ids))
+    try:
+      async with session.get(url) as response:
+        if response.status == 200:
+          return await response.json()
+        logger.debug("%s: HTTP %d for %d id(s)", prov["name"], response.status, len(ids))
+    except Exception as e:
+      logger.debug("%s: request failed for %d id(s): %s", prov["name"], len(ids), e)
+    return None
+
+  async def _apply_enrichment(self, node_id: str, info: dict) -> bool:
+    """Write enriched name fields straight to Postgres + cache. Returns True if applied.
+
+    Bypasses update_node so a name lookup doesn't reactivate the node or bump last_seen.
+    """
     short = info.get('shortName')
     long_ = info.get('longName')
     if not short and not long_:
-      return
+      return False
     node = await self.pg_storage.get_node_cached(node_id)
     if node is None:
-      return
-    # Bypass update_node to avoid touching active/last_seen on a name lookup.
+      return False
     if short:
       node['shortname'] = short
     if long_:
       node['longname'] = long_
-    logger.debug("Enriched %s", node_id)
     try:
       await self.pg_storage.write_node(node_id, node)
       self.pg_storage.cache_node_set(node_id, node)
     except Exception as e:
       logger.error("Failed to write enrichment for %s: %s", node_id, e)
+      return False
+    return True
