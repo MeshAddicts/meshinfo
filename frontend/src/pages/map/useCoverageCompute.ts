@@ -9,6 +9,7 @@ import { buildBuildingRaster, type BuildingRaster, downsampleBuildingRaster } fr
 import { buildCanopyRaster, type CanopyRaster, downsampleCanopyRaster } from "./canopyTiles";
 import { AGGRESSION_STOPS, type MergeOrigin, reliabilityPreset, REPRESENTATIVE_CLUTTER_DB } from "./coverageAnalysis";
 import { type ContourFeatureCollection, extractCoverageContours } from "./coverageContours";
+import { COVERAGE_DETAIL_MAX_TILES, COVERAGE_DETAIL_SIZE } from "./coverageDetail";
 import { exportCoverage } from "./coverageExport";
 import type { RasterParams } from "./coverageRaster";
 import { extractCoverageRays, type VisibilityRayFeatureCollection } from "./coverageRays";
@@ -16,7 +17,6 @@ import type { CoverageSliceRequest, SliceOrigin } from "./coverageSliceWorker";
 import { CoverageWorkerPool } from "./coverageWorkerPool";
 import { queryTerrainElevationMSL } from "./helpers";
 import { buildClutterRaster, type ClutterRaster, downsampleClutterRaster } from "./landcoverTiles";
-import { COVERAGE_DETAIL_MAX_TILES, COVERAGE_DETAIL_SIZE } from "./MapCoveragePanel";
 import { type DEM, type DEMBounds, demBoundsAround, downsampleDEM, sampleDEMAt } from "./terrainDEM";
 import { buildDem, fetchElevationAt } from "./terrainRgb";
 import type { IMapNode } from "./types";

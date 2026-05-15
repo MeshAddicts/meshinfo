@@ -155,6 +155,42 @@ export function MapScanPanel({
   reliability: CoverageReliability;
   onReliabilityChange: (r: CoverageReliability) => void;
 }) {
+  // null = show all; click active filter to toggle off
+  const [filter, setFilter] = useState<ScanClass | null>(null);
+  const [expandedSettingsRow, setExpandedSettingsRow] = useState<SettingsRowKey | null>(null);
+  const [minimized, setMinimized] = useState(false);
+
+  // Without a snapshot, unchecking "Same as transmitter" would be a visual
+  // no-op — rxMatchesTx is derived, so the values still match TX.
+  const rxSnapshotRef = useRef<{ hw: number; ant: number } | null>(null);
+
+  const sheet = useBottomSheetGesture(onClose);
+
+  useEffect(() => {
+    const onDocMouseDown = (e: MouseEvent) => {
+      const root = sheet.sheetRef.current;
+      if (!root) return;
+      if (root.contains(e.target as Node)) return;
+      root.querySelectorAll<HTMLDetailsElement>("details[open]").forEach((d) => {
+        d.removeAttribute("open");
+      });
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [sheet.sheetRef]);
+
+  // Text-mode input; commit on blur/Enter, blank → 2 m default.
+  const [heightInput, setHeightInput] = useState(String(antennaHeightM));
+  useEffect(() => { setHeightInput(String(antennaHeightM)); }, [antennaHeightM]);
+
+  const displayResults: ScanResult[] = useMemo(() => {
+    if (!summary) return [];
+    const filtered = filter
+      ? summary.results.filter((r) => r.cls === filter)
+      : summary.results;
+    return [...filtered].sort((a, b) => b.marginDb - a.marginDb);
+  }, [summary, filter]);
+
   if (terrainNeeded && onEnableTerrain) {
     return (
       <div className="fixed z-1050 shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
@@ -183,41 +219,15 @@ export function MapScanPanel({
     );
   }
 
-  // null = show all; click active filter to toggle off
-  const [filter, setFilter] = useState<ScanClass | null>(null);
   const toggleFilter = (cls: ScanClass) =>
     setFilter((prev) => (prev === cls ? null : cls));
 
-  const [expandedSettingsRow, setExpandedSettingsRow] = useState<SettingsRowKey | null>(null);
   const toggleSettingsRow = (k: SettingsRowKey) =>
     setExpandedSettingsRow((cur) => (cur === k ? null : k));
 
-  const [minimized, setMinimized] = useState(false);
-
-  // Without a snapshot, unchecking "Same as transmitter" would be a visual
-  // no-op — rxMatchesTx is derived, so the values still match TX.
-  const rxSnapshotRef = useRef<{ hw: number; ant: number } | null>(null);
-
-  const sheet = useBottomSheetGesture(onClose);
   const isCustomHardware = COMMON_HARDWARE[hardwareIdx]?.isCustom ?? false;
   const isCustomPreset = MESHTASTIC_PRESETS[presetIdx]?.isCustom ?? false;
 
-  useEffect(() => {
-    const onDocMouseDown = (e: MouseEvent) => {
-      const root = sheet.sheetRef.current;
-      if (!root) return;
-      if (root.contains(e.target as Node)) return;
-      root.querySelectorAll<HTMLDetailsElement>("details[open]").forEach((d) => {
-        d.removeAttribute("open");
-      });
-    };
-    document.addEventListener("mousedown", onDocMouseDown);
-    return () => document.removeEventListener("mousedown", onDocMouseDown);
-  }, [sheet.sheetRef]);
-
-  // Text-mode input; commit on blur/Enter, blank → 2 m default.
-  const [heightInput, setHeightInput] = useState(String(antennaHeightM));
-  useEffect(() => { setHeightInput(String(antennaHeightM)); }, [antennaHeightM]);
   const commitHeight = () => {
     const trimmed = heightInput.trim();
     if (trimmed === "") { onAntennaHeightChange(2); setHeightInput("2"); return; }
@@ -255,14 +265,6 @@ export function MapScanPanel({
     return r ? `${r.time}/${r.location}/${r.situation}` : "";
   })();
   const accSummaryStr = `${reliabilityLabel} · ${reliabilityPctStr}`;
-
-  const displayResults: ScanResult[] = useMemo(() => {
-    if (!summary) return [];
-    const filtered = filter
-      ? summary.results.filter((r) => r.cls === filter)
-      : summary.results;
-    return [...filtered].sort((a, b) => b.marginDb - a.marginDb);
-  }, [summary, filter]);
 
   return (
     <div

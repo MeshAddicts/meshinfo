@@ -262,10 +262,7 @@ export const Stats = () => {
       tone?: "good" | "warn" | "info";
     }> = [];
 
-    // Active ratio. The "known" count includes nodes only ever seen as stubs
-    // (gateways/recipients), so a healthy mesh routinely sits in the 25–50% band.
-    // Phrasing avoids a fixed window since the backend prune threshold is
-    // configurable via server.node_activity_prune_threshold.
+    // Active ratio. "Known" includes stub-only nodes, so a healthy mesh sits in the 25-50% band.
     if (derived.nodes > 0) {
       const pct = Math.round(derived.activeRatio * 100);
       if (pct >= 50) {

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AggressionSlider, BuildingStatusChip, CanopyStatusChip, ClassLegend, ClutterStatusChip } from "./ClutterUI";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, type MergeOrigin, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
+import { COVERAGE_DETAIL_SIZE,type CoverageDetail } from "./coverageDetail";
 import type { DemSource } from "./terrainRgb";
 import { useBottomSheetGesture } from "./useBottomSheet";
 
@@ -21,25 +22,6 @@ function parseLatLng(input: string): [number, number] | null {
   if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
   return [lng, lat];
 }
-
-/** Coverage paint resolution. Standard=instant, Survey=2048² (1:1 with DEM, 4× Ultra cost). */
-export type CoverageDetail = "standard" | "high" | "ultra" | "survey";
-
-export const COVERAGE_DETAIL_SIZE: Record<CoverageDetail, number> = {
-  standard: 512,
-  high: 768,
-  ultra: 1024,
-  survey: 2048,
-};
-
-/** Per-Detail DEM tile cap. Higher = finer native zoom at smaller radii. Standard
- *  matches the Tilezen LRU size so default-tier repeats hit cache 100%. */
-export const COVERAGE_DETAIL_MAX_TILES: Record<CoverageDetail, number> = {
-  standard: 256,
-  high: 512,
-  ultra: 768,
-  survey: 1024,
-};
 
 /** Info icon with hover tooltip. `align` picks the edge it anchors to. */
 function InfoTip({ children, align = "right" }: { children: React.ReactNode; align?: "left" | "right" }) {

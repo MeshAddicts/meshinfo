@@ -44,6 +44,6 @@ export default tseslint.config(
   prettier,
 
   {
-    ignores: ["dist", "scripts", ".yarn"],
+    ignores: ["dist", "scripts", ".yarn", "src/generated/**"],
   },
 );

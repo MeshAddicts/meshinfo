@@ -84,13 +84,9 @@ class PostgresStorage:
         # Optional: enable to make migrations "honest" (fail fast / count failures correctly)
         self.raise_on_write_error = bool(self.pg_config.get("raise_on_write_error", False))
 
-        # Node read cache. Stores live references to node dicts — callers that
-        # mutate the returned dict (the MQTT handlers do; that's the read-modify-
-        # write pattern) directly update the cache. Writes via `cache_node_set`
-        # keep cache and DB in lockstep. Eviction is LRU by insertion/access order.
+        # LRU node cache. Stores live refs so read-modify-write callers update
+        # the cache directly; pair mutations with cache_node_set after a write.
         self._node_lru: "OrderedDict[str, dict]" = OrderedDict()
-        # Floor at 1 so a misconfigured non-positive value can't crash the
-        # eviction loop on its first popitem.
         self._node_lru_max = max(1, int(self.pg_config.get("node_cache_size", 10000)))
 
     async def connect(self) -> bool:
@@ -1593,7 +1589,7 @@ class PostgresStorage:
         return nodes.get(node_id)
 
     # ───────────────────────────────────────────────────────────────────
-    # Node cache (replaces the old in-memory `data.nodes` dict)
+    # Node cache
     # ───────────────────────────────────────────────────────────────────
 
     def cache_node_set(self, node_id: str, node: Optional[Dict[str, Any]]) -> None:
@@ -1613,12 +1609,7 @@ class PostgresStorage:
         self._node_lru.clear()
 
     async def get_node_cached(self, node_id: str) -> Optional[Dict[str, Any]]:
-        """Get a single node, hitting LRU cache first then PostgreSQL.
-
-        Returns the live cache reference — callers that mutate the dict directly
-        update the cache. Pair mutations with a `write_node` + `cache_node_set`
-        so the persisted state matches.
-        """
+        """Get a single node, hitting LRU cache first then PostgreSQL. Returns the live cache ref."""
         cached = self._node_lru.get(node_id)
         if cached is not None:
             self._node_lru.move_to_end(node_id)
@@ -1663,10 +1654,7 @@ class PostgresStorage:
             return None
 
     async def find_nodes_needing_enrichment(self, limit: int = 200) -> Dict[str, Dict[str, Any]]:
-        """Return nodes whose name fields look unenriched (Unknown/UNK or NULL).
-
-        Replaces the old in-memory walk of `data.nodes`. Cached via `get_node_cached`.
-        """
+        """Return nodes whose name fields look unenriched (Unknown/UNK or NULL)."""
         if not self._ready("find_nodes_needing_enrichment"):
             return {}
         try:
@@ -1695,12 +1683,7 @@ class PostgresStorage:
         return result
 
     async def mark_nodes_inactive_by_age(self, threshold_seconds: int) -> int:
-        """Bulk-mark stale nodes as inactive. Returns the number of rows updated.
-
-        Replaces the per-node dict walk in `mqtt.prune_expired_nodes`. Affected
-        node entries are evicted from the cache so the next read sees the new
-        `active=False` state.
-        """
+        """Bulk-mark stale nodes inactive and evict them from cache. Returns rows updated."""
         if not self._ready("mark_nodes_inactive_by_age") or threshold_seconds <= 0:
             return 0
         try:
@@ -2093,11 +2076,7 @@ class PostgresStorage:
             return []
 
     async def query_stats(self) -> Dict[str, Any]:
-        """Query statistics from PostgreSQL.
-
-        Most fields are integer counters. `session_by_modem_preset` is a nested
-        dict (preset → count) so the overall return is `Dict[str, Any]`.
-        """
+        """Query statistics from PostgreSQL."""
         if not self.enabled or not self.pool:
             return {}
 
@@ -2114,11 +2093,7 @@ class PostgresStorage:
                 stats["total_telemetry"] = await conn.fetchval("SELECT COUNT(*) FROM telemetry")
                 stats["total_traceroutes"] = await conn.fetchval("SELECT COUNT(*) FROM traceroutes")
 
-                # mqtt_messages can be huge and is under constant write load — an exact
-                # COUNT(*) can be slow enough to hit statement_timeout. The planner
-                # estimate is instant and accurate to within a few percent, which is
-                # plenty for a stats counter. Isolate so a failure here can't blank
-                # the rest of the response.
+                # Planner estimate; exact COUNT(*) can hit statement_timeout on this table.
                 try:
                     approx = await conn.fetchval(
                         "SELECT reltuples::bigint FROM pg_class WHERE relname = 'mqtt_messages'"
@@ -2130,9 +2105,7 @@ class PostgresStorage:
                 stats["total_messages"] = mqtt_count
                 stats["total_mqtt_messages"] = mqtt_count
 
-                # Topic-preset split over the last 24h. The Meshtastic topic format is
-                # `msh/<region(s)>/2/e/<preset>/!<node>`, so the preset is the segment
-                # immediately after `/2/e/`. Isolated try so a failure can't blank stats.
+                # 24h topic-preset split. Topic format: msh/<region>/2/e/<preset>/!<node>.
                 preset_split: Dict[str, int] = {}
                 try:
                     rows = await conn.fetch(
