@@ -7,10 +7,6 @@ MeshInfo uses PostgreSQL as its storage backend. This document covers configurat
 Add the following to your `config.toml`:
 
 ```toml
-[storage]
-read_from = "postgres"
-write_to = ["postgres"]
-
 [storage.postgres]
 enabled = true
 host = "postgres"
@@ -24,8 +20,6 @@ max_pool_size = 5
 
 ### Configuration Options
 
-- **`read_from`**: Must be `"postgres"`
-- **`write_to`**: Must be `["postgres"]`
 - **`postgres.enabled`**: Must be `true`
 - **`postgres.host`**: Database server hostname (use `"localhost"` if not using Docker)
 - **`postgres.port`**: Database server port (default: 5432)
