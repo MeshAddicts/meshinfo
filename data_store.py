@@ -109,25 +109,6 @@ class DataStore:
       logger.exception("Failed to initialize PostgreSQL connection: %s", e)
       raise
 
-  async def save(self):
-    save_start = datetime.now(ZoneInfo(self.config['server']['timezone']))
-    last_data = self.config['server']['last_data_save'] if 'last_data_save' in self.config['server'] else self.config['server']['start_time']
-    since_last_data = (save_start - last_data).total_seconds()
-    last_backfill = self.config['server']['last_backfill'] if 'last_backfill' in self.config['server'] else self.config['server']['start_time']
-    since_last_backfill = (save_start - last_backfill).total_seconds()
-
-    if 'enrich' in self.config['server'] and self.config['server']['enrich']['enabled']:
-      if since_last_backfill >= self.config['server']['enrich']['interval']:
-        await self.backfill_node_infos()
-        end = datetime.now(ZoneInfo(self.config['server']['timezone']))
-        logger.debug("Enriched in %.2f seconds", end.timestamp() - save_start.timestamp())
-        self.config['server']['last_backfill'] = end
-
-    if since_last_data >= self.config['server']['intervals']['data_save']:
-        end = datetime.now(ZoneInfo(self.config['server']['timezone']))
-        logger.debug("Periodic save tick in %.2f seconds", end.timestamp() - save_start.timestamp())
-        self.config['server']['last_data_save'] = end
-
   ### helpers
 
   async def backfill_node_infos(self):

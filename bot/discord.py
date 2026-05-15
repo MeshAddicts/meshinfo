@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-import asyncio
 import logging
 from discord.ext import commands
 import discord
-from dotenv import load_dotenv
 from bot.cogs.main_commands import MainCommands
 from bot.cogs.admin_commands import AdminCommands
 from bot.cogs.mesh_bridge import MeshBridge
@@ -48,26 +46,3 @@ class DiscordBot(commands.Bot):
         await self.add_cog(MeshBridge(self, self.config, self.data))
         await self.start(self.config['integrations']['discord']['token'])
         logger.info("Discord Bot Done!")
-
-
-async def main():
-    load_dotenv()
-    # if os.environ.get("DISCORD_TOKEN") is not None:
-    #     token = os.environ["DISCORD_TOKEN"]
-    #     channel_id = os.environ["DISCORD_CHANNEL_ID"]
-    #     bot = DiscordBot(
-    #         command_prefix="!",
-    #         intents=discord.Intents.all(),
-    #         initial_guilds=[1234910729480441947],
-    #     )
-    #     print("Adding cog MainCommands")
-    #     await bot.add_cog(MainCommands(bot))
-    #     print("Starting bot")
-    #     await bot.start(token)
-    #     print("Bot started")
-    #     await bot.get_channel(channel_id).send("Hello.")
-    # else:
-    #     print("Not running bot because DISCORD_TOKEN not set")
-
-if __name__ == "__main__":
-    asyncio.run(main(), debug=True)

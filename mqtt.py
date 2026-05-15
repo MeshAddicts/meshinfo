@@ -457,7 +457,6 @@ class MQTT:
             node['gateway'] = msg['sender']
         await self.data.update_node(id, node)
         logger.debug("Node %s updated with neighborinfo", id)
-        await self.data.save()
 
     async def handle_nodeinfo(self, msg):
         from_id = self._normalize_msg_addrs(msg)
@@ -510,7 +509,6 @@ class MQTT:
             node['last_channel'] = str(msg['channel'])
 
         await self.data.update_node(id, node)
-        await self.data.save()
 
     async def handle_position(self, msg):
         id = self._normalize_msg_addrs(msg)
@@ -540,7 +538,6 @@ class MQTT:
         except asyncio.QueueFull:
             pass  # Drop event if consumer is behind
 
-        await self.data.save()
 
     async def handle_telemetry(self, msg):
         id = self._normalize_msg_addrs(msg)
@@ -586,7 +583,6 @@ class MQTT:
                 except Exception as e:
                     logger.error("Failed to update node_telemetry_current for node %s: %s", id, e)
 
-        await self.data.save()
 
     async def handle_text(self, msg):
         from_id = self._normalize_msg_addrs(msg)
@@ -642,7 +638,6 @@ class MQTT:
         except asyncio.QueueFull:
             pass  # Drop event if consumer is behind
 
-        await self.data.save()
 
     async def handle_traceroute(self, msg):
         id = self._normalize_msg_addrs(msg)
@@ -673,4 +668,3 @@ class MQTT:
                 msg['route_ids'].append(r)
 
         await self.data.pg_storage.write_traceroute(id, msg)
-        await self.data.save()

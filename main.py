@@ -93,6 +93,23 @@ async def prune_loop(config, data, interval_seconds: float = PRUNE_INTERVAL_SEC)
         await asyncio.sleep(interval_seconds)
 
 
+async def enrichment_loop(config, data) -> None:
+    """Periodically backfill node names/hardware from external enrichment APIs.
+
+    Replaces the per-packet `data.save()` tick that previously gated enrichment.
+    The interval comes from config (server.enrich.interval, seconds).
+    """
+    interval = float(config['server']['enrich'].get('interval', 600))
+    while True:
+        try:
+            await data.backfill_node_infos()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Enrichment loop iteration failed")
+        await asyncio.sleep(interval)
+
+
 async def supervise(
     name: str,
     factory: Callable[[], Awaitable[None]],
@@ -178,8 +195,6 @@ async def main() -> None:
     # Placeholder until MQTT connects; MQTT will overwrite on successful connect.
     data.update("mqtt_connect_time", startup_time)
 
-    await data.save()
-
     api_server = api.API(config, data)
 
     background_tasks: list[asyncio.Task] = []
@@ -195,6 +210,14 @@ async def main() -> None:
     background_tasks.append(
         asyncio.create_task(supervise("Prune", lambda: prune_loop(config, data)))
     )
+
+    # Periodic enrichment backfill (replaces the per-packet data.save() that used to gate it).
+    if config['server'].get('enrich', {}).get('enabled'):
+        background_tasks.append(
+            asyncio.create_task(supervise("Enrichment", lambda: enrichment_loop(config, data)))
+        )
+    else:
+        logger.info("Enrichment disabled in config")
 
     # Discord
     if config["integrations"]["discord"]["enabled"]:
