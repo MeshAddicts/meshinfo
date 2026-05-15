@@ -83,7 +83,7 @@ meshinfo/
 ├── config.py              # Configuration loading and validation
 ├── main.py                # Application entry point
 ├── mqtt.py                # MQTT broker connection and message handling
-├── memory_data_store.py   # In-memory data store with PostgreSQL writes
+├── data_store.py          # Runtime coordinator: Postgres handle, MQTT→Discord queue, enrichment loop
 ├── Dockerfile             # Backend container image
 ├── Dockerfile.spa         # Frontend container image
 ├── Dockerfile.caddy       # Caddy reverse proxy image

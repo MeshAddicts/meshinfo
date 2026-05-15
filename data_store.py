@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Runtime coordinator: Postgres handle, MQTT→Discord event queue, periodic enrichment."""
 
 import asyncio
 from datetime import datetime, timedelta
@@ -13,31 +14,24 @@ import utils
 logger = logging.getLogger(__name__)
 
 
-class MemoryDataStore:
+class DataStore:
   def __init__(self, config):
     self.config = config
     self.mqtt_connect_time: datetime = self.config['server']['start_time']
-
-    # Bounded asyncio queue used by the Discord bridge (MQTT -> Discord).
-    # Capacity caps producer pressure if the consumer stalls.
+    # Bounded so MQTT producers shed load if the Discord consumer stalls.
     self.discord_event_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
-
     self.pg_storage = PostgresStorage(config)
 
   def update(self, key, value):
     self.__dict__[key] = value
 
   async def update_node(self, id: str, node):
-    """Persist a node update.
-
-    Callers assemble the node dict (typically by reading from `pg_storage.get_node_cached`
-    and mutating fields). This method handles the common tail: geocoding, freshness
-    metadata, the DB write, and refreshing the cache.
-    """
+    """Apply geocoding + freshness fields, persist to Postgres, refresh the cache."""
     n = node.copy()
     if n.get('position') is None:
       n['position'] = {}
 
+    # Geocode positions at most once an hour per node.
     if self.config['integrations']['geocoding']['enabled']:
       pos = n['position']
       if 'geocoded' not in pos:
@@ -55,6 +49,7 @@ class MemoryDataStore:
           except Exception as e:
             logger.warning("Failed to geocode position: %s", e)
 
+    # Any update reactivates the node, so a previously-pruned node comes back online.
     n['active'] = True
     if isinstance(n.get('last_seen'), str):
       n['last_seen'] = datetime.fromisoformat(n['last_seen']).astimezone(ZoneInfo(self.config['server']['timezone']))
@@ -75,7 +70,7 @@ class MemoryDataStore:
     await self._load_from_postgres()
 
   async def _load_from_postgres(self):
-    """Open the Postgres pool and ensure the default node rows exist."""
+    """Open the pool, run migrations, and seed the local + broadcast node rows."""
     try:
       ok = await self.pg_storage.connect()
       if not ok:
@@ -104,11 +99,6 @@ class MemoryDataStore:
     since_last_data = (save_start - last_data).total_seconds()
     last_backfill = self.config['server']['last_backfill'] if 'last_backfill' in self.config['server'] else self.config['server']['start_time']
     since_last_backfill = (save_start - last_backfill).total_seconds()
-    logger.debug(
-      "Save (since last): graph: %s (threshold: %s), enrich: %s (threshold: %s)",
-      since_last_data, self.config['server']['intervals']['data_save'],
-      since_last_backfill, self.config['server']['enrich']['interval'],
-    )
 
     if 'enrich' in self.config['server'] and self.config['server']['enrich']['enabled']:
       if since_last_backfill >= self.config['server']['enrich']['interval']:
@@ -173,22 +163,3 @@ class MemoryDataStore:
       node['longname'] = long_
     logger.debug("Enriched %s", node_id)
     await self.update_node(node_id, node)
-
-  def find_node_by_int_id(self, id: int):
-    """Synchronous shim retained for callers that still use it.
-
-    Returns None when the node isn't cached. Callers that need a guaranteed
-    lookup should `await pg_storage.get_node_cached(hex_id)` directly.
-    """
-    return self.pg_storage._node_lru.get(utils.convert_node_id_from_int_to_hex(id))
-
-  async def find_node_by_hex_id(self, id: str):
-    if not isinstance(id, str) or len(id) != 8 or not all(c in '0123456789abcdefABCDEF' for c in id):
-      return None
-    return await self.pg_storage.get_node_cached(id)
-
-  async def find_node_by_short_name(self, sn: str):
-    return await self.pg_storage.find_node_by_shortname(sn)
-
-  async def find_node_by_longname(self, ln: str):
-    return await self.pg_storage.find_node_by_longname(ln)

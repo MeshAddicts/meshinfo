@@ -53,15 +53,15 @@ The schema is automatically created on first run. Key tables:
 ### Write Flow
 
 1. MQTT message received
-2. Data stored in memory (MemoryDataStore) for internal use
-3. **Real-time write to PostgreSQL** (non-blocking, errors logged)
+2. Handler reads existing node via `pg_storage.get_node_cached` (LRU + DB)
+3. Handler merges incoming fields into the node
+4. `data.update_node` writes the merged node to PostgreSQL and refreshes the cache
 
 ### Read Flow
 
 1. Application starts
 2. PostgreSQL connection established
-3. API queries PostgreSQL directly for each request
-4. Lower memory footprint, always current data
+3. API queries PostgreSQL directly for each request (node lookups hit the LRU cache first)
 
 ### Error Handling
 

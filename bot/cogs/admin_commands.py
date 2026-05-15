@@ -25,7 +25,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import utils
-from memory_data_store import MemoryDataStore
+from data_store import DataStore
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +179,7 @@ class _UnbanView(discord.ui.View):
 class AdminCommands(commands.Cog):
     """Slash commands for Discord bridge administration."""
 
-    def __init__(self, bot: commands.Bot, config: dict, data: MemoryDataStore):
+    def __init__(self, bot: commands.Bot, config: dict, data: DataStore):
         self.bot = bot
         self.config = config
         self.data = data

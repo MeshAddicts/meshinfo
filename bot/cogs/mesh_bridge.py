@@ -1,7 +1,7 @@
 """
 MeshBridge cog — live mesh-to-Discord message bridge.
 
-Consumes events from MemoryDataStore.discord_event_queue, aggregates gateway
+Consumes events from DataStore.discord_event_queue, aggregates gateway
 reports for the same packet over a configurable window (default 5s), then
 posts or edits a Discord embed via webhook. Each mesh node appears as a
 unique "sender" with its own name and avatar in Discord.
@@ -16,7 +16,7 @@ import discord
 from discord.ext import commands, tasks
 
 from bot.embeds import build_text_embed, build_position_embed, build_gateway_detail_embed
-from memory_data_store import MemoryDataStore
+from data_store import DataStore
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ class _PendingPacket:
 class MeshBridge(commands.Cog):
     """Bridges live mesh traffic into Discord channels."""
 
-    def __init__(self, bot: commands.Bot, config: dict, data: MemoryDataStore):
+    def __init__(self, bot: commands.Bot, config: dict, data: DataStore):
         self.bot = bot
         self.config = config
         self.data = data

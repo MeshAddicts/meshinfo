@@ -10,7 +10,7 @@ from discord.ext import commands
 from meshtastic import mesh_pb2, config_pb2
 
 import utils
-from memory_data_store import MemoryDataStore
+from data_store import DataStore
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ class MainCommands(commands.Cog):
     def __init__(self, bot, config, data):
         self.bot = bot
         self.config = config
-        self.data: MemoryDataStore = data
+        self.data: DataStore = data
 
     @commands.Cog.listener()
     async def on_ready(self):

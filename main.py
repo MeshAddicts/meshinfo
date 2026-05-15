@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from api import api
 from bot import discord as discord_bot
 from config import Config, ConfigValidationError
-from memory_data_store import MemoryDataStore
+from data_store import DataStore
 from mqtt import MQTT
 
 logging.basicConfig(
@@ -47,11 +47,11 @@ class _DowngradeSuccessfulGetRequests(logging.Filter):
         return True
 
 
-def init_runtime() -> Tuple[Config, MemoryDataStore]:
+def init_runtime() -> Tuple[Config, DataStore]:
     """Initialize env/config/datastore without making any network connections."""
     load_dotenv()
     config = Config.load()
-    data = MemoryDataStore(config)
+    data = DataStore(config)
     return config, data
 
 

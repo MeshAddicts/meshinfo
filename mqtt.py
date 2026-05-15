@@ -339,7 +339,7 @@ class MQTT:
                         if 'route' in j['payload']:
                             route = []
                             for r in j['payload']['route']:
-                                node = await self.data.find_node_by_longname(r)
+                                node = await self.data.pg_storage.find_node_by_longname(r)
                                 if node is not None:
                                     id = node['id']
                                 else:
@@ -554,7 +554,7 @@ class MQTT:
 
         await self.data.pg_storage.write_chat_message(chat['from'], chat)
 
-        node = await self.data.find_node_by_hex_id(msg['from'])
+        node = await self.data.pg_storage.get_node_cached(msg['from'])
         # TODO: Replace with something more configurable
         if node:
             if 'TC' in chat['text'] and 'BBS' in chat['text'] and 'Commands' in chat['text']:
@@ -584,9 +584,9 @@ class MQTT:
         msg['route_ids'] = []
         for r in msg['route']:
             if isinstance(r, str):
-                node = await self.data.find_node_by_longname(r)
+                node = await self.data.pg_storage.find_node_by_longname(r)
             elif isinstance(r, int):
-                node = await self.data.find_node_by_hex_id(utils.convert_node_id_from_int_to_hex(r))
+                node = await self.data.pg_storage.get_node_cached(utils.convert_node_id_from_int_to_hex(r))
             else:
                 node = None
 
