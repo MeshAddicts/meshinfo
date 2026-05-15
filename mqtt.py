@@ -193,13 +193,19 @@ class MQTT:
                     try:
                         info = mesh_pb2.User().FromString(mp.decoded.payload)
                         out = json.loads(MessageToJson(info, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
-                        if isinstance(out['id'], int):
-                            out["id"] = utils.convert_node_id_from_int_to_hex(out['id'])
-                        out["id"] = out['id'].replace('!', '')
-                        outs["type"] = "nodeinfo"
-                        outs["payload"] = out
-                        logger.debug("Decoded protobuf message: nodeinfo: %s", outs)
-                        await self.handle_nodeinfo(outs)
+                        # Some senders broadcast NODEINFO without setting User.id;
+                        # the MeshPacket `from` field identifies the same node.
+                        nid = out.get('id', outs.get('from'))
+                        if nid is None:
+                            logger.debug("NODEINFO packet missing identity; skipping: %s", out)
+                        else:
+                            if isinstance(nid, int):
+                                nid = utils.convert_node_id_from_int_to_hex(nid)
+                            out["id"] = str(nid).replace('!', '')
+                            outs["type"] = "nodeinfo"
+                            outs["payload"] = out
+                            logger.debug("Decoded protobuf message: nodeinfo: %s", outs)
+                            await self.handle_nodeinfo(outs)
                     except UnicodeDecodeError as e:
                         logger.debug("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
