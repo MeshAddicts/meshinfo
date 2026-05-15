@@ -237,7 +237,7 @@ export const Stats = () => {
       ["total_chat", safeNum(stats.total_chat)],
       ["total_telemetry", safeNum(stats.total_telemetry)],
       ["total_traceroutes", safeNum(stats.total_traceroutes)],
-      ["total_mqtt_messages", safeNum(stats.total_messages)],
+      ["total_mqtt_messages", safeNum(stats.total_mqtt_messages)],
     ];
 
     if (derived.hasPresetSplit) {
@@ -264,18 +264,20 @@ export const Stats = () => {
 
     // Active ratio. The "known" count includes nodes only ever seen as stubs
     // (gateways/recipients), so a healthy mesh routinely sits in the 25–50% band.
+    // Phrasing avoids a fixed window since the backend prune threshold is
+    // configurable via server.node_activity_prune_threshold.
     if (derived.nodes > 0) {
       const pct = Math.round(derived.activeRatio * 100);
       if (pct >= 50) {
         items.push({
           title: "Healthy presence",
-          detail: `${pct}% of known nodes have been active in the last 3 days.`,
+          detail: `${pct}% of known nodes have been active recently.`,
           tone: "good",
         });
       } else if (pct >= 20) {
         items.push({
           title: "Typical activity",
-          detail: `${pct}% of known nodes have been active in the last 3 days.`,
+          detail: `${pct}% of known nodes have been active recently.`,
           tone: "info",
         });
       } else {
@@ -590,9 +592,9 @@ export const Stats = () => {
                 <KpiCard
                   title="Active nodes"
                   value={derived.active}
-                  subtitle="heard in last 3 days"
+                  subtitle="recently heard"
                   icon={<Icon name="signal" />}
-                  hint="Nodes with a last_seen newer than the configured prune threshold (default 3 days)."
+                  hint="Nodes with a last_seen newer than the configured prune threshold (server.node_activity_prune_threshold, default 3 days)."
                 />
                 <KpiCard
                   title="Chat messages"

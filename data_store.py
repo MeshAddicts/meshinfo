@@ -39,6 +39,13 @@ class DataStore:
       lat_i = pos.get('latitude_i')
       lon_i = pos.get('longitude_i')
       last_geo = pos.get('last_geocoding')
+      # last_geocoding can be a datetime (just set in memory) or an ISO string
+      # (loaded from Postgres). Normalize before the freshness comparison.
+      if isinstance(last_geo, str):
+        try:
+          last_geo = datetime.fromisoformat(last_geo).astimezone(ZoneInfo(self.config['server']['timezone']))
+        except ValueError:
+          last_geo = None
       if lat_i is not None and lon_i is not None:
         if pos['geocoded'] is None or last_geo is None or last_geo < datetime.now().astimezone(ZoneInfo(self.config['server']['timezone'])) - timedelta(minutes=60):
           try:
@@ -61,9 +68,11 @@ class DataStore:
     if self.pg_storage is not None and getattr(self.pg_storage, "enabled", False) and getattr(self.pg_storage, "pool", None) is not None:
       try:
         await self.pg_storage.write_node(id, n)
+        # Only refresh the cache on a confirmed successful write so a failed
+        # write doesn't leave the cache ahead of the DB.
+        self.pg_storage.cache_node_set(id, n)
       except Exception as e:
         logger.error("Failed to write node %s to Postgres: %s", id, e)
-      self.pg_storage.cache_node_set(id, n)
 
   async def load(self):
     logger.info("Loading data from PostgreSQL")
@@ -152,14 +161,23 @@ class DataStore:
             logger.warning("Failed to get info for %d nodes: %s", len(node_ids), e)
 
   async def _apply_enrichment(self, node_id: str, info: dict):
+    short = info.get('shortName')
+    long_ = info.get('longName')
+    if not short and not long_:
+      return
     node = await self.pg_storage.get_node_cached(node_id)
     if node is None:
       return
-    short = info.get('shortName')
-    long_ = info.get('longName')
+    # Enrichment is a name lookup, not a packet from the node — don't go
+    # through update_node, which would force `active=True` and reset
+    # `last_seen`. Persist only the name fields.
     if short:
       node['shortname'] = short
     if long_:
       node['longname'] = long_
     logger.debug("Enriched %s", node_id)
-    await self.update_node(node_id, node)
+    try:
+      await self.pg_storage.write_node(node_id, node)
+      self.pg_storage.cache_node_set(node_id, node)
+    except Exception as e:
+      logger.error("Failed to write enrichment for %s: %s", node_id, e)

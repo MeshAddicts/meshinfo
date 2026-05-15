@@ -89,7 +89,9 @@ class PostgresStorage:
         # write pattern) directly update the cache. Writes via `cache_node_set`
         # keep cache and DB in lockstep. Eviction is LRU by insertion/access order.
         self._node_lru: "OrderedDict[str, dict]" = OrderedDict()
-        self._node_lru_max = int(self.pg_config.get("node_cache_size", 10000))
+        # Floor at 1 so a misconfigured non-positive value can't crash the
+        # eviction loop on its first popitem.
+        self._node_lru_max = max(1, int(self.pg_config.get("node_cache_size", 10000)))
 
     async def connect(self) -> bool:
         """
@@ -2090,8 +2092,12 @@ class PostgresStorage:
             logger.error(f"Failed to query traceroutes from PostgreSQL: {e}")
             return []
 
-    async def query_stats(self) -> Dict[str, int]:
-        """Query statistics from PostgreSQL."""
+    async def query_stats(self) -> Dict[str, Any]:
+        """Query statistics from PostgreSQL.
+
+        Most fields are integer counters. `session_by_modem_preset` is a nested
+        dict (preset → count) so the overall return is `Dict[str, Any]`.
+        """
         if not self.enabled or not self.pool:
             return {}
 
