@@ -190,15 +190,23 @@ export async function buildClutterRaster(
   const xMax = Math.floor(lng2tileX(bounds.east, zoom));
   const yMin = Math.floor(lat2tileY(bounds.north, zoom));
   const yMax = Math.floor(lat2tileY(bounds.south, zoom));
+  const scale = Math.pow(2, zoom);
   const tilesTotal = (xMax - xMin + 1) * (yMax - yMin + 1);
 
   const tileMap = new Map<string, CachedLandcoverTile>();
   const jobs: Promise<void>[] = [];
+  // Antimeridian: when demBoundsAround() straddles ±180 it produces west/east
+  // outside [-180, 180], so xMin/xMax can be < 0 or >= scale. Wrap each absolute
+  // x to a canonical [0, scale) fetch index — the stitching lookup applies the
+  // same wrap, so both sides agree. Without this, the fetch URLs 404 and the
+  // east-of-seam half of the raster reads as out-of-data.
   for (let x = xMin; x <= xMax; x++) {
+    const fetchX = ((x % scale) + scale) % scale;
     for (let y = yMin; y <= yMax; y++) {
-      const key = `${zoom}/${x}/${y}`;
+      const key = `${zoom}/${fetchX}/${y}`;
+      if (tileMap.has(key)) continue; // dedupe if the bbox spans > 360° at this zoom
       jobs.push(
-        fetchLandcoverTile(zoom, x, y)
+        fetchLandcoverTile(zoom, fetchX, y)
           .then((t) => void tileMap.set(key, t))
           .catch((err) => {
             console.warn("[landcoverTiles]", err);
@@ -216,7 +224,6 @@ export async function buildClutterRaster(
 
   const data = new Uint8Array(targetWidth * targetHeight);
   data.fill(NLCD_DEFAULT_CLASS_ID);
-  const scale = Math.pow(2, zoom);
 
   /** Class ID at absolute tile-pixel; 0 for missing/nodata. */
   const lookup = (absX: number, absY: number): number => {

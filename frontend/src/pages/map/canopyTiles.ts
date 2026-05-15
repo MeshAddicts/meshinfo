@@ -215,15 +215,19 @@ export async function buildCanopyRaster(
   const xMax = Math.floor(lng2tileX(bounds.east, zoom));
   const yMin = Math.floor(lat2tileY(bounds.north, zoom));
   const yMax = Math.floor(lat2tileY(bounds.south, zoom));
+  const scale = Math.pow(2, zoom);
   const tilesTotal = (xMax - xMin + 1) * (yMax - yMin + 1);
 
   const tileMap = new Map<string, CachedCanopyTile>();
   const jobs: Promise<void>[] = [];
+  // Antimeridian: wrap absolute x to canonical [0, scale) fetch index. See landcoverTiles.ts for rationale.
   for (let x = xMin; x <= xMax; x++) {
+    const fetchX = ((x % scale) + scale) % scale;
     for (let y = yMin; y <= yMax; y++) {
-      const key = `${zoom}/${x}/${y}`;
+      const key = `${zoom}/${fetchX}/${y}`;
+      if (tileMap.has(key)) continue;
       jobs.push(
-        fetchCanopyTile(zoom, x, y)
+        fetchCanopyTile(zoom, fetchX, y)
           .then((t) => void tileMap.set(key, t))
           .catch((err) => {
             console.warn("[canopyTiles]", err);
@@ -243,7 +247,6 @@ export async function buildCanopyRaster(
   const heightOut = new Float32Array(n);
   const stdOut = new Float32Array(n);
   const maskOut = new Float32Array(n);
-  const scale = Math.pow(2, zoom);
 
   /** Sample (h, s, m) at a fractional tile-pixel coord. m=0 if no valid neighbour. */
   const sampleAt = (absX: number, absY: number): [number, number, number] => {
