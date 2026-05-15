@@ -1,7 +1,7 @@
 """
 MeshBridge cog — live mesh-to-Discord message bridge.
 
-Consumes events from MemoryDataStore.discord_event_queue, aggregates gateway
+Consumes events from DataStore.discord_event_queue, aggregates gateway
 reports for the same packet over a configurable window (default 5s), then
 posts or edits a Discord embed via webhook. Each mesh node appears as a
 unique "sender" with its own name and avatar in Discord.
@@ -16,7 +16,7 @@ import discord
 from discord.ext import commands, tasks
 
 from bot.embeds import build_text_embed, build_position_embed, build_gateway_detail_embed
-from memory_data_store import MemoryDataStore
+from data_store import DataStore
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ class _PendingPacket:
 class MeshBridge(commands.Cog):
     """Bridges live mesh traffic into Discord channels."""
 
-    def __init__(self, bot: commands.Bot, config: dict, data: MemoryDataStore):
+    def __init__(self, bot: commands.Bot, config: dict, data: DataStore):
         self.bot = bot
         self.config = config
         self.data = data
@@ -167,23 +167,22 @@ class MeshBridge(commands.Cog):
     # ─── Node name resolution ────────────────────────────────────────
 
     async def _resolve_node(self, node_id: str) -> Optional[dict]:
-        """Look up a node by ID, checking in-memory first then PostgreSQL."""
-        # In-memory (live data from this session)
-        node = self.data.nodes.get(node_id)
-        if node and node.get("longname", "Unknown") != "Unknown":
-            return node
+        """Look up a node by ID via the storage-level LRU cache + PostgreSQL.
 
-        # Local cache (avoids repeated DB hits for the same node)
-        if node_id in self._node_cache:
-            return self._node_cache[node_id]
+        The bridge keeps its own per-cog cache so we can serve a still-useful
+        "best-known" entry even when DB calls intermittently fail.
+        """
+        # Bridge-level cache (avoids repeated DB hits for the same node within
+        # a single posting window).
+        cached = self._node_cache.get(node_id)
+        if cached and cached.get("longname", "Unknown") != "Unknown":
+            return cached
 
-        # PostgreSQL
         if self.data.pg_storage:
             try:
-                db_node = await self.data.pg_storage.query_node_by_id(node_id)
+                db_node = await self.data.pg_storage.get_node_cached(node_id)
                 if db_node:
                     self._node_cache[node_id] = db_node
-                    # Evict old cache entries
                     if len(self._node_cache) > self._node_cache_max:
                         oldest = next(iter(self._node_cache))
                         self._node_cache.pop(oldest, None)
@@ -191,9 +190,7 @@ class MeshBridge(commands.Cog):
             except Exception:
                 logger.debug("MeshBridge: DB lookup failed for node %s", node_id)
 
-        # Return whatever we have from memory (might be a skeleton)
-        self._node_cache[node_id] = node
-        return node
+        return cached
 
     async def _build_enriched_nodes(self, node_ids: list[str]) -> dict:
         """Build a nodes dict enriched with DB data for all referenced node IDs."""

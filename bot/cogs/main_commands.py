@@ -10,7 +10,7 @@ from discord.ext import commands
 from meshtastic import mesh_pb2, config_pb2
 
 import utils
-from memory_data_store import MemoryDataStore
+from data_store import DataStore
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ class MainCommands(commands.Cog):
     def __init__(self, bot, config, data):
         self.bot = bot
         self.config = config
-        self.data: MemoryDataStore = data
+        self.data: DataStore = data
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -38,13 +38,30 @@ class MainCommands(commands.Cog):
         choices: list[app_commands.Choice[str]] = []
         seen: set[str] = set()
 
-        # Search in-memory nodes first
-        for nid, node in self.data.nodes.items():
-            if len(choices) >= 25:
-                break
-            short = str(node.get("shortname", "")).lower()
-            long = str(node.get("longname", "")).lower()
-            if current in nid or current in short or current in long:
+        if not self.data.pg_storage:
+            return choices
+
+        try:
+            results = await asyncio.wait_for(
+                self.data.pg_storage.query_nodes_filtered(
+                    days_limit=None, shortname_filter=current,
+                ),
+                timeout=1.5,
+            )
+            if len(results) < 10:
+                long_results = await asyncio.wait_for(
+                    self.data.pg_storage.query_nodes_filtered(
+                        days_limit=None, longname_filter=current,
+                    ),
+                    timeout=1.0,
+                )
+                results.update(long_results)
+
+            for nid, node in results.items():
+                if len(choices) >= 25:
+                    break
+                if nid in seen:
+                    continue
                 longname = node.get("longname", "")
                 shortname = node.get("shortname", "")
                 if longname and longname != "Unknown" and shortname and shortname != "UNK":
@@ -56,48 +73,10 @@ class MainCommands(commands.Cog):
                 else:
                     label = f"!{nid}"
                 label = label[:100]
-                if nid not in seen:
-                    choices.append(app_commands.Choice(name=label, value=nid))
-                    seen.add(nid)
-
-        # Supplement from DB (with timeout to stay within Discord's 3s limit)
-        if len(choices) < 25 and self.data.pg_storage:
-            try:
-                results = await asyncio.wait_for(
-                    self.data.pg_storage.query_nodes_filtered(
-                        days_limit=None, shortname_filter=current,
-                    ),
-                    timeout=1.5,
-                )
-                if len(results) < 10:
-                    long_results = await asyncio.wait_for(
-                        self.data.pg_storage.query_nodes_filtered(
-                            days_limit=None, longname_filter=current,
-                        ),
-                        timeout=1.0,
-                    )
-                    results.update(long_results)
-
-                for nid, node in results.items():
-                    if len(choices) >= 25:
-                        break
-                    if nid in seen:
-                        continue
-                    longname = node.get("longname", "")
-                    shortname = node.get("shortname", "")
-                    if longname and longname != "Unknown" and shortname and shortname != "UNK":
-                        label = f"{longname} [{shortname}] (!{nid})"
-                    elif longname and longname != "Unknown":
-                        label = f"{longname} (!{nid})"
-                    elif shortname and shortname != "UNK":
-                        label = f"{shortname} (!{nid})"
-                    else:
-                        label = f"!{nid}"
-                    label = label[:100]
-                    choices.append(app_commands.Choice(name=label, value=nid))
-                    seen.add(nid)
-            except Exception:
-                pass
+                choices.append(app_commands.Choice(name=label, value=nid))
+                seen.add(nid)
+        except Exception:
+            pass
 
         return choices
 
@@ -123,31 +102,17 @@ class MainCommands(commands.Cog):
         if id_hex is None and all(c in '0123456789abcdef' for c in search) and len(search) <= 8:
             id_hex = search.zfill(8)
 
-        # Check in-memory
-        if id_hex and id_hex in self.data.nodes:
-            node = self.data.nodes[id_hex]
-        else:
-            for node_id, n in self.data.nodes.items():
-                if (str(n.get('shortname', '')).lower() == search or
-                        str(n.get('longname', '')).lower() == search):
-                    node = n
-                    id_hex = node_id
-                    break
+        if not self.data.pg_storage:
+            return id_hex, None
 
-        # Fall back to PostgreSQL
-        if node is None and self.data.pg_storage:
-            if id_hex:
-                node = await self.data.pg_storage.query_node_by_id(id_hex)
-            if node is None:
-                results = await self.data.pg_storage.query_nodes_filtered(
-                    days_limit=None, shortname_filter=search,
-                )
-                if not results:
-                    results = await self.data.pg_storage.query_nodes_filtered(
-                        days_limit=None, longname_filter=search,
-                    )
-                if results:
-                    id_hex, node = next(iter(results.items()))
+        if id_hex:
+            node = await self.data.pg_storage.get_node_cached(id_hex)
+        if node is None:
+            node = await self.data.pg_storage.find_node_by_shortname(search)
+        if node is None:
+            node = await self.data.pg_storage.find_node_by_longname(search)
+        if node is not None:
+            id_hex = node.get('id', id_hex)
 
         return id_hex, node
 
@@ -282,9 +247,7 @@ class MainCommands(commands.Cog):
         embed.set_thumbnail(url=user.display_avatar.url)
 
         for nid in nodes[:25]:  # Discord embed field limit
-            node = await self.data.pg_storage.query_node_by_id(nid)
-            if not node:
-                node = self.data.nodes.get(nid)
+            node = await self.data.pg_storage.get_node_cached(nid)
 
             shortname = (node.get('shortname') or 'UNK') if node else 'UNK'
             longname = (node.get('longname') or 'Unknown') if node else 'Unknown'
@@ -308,8 +271,8 @@ class MainCommands(commands.Cog):
         if self.data.pg_storage:
             stats = await self.data.pg_storage.query_stats()
 
-        total_nodes = stats.get("total_nodes", len(self.data.nodes))
-        active_nodes = stats.get("active_nodes", len([n for n in self.data.nodes.values() if n.get('active')]))
+        total_nodes = stats.get("total_nodes", 0)
+        active_nodes = stats.get("active_nodes", 0)
 
         base_url = self.config['server']['base_url'].strip('/')
         embed = discord.Embed(
@@ -378,9 +341,9 @@ class MainCommands(commands.Cog):
         base_url = self.config.get('server', {}).get('base_url', '').rstrip('/')
 
         async def resolve_name(node_id: str) -> str:
-            n = self.data.nodes.get(node_id)
-            if not n and self.data.pg_storage:
-                n = await self.data.pg_storage.query_node_by_id(node_id)
+            n = None
+            if self.data.pg_storage:
+                n = await self.data.pg_storage.get_node_cached(node_id)
             if n:
                 name = n.get("longname") or n.get("shortname")
                 if name and name not in ("Unknown", "UNK"):

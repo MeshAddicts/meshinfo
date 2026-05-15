@@ -25,7 +25,7 @@ from discord import app_commands
 from discord.ext import commands
 
 import utils
-from memory_data_store import MemoryDataStore
+from data_store import DataStore
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +179,7 @@ class _UnbanView(discord.ui.View):
 class AdminCommands(commands.Cog):
     """Slash commands for Discord bridge administration."""
 
-    def __init__(self, bot: commands.Bot, config: dict, data: MemoryDataStore):
+    def __init__(self, bot: commands.Bot, config: dict, data: DataStore):
         self.bot = bot
         self.config = config
         self.data = data
@@ -195,13 +195,30 @@ class AdminCommands(commands.Cog):
         choices: list[app_commands.Choice[str]] = []
         seen: set[str] = set()
 
-        # Search in-memory nodes first (fast)
-        for nid, node in self.data.nodes.items():
-            if len(choices) >= 25:
-                break
-            short = str(node.get("shortname", "")).lower()
-            long = str(node.get("longname", "")).lower()
-            if current in nid or current in short or current in long:
+        if not self.data.pg_storage:
+            return choices
+
+        try:
+            results = await asyncio.wait_for(
+                self.data.pg_storage.query_nodes_filtered(
+                    days_limit=None, shortname_filter=current,
+                ),
+                timeout=1.5,
+            )
+            if len(results) < 10:
+                long_results = await asyncio.wait_for(
+                    self.data.pg_storage.query_nodes_filtered(
+                        days_limit=None, longname_filter=current,
+                    ),
+                    timeout=1.0,
+                )
+                results.update(long_results)
+
+            for nid, node in results.items():
+                if len(choices) >= 25:
+                    break
+                if nid in seen:
+                    continue
                 longname = node.get("longname", "")
                 shortname = node.get("shortname", "")
                 if longname and longname != "Unknown" and shortname and shortname != "UNK":
@@ -213,48 +230,10 @@ class AdminCommands(commands.Cog):
                 else:
                     label = f"!{nid}"
                 label = label[:100]
-                if nid not in seen:
-                    choices.append(app_commands.Choice(name=label, value=nid))
-                    seen.add(nid)
-
-        # Supplement from DB (with timeout to stay within Discord's 3s limit)
-        if len(choices) < 25 and self.data.pg_storage:
-            try:
-                results = await asyncio.wait_for(
-                    self.data.pg_storage.query_nodes_filtered(
-                        days_limit=None, shortname_filter=current,
-                    ),
-                    timeout=1.5,
-                )
-                if len(results) < 10:
-                    long_results = await asyncio.wait_for(
-                        self.data.pg_storage.query_nodes_filtered(
-                            days_limit=None, longname_filter=current,
-                        ),
-                        timeout=1.0,
-                    )
-                    results.update(long_results)
-
-                for nid, node in results.items():
-                    if len(choices) >= 25:
-                        break
-                    if nid in seen:
-                        continue
-                    longname = node.get("longname", "")
-                    shortname = node.get("shortname", "")
-                    if longname and longname != "Unknown" and shortname and shortname != "UNK":
-                        label = f"{longname} [{shortname}] (!{nid})"
-                    elif longname and longname != "Unknown":
-                        label = f"{longname} (!{nid})"
-                    elif shortname and shortname != "UNK":
-                        label = f"{shortname} (!{nid})"
-                    else:
-                        label = f"!{nid}"
-                    label = label[:100]
-                    choices.append(app_commands.Choice(name=label, value=nid))
-                    seen.add(nid)
-            except Exception:
-                pass
+                choices.append(app_commands.Choice(name=label, value=nid))
+                seen.add(nid)
+        except Exception:
+            pass
 
         return choices
 
@@ -283,68 +262,32 @@ class AdminCommands(commands.Cog):
         raw = raw.strip()
         search = raw.replace("!", "").strip()
 
+        if not self.data.pg_storage:
+            return None, None
+
         # Try as integer ID first (digits-only input like "1234" should be decimal, not hex)
         if search.isdigit():
             try:
                 id_int = int(search, 10)
                 nid = utils.convert_node_id_from_int_to_hex(id_int)
-                # Look up best display name (memory then DB)
-                node = self.data.nodes.get(nid)
-                name = self._make_display_name(node)
-                if self.data.pg_storage and (not name or "[" not in (name or "")):
-                    db_node = await self.data.pg_storage.query_node_by_id(nid)
-                    db_name = self._make_display_name(db_node)
-                    if db_name and (not name or len(db_name) > len(name)):
-                        name = db_name
-                return nid, name
+                node = await self.data.pg_storage.get_node_cached(nid)
+                return nid, self._make_display_name(node)
             except (ValueError, TypeError):
                 pass
 
-        # Try as hex ID (contains a-f, or has ! prefix)
+        # Try as hex ID
         nid = _normalize_node_id(raw)
         if nid:
-            # Try in-memory, then DB — pick the most complete display name
-            node = self.data.nodes.get(nid)
-            name = self._make_display_name(node)
-            # If name is incomplete (missing shortname), try DB for a better version
-            if self.data.pg_storage and (not name or "[" not in (name or "")):
-                db_node = await self.data.pg_storage.query_node_by_id(nid)
-                db_name = self._make_display_name(db_node)
-                if db_name and (not name or len(db_name) > len(name)):
-                    name = db_name
-            return nid, name
+            node = await self.data.pg_storage.get_node_cached(nid)
+            return nid, self._make_display_name(node)
 
-        # Try as shortname/longname in memory
+        # Try as shortname, then longname
         search_lower = raw.lower()
-        found_nid = None
-        for node_id, node in self.data.nodes.items():
-            if (str(node.get("shortname", "")).lower() == search_lower or
-                    str(node.get("longname", "")).lower() == search_lower):
-                found_nid = node_id
-                break
-
-        # Try as shortname/longname in PostgreSQL
-        if found_nid is None and self.data.pg_storage:
-            results = await self.data.pg_storage.query_nodes_filtered(
-                days_limit=None, shortname_filter=search_lower,
-            )
-            if not results:
-                results = await self.data.pg_storage.query_nodes_filtered(
-                    days_limit=None, longname_filter=search_lower,
-                )
-            if results:
-                found_nid = next(iter(results.keys()))
-
-        if found_nid:
-            # Get best display name (memory then DB)
-            node = self.data.nodes.get(found_nid)
-            name = self._make_display_name(node)
-            if self.data.pg_storage and (not name or "[" not in (name or "")):
-                db_node = await self.data.pg_storage.query_node_by_id(found_nid)
-                db_name = self._make_display_name(db_node)
-                if db_name and (not name or len(db_name) > len(name)):
-                    name = db_name
-            return found_nid, name
+        node = await self.data.pg_storage.find_node_by_shortname(search_lower)
+        if node is None:
+            node = await self.data.pg_storage.find_node_by_longname(search_lower)
+        if node is not None:
+            return node.get('id'), self._make_display_name(node)
 
         return None, None
 
@@ -409,9 +352,7 @@ class AdminCommands(commands.Cog):
 
         lines = []
         for nid in nodes:
-            node = self.data.nodes.get(nid)
-            if not node and self.data.pg_storage:
-                node = await self.data.pg_storage.query_node_by_id(nid)
+            node = await self.data.pg_storage.get_node_cached(nid) if self.data.pg_storage else None
             name = self._make_display_name(node)
             lines.append(f"- {self._format_node_display(nid, name)}")
 
@@ -471,9 +412,7 @@ class AdminCommands(commands.Cog):
 
         lines = []
         for nid in nodes:
-            node = self.data.nodes.get(nid)
-            if not node and self.data.pg_storage:
-                node = await self.data.pg_storage.query_node_by_id(nid)
+            node = await self.data.pg_storage.get_node_cached(nid) if self.data.pg_storage else None
             name = self._make_display_name(node)
             lines.append(f"- {self._format_node_display(nid, name)}")
 
@@ -651,9 +590,7 @@ class AdminCommands(commands.Cog):
             track_type = t.get("track_type", "tracker")
             label = "Balloon" if track_type == "balloon" else "Tracker"
             # Resolve name
-            node = self.data.nodes.get(nid)
-            if not node and self.data.pg_storage:
-                node = await self.data.pg_storage.query_node_by_id(nid)
+            node = await self.data.pg_storage.get_node_cached(nid) if self.data.pg_storage else None
             name = self._make_display_name(node)
             display = self._format_node_display(nid, name)
             added_by = t.get("added_by", "")
@@ -684,9 +621,7 @@ class AdminCommands(commands.Cog):
             nid = b["node_id"]
             node_ids.append(nid)
             # Resolve name
-            node = self.data.nodes.get(nid)
-            if not node and self.data.pg_storage:
-                node = await self.data.pg_storage.query_node_by_id(nid)
+            node = await self.data.pg_storage.get_node_cached(nid) if self.data.pg_storage else None
             name = self._make_display_name(node)
             display = self._format_node_display(nid, name)
             reason = b.get("reason", "")

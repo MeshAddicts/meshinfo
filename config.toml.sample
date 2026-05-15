@@ -10,10 +10,6 @@ debug = false
 # PostgreSQL is the only supported storage backend.
 # ─────────────────────────────────────────────────────────────────────────────
 
-[storage]
-read_from = "postgres"
-write_to = ["postgres"]
-
 [storage.postgres]
 enabled = true
 host = "postgres"                     # use "localhost" if not using Docker

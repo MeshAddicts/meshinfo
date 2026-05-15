@@ -339,7 +339,7 @@ class MQTT:
                         if 'route' in j['payload']:
                             route = []
                             for r in j['payload']['route']:
-                                node = self.data.find_node_by_longname(r)
+                                node = await self.data.pg_storage.find_node_by_longname(r)
                                 if node is not None:
                                     id = node['id']
                                 else:
@@ -374,22 +374,16 @@ class MQTT:
         topic = msg['topic'] if 'topic' in msg else 'unknown'
         logger.debug("MQTT >> %s -- %s", topic, msg)
 
-        self.data.mqtt_messages.append(msg)
-
         clean_msg = msg.copy()
         clean_msg.pop("decoded", None)
         clean_msg.pop("encrypted", None)
 
-        self.data.messages.append(clean_msg)
-
-        # Real-time write to Postgres if enabled (raw MQTT log table)
-        if 'postgres' in self.config.get('storage', {}).get('write_to', []):
-            try:
-                await self.data.pg_storage.write_mqtt_message(clean_msg)
-            except Exception as e:
-                logger.error("Failed to write mqtt_message to postgres: %s", e)
-                if self.config.get('debug'):
-                    logger.debug("Postgres write traceback", exc_info=True)
+        try:
+            await self.data.pg_storage.write_mqtt_message(clean_msg)
+        except Exception as e:
+            logger.error("Failed to write mqtt_message to postgres: %s", e)
+            if self.config.get('debug'):
+                logger.debug("Postgres write traceback", exc_info=True)
 
 
     async def handle_neighborinfo(self, msg):
@@ -400,15 +394,13 @@ class MQTT:
             msg['sender'] = msg['sender'].replace('!', '')
 
         id = msg['from']
-        if id in self.data.nodes:
-            node = self.data.nodes[id]
-            node['neighborinfo'] = msg['payload']
-        else:
+        node = await self.data.pg_storage.get_node_cached(id)
+        if node is None:
             node = Node.default_node(id)
-            node['neighborinfo'] = msg['payload']
+        node['neighborinfo'] = msg['payload']
         if msg.get('sender'):
             node['gateway'] = msg['sender']
-        self.data.update_node(id, node)
+        await self.data.update_node(id, node)
         logger.debug("Node %s updated with neighborinfo", id)
         await self.data.save()
 
@@ -420,12 +412,12 @@ class MQTT:
             msg['sender'] = msg['sender'].replace('!', '')
 
         id = msg['payload']['id']
-        if id in self.data.nodes:
-            node = self.data.nodes[id]
-            logger.debug("Updating node %s", id)
-        else:
+        node = await self.data.pg_storage.get_node_cached(id)
+        if node is None:
             node = Node.default_node(id)
             logger.debug("Discovered node %s", id)
+        else:
+            logger.debug("Updating node %s", id)
 
         if 'hardware' in msg['payload']:
             node['hardware'] = msg['payload']['hardware']
@@ -453,9 +445,7 @@ class MQTT:
         if 'channel' in msg:
             node['last_channel'] = str(msg['channel'])
 
-        self.data.update_node(id, node)
-
-        self.sort_nodes_by_shortname()
+        await self.data.update_node(id, node)
         await self.data.save()
 
     async def handle_position(self, msg):
@@ -466,9 +456,8 @@ class MQTT:
             msg['sender'] = msg['sender'].replace('!', '')
 
         id = msg['from']
-        if id in self.data.nodes:
-            node = self.data.nodes[id]
-        else:
+        node = await self.data.pg_storage.get_node_cached(id)
+        if node is None:
             node = Node.default_node(id)
             logger.debug("Node %s skeleton added with position", id)
 
@@ -477,7 +466,7 @@ class MQTT:
         if 'channel' in msg:
             node['last_channel'] = str(msg['channel'])
 
-        self.data.update_node(id, node)
+        await self.data.update_node(id, node)
 
         # Emit event for Discord bridge
         try:
@@ -502,9 +491,8 @@ class MQTT:
         telemetry_type = msg.get('telemetry_type')
         payload = msg.get('payload')
 
-        if id in self.data.nodes:
-            node = self.data.nodes[id]
-        else:
+        node = await self.data.pg_storage.get_node_cached(id)
+        if node is None:
             node = Node.default_node(id)
 
         # Merge incoming telemetry into the node's existing telemetry dict
@@ -514,7 +502,6 @@ class MQTT:
             existing = node.get('telemetry')
             if existing is None or not isinstance(existing, dict):
                 existing = {}
-            # Merge: new fields overwrite, but fields not in this payload survive
             existing.update(payload)
             node['telemetry'] = existing
 
@@ -524,39 +511,21 @@ class MQTT:
         if 'channel' in msg:
             node['last_channel'] = str(msg['channel'])
 
-        self.data.update_node(id, node)
+        await self.data.update_node(id, node)
         logger.debug("Node %s updated with telemetry (variant=%s)", id, telemetry_type)
 
-        if id not in self.data.telemetry_by_node:
-            self.data.telemetry_by_node[id] = []
-
         if payload is not None:
-            self.data.telemetry.insert(0, msg)
-            self.data.telemetry_by_node[id].insert(0, msg)
-
-            # Real-time write to Postgres if enabled
-            if 'postgres' in self.config.get('storage', {}).get('write_to', []):
-                # Write to telemetry history table
-                await self.data.pg_storage.write_telemetry(id, msg)
-
-                # Update node_telemetry_current with variant-aware write.
-                # For JSONB variants (power_metrics, air_quality, etc.) this
-                # stores the payload in the correct JSONB column. For typed
-                # variants (device_metrics, environment_metrics) it updates
-                # the individual typed columns as before.
-                if self.data.pg_storage and self.data.pg_storage.pool:
-                    try:
-                        async with self.data.pg_storage.pool.acquire() as conn:
-                            await self.data.pg_storage._write_node_telemetry_current(
-                                conn, id, payload, telemetry_type=telemetry_type
-                            )
-                    except Exception as e:
-                        logger.error("Failed to update node_telemetry_current for node %s: %s", id, e)
-                else:
-                    logger.warning(
-                        "handle_telemetry: pg_storage or pool not available; "
-                        "skipping node_telemetry_current update for node %s", id
-                    )
+            await self.data.pg_storage.write_telemetry(id, msg)
+            # node_telemetry_current uses a variant-aware write so a device_metrics
+            # message doesn't NULL out environment_metrics columns and vice versa.
+            if self.data.pg_storage.pool:
+                try:
+                    async with self.data.pg_storage.pool.acquire() as conn:
+                        await self.data.pg_storage._write_node_telemetry_current(
+                            conn, id, payload, telemetry_type=telemetry_type
+                        )
+                except Exception as e:
+                    logger.error("Failed to update node_telemetry_current for node %s: %s", id, e)
 
         await self.data.save()
 
@@ -568,12 +537,6 @@ class MQTT:
             msg['sender'] = msg['sender'].replace('!', '')
         if 'channel' not in msg:
             msg['channel'] = "0"
-
-        if str(msg['channel']) not in self.data.chat['channels']:
-            self.data.chat['channels'][str(msg['channel'])] = {
-                'name': f'Channel {msg["channel"]}',
-                'messages': []
-            }
 
         chat = {
             'id': msg['id'],
@@ -588,19 +551,16 @@ class MQTT:
         }
         if 'sender' in msg:
             chat['sender'] = msg['sender']
-        self.data.chat['channels'][str(msg['channel'])]['messages'].insert(0, chat)
-        
-        # Real-time write to Postgres if enabled
-        if 'postgres' in self.config.get('storage', {}).get('write_to', []):
-            await self.data.pg_storage.write_chat_message(chat['from'], chat)
 
-        node = self.data.find_node_by_hex_id(msg['from'])
+        await self.data.pg_storage.write_chat_message(chat['from'], chat)
+
+        node = await self.data.pg_storage.get_node_cached(msg['from'])
         # TODO: Replace with something more configurable
         if node:
             if 'TC' in chat['text'] and 'BBS' in chat['text'] and 'Commands' in chat['text']:
                 node['tc2_bbs'] = True
             node['last_channel'] = str(msg['channel'])
-            self.data.update_node(node['id'], node)
+            await self.data.update_node(node['id'], node)
 
         # Emit event for Discord bridge
         try:
@@ -624,9 +584,9 @@ class MQTT:
         msg['route_ids'] = []
         for r in msg['route']:
             if isinstance(r, str):
-                node = self.data.find_node_by_longname(r)
+                node = await self.data.pg_storage.find_node_by_longname(r)
             elif isinstance(r, int):
-                node = self.data.find_node_by_hex_id(utils.convert_node_id_from_int_to_hex(r))
+                node = await self.data.pg_storage.get_node_cached(utils.convert_node_id_from_int_to_hex(r))
             else:
                 node = None
 
@@ -636,42 +596,14 @@ class MQTT:
                 msg['route_ids'].append(r)
 
         id = msg['from']
-        if id in self.data.traceroutes_by_node:
-            self.data.traceroutes_by_node[id].insert(0, msg)
-        else:
-            self.data.traceroutes_by_node[id] = [msg]
-        self.data.traceroutes.insert(0, msg)
-        
-        # Real-time write to Postgres if enabled
-        if 'postgres' in self.config.get('storage', {}).get('write_to', []):
-            await self.data.pg_storage.write_traceroute(id, msg)
-        
+        await self.data.pg_storage.write_traceroute(id, msg)
+
         await self.data.save()
 
     ### helpers
 
-    # TODO: where should this really live?
     async def prune_expired_nodes(self):
-        now = datetime.datetime.now(ZoneInfo(self.config['server']['timezone']))
-        ids_to_delete: list[str] = []
-        for id, node in self.data.nodes.items():
-            if node['last_seen'] is None:
-                ids_to_delete.append(node['id'])
-                continue
-            last_seen = datetime.datetime.fromisoformat(node['last_seen']).astimezone() if isinstance(node['last_seen'], str) else node['last_seen']
-            try:
-                since = (now - last_seen).seconds
-            except Exception:
-                logger.warning("Node %s has invalid last_seen: %s", id, node['last_seen'])
-                self.data.nodes[id]['last_seen'] = None
-                self.data.nodes[id]['active'] = False
-            if node['active'] and since >= self.config['server']['node_activity_prune_threshold']:
-                ids_to_delete.append(node['id'])
-                logger.debug("Node %s pruned (last heard %d seconds ago)", id, since)
-
-        for id in ids_to_delete:
-            self.data.nodes[id]['active'] = False
-
-    # TODO: where should this really live?
-    def sort_nodes_by_shortname(self):
-        self.data.nodes = dict(sorted(self.data.nodes.items(), key=lambda item: item[1]["shortname"]))
+        threshold = self.config['server']['node_activity_prune_threshold']
+        pruned = await self.data.pg_storage.mark_nodes_inactive_by_age(threshold)
+        if pruned:
+            logger.debug("Pruned %d node(s) inactive for >= %ds", pruned, threshold)

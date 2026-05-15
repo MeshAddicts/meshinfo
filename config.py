@@ -117,8 +117,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         },
     },
     "storage": {
-        "read_from": "postgres",
-        "write_to": ["postgres"],
         "postgres": {
             "enabled": False,
             "host": "postgres",
@@ -419,42 +417,8 @@ def validate(config: dict) -> list[str]:
 
     # ── storage section ───────────────────────────────────────────────
     check(_validate_type(config, "storage", dict))
-    check(_validate_type(config, "storage.write_to", list))
 
     storage_cfg = config.get("storage", {})
-    read_from = storage_cfg.get("read_from", "postgres")
-
-    if "write_to" not in storage_cfg:
-        raise ConfigValidationError(
-            "storage.write_to is required. "
-            "Set write_to = ['postgres'] under [storage] in your config.toml."
-        )
-    write_to = storage_cfg["write_to"]
-    if not isinstance(write_to, list) or not write_to:
-        raise ConfigValidationError(
-            "storage.write_to must be a non-empty list containing 'postgres'. "
-            "Set write_to = ['postgres'] under [storage] in your config.toml."
-        )
-    write_to_list = write_to
-
-    if "postgres" not in write_to_list:
-        raise ConfigValidationError(
-            "storage.write_to must include 'postgres'. "
-            "Use write_to = ['postgres'] in your config.toml."
-        )
-
-    if read_from != "postgres":
-        raise ConfigValidationError(
-            f"storage.read_from = {read_from!r} is no longer supported. "
-            "JSON storage has been removed. Set read_from = 'postgres' in your config.toml."
-        )
-
-    for target in write_to_list:
-        if target != "postgres":
-            raise ConfigValidationError(
-                f"Storage write target {target!r} is no longer supported. "
-                "JSON storage has been removed. Use write_to = ['postgres'] in your config.toml."
-            )
 
     # ── PostgreSQL required ────────────────────────────────────────────
     pg_cfg = storage_cfg.get("postgres", {})
@@ -543,11 +507,9 @@ class Config:
             pass
 
         logger.info(
-            "Config loaded: mesh=%r, broker_enabled=%s, storage_read=%s, storage_write=%s",
+            "Config loaded: mesh=%r, broker_enabled=%s",
             config["mesh"]["name"],
             config["broker"]["enabled"],
-            config["storage"]["read_from"],
-            config["storage"]["write_to"],
         )
 
         return config

@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from bot.cogs.main_commands import MainCommands
 from bot.cogs.admin_commands import AdminCommands
 from bot.cogs.mesh_bridge import MeshBridge
-from memory_data_store import MemoryDataStore
+from data_store import DataStore
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ class DiscordBot(commands.Bot):
         self,
         *args,
         config: dict,
-        data: MemoryDataStore,
+        data: DataStore,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
