@@ -25,6 +25,12 @@ _PROVIDER_PRESETS: dict = {
 
 # Throttle within a single provider's batch so we don't hammer the upstream API.
 _PER_REQUEST_DELAY_SEC = 0.1
+# Per-request HTTP timeout. Without this, aiohttp can wait minutes on a hung TCP
+# connection, leaving thousands of unknowns queued behind a dead upstream.
+_REQUEST_TIMEOUT_SEC = 10.0
+# Circuit breaker: stop hammering a provider after this many consecutive failures
+# within a single cycle. Resets next cycle. Keeps the per-cycle summary log timely.
+_PROVIDER_FAIL_THRESHOLD = 10
 
 
 def _resolve_providers(config) -> list:
@@ -192,37 +198,86 @@ class DataStore:
       logger.debug("No enrichment providers configured")
       return
     pending: set = set(node_to_enrich.keys())
-    async with aiohttp.ClientSession() as session:
+    timeout = aiohttp.ClientTimeout(total=_REQUEST_TIMEOUT_SEC)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
       for prov in providers:
         if not pending:
           break
-        named = await self._enrich_via_provider(session, prov, sorted(pending))
-        if named:
-          logger.info("%s: enriched %d/%d unknown name(s)", prov["name"], len(named), len(pending))
+        before_count = len(pending)
+        result = await self._enrich_via_provider(session, prov, sorted(pending))
+        # One log line per provider per cycle. WARNING if the provider looks
+        # unreachable (0/N or circuit-breaker aborted), INFO otherwise — including
+        # the case where the provider responded but didn't know any of our nodes.
+        attempted = result["attempted"]
+        succeeded = result["succeeded"]
+        named = result["named"]
+        aborted = result["aborted"]
+        if attempted > 0 and succeeded == 0:
+          logger.warning(
+            "%s: 0/%d requests succeeded — upstream may be unreachable",
+            prov["name"], attempted,
+          )
+        elif aborted:
+          logger.warning(
+            "%s: aborted after %d consecutive failures; named %d of %d (cycle %d/%d)",
+            prov["name"], _PROVIDER_FAIL_THRESHOLD, len(named), before_count, succeeded, attempted,
+          )
+        elif succeeded < attempted:
+          logger.info(
+            "%s: named %d of %d node(s); %d/%d requests succeeded",
+            prov["name"], len(named), before_count, succeeded, attempted,
+          )
+        elif attempted > 0:
+          logger.info(
+            "%s: named %d of %d node(s)",
+            prov["name"], len(named), before_count,
+          )
         pending -= named
     if pending:
       logger.debug("After all providers, %d node(s) remain unnamed", len(pending))
 
-  async def _enrich_via_provider(self, session, prov: dict, node_ids: list) -> set:
-    """Query a single provider for the given ids; return ids it could name."""
+  async def _enrich_via_provider(self, session, prov: dict, node_ids: list) -> dict:
+    """Query one provider for the given ids; return an outcome summary.
+
+    Returns dict with four fields:
+      - named:     set of node ids we actually wrote enriched names for
+      - attempted: total HTTP requests issued
+      - succeeded: requests that returned HTTP 200 (regardless of body content)
+      - aborted:   True if circuit breaker tripped (provider looks fully down)
+    enrich_nodes uses these to choose between INFO summary vs unreachable WARNING.
+    """
     named: set = set()
+    attempted = 0
+    succeeded = 0
+    consecutive_failures = 0
+    aborted = False
     if prov["single_id_per_request"]:
       # bayme.sh's API only accepts one id per call. Pace requests so we don't hammer it.
       for node_id in node_ids:
+        attempted += 1
         data = await self._fetch_provider(session, prov, [node_id])
-        if data:
+        if data is not None:
+          succeeded += 1
+          consecutive_failures = 0
           for nid, info in data.items():
             if await self._apply_enrichment(nid, info):
               named.add(nid)
+        else:
+          consecutive_failures += 1
+          if consecutive_failures >= _PROVIDER_FAIL_THRESHOLD:
+            aborted = True
+            break
         await asyncio.sleep(_PER_REQUEST_DELAY_SEC)
     else:
       # Generic MeshInfo-instance template — comma-join the ids into one call.
+      attempted = 1
       data = await self._fetch_provider(session, prov, node_ids)
-      if data:
+      if data is not None:
+        succeeded = 1
         for nid, info in data.items():
           if await self._apply_enrichment(nid, info):
             named.add(nid)
-    return named
+    return {"named": named, "attempted": attempted, "succeeded": succeeded, "aborted": aborted}
 
   async def _fetch_provider(self, session, prov: dict, ids: list) -> dict | None:
     """One GET against `prov`. Returns the parsed JSON dict, or None on any failure."""
