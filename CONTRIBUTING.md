@@ -7,8 +7,8 @@ Thanks for your interest in contributing! MeshInfo is open source under the [GPL
 ### Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
-- Python 3.12.4+ (for backend development without Docker)
-- Node.js 20.19+ and Yarn 4 (for frontend development)
+- Python 3.14+ (for backend development without Docker)
+- Node.js 22+ and Yarn 4 via Corepack (for frontend development)
 - A running PostgreSQL 16 instance (Docker Compose provides one)
 
 ### Development Setup
@@ -110,7 +110,7 @@ meshinfo/
 
 - Built with **React 19**, **TypeScript**, **Vite**, and **Tailwind CSS**
 - State management uses **Redux Toolkit**
-- Maps support both **OpenLayers** (OSM) and **Mapbox GL**
+- Maps use **MapLibre GL** with OpenStreetMap (default) or Mapbox tiles
 - Run `yarn dev` for hot-reload development
 - Run `yarn build` to create a production build
 - Run `yarn test` to run the test suite
