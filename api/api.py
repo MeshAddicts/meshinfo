@@ -66,12 +66,13 @@ class API:
         @app.get("/v1/nodes")
         async def nodes(request: Request) -> JSONResponse:
             days_to_limit = 7
-            if "days" in request.query_params.keys():
-                days_param: str|None = request.query_params.get("days")
-                if days_param is not None:
+            days_param = request.query_params.get("days")
+            if days_param is not None:
+                try:
                     days_to_limit = int(days_param)
-            if days_to_limit < 1:
-                days_to_limit = 1
+                except ValueError:
+                    return JSONResponse({"error": "days must be an integer"}, status_code=400)
+            days_to_limit = max(1, days_to_limit)
 
             node_ids = None
             if "ids" in request.query_params.keys():
@@ -218,7 +219,10 @@ class API:
         async def messages(request: Request) -> JSONResponse:
             search = request.query_params.get("q")
             range_seconds = self._parse_range(request.query_params.get("range"))
-            limit = int(request.query_params.get("limit", 5000))
+            try:
+                limit = int(request.query_params.get("limit", 5000))
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "limit must be an integer"}, status_code=400)
             limit = max(1, min(limit, 50000))
             results = await self.data.pg_storage.query_mqtt_messages(
                 limit=limit, search=search, range_seconds=range_seconds,
@@ -228,7 +232,10 @@ class API:
         @app.get("/v1/mqtt_messages")
         async def mqtt_messages(request: Request) -> JSONResponse:
             range_seconds = self._parse_range(request.query_params.get("range"))
-            limit = int(request.query_params.get("limit", 5000))
+            try:
+                limit = int(request.query_params.get("limit", 5000))
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "limit must be an integer"}, status_code=400)
             limit = max(1, min(limit, 50000))
             results = await self.data.pg_storage.query_mqtt_messages(
                 limit=limit, range_seconds=range_seconds,
@@ -243,17 +250,20 @@ class API:
         @app.get("/v1/static-map")
         async def static_map(request: Request) -> Response:
             """Generate a static map PNG image for given coordinates."""
+            lat_param = request.query_params.get("lat")
+            lon_param = request.query_params.get("lon")
+            # Require explicit lat/lon — defaulting to 0 then rejecting (0,0)
+            # incorrectly bounced legitimate Null Island / Gulf of Guinea coords.
+            if lat_param is None or lon_param is None:
+                return JSONResponse({"error": "lat and lon are required"}, status_code=400)
             try:
-                lat = float(request.query_params.get("lat", 0))
-                lon = float(request.query_params.get("lon", 0))
+                lat = float(lat_param)
+                lon = float(lon_param)
                 zoom = int(request.query_params.get("zoom", 12))
                 width = int(request.query_params.get("width", 300))
                 height = int(request.query_params.get("height", 200))
             except (ValueError, TypeError):
                 return JSONResponse({"error": "Invalid parameters"}, status_code=400)
-
-            if lat == 0 and lon == 0:
-                return JSONResponse({"error": "lat and lon are required"}, status_code=400)
 
             zoom = max(1, min(zoom, 18))
             width = max(100, min(width, 800))
@@ -334,17 +344,25 @@ class API:
                     tile_dir,
                 )
 
-        allow_origins = os.getenv("ALLOW_ORIGINS", "").split(",")
-        logger.info("Allowed origins: %s (%d)", allow_origins, len(allow_origins))
+        # Empty ALLOW_ORIGINS → don't install the middleware at all (was installed
+        # with [""] before, which is a deny-all that looked configured). Also strip
+        # stray quote chars: docker-compose YAML sometimes wraps values in quotes,
+        # producing `'"*"'` at runtime — neither a valid origin nor the wildcard.
+        raw_origins = os.getenv("ALLOW_ORIGINS", "")
+        allow_origins = [o.strip().strip('"').strip("'") for o in raw_origins.split(",")]
+        allow_origins = [o for o in allow_origins if o]
 
-        if(len(allow_origins) > 0):
+        if allow_origins:
+            logger.info("Allowed origins: %s (%d)", allow_origins, len(allow_origins))
             app.add_middleware(
                 CORSMiddleware,
                 allow_origins=allow_origins,
                 allow_credentials=True,
                 allow_methods=["*"],
-                allow_headers=["*"]
+                allow_headers=["*"],
             )
+        else:
+            logger.info("ALLOW_ORIGINS not set — CORS middleware disabled")
 
         conf = uvicorn.Config(app=app, host="0.0.0.0", port=9000, loop="asyncio", log_config=None)
         server = uvicorn.Server(conf)
