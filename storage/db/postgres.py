@@ -86,14 +86,13 @@ class PostgresStorage:
         # Optional: enable to make migrations "honest" (fail fast / count failures correctly)
         self.raise_on_write_error = bool(self.pg_config.get("raise_on_write_error", False))
 
-        # LRU node cache. Stores live refs so read-modify-write callers update
-        # the cache directly; pair mutations with cache_node_set after a write.
+        # LRU node cache holding live refs — callers read-modify-write directly
+        # and pair the mutation with cache_node_set on a successful DB write.
         self._node_lru: "OrderedDict[str, dict]" = OrderedDict()
         self._node_lru_max = max(1, int(self.pg_config.get("node_cache_size", 10000)))
 
-        # Background task ref for _backfill_mqtt_node_ids; tracked so close()
-        # can cancel it before tearing down the pool (otherwise it errors with
-        # "InterfaceError: pool is closing" mid-batch).
+        # Tracked so close() can cancel before tearing down the pool (otherwise
+        # this task errors mid-batch with "InterfaceError: pool is closing").
         self._backfill_task: Optional[asyncio.Task] = None
 
     async def connect(self) -> bool:
@@ -118,8 +117,7 @@ class PostgresStorage:
                 database=self.pg_config.get("database", "meshinfo"),
                 user=self.pg_config.get("username", "postgres"),
                 password=self.pg_config.get("password", "password"),
-                # Fallbacks aligned with DEFAULT_CONFIG and config.toml.sample (1/5).
-                # Operators should tune via storage.postgres.{min,max}_pool_size.
+                # Tune via storage.postgres.{min,max}_pool_size.
                 min_size=self.pg_config.get("min_pool_size", 1),
                 max_size=self.pg_config.get("max_pool_size", 5),
                 command_timeout=10,
@@ -140,9 +138,7 @@ class PostgresStorage:
             try:
                 await asyncio.wait_for(self._backfill_task, timeout=5.0)
             except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
-                # Best-effort wait; the task itself logs on real errors and we're
-                # already on the shutdown path. Don't block shutdown on it.
-                pass
+                pass  # best-effort; shutdown shouldn't block on this
         self._backfill_task = None
 
         if self.pool is not None:
@@ -157,9 +153,7 @@ class PostgresStorage:
         if not self.enabled or not self.pool:
             return
 
-        # Resolve schema.sql relative to this file rather than the CWD — the
-        # previous open("postgres/sql/schema.sql") only worked when the process
-        # was launched from the repo root.
+        # Resolve relative to this file so we don't depend on CWD.
         schema_path = Path(__file__).resolve().parents[2] / "postgres" / "sql" / "schema.sql"
         try:
             schema_sql = schema_path.read_text(encoding="utf-8")
@@ -265,8 +259,7 @@ class PostgresStorage:
         except Exception as e:
             logger.warning(f"MQTT node-ID trigger setup skipped: {e}")
 
-        # Backfill existing rows in the background — don't block startup.
-        # Stash the task ref so close() can cancel cleanly during shutdown.
+        # Don't block startup; close() cancels via self._backfill_task on shutdown.
         self._backfill_task = asyncio.create_task(self._backfill_mqtt_node_ids())
 
     async def _backfill_mqtt_node_ids(self):
@@ -1207,10 +1200,6 @@ class PostgresStorage:
             logger.error("Failed to query node mqtt_messages: %s", e)
             return []
 
-    # NOTE: The load_nodes / load_chat / load_telemetry / load_traceroutes bulk
-    # readers were removed in the in-memory→Postgres refactor cleanup. Callers
-    # use direct query methods further down (query_nodes_filtered, etc.).
-
     # ============================================================================
     # DIRECT QUERY OPERATIONS - For API endpoints when reading from Postgres
     # ============================================================================
@@ -1395,20 +1384,13 @@ class PostgresStorage:
         self._node_lru.clear()
 
     async def get_node_cached(self, node_id: str) -> Optional[Dict[str, Any]]:
-        """Get a single node, hitting LRU cache first then PostgreSQL.
+        """Single node from LRU cache then DB.
 
-        Returns the LIVE cache reference (not a copy). The MQTT handlers depend
-        on this for the read-mutate-write pattern:
-
-            node = await pg.get_node_cached(id)
-            node['field'] = value
-            await data.update_node(id, node)  # writes + refreshes cache
-
-        Concurrent handlers for the same node id may interleave at await points
-        and end up merging each other's mutations into the shared dict — that
-        is the intended behaviour (position + telemetry updates on disjoint
-        fields naturally accumulate). If you need an isolated snapshot, copy
-        the result yourself at the call site.
+        Returns the **live** cache reference (not a copy). MQTT handlers do
+        read-mutate-write directly; concurrent handlers for the same id may
+        interleave at await points and merge their changes — intended for
+        disjoint-field updates like position vs telemetry. Snapshot at the
+        call site if you need isolation.
         """
         cached = self._node_lru.get(node_id)
         if cached is not None:
@@ -1456,9 +1438,8 @@ class PostgresStorage:
     async def find_nodes_needing_enrichment(self, limit: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
         """Return nodes whose name fields look unenriched (Unknown/UNK or NULL).
 
-        Pass limit=None (default) for all matching rows — enrichment paces itself
-        per-request to avoid hammering upstreams, so the cap should no longer be a
-        client-side concern. Pass an int to cap if needed.
+        limit=None returns every match — enrichment paces requests itself, so the
+        client-side cap is rarely needed. Pass an int to cap.
         """
         if not self._ready("find_nodes_needing_enrichment"):
             return {}

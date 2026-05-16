@@ -7,12 +7,8 @@ import {
   useState,
 } from "react";
 
-/**
- * Shared time-tick provider so virtualized lists don't have to pass `currentDate`
- * down as a prop. When the tick changes, only components that actually subscribe
- * to this context (via useTimeTicker) re-render — sibling props on memoized rows
- * stay stable and React skips the row entirely.
- */
+/** Tick provider for virtualized lists: only useTimeTicker subscribers re-render
+ *  on each tick, so memoized sibling rows can be skipped by React. */
 const TimeTickerContext = createContext<Date>(new Date());
 
 export function TimeTickerProvider({

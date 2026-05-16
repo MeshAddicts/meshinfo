@@ -42,8 +42,7 @@ services:
     ports:
       - 9000:9000
     restart: unless-stopped
-    # Wait for Postgres to actually be ready (its healthcheck is already wired
-    # above) — `depends_on: <list>` only waits for container start, not readiness.
+    # Wait for Postgres readiness, not just container start.
     depends_on:
       postgres:
         condition: service_healthy

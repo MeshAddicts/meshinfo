@@ -1,8 +1,7 @@
 """
-Tests for data_store._resolve_providers — the config-to-runtime mapping that
-backs the Group K multi-provider enrichment refactor. Covers preset lookup,
-legacy single-string back-compat, URL templates, and graceful handling of the
-dead `world.meshinfo.network` config that's still in many operators' configs.
+Tests for data_store._resolve_providers — preset lookup, legacy single-string
+back-compat, URL templates, and graceful handling of the dead
+'world.meshinfo.network' value still present in many operator configs.
 """
 
 import sys

@@ -1,8 +1,6 @@
 import datetime
 
-# The "since" default exists only so callers don't crash when reading the field
-# before update_node has set the real value. The real value is set in
-# data_store.update_node:65 (now_local - last_seen) on the first packet.
+# Placeholder; the real 'since' is set on the first packet via update_node.
 _ZERO_DELTA = datetime.timedelta(0)
 
 

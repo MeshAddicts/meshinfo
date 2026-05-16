@@ -29,11 +29,10 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "25"
-      # Corepack picks up the yarn version from frontend/package.json `packageManager` field.
+      # Corepack picks the yarn version up from frontend/package.json `packageManager`.
       - run: corepack enable
       - run: yarn install
       - run: yarn tsc --noEmit
       - run: yarn test
-      # Production bundle check — catches issues vitest doesn't (asset paths,
-      # dynamic imports, rollup tree-shake). Replaces the now-deleted ci.yml.
+      # Production bundle — catches asset/dynamic-import issues vitest doesn't.
       - run: yarn build

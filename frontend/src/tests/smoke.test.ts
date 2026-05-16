@@ -1,17 +1,12 @@
 /**
- * Antimeridian regression for the Group E1 tile-fetch fix.
+ * Antimeridian regression for the tile fetchers. demBoundsAround can produce
+ * longitudes outside [-180, 180] near ±180°; the fetch loop must wrap x to a
+ * canonical [0, 2^zoom) index so URLs are valid and the lookup (which also
+ * wraps via modulo) finds the tile it expects.
  *
- * demBoundsAround(origin, radius) produces longitudes outside [-180, 180]
- * when the origin is near ±180° (e.g. west=179.5, east=180.5). Before the
- * fix, the fetcher iterated absolute tile-x indices and hit URLs like
- * `/tiles/landcover/4/16/y.png` (x out of range → 404). The lookup wraps
- * via modulo, so it then searched for the wrapped tile that was never
- * fetched, and the east-of-seam half of the raster came back empty.
- *
- * Same wrap logic now lives in landcoverTiles, canopyTiles, buildingTiles,
- * and terrainRgb. Test all three of the tile-only fetchers here in one
- * cross-cutting place; if any drifts back to unwrapped iteration, this
- * file fails before the regression ships.
+ * Cross-cutting because the same wrap pattern lives in landcoverTiles,
+ * canopyTiles, buildingTiles, and terrainRgb (Tilezen path); if any drifts
+ * back to unwrapped iteration this file catches it.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -24,13 +19,9 @@ import { buildDemFromTilezen } from "../pages/map/terrainRgb";
 // Antimeridian-crossing bbox produced by demBoundsAround(origin=[180, 0], radiusKm=50).
 const STRADDLE_BOUNDS: DEMBounds = { west: 179.5, east: 180.5, south: -0.5, north: 0.5 };
 
-/**
- * Stub global fetch and record every (z, x, y) tuple that the fetcher asks for.
- * Returns 404 so the caller falls through to the "missing tile" path without
- * touching the canvas decoder (jsdom has no OffscreenCanvas). Matches both the
- * baked-tile URL shape (`/tiles/<layer>/{z}/{x}/{y}.png`) and the external
- * Tilezen CDN shape (`.../{z}/{x}/{y}.png`).
- */
+/** Stub fetch and record requested (z, x, y) tuples. Returns 404 so the caller
+ *  takes the "missing tile" path without needing OffscreenCanvas (absent under jsdom).
+ *  Regex matches both `/tiles/<layer>/{z}/{x}/{y}.png` and Tilezen CDN URLs. */
 function captureFetchedTileCoords() {
   const requests: Array<{ z: number; x: number; y: number }> = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any) => {
@@ -98,19 +89,15 @@ describe("Antimeridian: tile fetchers wrap x into [0, 2^zoom)", () => {
   });
 
   it("tilezen DEM bbox crossing ±180", async () => {
-    // Tilezen is the primary terrain source (see project_coverage_terrain_accuracy_options).
-    // The Mapbox-fallback path is exercised by the production buildDem(); the Tilezen
-    // path is what most users actually hit, and it shipped its wrap separately from the
-    // tile-bake files.
+    // All-404 here makes buildDemFromTilezen throw (>50% failure); the throw
+    // is fine — we just need to inspect the URLs requested before it bailed.
     const requests = captureFetchedTileCoords();
-    // All-404 path: buildDemFromTilezen throws (>50% failure) — that's expected; we
-    // just need to verify the URLs it issued before throwing were canonical.
     await expect(
       buildDemFromTilezen({
         bounds: STRADDLE_BOUNDS,
         targetWidth: 32,
         targetHeight: 32,
-        token: "", // Tilezen path doesn't use the Mapbox token; satisfy the typing.
+        token: "", // unused on the Tilezen path; satisfies the typing
       }),
     ).rejects.toThrow();
     assertAllInRange(requests);
@@ -119,9 +106,8 @@ describe("Antimeridian: tile fetchers wrap x into [0, 2^zoom)", () => {
   it("dedupes repeated wrapped tiles when the bbox spans > 360° at low zoom", async () => {
     _resetLandcoverCacheForTests();
     const requests = captureFetchedTileCoords();
-    // 720° span at low detail forces the same wrapped tile to appear twice in
-    // the un-wrapped x range; the dedupe `if (tileMap.has(key)) continue` skip
-    // should ensure no fetch URL appears more than once per (z, x, y) tuple.
+    // A 720° span produces the same wrapped tile twice in the un-wrapped x range;
+    // the sync pre-seed + dedupe should fire so each (z, x, y) is fetched once.
     await buildClutterRaster({
       bounds: { west: -180, east: 540, south: -10, north: 10 },
       targetWidth: 16,

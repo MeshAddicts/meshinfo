@@ -1,12 +1,10 @@
-# Build artifacts + repo metadata that don't belong in the image.
+# Build artifacts + repo metadata.
 .git
 .github
 .venv
 .vscode
 .pytest_cache
-# Globstar form so the rule applies at any depth — bare `__pycache__` only
-# matches the top level under classic builder; BuildKit treats it recursively
-# but pin explicitly to avoid drift.
+# Globstar so the rule applies at any depth (classic builder needs it explicit).
 **/__pycache__
 **/*.pyc
 
@@ -17,11 +15,10 @@ postgres
 config.toml
 mosquitto/data
 
-# Docs — don't ship in the backend image (the README/etc. live in the repo).
+# Docs aren't needed at runtime.
 *.md
 docs
 
-# Smoke tests aren't useful inside the container.
 tests
 
 # Host node_modules would clobber the container install and drop .bin shims.

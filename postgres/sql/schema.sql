@@ -1,5 +1,4 @@
--- Postgres schema for MeshInfo. Postgres is the sole storage backend; the
--- former JSON-file layout was retired in the 2026-05 in-memory→Postgres refactor.
+-- Postgres schema for MeshInfo. Postgres is the sole storage backend.
 
 -- Nodes table - stores basic node information
 CREATE TABLE IF NOT EXISTS nodes (

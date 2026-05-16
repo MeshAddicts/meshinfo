@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-// Static base classes Tailwind JIT can see literally. Size is applied via inline
-// style because `w-${size}` is a runtime string the JIT scanner cannot tokenize,
-// which previously left avatars unsized in production builds.
+// Size is applied via inline style — `w-${size}` is a runtime string Tailwind's
+// JIT scanner can't tokenize, so it'd leave avatars unsized in prod builds.
 const BASE_CLASSES = "object-cover";
 
 export const Avatar = ({
@@ -19,7 +18,7 @@ export const Avatar = ({
     [className],
   );
 
-  // size is in Tailwind spacing units (default --spacing = 0.25rem).
+  // size matches Tailwind's --spacing (0.25rem default).
   const sizeStyle = useMemo(
     () => ({ width: `${size * 0.25}rem`, height: `${size * 0.25}rem` }),
     [size],
@@ -28,8 +27,7 @@ export const Avatar = ({
   const [showBroken, setShowBroken] = useState(false);
   const timerRef = useRef<number | null>(null);
 
-  // Clear any pending broken-state timer if the component unmounts (rows in
-  // Virtuoso mount/unmount frequently while scrolling).
+  // Virtuoso rows mount/unmount frequently; cancel a pending broken-state timer.
   useEffect(() => {
     return () => {
       if (timerRef.current != null) {
@@ -41,8 +39,7 @@ export const Avatar = ({
 
   const handleError = () => {
     setShowBroken(true);
-    // Reset any previous in-flight timer so we don't race (onError can fire
-    // more than once for the same img element).
+    // onError can fire more than once for the same img; reset to avoid racing.
     if (timerRef.current != null) {
       window.clearTimeout(timerRef.current);
     }

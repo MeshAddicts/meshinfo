@@ -1,6 +1,4 @@
-# Pinned to current-major ranges so transitive breakage doesn't silently land
-# on `docker build`. Bake-script requirements (scripts/requirements-*.txt) follow
-# the same style. Refresh after testing a major bump.
+# Pinned to current-major ranges; refresh after testing a major bump.
 aiomqtt>=2.5,<3
 aiohttp>=3.13,<4
 scipy>=1.17,<2

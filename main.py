@@ -76,11 +76,7 @@ PRUNE_INTERVAL_SEC = 60.0
 
 
 async def prune_loop(config, data, interval_seconds: float = PRUNE_INTERVAL_SEC) -> None:
-    """Periodically mark nodes inactive past the activity threshold.
-
-    Previously this ran inside every MQTT message handler (one bulk UPDATE per packet).
-    Under load that's pure waste; activity windows are measured in days, not packets.
-    """
+    """Periodically mark nodes inactive past the activity threshold."""
     threshold = config['server']['node_activity_prune_threshold']
     while True:
         try:
@@ -99,11 +95,7 @@ ENRICHMENT_JITTER_FRAC = 0.1
 
 async def enrichment_loop(config, data) -> None:
     """Periodically backfill node names/hardware from external enrichment APIs.
-
-    Replaces the per-packet `data.save()` tick that previously gated enrichment.
-    Sleeps `interval ± 10%` between cycles so multiple MeshInfo deployments
-    pointed at the same provider don't synchronize their hits.
-    """
+    ±10% jitter on the sleep so multiple deployments don't hit the same provider in lockstep."""
     interval = float(config['server']['enrich'].get('interval', 600))
     while True:
         try:
@@ -212,12 +204,10 @@ async def main() -> None:
     else:
         logger.info("MQTT disabled in config")
 
-    # Periodic node-activity prune (replaces the per-packet UPDATE that used to fire from MQTT handlers).
     background_tasks.append(
         asyncio.create_task(supervise("Prune", lambda: prune_loop(config, data)))
     )
 
-    # Periodic enrichment backfill (replaces the per-packet data.save() that used to gate it).
     if config['server'].get('enrich', {}).get('enabled'):
         background_tasks.append(
             asyncio.create_task(supervise("Enrichment", lambda: enrichment_loop(config, data)))

@@ -195,19 +195,15 @@ export async function buildClutterRaster(
 
   const tileMap = new Map<string, CachedLandcoverTile>();
   const jobs: Promise<void>[] = [];
-  // Antimeridian: when demBoundsAround() straddles ±180 it produces west/east
-  // outside [-180, 180], so xMin/xMax can be < 0 or >= scale. Wrap each absolute
-  // x to a canonical [0, scale) fetch index — the stitching lookup applies the
-  // same wrap, so both sides agree. Without this, the fetch URLs 404 and the
-  // east-of-seam half of the raster reads as out-of-data.
-  // Pre-seed the tileMap synchronously so the dedupe check sees in-flight tiles
-  // (the .then() that writes the real value runs much later, so a plain
-  // `if (tileMap.has(key))` would never skip anything within one call).
+  // Antimeridian: bbox may straddle ±180 (xMin/xMax outside [0, scale)). Wrap
+  // each absolute x to a canonical fetch index so URLs stay valid; the lookup
+  // applies the same wrap. Pre-seed the map synchronously — the .then() that
+  // writes the real value runs later, so the dedupe check needs the placeholder.
   for (let x = xMin; x <= xMax; x++) {
     const fetchX = ((x % scale) + scale) % scale;
     for (let y = yMin; y <= yMax; y++) {
       const key = `${zoom}/${fetchX}/${y}`;
-      if (tileMap.has(key)) continue; // dedupe if the bbox spans > 360° at this zoom
+      if (tileMap.has(key)) continue;
       tileMap.set(key, TILE_MISSING);
       jobs.push(
         fetchLandcoverTile(zoom, fetchX, y)

@@ -1,10 +1,7 @@
 """
-Behavioral tests for the MQTT handlers.
-
-Focus: the Group A defensive guards that prevent "Unknown" nodes from sticking.
-A malformed NODEINFO used to crash the handler, propagate up through the aiomqtt
-message loop, kill the connection, and drop other in-flight messages during the
-supervisor reconnect window. These tests pin that hardening down.
+Behavioral tests for the MQTT handlers — pin down the defensive guards that
+prevent a malformed packet from crashing the handler and killing the MQTT
+loop (which would drop other in-flight messages including corrective NODEINFOs).
 """
 
 import asyncio
@@ -16,11 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from mqtt import MQTT, _normalize_node_id
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Fakes — minimal stand-ins for PgStorage / DataStore that record interactions
-# instead of touching the network or a real database. Kept inline so the test
-# file is self-contained.
-# ─────────────────────────────────────────────────────────────────────────────
+# Inline fakes: record interactions without touching the network or a real DB.
 
 
 class FakePgStorage:
@@ -118,8 +111,8 @@ class TestHandleNodeinfo:
         assert node["role"] == 0  # default when not provided
 
     def test_falls_back_to_meshpacket_from_when_payload_id_missing(self):
-        """The eb7c421 fix: NODEINFO with User.id unset should still resolve via the
-        outer MeshPacket 'from'. Without this, the node stays Unknown forever."""
+        """NODEINFO with User.id unset must resolve via MeshPacket 'from',
+        otherwise the node sticks at default 'Unknown' indefinitely."""
         mqtt, data = make_mqtt()
         msg = {
             "from": 0x67EA9400,

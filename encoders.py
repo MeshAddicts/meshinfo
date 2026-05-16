@@ -13,9 +13,8 @@ class _JSONEncoder(json.JSONEncoder):
     return obj
 
 
-# Keys whose string values are node IDs and may carry a leading '!'. Stripping
-# is only correct on these — applying it to every string value silently mangles
-# chat text and any other free-form payload field containing '!'.
+# Node-id keys may carry a leading '!'; stripping is only correct on these,
+# not on free-form text payloads that legitimately contain '!'.
 _ID_KEYS = frozenset({"id", "sender", "from", "to", "gateway"})
 
 
@@ -28,9 +27,8 @@ class _JSONDecoder(json.JSONDecoder):
     ret = {}
     for key, value in obj.items():
       if key in {'last_seen', 'last_geocoding'}:
+        # DB rows often arrive with NULL here.
         if value is None:
-          # DB rows can return NULL last_seen/last_geocoding; pre-2026 fromisoformat
-          # would raise TypeError here and abort the whole packet.
           ret[key] = None
         else:
           try:

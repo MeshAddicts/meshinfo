@@ -1,7 +1,6 @@
 """
-Tests for mqtt._normalize_node_id — the canonical node-id coercion at the
-heart of the Group A "Unknown nodes" fix. A wrong normalization here would
-silently fork node identity across decoder paths.
+Tests for mqtt._normalize_node_id — node-id coercion. A wrong normalization
+here silently forks node identity across decoder paths (int vs string vs case).
 """
 
 import sys

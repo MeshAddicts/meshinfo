@@ -37,12 +37,9 @@ class API:
 
     @staticmethod
     def _coerce_node_id(raw: str) -> str:
-        """Normalize a URL `{id}` path param to the schema's 8-char lowercase hex.
-
-        Accepts decimal (`3137048218`), hex with or without leading `!` (`!bafb8e9a`,
-        `bafb8e9a`, `BAFB8E9A`). Pure lookup helper — invalid inputs pass through
-        and just won't match any row, returning 404 naturally.
-        """
+        """Normalize a URL `{id}` path param to 8-char lowercase hex.
+        Accepts decimal, hex with or without leading '!', any case.
+        Invalid inputs pass through and 404 naturally at lookup time."""
         try:
             return utils.convert_node_id_from_int_to_hex(int(raw))
         except (TypeError, ValueError):
@@ -183,9 +180,7 @@ class API:
                 "7d": 604800,
                 "all": None,
             }
-            # Use `in` not `.get(...) is None` — the latter would mistake the
-            # legitimate "all" mapping (→ None) for an invalid input and override
-            # it to 86400, silently turning "all" into 24h.
+            # Membership check, not `.get() is None` — "all" maps to None on purpose.
             range_seconds = range_map[range_param] if range_param in range_map else 86400
 
             chat_data = await self.data.pg_storage.query_chat_filtered(
@@ -239,10 +234,9 @@ class API:
         @app.get("/v1/static-map")
         async def static_map(request: Request) -> Response:
             """Generate a static map PNG image for given coordinates."""
+            # Presence check, not (0,0) reject — Null Island is a valid coordinate.
             lat_param = request.query_params.get("lat")
             lon_param = request.query_params.get("lon")
-            # Require explicit lat/lon — defaulting to 0 then rejecting (0,0)
-            # incorrectly bounced legitimate Null Island / Gulf of Guinea coords.
             if lat_param is None or lon_param is None:
                 return JSONResponse({"error": "lat and lon are required"}, status_code=400)
             try:
@@ -333,10 +327,8 @@ class API:
                     tile_dir,
                 )
 
-        # Empty ALLOW_ORIGINS → don't install the middleware at all (was installed
-        # with [""] before, which is a deny-all that looked configured). Also strip
-        # stray quote chars: docker-compose YAML sometimes wraps values in quotes,
-        # producing `'"*"'` at runtime — neither a valid origin nor the wildcard.
+        # Strip stray quote chars — compose YAML can wrap values producing `'"*"'`.
+        # Empty env → no middleware (the previous `[""]` was a deny-all that looked configured).
         raw_origins = os.getenv("ALLOW_ORIGINS", "")
         allow_origins = [o.strip().strip('"').strip("'") for o in raw_origins.split(",")]
         allow_origins = [o for o in allow_origins if o]

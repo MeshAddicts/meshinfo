@@ -1,7 +1,5 @@
 """
-Tests for API.api small pure helpers — node-id coercion (L11) and range
-parsing (L6 covered the dead-code/'all'-override bug downstream of _parse_range,
-but _parse_range itself is also worth a quick lock-down).
+Tests for the small pure helpers in api.api — node-id coercion + range parsing.
 """
 
 import sys

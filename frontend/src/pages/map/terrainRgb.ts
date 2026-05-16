@@ -325,8 +325,7 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
 
 
   // Parallel fetch; individual failures → null tile.
-  // Antimeridian: wrap absolute x to canonical [0, scale) fetch index. See landcoverTiles.ts for rationale.
-  // Pre-seed with null synchronously so the dedupe check sees in-flight tiles.
+  // Antimeridian wrap + sync pre-seed for in-flight dedupe — see landcoverTiles.ts.
   const tileMap = new Map<string, CachedTile | null>();
   const jobs: Promise<void>[] = [];
   for (let x = xMin; x <= xMax; x++) {
@@ -420,9 +419,8 @@ export async function buildDemFromTilezen(opts: BuildDemOptions): Promise<DEM> {
   const yMax = Math.floor(lat2tileY(bounds.south, zoom));
   const scale = Math.pow(2, zoom);
 
-  // buildDem's Tilezen→Mapbox fallback relies on throwing when >half the tiles fail.
-  // Antimeridian: wrap x to canonical [0, scale) and pre-seed tileMap synchronously
-  // so the dedupe check fires within one call (see landcoverTiles.ts for full rationale).
+  // buildDem's Tilezen→Mapbox fallback throws when >half the tiles fail.
+  // Antimeridian wrap + sync pre-seed for in-flight dedupe — see landcoverTiles.ts.
   const tileMap = new Map<string, CachedTile | null>();
   let failureCount = 0;
   const jobs: Promise<void>[] = [];
@@ -445,10 +443,8 @@ export async function buildDemFromTilezen(opts: BuildDemOptions): Promise<DEM> {
   }
   await Promise.all(jobs);
 
-  // Use the dedupe-aware unique-tile count so the 50% threshold stays meaningful
-  // when an antimeridian-spanning bbox would otherwise inflate the denominator.
+  // Use the dedupe-aware count so the 50% threshold survives antimeridian spans.
   const totalTiles = tileMap.size;
-  // >50% failure → throw so buildDem falls back to Mapbox
   if (failureCount > totalTiles / 2) {
     throw new Error(
       `tilezen bulk DEM failed: ${failureCount}/${totalTiles} tiles errored`,

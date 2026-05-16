@@ -11,7 +11,7 @@ ENV PYTHONUNBUFFERED=1
 RUN mkdir /app
 WORKDIR /app
 
-# Install deps first so the (slow) pip layer is reused when only source changes.
+# Install deps first so the pip layer caches across source-only changes.
 COPY requirements.txt .
 RUN pip install --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt

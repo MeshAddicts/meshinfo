@@ -163,12 +163,7 @@ class MeshBridge(commands.Cog):
     # ─── Node name resolution ────────────────────────────────────────
 
     async def _resolve_node(self, node_id: str) -> Optional[dict]:
-        """Look up a node by ID via the storage-level LRU cache + PostgreSQL.
-
-        Previously kept its own per-cog cache, but eviction was FIFO-by-insertion
-        rather than true LRU, and it duplicated PostgresStorage._node_lru (which
-        is proper LRU). Now just delegates.
-        """
+        """Look up a node by ID via the storage-level LRU cache + PostgreSQL."""
         if not self.data.pg_storage:
             return None
         try:

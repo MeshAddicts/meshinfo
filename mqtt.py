@@ -24,9 +24,9 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_node_id(value) -> Optional[str]:
-    """Coerce a node id (int from protobuf or str from JSON) to canonical 8-char lowercase hex.
-
-    Returns None if value is missing or not a valid id. Tolerates an optional leading '!'.
+    """Coerce a node id (int from protobuf, str from JSON) to canonical 8-char lowercase hex,
+    or None if invalid. Tolerates a leading '!' and short ids (left-padded with zeros so
+    equality holds across publishers).
     """
     if value is None:
         return None
@@ -35,13 +35,10 @@ def _normalize_node_id(value) -> Optional[str]:
     if isinstance(value, str):
         s = value.replace('!', '').lower()
         if 1 <= len(s) <= 8 and all(c in '0123456789abcdef' for c in s):
-            # Left-pad to 8 chars so equality holds across publishers.
             return s.rjust(8, '0')
     return None
 
 class MQTT:
-    # Surface Discord bridge backpressure every Nth drop so a stalled consumer
-    # doesn't disappear into the void. WARNING is logged once per bucket.
     _DISCORD_DROP_LOG_EVERY = 100
 
     def __init__(self, config, data):
@@ -54,9 +51,8 @@ class MQTT:
         self.username = config['broker']['username']
         self.password = config['broker']['password']
 
-        # Cumulative count of events the Discord bridge couldn't keep up with.
-        # Bounded queue is intentional (we'd rather drop than balloon memory),
-        # but silent drops were invisible — this surfaces them.
+        # Discord bridge queue is bounded; we'd rather drop than balloon memory.
+        # Track drops so the warning at every Nth surfaces a stalled consumer.
         self._discord_drops_total: int = 0
 
     def _record_discord_drop(self, event_type: str) -> None:
@@ -70,9 +66,7 @@ class MQTT:
     ### actions
 
     async def connect(self):
-        # Single attempt: on MqttError, raise out to main.py's supervise() which owns the
-        # restart loop with exponential backoff. Two retry policies stacked silently broke
-        # backoff (the inner flat 5 s sleep meant the supervisor never got to act).
+        # Single attempt; main.py's supervise() owns reconnect + exponential backoff.
         logger.info("Connecting to MQTT broker at %s:%d", self.config['broker']['host'], self.config['broker']['port'])
         try:
             async with aiomqtt.Client(
@@ -125,8 +119,7 @@ class MQTT:
                     logger.warning("Discarding malformed protobuf ServiceEnvelope on %s: %s", msg.topic.value, e)
                     return
                 except Exception as e:
-                    # Don't process a packet we couldn't parse — empty outs/default mp downstream
-                    # produces noisy type='unknown' rows in mqtt_messages and can mask real failures.
+                    # Returning early avoids logging a noisy type='unknown' row for a packet we can't read.
                     logger.exception("Unexpected error decoding protobuf envelope on %s: %s", msg.topic.value, e)
                     return
 
@@ -232,11 +225,8 @@ class MQTT:
                     try:
                         info = mesh_pb2.User().FromString(mp.decoded.payload)
                         out = json.loads(MessageToJson(info, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
-                        # Fall back to MeshPacket `from` when User.id is unset (eb7c421).
-                        # Normalize via _normalize_node_id so both protobuf ints and pre-stringified ids land canonical.
-                        nid = _normalize_node_id(out.get('id'))
-                        if nid is None:
-                            nid = _normalize_node_id(outs.get('from'))
+                        # User.id is occasionally unset; MeshPacket.from is the fallback.
+                        nid = _normalize_node_id(out.get('id')) or _normalize_node_id(outs.get('from'))
                         if nid is None:
                             logger.debug("NODEINFO packet missing identity; skipping: %s", out)
                         else:
@@ -275,7 +265,6 @@ class MQTT:
                     except DecodeError as e:
                         logger.debug("Protobuf decode error: text: %s", e)
                     else:
-                        # handle_traceroute owns route normalization (handles int + str entries).
                         await self._safe_handle("handle_traceroute", self.handle_traceroute(outs))
 
                 elif mp.decoded.portnum == portnums_pb2.POSITION_APP:
@@ -367,8 +356,6 @@ class MQTT:
 
                     await self.handle_log(j)
 
-                    # Per-handler safe dispatch so one malformed packet can't kill the loop.
-                    # handle_traceroute already normalizes route entries (str/int) internally.
                     msg_type = j.get('type')
                     if msg_type == "neighborinfo":
                         await self._safe_handle("handle_neighborinfo", self.handle_neighborinfo(j))
@@ -405,26 +392,16 @@ class MQTT:
     ### message handlers
 
     async def _safe_handle(self, label: str, coro) -> None:
-        """Run a handler coroutine; log + swallow exceptions.
-
-        Without this wrap, a KeyError or TypeError inside a handler propagates up
-        through process_mqtt_msg / the aiomqtt message loop, kills the connection,
-        and any in-flight messages (potentially including the corrective NODEINFO
-        for an 'Unknown' node) are dropped during the reconnect window.
-        """
+        """Run a handler coroutine; log + swallow exceptions so one bad packet
+        doesn't kill the aiomqtt loop and drop concurrent in-flight messages."""
         try:
             await coro
         except Exception as e:
             logger.exception("%s failed: %s", label, e)
 
     def _normalize_msg_addrs(self, msg: dict) -> Optional[str]:
-        """Normalize msg['from'/'to'/'sender'] in-place; return canonical 'from' or None.
-
-        Handlers previously did `utils.convert_node_id_from_int_to_hex(msg["from"])`
-        which KeyError'd on missing 'from' and TypeError'd if the JSON publisher sent
-        a hex string instead of an int. The new normalizer accepts either and skips
-        malformed packets cleanly.
-        """
+        """Normalize msg['from'/'to'/'sender'] in-place; return canonical 'from' or None
+        if missing/invalid. Accepts int (protobuf) or hex string (JSON publisher)."""
         from_id = _normalize_node_id(msg.get("from"))
         if from_id is None:
             return None
@@ -482,12 +459,10 @@ class MQTT:
             logger.debug("handle_nodeinfo: missing/invalid payload; skipping: %s", msg)
             return
 
-        # Pick the canonical node id: prefer payload.id (the User.id from the protobuf),
-        # fall back to MeshPacket 'from'. Either may arrive as int (protobuf/JSON publisher)
-        # or hex string. Normalizing both makes node identity stable across decoders.
+        # User.id when present, MeshPacket 'from' as fallback.
         id = _normalize_node_id(payload.get('id')) or from_id
         if id is None:
-            logger.debug("handle_nodeinfo: no usable node id (payload.id and from both missing/invalid); skipping: %s", msg)
+            logger.debug("handle_nodeinfo: no usable node id; skipping: %s", msg)
             return
 
         node = await self.data.pg_storage.get_node_cached(id)
@@ -497,8 +472,7 @@ class MQTT:
         else:
             logger.debug("Updating node %s", id)
 
-        # NODEINFO is the only path that fills in real shortname/longname/hardware;
-        # accept either snake_case or camelCase (different decoders emit different keys).
+        # Different decoders emit snake_case or camelCase for the same field.
         if 'hardware' in payload:
             node['hardware'] = payload['hardware']
         elif 'hw_model' in payload:

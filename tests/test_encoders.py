@@ -1,7 +1,6 @@
 """
-Tests for encoders._JSONDecoder — specifically the L4 fix that limits `!`
-stripping to id/sender-style keys instead of every string, and the L5 fix
-that guards `datetime.fromisoformat` against None values from DB rows.
+Tests for encoders._JSONDecoder — `!` stripping limited to id-style keys
+(text payloads preserved), and `fromisoformat` guarded against NULL DB rows.
 """
 
 import json
@@ -28,12 +27,10 @@ class TestBangStripping:
         assert _decode('{"from": "!a1", "to": "!ff"}') == {"from": "a1", "to": "ff"}
 
     def test_text_preserves_bang(self):
-        """Chat text containing '!' previously got silently mangled."""
         msg = '{"payload": {"text": "Hello, mesh!"}}'
         assert _decode(msg) == {"payload": {"text": "Hello, mesh!"}}
 
     def test_longname_preserves_bang(self):
-        # A node literally named "Yes!" should round-trip intact.
         assert _decode('{"longname": "Yes!"}') == {"longname": "Yes!"}
 
     def test_non_string_id_passes_through(self):
@@ -48,7 +45,7 @@ class TestDateParsing:
         assert isinstance(out["last_seen"], datetime)
 
     def test_none_does_not_crash(self):
-        """DB rows can return NULL last_seen; pre-L5 this raised TypeError."""
+        """DB rows can carry NULL last_seen; must not raise."""
         assert _decode('{"last_seen": null}') == {"last_seen": None}
 
     def test_invalid_format_does_not_crash(self):

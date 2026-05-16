@@ -59,9 +59,8 @@ export function NodesList({
 }) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
 
-  // The "Seen X sec" counters tick via TimeTickerProvider below; consuming it
-  // in DateToSince via context means only the date span re-renders each second,
-  // not the whole memoized row.
+  // "Seen X sec" counters tick via TimeTickerProvider below; only the date span
+  // (via context) re-renders, not the whole memoized row.
 
   // Track whether we're at the top of the list
   const [atTop, setAtTop] = useState(true);
@@ -229,8 +228,7 @@ export function NodesList({
   );
 }
 
-// Memoized so the per-second TimeTickerProvider re-render only invalidates the
-// DateToSince span (which subscribes to context), not the whole row's DOM.
+// Memoized so the 1 Hz tick only re-renders the DateToSince span, not the row.
 const NodeRow = memo(function NodeRow({
   item,
   isSelected,

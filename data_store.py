@@ -13,33 +13,26 @@ import utils
 
 logger = logging.getLogger(__name__)
 
-# Named provider presets. URL templates substitute {ids} with a comma-joined id list
-# (or a single id when single_id_per_request=True). Add new presets here as their APIs
-# are confirmed; users can also drop arbitrary URL templates into config.enrich.providers.
+# Named enrichment provider presets. URL templates substitute {ids} with a
+# comma-joined id list (or single id when single_id_per_request=True).
 _PROVIDER_PRESETS: dict = {
     "bayme": {
         "url_template": "https://data.bayme.sh/api/node/infos?ids={ids}",
-        "single_id_per_request": True,  # bayme's API rejects multi-id requests
+        "single_id_per_request": True,
     },
 }
 
-# Throttle within a single provider's batch so we don't hammer the upstream API.
 _PER_REQUEST_DELAY_SEC = 0.1
-# Per-request HTTP timeout. Without this, aiohttp can wait minutes on a hung TCP
-# connection, leaving thousands of unknowns queued behind a dead upstream.
 _REQUEST_TIMEOUT_SEC = 10.0
-# Circuit breaker: stop hammering a provider after this many consecutive failures
-# within a single cycle. Resets next cycle. Keeps the per-cycle summary log timely.
+# Stop hammering a provider after N consecutive failures in one cycle; resets next cycle.
 _PROVIDER_FAIL_THRESHOLD = 10
 
 
 def _resolve_providers(config) -> list:
-  """Turn config.server.enrich.providers (or legacy 'provider') into a runtime list.
+  """Resolve config.server.enrich.providers (or legacy 'provider') into a runtime list.
 
-  Accepts entries shaped as either a preset name (e.g. "bayme") or a dict with at
-  least a `url` template for a generic MeshInfo-instance endpoint. Legacy
-  `provider = "world.meshinfo.network"` is silently dropped (the upstream is dead);
-  legacy `provider = "bayme"` is upgraded to ["bayme"].
+  Accepts preset names ("bayme") or dicts with at least a `url` template. The dead
+  'world.meshinfo.network' legacy value is dropped with a warning.
   """
   cfg = config.get('server', {}).get('enrich', {}) or {}
   raw = cfg.get('providers')
@@ -60,7 +53,7 @@ def _resolve_providers(config) -> list:
     if isinstance(entry, str):
       preset = _PROVIDER_PRESETS.get(entry)
       if preset is None:
-        # Treat bare strings that look like URLs as generic templates (with {ids} placeholder).
+        # Bare URLs with an {ids} placeholder are generic templates.
         if entry.startswith(('http://', 'https://')) and '{ids}' in entry:
           result.append({
             "name": entry,
@@ -96,11 +89,8 @@ class DataStore:
   async def update_node(self, id: str, node):
     """Apply geocoding + freshness fields, persist to Postgres, refresh the cache."""
     n = node.copy()
-    # node.copy() is shallow — sub-dicts (especially 'position') are shared with
-    # the caller. Without isolating, geocoding writes leak into the original
-    # msg['payload'] that handle_log later persists to mqtt_messages, polluting
-    # the raw-packet log with enriched fields. Only deep-copy position because
-    # that's the only sub-dict we mutate here.
+    # Isolate position from the caller's dict — geocoding mutates pos in place
+    # and we'd otherwise leak enriched fields into the raw mqtt_messages log.
     if n.get('position') is None:
       n['position'] = {}
     else:
@@ -114,7 +104,7 @@ class DataStore:
       lat_i = pos.get('latitude_i')
       lon_i = pos.get('longitude_i')
       last_geo = pos.get('last_geocoding')
-      # Normalize ISO-string last_geocoding (from DB) to datetime for comparison.
+      # DB rows arrive as ISO strings; normalize for comparison.
       if isinstance(last_geo, str):
         try:
           last_geo = datetime.fromisoformat(last_geo).astimezone(ZoneInfo(self.config['server']['timezone']))
@@ -123,9 +113,7 @@ class DataStore:
       if lat_i is not None and lon_i is not None:
         if pos['geocoded'] is None or last_geo is None or last_geo < datetime.now().astimezone(ZoneInfo(self.config['server']['timezone'])) - timedelta(minutes=60):
           try:
-            # geocode_position uses blocking `requests.get` with a 5 s timeout; running it
-            # inline stalled the entire asyncio loop (MQTT ingest, API, Discord) on every
-            # position from a new-or-stale-geocode node. Offload to a worker thread.
+            # geocode_position is sync (requests.get); offload so it doesn't block the event loop.
             geocoded = await asyncio.to_thread(
               utils.geocode_position,
               self.config['integrations']['geocoding']['geocode.maps.co']['api_key'],
@@ -138,8 +126,7 @@ class DataStore:
           except Exception as e:
             logger.warning("Failed to geocode position: %s", e)
 
-    # Any update reactivates the node, so a previously-pruned node comes back online.
-    # Any packet reactivates the node.
+    # Any packet reactivates a pruned node.
     n['active'] = True
     if isinstance(n.get('last_seen'), str):
       n['last_seen'] = datetime.fromisoformat(n['last_seen']).astimezone(ZoneInfo(self.config['server']['timezone']))
@@ -187,11 +174,7 @@ class DataStore:
   ### helpers
 
   async def backfill_node_infos(self):
-    """Query every configured enrichment provider for unknown node names.
-
-    Unbounded: the previous limit=200 left the long tail permanently unnamed.
-    The supervised enrichment_loop paces invocations between full cycles.
-    """
+    """Query every configured enrichment provider for the current set of unknown nodes."""
     nodes_needing_enrichment = await self.pg_storage.find_nodes_needing_enrichment()
     if not nodes_needing_enrichment:
       return
@@ -199,7 +182,7 @@ class DataStore:
     await self.enrich_nodes(nodes_needing_enrichment)
 
   async def enrich_nodes(self, node_to_enrich):
-    """Iterate providers, ask each for the remaining unknowns, apply what comes back."""
+    """Iterate providers in order, asking each for the still-unknown ids."""
     providers = _resolve_providers(self.config)
     if not providers:
       logger.debug("No enrichment providers configured")
@@ -212,9 +195,8 @@ class DataStore:
           break
         before_count = len(pending)
         result = await self._enrich_via_provider(session, prov, sorted(pending))
-        # One log line per provider per cycle. WARNING if the provider looks
-        # unreachable (0/N or circuit-breaker aborted), INFO otherwise — including
-        # the case where the provider responded but didn't know any of our nodes.
+        # One log line per provider per cycle. WARNING when the provider looks
+        # unreachable (0/N succeeded or circuit-breaker fired), INFO otherwise.
         attempted = result["attempted"]
         succeeded = result["succeeded"]
         named = result["named"]
@@ -244,14 +226,11 @@ class DataStore:
       logger.debug("After all providers, %d node(s) remain unnamed", len(pending))
 
   async def _enrich_via_provider(self, session, prov: dict, node_ids: list) -> dict:
-    """Query one provider for the given ids; return an outcome summary.
+    """Query one provider for the given ids.
 
-    Returns dict with four fields:
-      - named:     set of node ids we actually wrote enriched names for
-      - attempted: total HTTP requests issued
-      - succeeded: requests that returned HTTP 200 (regardless of body content)
-      - aborted:   True if circuit breaker tripped (provider looks fully down)
-    enrich_nodes uses these to choose between INFO summary vs unreachable WARNING.
+    Returns {named, attempted, succeeded, aborted}. `aborted` is set when the
+    circuit breaker trips so the caller can distinguish "unreachable" from
+    "responded but didn't know any of our nodes".
     """
     named: set = set()
     attempted = 0
@@ -259,7 +238,7 @@ class DataStore:
     consecutive_failures = 0
     aborted = False
     if prov["single_id_per_request"]:
-      # bayme.sh's API only accepts one id per call. Pace requests so we don't hammer it.
+      # bayme rejects multi-id requests; iterate, paced so we don't hammer it.
       for node_id in node_ids:
         attempted += 1
         data = await self._fetch_provider(session, prov, [node_id])
@@ -276,7 +255,7 @@ class DataStore:
             break
         await asyncio.sleep(_PER_REQUEST_DELAY_SEC)
     else:
-      # Generic MeshInfo-instance template — comma-join the ids into one call.
+      # Generic MeshInfo template — comma-join into one call.
       attempted = 1
       data = await self._fetch_provider(session, prov, node_ids)
       if data is not None:
@@ -288,9 +267,8 @@ class DataStore:
 
   async def _fetch_provider(self, session, prov: dict, ids: list) -> dict | None:
     """One GET against `prov`. Returns the parsed JSON dict, or None on any failure."""
-    # str.replace, not str.format — a generic operator-supplied URL might contain
-    # stray `{}` or `{key}` braces (e.g. `?ids={ids}&token={env:TOKEN}`). format()
-    # would KeyError on those; replace() leaves them intact for the upstream to handle.
+    # str.replace rather than .format — operator-supplied URLs may have stray
+    # `{...}` braces that would trip str.format's placeholder parser.
     url = prov["url_template"].replace("{ids}", ",".join(ids))
     try:
       async with session.get(url) as response:
@@ -302,10 +280,8 @@ class DataStore:
     return None
 
   async def _apply_enrichment(self, node_id: str, info: dict) -> bool:
-    """Write enriched name fields straight to Postgres + cache. Returns True if applied.
-
-    Bypasses update_node so a name lookup doesn't reactivate the node or bump last_seen.
-    """
+    """Write enriched name fields direct to Postgres + cache; returns True if applied.
+    Bypasses update_node so a name lookup doesn't bump last_seen or active."""
     short = info.get('shortName')
     long_ = info.get('longName')
     if not short and not long_:

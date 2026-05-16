@@ -7,8 +7,7 @@ export const DateToSince = ({
   currentDate,
 }: {
   date: string | Date;
-  /** Optional override. If omitted, falls back to the TimeTickerContext so
-   * rendering inside a memoized row doesn't require currentDate as a prop. */
+  /** Optional override; falls back to TimeTickerContext when omitted. */
   currentDate?: Date;
 }) => {
   const tickerDate = useTimeTicker();
