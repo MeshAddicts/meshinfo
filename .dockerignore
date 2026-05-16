@@ -1,6 +1,26 @@
+# Build artifacts + repo metadata that don't belong in the image.
+.git
+.github
+.venv
+.vscode
+.pytest_cache
+__pycache__
+*.pyc
+
+# Local-only state.
 caddy
 output
 postgres
+config.toml
+mosquitto/data
+
+# Docs — don't ship in the backend image (the README/etc. live in the repo).
+*.md
+docs
+
+# Smoke tests aren't useful inside the container.
+tests
+
 # Host node_modules would clobber the container install and drop .bin shims.
 frontend/node_modules
 # Regenerated inside the wasm-build stage.

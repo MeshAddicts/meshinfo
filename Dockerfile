@@ -11,9 +11,12 @@ ENV PYTHONUNBUFFERED=1
 RUN mkdir /app
 WORKDIR /app
 
+# Install deps first so the (slow) pip layer is reused when only source changes.
+COPY requirements.txt .
+RUN pip install --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
+
 COPY . .
-RUN pip install --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt
 
 HEALTHCHECK NONE
 

@@ -1,14 +1,17 @@
-aiomqtt
-aiohttp
-scipy
-python-dotenv
-fastapi
-discord.py
-requests
-meshtastic
-cryptography
-protobuf
-uvicorn
-asyncpg
-staticmap
-Pillow
+# Pinned to current-major ranges so transitive breakage doesn't silently land
+# on `docker build`. Bake-script requirements (scripts/requirements-*.txt) follow
+# the same style. Refresh after testing a major bump.
+aiomqtt>=2.5,<3
+aiohttp>=3.13,<4
+scipy>=1.17,<2
+python-dotenv>=1.2,<2
+fastapi>=0.136,<1
+discord.py>=2.7,<3
+requests>=2.34,<3
+meshtastic>=2.7,<3
+cryptography>=48,<50
+protobuf>=7,<8
+uvicorn>=0.47,<1
+asyncpg>=0.30,<1
+staticmap>=0.5,<1
+Pillow>=12,<13
