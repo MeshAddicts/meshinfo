@@ -15,7 +15,8 @@ jobs:
         with:
           python-version: "3.14"
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install pytest pytest-cov
+      # Tests import real modules at collection time, so runtime deps are needed.
+      - run: python -m pip install -r requirements-dev.txt
       - run: python -m pytest -q tests
 
   frontend-tests:
