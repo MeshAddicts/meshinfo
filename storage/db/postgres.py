@@ -2,15 +2,16 @@
 """
 PostgreSQL storage backend for MeshInfo.
 
-This module provides real-time write capabilities to PostgreSQL while maintaining
-the exact same data structure as JSON files for API compatibility.
+Owns the asyncpg connection pool, the in-process node LRU cache, and the
+schema/migration lifecycle. All node/chat/telemetry state lives here.
 """
 
+import asyncio
 import asyncpg
+import base64
 import datetime
 import json
 import logging
-import base64
 from collections import OrderedDict
 from typing import Any, Dict, Optional, List, Tuple
 from zoneinfo import ZoneInfo
@@ -89,6 +90,11 @@ class PostgresStorage:
         self._node_lru: "OrderedDict[str, dict]" = OrderedDict()
         self._node_lru_max = max(1, int(self.pg_config.get("node_cache_size", 10000)))
 
+        # Background task ref for _backfill_mqtt_node_ids; tracked so close()
+        # can cancel it before tearing down the pool (otherwise it errors with
+        # "InterfaceError: pool is closing" mid-batch).
+        self._backfill_task: Optional[asyncio.Task] = None
+
     async def connect(self) -> bool:
         """
         Establish connection pool to PostgreSQL.
@@ -111,8 +117,10 @@ class PostgresStorage:
                 database=self.pg_config.get("database", "meshinfo"),
                 user=self.pg_config.get("username", "postgres"),
                 password=self.pg_config.get("password", "password"),
-                min_size=self.pg_config.get("min_pool_size", 5),
-                max_size=self.pg_config.get("max_pool_size", 20),
+                # Fallbacks aligned with DEFAULT_CONFIG and config.toml.sample (1/5).
+                # Operators should tune via storage.postgres.{min,max}_pool_size.
+                min_size=self.pg_config.get("min_pool_size", 1),
+                max_size=self.pg_config.get("max_pool_size", 5),
                 command_timeout=10,
             )
             logger.info("PostgreSQL connection pool established")
@@ -125,7 +133,17 @@ class PostgresStorage:
             return False
 
     async def close(self):
-        """Close the connection pool."""
+        """Cancel background tasks (so they don't touch a closing pool) and tear down."""
+        if self._backfill_task is not None and not self._backfill_task.done():
+            self._backfill_task.cancel()
+            try:
+                await asyncio.wait_for(self._backfill_task, timeout=5.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                # Best-effort wait; the task itself logs on real errors and we're
+                # already on the shutdown path. Don't block shutdown on it.
+                pass
+        self._backfill_task = None
+
         if self.pool is not None:
             try:
                 await self.pool.close()
@@ -228,9 +246,9 @@ class PostgresStorage:
         except Exception as e:
             logger.warning(f"MQTT node-ID trigger setup skipped: {e}")
 
-        # Backfill existing rows in the background — don't block startup
-        import asyncio
-        asyncio.ensure_future(self._backfill_mqtt_node_ids())
+        # Backfill existing rows in the background — don't block startup.
+        # Stash the task ref so close() can cancel cleanly during shutdown.
+        self._backfill_task = asyncio.create_task(self._backfill_mqtt_node_ids())
 
     async def _backfill_mqtt_node_ids(self):
         """Backfill from_node_id/to_node_id for existing mqtt_messages rows in batches."""
@@ -1358,7 +1376,21 @@ class PostgresStorage:
         self._node_lru.clear()
 
     async def get_node_cached(self, node_id: str) -> Optional[Dict[str, Any]]:
-        """Get a single node, hitting LRU cache first then PostgreSQL. Returns the live cache ref."""
+        """Get a single node, hitting LRU cache first then PostgreSQL.
+
+        Returns the LIVE cache reference (not a copy). The MQTT handlers depend
+        on this for the read-mutate-write pattern:
+
+            node = await pg.get_node_cached(id)
+            node['field'] = value
+            await data.update_node(id, node)  # writes + refreshes cache
+
+        Concurrent handlers for the same node id may interleave at await points
+        and end up merging each other's mutations into the shared dict — that
+        is the intended behaviour (position + telemetry updates on disjoint
+        fields naturally accumulate). If you need an isolated snapshot, copy
+        the result yourself at the call site.
+        """
         cached = self._node_lru.get(node_id)
         if cached is not None:
             self._node_lru.move_to_end(node_id)

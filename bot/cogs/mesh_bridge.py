@@ -137,10 +137,6 @@ class MeshBridge(commands.Cog):
         # Webhook cache: discord_channel_id -> discord.Webhook
         self._webhooks: dict[int, discord.Webhook] = {}
 
-        # Node info cache from DB: node_id -> node dict (avoids repeated queries)
-        self._node_cache: dict[str, Optional[dict]] = {}
-        self._node_cache_max = 1000
-
         # Status alert channel (first text channel mapped, or configurable)
         self._alert_channel_id = bridge_cfg.get("alert_channel")
         # Track last known status per linked node: node_id -> bool (active)
@@ -169,28 +165,17 @@ class MeshBridge(commands.Cog):
     async def _resolve_node(self, node_id: str) -> Optional[dict]:
         """Look up a node by ID via the storage-level LRU cache + PostgreSQL.
 
-        The bridge keeps its own per-cog cache so we can serve a still-useful
-        "best-known" entry even when DB calls intermittently fail.
+        Previously kept its own per-cog cache, but eviction was FIFO-by-insertion
+        rather than true LRU, and it duplicated PostgresStorage._node_lru (which
+        is proper LRU). Now just delegates.
         """
-        # Bridge-level cache (avoids repeated DB hits for the same node within
-        # a single posting window).
-        cached = self._node_cache.get(node_id)
-        if cached and cached.get("longname", "Unknown") != "Unknown":
-            return cached
-
-        if self.data.pg_storage:
-            try:
-                db_node = await self.data.pg_storage.get_node_cached(node_id)
-                if db_node:
-                    self._node_cache[node_id] = db_node
-                    if len(self._node_cache) > self._node_cache_max:
-                        oldest = next(iter(self._node_cache))
-                        self._node_cache.pop(oldest, None)
-                    return db_node
-            except Exception:
-                logger.debug("MeshBridge: DB lookup failed for node %s", node_id)
-
-        return cached
+        if not self.data.pg_storage:
+            return None
+        try:
+            return await self.data.pg_storage.get_node_cached(node_id)
+        except Exception:
+            logger.debug("MeshBridge: DB lookup failed for node %s", node_id)
+            return None
 
     async def _build_enriched_nodes(self, node_ids: list[str]) -> dict:
         """Build a nodes dict enriched with DB data for all referenced node IDs."""
