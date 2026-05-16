@@ -26,6 +26,10 @@ class TestCoerceNodeId:
         assert API._coerce_node_id("abc") == "00000abc"
         assert API._coerce_node_id("!abc") == "00000abc"
 
+    def test_all_digit_hex_treated_as_hex_not_decimal(self):
+        # 8 chars of all digits is still a valid hex id; must not convert via int().
+        assert API._coerce_node_id("99005060") == "99005060"
+
     def test_invalid_input_passes_through(self):
         assert API._coerce_node_id("not-an-id") == "not-an-id"
 

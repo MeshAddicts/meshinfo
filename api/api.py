@@ -38,15 +38,17 @@ class API:
     @staticmethod
     def _coerce_node_id(raw: str) -> str:
         """Normalize a URL `{id}` path param to canonical 8-char lowercase hex.
-        Accepts decimal, hex (with or without leading '!', any case), and short
-        hex (left-padded). Invalid inputs pass through verbatim → 404 naturally.
+        Accepts hex (with or without leading '!', any case, short ones padded)
+        and decimal uint32. Invalid inputs pass through → 404 naturally.
         """
-        # Try decimal, then hex; unparseable returns raw.
+        # Hex first — '99005060' is a valid hex id, not a decimal to convert.
+        direct = utils.normalize_node_id(raw)
+        if direct:
+            return direct
         try:
-            decimal = int(raw)
+            return utils.normalize_node_id(int(raw)) or raw
         except (TypeError, ValueError):
-            return utils.normalize_node_id(raw) or raw
-        return utils.normalize_node_id(decimal) or utils.normalize_node_id(raw) or raw
+            return raw
 
     @staticmethod
     def _parse_range(value: str | None) -> int | None:
