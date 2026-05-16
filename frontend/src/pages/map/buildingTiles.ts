@@ -212,11 +212,13 @@ export async function buildBuildingRaster(
   const tileMap = new Map<string, CachedBuildingTile>();
   const jobs: Promise<void>[] = [];
   // Antimeridian: wrap absolute x to canonical [0, scale) fetch index. See landcoverTiles.ts for rationale.
+  // Pre-seed synchronously so the dedupe check sees in-flight tiles.
   for (let x = xMin; x <= xMax; x++) {
     const fetchX = ((x % scale) + scale) % scale;
     for (let y = yMin; y <= yMax; y++) {
       const key = `${zoom}/${fetchX}/${y}`;
       if (tileMap.has(key)) continue;
+      tileMap.set(key, TILE_MISSING);
       jobs.push(
         fetchBuildingTile(zoom, fetchX, y)
           .then((t) => void tileMap.set(key, t))

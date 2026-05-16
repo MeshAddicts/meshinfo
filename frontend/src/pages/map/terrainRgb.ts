@@ -326,6 +326,7 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
 
   // Parallel fetch; individual failures → null tile.
   // Antimeridian: wrap absolute x to canonical [0, scale) fetch index. See landcoverTiles.ts for rationale.
+  // Pre-seed with null synchronously so the dedupe check sees in-flight tiles.
   const tileMap = new Map<string, CachedTile | null>();
   const jobs: Promise<void>[] = [];
   for (let x = xMin; x <= xMax; x++) {
@@ -333,6 +334,7 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
     for (let y = yMin; y <= yMax; y++) {
       const key = `${zoom}/${fetchX}/${y}`;
       if (tileMap.has(key)) continue;
+      tileMap.set(key, null);
       jobs.push(
         fetchTile(zoom, fetchX, y, token)
           .then((t) => void tileMap.set(key, t))

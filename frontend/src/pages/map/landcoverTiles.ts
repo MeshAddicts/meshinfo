@@ -200,11 +200,15 @@ export async function buildClutterRaster(
   // x to a canonical [0, scale) fetch index — the stitching lookup applies the
   // same wrap, so both sides agree. Without this, the fetch URLs 404 and the
   // east-of-seam half of the raster reads as out-of-data.
+  // Pre-seed the tileMap synchronously so the dedupe check sees in-flight tiles
+  // (the .then() that writes the real value runs much later, so a plain
+  // `if (tileMap.has(key))` would never skip anything within one call).
   for (let x = xMin; x <= xMax; x++) {
     const fetchX = ((x % scale) + scale) % scale;
     for (let y = yMin; y <= yMax; y++) {
       const key = `${zoom}/${fetchX}/${y}`;
       if (tileMap.has(key)) continue; // dedupe if the bbox spans > 360° at this zoom
+      tileMap.set(key, TILE_MISSING);
       jobs.push(
         fetchLandcoverTile(zoom, fetchX, y)
           .then((t) => void tileMap.set(key, t))
