@@ -62,7 +62,6 @@ class TestUrlTemplates:
         assert prov["single_id_per_request"] is False
 
     def test_url_template_without_ids_placeholder_rejected(self):
-        # Without {ids} we'd format nothing — silently broken upstream calls.
         providers = _resolve_providers(_cfg({"providers": ["https://example.com/api"]}))
         assert providers == []
 
@@ -76,6 +75,10 @@ class TestUrlTemplates:
         assert len(providers) == 1
         assert providers[0]["name"] == "custom"
         assert providers[0]["single_id_per_request"] is True
+
+    def test_dict_url_without_ids_placeholder_rejected(self):
+        cfg = _cfg({"providers": [{"name": "broken", "url": "https://x.example/api"}]})
+        assert _resolve_providers(cfg) == []
 
 
 class TestEmptyOrInvalid:

@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mqtt import MQTT, _normalize_node_id
+from mqtt import MQTT, normalize_node_id  # noqa: F401  (re-exported via from utils)
 
 
 # Inline fakes: record interactions without touching the network or a real DB.

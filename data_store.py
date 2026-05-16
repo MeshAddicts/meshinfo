@@ -65,9 +65,14 @@ def _resolve_providers(config) -> list:
       else:
         result.append({"name": entry, **preset})
     elif isinstance(entry, dict) and entry.get("url"):
+      url = entry["url"]
+      # Without {ids} the substitution is a no-op; requests would silently miss ids.
+      if "{ids}" not in url:
+        logger.warning("Enrichment provider %r is missing {ids} placeholder; skipping", entry.get("name", url))
+        continue
       result.append({
-        "name": entry.get("name", entry["url"]),
-        "url_template": entry["url"],
+        "name": entry.get("name", url),
+        "url_template": url,
         "single_id_per_request": bool(entry.get("single_id_per_request", False)),
       })
     else:
@@ -175,19 +180,19 @@ class DataStore:
 
   async def backfill_node_infos(self):
     """Query every configured enrichment provider for the current set of unknown nodes."""
-    nodes_needing_enrichment = await self.pg_storage.find_nodes_needing_enrichment()
-    if not nodes_needing_enrichment:
+    ids_needing_enrichment = await self.pg_storage.find_nodes_needing_enrichment()
+    if not ids_needing_enrichment:
       return
-    logger.info("Nodes needing enrichment: %d", len(nodes_needing_enrichment))
-    await self.enrich_nodes(nodes_needing_enrichment)
+    logger.info("Nodes needing enrichment: %d", len(ids_needing_enrichment))
+    await self.enrich_nodes(ids_needing_enrichment)
 
-  async def enrich_nodes(self, node_to_enrich):
+  async def enrich_nodes(self, node_ids_to_enrich):
     """Iterate providers in order, asking each for the still-unknown ids."""
     providers = _resolve_providers(self.config)
     if not providers:
       logger.debug("No enrichment providers configured")
       return
-    pending: set = set(node_to_enrich.keys())
+    pending: set = set(node_ids_to_enrich)
     timeout = aiohttp.ClientTimeout(total=_REQUEST_TIMEOUT_SEC)
     async with aiohttp.ClientSession(timeout=timeout) as session:
       for prov in providers:

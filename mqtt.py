@@ -19,24 +19,9 @@ from cryptography.hazmat.backends import default_backend
 from encoders import _JSONDecoder
 from models.node import Node
 import utils
+from utils import normalize_node_id
 
 logger = logging.getLogger(__name__)
-
-
-def _normalize_node_id(value) -> Optional[str]:
-    """Coerce a node id (int from protobuf, str from JSON) to canonical 8-char lowercase hex,
-    or None if invalid. Tolerates a leading '!' and short ids (left-padded with zeros so
-    equality holds across publishers).
-    """
-    if value is None:
-        return None
-    if isinstance(value, int):
-        return utils.convert_node_id_from_int_to_hex(value)
-    if isinstance(value, str):
-        s = value.replace('!', '').lower()
-        if 1 <= len(s) <= 8 and all(c in '0123456789abcdef' for c in s):
-            return s.rjust(8, '0')
-    return None
 
 class MQTT:
     _DISCORD_DROP_LOG_EVERY = 100
@@ -226,7 +211,7 @@ class MQTT:
                         info = mesh_pb2.User().FromString(mp.decoded.payload)
                         out = json.loads(MessageToJson(info, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
                         # User.id is occasionally unset; MeshPacket.from is the fallback.
-                        nid = _normalize_node_id(out.get('id')) or _normalize_node_id(outs.get('from'))
+                        nid = normalize_node_id(out.get('id')) or normalize_node_id(outs.get('from'))
                         if nid is None:
                             logger.debug("NODEINFO packet missing identity; skipping: %s", out)
                         else:
@@ -402,12 +387,12 @@ class MQTT:
     def _normalize_msg_addrs(self, msg: dict) -> Optional[str]:
         """Normalize msg['from'/'to'/'sender'] in-place; return canonical 'from' or None
         if missing/invalid. Accepts int (protobuf) or hex string (JSON publisher)."""
-        from_id = _normalize_node_id(msg.get("from"))
+        from_id = normalize_node_id(msg.get("from"))
         if from_id is None:
             return None
         msg['from'] = from_id
         if 'to' in msg:
-            to_id = _normalize_node_id(msg['to'])
+            to_id = normalize_node_id(msg['to'])
             if to_id is not None:
                 msg['to'] = to_id
             else:
@@ -460,7 +445,7 @@ class MQTT:
             return
 
         # User.id when present, MeshPacket 'from' as fallback.
-        id = _normalize_node_id(payload.get('id')) or from_id
+        id = normalize_node_id(payload.get('id')) or from_id
         if id is None:
             logger.debug("handle_nodeinfo: no usable node id; skipping: %s", msg)
             return

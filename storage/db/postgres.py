@@ -1435,14 +1435,13 @@ class PostgresStorage:
             logger.error("find_node_by_shortname failed for %r: %s", shortname, e)
             return None
 
-    async def find_nodes_needing_enrichment(self, limit: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
-        """Return nodes whose name fields look unenriched (Unknown/UNK or NULL).
-
-        limit=None returns every match — enrichment paces requests itself, so the
-        client-side cap is rarely needed. Pass an int to cap.
+    async def find_nodes_needing_enrichment(self, limit: Optional[int] = None) -> List[str]:
+        """Return ids of nodes whose name fields look unenriched (Unknown/UNK or NULL).
+        IDs only — fetching full node rows would be one extra query per match.
+        limit=None returns every match; pass an int to cap.
         """
         if not self._ready("find_nodes_needing_enrichment"):
-            return {}
+            return []
         try:
             async with self.pool.acquire() as conn:
                 if limit is None:
@@ -1471,14 +1470,9 @@ class PostgresStorage:
                     )
         except Exception as e:
             logger.error("find_nodes_needing_enrichment failed: %s", e)
-            return {}
+            return []
 
-        result: Dict[str, Dict[str, Any]] = {}
-        for row in rows:
-            n = await self.get_node_cached(row["id"])
-            if n is not None:
-                result[row["id"]] = n
-        return result
+        return [row["id"] for row in rows]
 
     async def mark_nodes_inactive_by_age(self, threshold_seconds: int) -> int:
         """Bulk-mark stale nodes inactive and evict them from cache. Returns rows updated."""

@@ -1,5 +1,5 @@
 """
-Tests for mqtt._normalize_node_id — node-id coercion. A wrong normalization
+Tests for utils.normalize_node_id — node-id coercion. A wrong normalization
 here silently forks node identity across decoder paths (int vs string vs case).
 """
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from mqtt import _normalize_node_id
+from utils import normalize_node_id as _normalize_node_id
 
 
 class TestIntInputs:
@@ -56,15 +56,31 @@ class TestRejected:
     def test_non_hex_chars(self):
         assert _normalize_node_id("xyz!") is None
 
+    def test_embedded_bang_rejected(self):
+        # Embedded '!' must not silently strip — only a single leading '!' is allowed.
+        assert _normalize_node_id("ab!cd") is None
+
+    def test_multiple_leading_bangs_rejected(self):
+        assert _normalize_node_id("!!abcd") is None
+
+    def test_int_overflow_rejected(self):
+        assert _normalize_node_id(0x100000000) is None
+        assert _normalize_node_id(2**63) is None
+
+    def test_negative_int_rejected(self):
+        assert _normalize_node_id(-1) is None
+
     def test_float_rejected(self):
         # Floats can sneak in from JSON if a publisher mis-serializes.
         assert _normalize_node_id(3.14) is None
 
-    def test_bool_rejected(self):
-        # bool is an int subclass in Python; make sure the normalizer accepts
-        # True as int(1) — this is the documented behaviour even if weird.
+    def test_bool_handled_as_int(self):
+        # bool is an int subclass — preserves callers that pass it.
         assert _normalize_node_id(True) == "00000001"
         assert _normalize_node_id(False) == "00000000"
+
+    def test_uint32_max_accepted(self):
+        assert _normalize_node_id(0xffffffff) == "ffffffff"
 
 
 class TestIdentityStable:

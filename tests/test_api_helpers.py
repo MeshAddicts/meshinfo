@@ -12,7 +12,7 @@ from api.api import API
 
 class TestCoerceNodeId:
     def test_decimal_to_hex(self):
-        # 3137048218 = 0xbafb8e9a — the int form Meshtastic sends for `from`.
+        # 3137048218 = 0xbafb8e9a — Meshtastic's int form for `from`.
         assert API._coerce_node_id("3137048218") == "bafb8e9a"
 
     def test_hex_pass_through_lowercased(self):
@@ -21,9 +21,19 @@ class TestCoerceNodeId:
     def test_bang_stripped(self):
         assert API._coerce_node_id("!bafb8e9a") == "bafb8e9a"
 
+    def test_short_hex_left_padded(self):
+        # Short hex would otherwise miss the VARCHAR(8) row.
+        assert API._coerce_node_id("abc") == "00000abc"
+        assert API._coerce_node_id("!abc") == "00000abc"
+
     def test_invalid_input_passes_through(self):
-        # Garbage in → garbage out → 404 downstream. Helper doesn't validate.
         assert API._coerce_node_id("not-an-id") == "not-an-id"
+
+    def test_overflow_decimal_passes_through(self):
+        assert API._coerce_node_id("999999999999") == "999999999999"
+
+    def test_negative_decimal_passes_through(self):
+        assert API._coerce_node_id("-1") == "-1"
 
 
 class TestParseRange:

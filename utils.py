@@ -26,6 +26,25 @@ def convert_node_id_from_hex_to_int(id: str):
   if not all(c in '0123456789abcdefABCDEF' for c in id):
       return None
   return int(id, 16)
+def normalize_node_id(value):
+  """Coerce a node id (int from protobuf, str from JSON) to canonical 8-char
+  lowercase hex, or None if invalid. Accepts a single leading '!' and short
+  hex (left-padded). Rejects ints outside uint32 and embedded '!' chars."""
+  if value is None:
+    return None
+  if isinstance(value, int):
+    # uint32 only — schema is VARCHAR(8). bool subclasses int intentionally.
+    if 0 <= value <= 0xffffffff:
+      return convert_node_id_from_int_to_hex(value)
+    return None
+  if isinstance(value, str):
+    s = value.lower()
+    if s.startswith('!'):
+      s = s[1:]
+    # Embedded '!' (e.g. "ab!cd") is rejected by the hex-only check below.
+    if 1 <= len(s) <= 8 and all(c in '0123456789abcdef' for c in s):
+      return s.rjust(8, '0')
+  return None
 def days_since_datetime(dt: datetime.datetime):
   # Returns the number of days since the given datetime using UTC
   now = datetime.datetime.now(datetime.timezone.utc)
