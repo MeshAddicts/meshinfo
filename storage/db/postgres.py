@@ -13,6 +13,7 @@ import datetime
 import json
 import logging
 from collections import OrderedDict
+from pathlib import Path
 from typing import Any, Dict, Optional, List, Tuple
 from zoneinfo import ZoneInfo
 
@@ -156,11 +157,29 @@ class PostgresStorage:
         if not self.enabled or not self.pool:
             return
 
+        # Resolve schema.sql relative to this file rather than the CWD — the
+        # previous open("postgres/sql/schema.sql") only worked when the process
+        # was launched from the repo root.
+        schema_path = Path(__file__).resolve().parents[2] / "postgres" / "sql" / "schema.sql"
+        try:
+            schema_sql = schema_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            logger.error(
+                "schema.sql not found at %s — Postgres mode requires the postgres/ tree "
+                "to be present (or mounted) alongside the running process.",
+                schema_path,
+            )
+            if self.raise_on_write_error:
+                raise
+            return
+        except OSError as e:
+            logger.error("Failed to read schema.sql at %s: %s", schema_path, e)
+            if self.raise_on_write_error:
+                raise
+            return
+
         try:
             async with self.pool.acquire() as conn:
-                # Read and execute schema file
-                with open("postgres/sql/schema.sql", "r") as f:
-                    schema_sql = f.read()
                 await conn.execute(schema_sql)
                 logger.info("PostgreSQL schema verified/created")
         except Exception as e:

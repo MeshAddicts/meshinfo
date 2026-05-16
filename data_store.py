@@ -96,8 +96,15 @@ class DataStore:
   async def update_node(self, id: str, node):
     """Apply geocoding + freshness fields, persist to Postgres, refresh the cache."""
     n = node.copy()
+    # node.copy() is shallow — sub-dicts (especially 'position') are shared with
+    # the caller. Without isolating, geocoding writes leak into the original
+    # msg['payload'] that handle_log later persists to mqtt_messages, polluting
+    # the raw-packet log with enriched fields. Only deep-copy position because
+    # that's the only sub-dict we mutate here.
     if n.get('position') is None:
       n['position'] = {}
+    else:
+      n['position'] = dict(n['position'])
 
     # Geocode positions at most once an hour per node.
     if self.config['integrations']['geocoding']['enabled']:
@@ -219,7 +226,7 @@ class DataStore:
           )
         elif aborted:
           logger.warning(
-            "%s: aborted after %d consecutive failures; named %d of %d (cycle %d/%d)",
+            "%s: aborted after %d consecutive failures; named %d of %d (%d/%d requests sent succeeded)",
             prov["name"], _PROVIDER_FAIL_THRESHOLD, len(named), before_count, succeeded, attempted,
           )
         elif succeeded < attempted:
@@ -281,7 +288,10 @@ class DataStore:
 
   async def _fetch_provider(self, session, prov: dict, ids: list) -> dict | None:
     """One GET against `prov`. Returns the parsed JSON dict, or None on any failure."""
-    url = prov["url_template"].format(ids=",".join(ids))
+    # str.replace, not str.format — a generic operator-supplied URL might contain
+    # stray `{}` or `{key}` braces (e.g. `?ids={ids}&token={env:TOKEN}`). format()
+    # would KeyError on those; replace() leaves them intact for the upstream to handle.
+    url = prov["url_template"].replace("{ids}", ",".join(ids))
     try:
       async with session.get(url) as response:
         if response.status == 200:

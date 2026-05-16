@@ -4,8 +4,11 @@
 .venv
 .vscode
 .pytest_cache
-__pycache__
-*.pyc
+# Globstar form so the rule applies at any depth — bare `__pycache__` only
+# matches the top level under classic builder; BuildKit treats it recursively
+# but pin explicitly to avoid drift.
+**/__pycache__
+**/*.pyc
 
 # Local-only state.
 caddy

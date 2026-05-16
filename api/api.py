@@ -36,6 +36,19 @@ class API:
         self.data = data
 
     @staticmethod
+    def _coerce_node_id(raw: str) -> str:
+        """Normalize a URL `{id}` path param to the schema's 8-char lowercase hex.
+
+        Accepts decimal (`3137048218`), hex with or without leading `!` (`!bafb8e9a`,
+        `bafb8e9a`, `BAFB8E9A`). Pure lookup helper — invalid inputs pass through
+        and just won't match any row, returning 404 naturally.
+        """
+        try:
+            return utils.convert_node_id_from_int_to_hex(int(raw))
+        except (TypeError, ValueError):
+            return raw.lstrip("!").lower()
+
+    @staticmethod
     def _parse_range(value: str | None) -> int | None:
         """Convert a range string like '1h', '24h', '7d' to seconds. Returns None for 'all' or missing, defaults invalid values to 24h."""
         DEFAULT_RANGE = 24 * 3600
@@ -121,12 +134,7 @@ class API:
 
         @app.get("/v1/nodes/{id}")
         async def node(request: Request, id: str) -> JSONResponse:
-            try:
-                node_id = int(id)
-                node_id = utils.convert_node_id_from_int_to_hex(node_id)
-            except ValueError:
-                node_id = id
-
+            node_id = self._coerce_node_id(id)
             node_data = await self.data.pg_storage.query_node_by_id(node_id)
             if node_data:
                 return jsonable_encoder({ "node": node_data })
@@ -134,12 +142,7 @@ class API:
 
         @app.get("/v1/nodes/{id}/telemetry")
         async def node_telemetry(request: Request, id: str) -> JSONResponse:
-            try:
-                node_id = int(id)
-                node_id = utils.convert_node_id_from_int_to_hex(node_id)
-            except ValueError:
-                node_id = id
-
+            node_id = self._coerce_node_id(id)
             telemetry_data = await self.data.pg_storage.query_node_telemetry(node_id)
             if telemetry_data:
                 return jsonable_encoder({ "telemetry": telemetry_data })
@@ -147,23 +150,13 @@ class API:
 
         @app.get("/v1/nodes/{id}/texts")
         async def node_text(request: Request, id: str) -> JSONResponse:
-            try:
-                node_id = int(id)
-                node_id = utils.convert_node_id_from_int_to_hex(node_id)
-            except ValueError:
-                node_id = id
-
+            node_id = self._coerce_node_id(id)
             texts = await self.data.pg_storage.query_node_texts(node_id)
             return jsonable_encoder({ "texts": texts })
 
         @app.get("/v1/nodes/{id}/packets")
         async def node_packets(request: Request, id: str) -> JSONResponse:
-            try:
-                node_id = int(id)
-                node_id = utils.convert_node_id_from_int_to_hex(node_id)
-            except ValueError:
-                node_id = id.lstrip("!")
-
+            node_id = self._coerce_node_id(id)
             try:
                 limit = int(request.query_params.get("limit", 50))
             except (TypeError, ValueError):
@@ -175,12 +168,7 @@ class API:
 
         @app.get("/v1/nodes/{id}/traceroutes")
         async def node_traceroutes(request: Request, id: str) -> JSONResponse:
-            try:
-                node_id = int(id)
-                node_id = utils.convert_node_id_from_int_to_hex(node_id)
-            except ValueError:
-                node_id = id
-
+            node_id = self._coerce_node_id(id)
             traceroutes = await self.data.pg_storage.query_node_traceroutes(node_id)
             return jsonable_encoder({ "traceroutes": traceroutes })
 
@@ -195,9 +183,10 @@ class API:
                 "7d": 604800,
                 "all": None,
             }
-            range_seconds = range_map.get(range_param)
-            if range_param not in range_map:
-                range_seconds = 86400
+            # Use `in` not `.get(...) is None` — the latter would mistake the
+            # legitimate "all" mapping (→ None) for an invalid input and override
+            # it to 86400, silently turning "all" into 24h.
+            range_seconds = range_map[range_param] if range_param in range_map else 86400
 
             chat_data = await self.data.pg_storage.query_chat_filtered(
                 channel_id=channel,

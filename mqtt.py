@@ -40,6 +40,10 @@ def _normalize_node_id(value) -> Optional[str]:
     return None
 
 class MQTT:
+    # Surface Discord bridge backpressure every Nth drop so a stalled consumer
+    # doesn't disappear into the void. WARNING is logged once per bucket.
+    _DISCORD_DROP_LOG_EVERY = 100
+
     def __init__(self, config, data):
         self.config = config
         self.data = data
@@ -49,6 +53,19 @@ class MQTT:
         self.client_id = config['broker']['client_id']
         self.username = config['broker']['username']
         self.password = config['broker']['password']
+
+        # Cumulative count of events the Discord bridge couldn't keep up with.
+        # Bounded queue is intentional (we'd rather drop than balloon memory),
+        # but silent drops were invisible — this surfaces them.
+        self._discord_drops_total: int = 0
+
+    def _record_discord_drop(self, event_type: str) -> None:
+        self._discord_drops_total += 1
+        if self._discord_drops_total % self._DISCORD_DROP_LOG_EVERY == 0:
+            logger.warning(
+                "Discord bridge queue full; dropped %d events so far (latest type=%s) — consumer may be stalled",
+                self._discord_drops_total, event_type,
+            )
 
     ### actions
 
@@ -536,7 +553,7 @@ class MQTT:
                 'node_id': id,
             })
         except asyncio.QueueFull:
-            pass  # Drop event if consumer is behind
+            self._record_discord_drop('position')
 
 
     async def handle_telemetry(self, msg):
@@ -636,7 +653,7 @@ class MQTT:
                 'chat': chat,
             })
         except asyncio.QueueFull:
-            pass  # Drop event if consumer is behind
+            self._record_discord_drop('text')
 
 
     async def handle_traceroute(self, msg):
