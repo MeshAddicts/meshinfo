@@ -190,15 +190,23 @@ export async function buildClutterRaster(
   const xMax = Math.floor(lng2tileX(bounds.east, zoom));
   const yMin = Math.floor(lat2tileY(bounds.north, zoom));
   const yMax = Math.floor(lat2tileY(bounds.south, zoom));
+  const scale = Math.pow(2, zoom);
   const tilesTotal = (xMax - xMin + 1) * (yMax - yMin + 1);
 
   const tileMap = new Map<string, CachedLandcoverTile>();
   const jobs: Promise<void>[] = [];
+  // Antimeridian: bbox may straddle ±180 (xMin/xMax outside [0, scale)). Wrap
+  // each absolute x to a canonical fetch index so URLs stay valid; the lookup
+  // applies the same wrap. Pre-seed the map synchronously — the .then() that
+  // writes the real value runs later, so the dedupe check needs the placeholder.
   for (let x = xMin; x <= xMax; x++) {
+    const fetchX = ((x % scale) + scale) % scale;
     for (let y = yMin; y <= yMax; y++) {
-      const key = `${zoom}/${x}/${y}`;
+      const key = `${zoom}/${fetchX}/${y}`;
+      if (tileMap.has(key)) continue;
+      tileMap.set(key, TILE_MISSING);
       jobs.push(
-        fetchLandcoverTile(zoom, x, y)
+        fetchLandcoverTile(zoom, fetchX, y)
           .then((t) => void tileMap.set(key, t))
           .catch((err) => {
             console.warn("[landcoverTiles]", err);
@@ -216,7 +224,6 @@ export async function buildClutterRaster(
 
   const data = new Uint8Array(targetWidth * targetHeight);
   data.fill(NLCD_DEFAULT_CLASS_ID);
-  const scale = Math.pow(2, zoom);
 
   /** Class ID at absolute tile-pixel; 0 for missing/nodata. */
   const lookup = (absX: number, absY: number): number => {

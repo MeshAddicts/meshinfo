@@ -1,9 +1,14 @@
 import datetime
 
+# Placeholder; the real 'since' is set on the first packet via update_node.
+_ZERO_DELTA = datetime.timedelta(0)
+
+
 class Node():
   @staticmethod
   def default_node(id: str):
     id = id.replace('!', '')
+    now = datetime.datetime.now(datetime.timezone.utc).astimezone()
     if id == 'ffffffff':
       return {
         'id': id,
@@ -16,8 +21,8 @@ class Node():
         'gateway': None,
         'last_channel': None,
         'active': False,
-        'since': datetime.datetime.now(datetime.timezone.utc).astimezone() - datetime.datetime.now(datetime.timezone.utc).astimezone(),
-        'last_seen': datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()
+        'since': _ZERO_DELTA,
+        'last_seen': now.isoformat()
       }
 
     return {
@@ -31,6 +36,6 @@ class Node():
       'gateway': None,
       'last_channel': None,
       'active': True,
-      'since': datetime.datetime.now(datetime.timezone.utc).astimezone() - datetime.datetime.now(datetime.timezone.utc).astimezone(),
-      'last_seen': datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()
+      'since': _ZERO_DELTA,
+      'last_seen': now.isoformat()
     }

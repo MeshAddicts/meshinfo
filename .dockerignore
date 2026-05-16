@@ -1,6 +1,26 @@
+# Build artifacts + repo metadata.
+.git
+.github
+.venv
+.vscode
+.pytest_cache
+# Globstar so the rule applies at any depth (classic builder needs it explicit).
+**/__pycache__
+**/*.pyc
+
+# Local-only state.
 caddy
 output
 postgres
+config.toml
+mosquitto/data
+
+# Docs aren't needed at runtime.
+*.md
+docs
+
+tests
+
 # Host node_modules would clobber the container install and drop .bin shims.
 frontend/node_modules
 # Regenerated inside the wasm-build stage.

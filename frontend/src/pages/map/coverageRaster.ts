@@ -251,9 +251,12 @@ export function renderCoverageRaster(
         const txHeightAgM = txHeights[k];
         const distKm = haversineKm(origLng, origLat, lng, lat);
 
-        // Origin pixel — short-circuit to max margin (50 dB).
+        // Origin pixel: path loss ≈ 0 so margin = link budget. Computed (not
+        // hardcoded) so a budget that physically can't close shows < 0 here
+        // and lets the panel's "Link budget fails everywhere" warning fire.
         if (distKm < 0.01) {
-          if (50 > bestMargin) bestMargin = 50;
+          const originMarginDb = txDbm + txGain + rxGain - cableLossDb - rxSensitivityDbm - fadeMarginDb;
+          if (originMarginDb > bestMargin) bestMargin = originMarginDb;
           anyOriginValid = true;
           continue;
         }

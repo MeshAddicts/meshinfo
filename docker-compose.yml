@@ -42,9 +42,18 @@ services:
     ports:
       - 9000:9000
     restart: unless-stopped
+    # Wait for Postgres readiness, not just container start.
     depends_on:
-      - postgres
-      - mqtt
+      postgres:
+        condition: service_healthy
+      mqtt:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(\"http://localhost:9000/\", timeout=3).status==200 else 1)'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   frontend:
     image: ghcr.io/meshaddicts/meshinfo-spa:latest
@@ -73,8 +82,10 @@ services:
       - CADDY_AGREE=true
     restart: unless-stopped
     depends_on:
-      - meshinfo
-      - frontend
+      meshinfo:
+        condition: service_healthy
+      frontend:
+        condition: service_started
 
   # `docker compose --profile bake run --rm landcover-bake` — see scripts/README-landcover.md.
   landcover-bake:

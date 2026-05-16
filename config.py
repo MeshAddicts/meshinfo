@@ -82,7 +82,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "enrich": {
             "enabled": False,
             "interval": 900,
-            "provider": "world.meshinfo.network",
+            # List of upstream MeshInfo-compatible name lookups. Each entry is either
+            # a named preset (currently: "bayme") or a URL template like
+            # "https://other.meshinfo.example/api/v1/nodes?ids={ids}".
+            "providers": ["bayme"],
         },
         "graph": {
             "enabled": True,
@@ -362,7 +365,13 @@ def validate(config: dict) -> list[str]:
     check(_validate_type(config, "server.enrich", dict))
     check(_validate_type(config, "server.enrich.enabled", bool))
     check(_validate_positive_number(config, "server.enrich.interval"))
-    check(_validate_type(config, "server.enrich.provider", str))
+    # Accept either the new 'providers' list or the legacy 'provider' string.
+    # Runtime resolver picks providers when present; legacy string is back-compat only.
+    enrich_cfg = config.get("server", {}).get("enrich", {}) or {}
+    if "providers" in enrich_cfg:
+        check(_validate_type(config, "server.enrich.providers", list))
+    if "provider" in enrich_cfg:
+        check(_validate_type(config, "server.enrich.provider", str))
     check(_validate_type(config, "server.graph", dict))
     check(_validate_type(config, "server.graph.enabled", bool))
     check(_validate_positive_number(config, "server.graph.max_depth"))

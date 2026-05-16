@@ -163,7 +163,7 @@ class MainCommands(commands.Cog):
 
         logger.info("Discord: /lookup: Found %s (%s)", id_hex, longname)
 
-        base_url = self.config['server']['base_url'].strip('/')
+        base_url = self.config.get('server', {}).get('base_url', '').rstrip('/')
         embed = discord.Embed(
             title=f"{shortname}: {longname}",
             url=f"{base_url}/nodes?node={id_hex}",
@@ -239,7 +239,7 @@ class MainCommands(commands.Cog):
             )
             return
 
-        base_url = self.config['server']['base_url'].strip('/')
+        base_url = self.config.get('server', {}).get('base_url', '').rstrip('/')
         embed = discord.Embed(
             title=f"Nodes linked to {user.display_name}",
             color=discord.Color.blue(),
@@ -274,7 +274,7 @@ class MainCommands(commands.Cog):
         total_nodes = stats.get("total_nodes", 0)
         active_nodes = stats.get("active_nodes", 0)
 
-        base_url = self.config['server']['base_url'].strip('/')
+        base_url = self.config.get('server', {}).get('base_url', '').rstrip('/')
         embed = discord.Embed(
             title=f"{self.config['mesh']['name']}",
             url=base_url,

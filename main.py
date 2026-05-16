@@ -4,6 +4,7 @@ import datetime
 import json
 import logging
 import os
+import random
 import time
 from typing import Awaitable, Callable, Tuple
 from zoneinfo import ZoneInfo
@@ -69,6 +70,42 @@ def _read_json_file(path: str) -> dict | None:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return None
+
+
+PRUNE_INTERVAL_SEC = 60.0
+
+
+async def prune_loop(config, data, interval_seconds: float = PRUNE_INTERVAL_SEC) -> None:
+    """Periodically mark nodes inactive past the activity threshold."""
+    threshold = config['server']['node_activity_prune_threshold']
+    while True:
+        try:
+            pruned = await data.pg_storage.mark_nodes_inactive_by_age(threshold)
+            if pruned:
+                logger.debug("Pruned %d node(s) inactive for >= %ds", pruned, threshold)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Prune loop iteration failed")
+        await asyncio.sleep(interval_seconds)
+
+
+ENRICHMENT_JITTER_FRAC = 0.1
+
+
+async def enrichment_loop(config, data) -> None:
+    """Periodically backfill node names/hardware from external enrichment APIs.
+    ±10% jitter on the sleep so multiple deployments don't hit the same provider in lockstep."""
+    interval = float(config['server']['enrich'].get('interval', 600))
+    while True:
+        try:
+            await data.backfill_node_infos()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Enrichment loop iteration failed")
+        jitter = random.uniform(-interval * ENRICHMENT_JITTER_FRAC, interval * ENRICHMENT_JITTER_FRAC)
+        await asyncio.sleep(max(1.0, interval + jitter))
 
 
 async def supervise(
@@ -156,8 +193,6 @@ async def main() -> None:
     # Placeholder until MQTT connects; MQTT will overwrite on successful connect.
     data.update("mqtt_connect_time", startup_time)
 
-    await data.save()
-
     api_server = api.API(config, data)
 
     background_tasks: list[asyncio.Task] = []
@@ -168,6 +203,17 @@ async def main() -> None:
         background_tasks.append(asyncio.create_task(supervise("MQTT", mqtt.connect)))
     else:
         logger.info("MQTT disabled in config")
+
+    background_tasks.append(
+        asyncio.create_task(supervise("Prune", lambda: prune_loop(config, data)))
+    )
+
+    if config['server'].get('enrich', {}).get('enabled'):
+        background_tasks.append(
+            asyncio.create_task(supervise("Enrichment", lambda: enrichment_loop(config, data)))
+        )
+    else:
+        logger.info("Enrichment disabled in config")
 
     # Discord
     if config["integrations"]["discord"]["enabled"]:
