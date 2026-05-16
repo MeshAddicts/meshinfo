@@ -418,16 +418,22 @@ export async function buildDemFromTilezen(opts: BuildDemOptions): Promise<DEM> {
   const xMax = Math.floor(lng2tileX(bounds.east, zoom));
   const yMin = Math.floor(lat2tileY(bounds.north, zoom));
   const yMax = Math.floor(lat2tileY(bounds.south, zoom));
+  const scale = Math.pow(2, zoom);
 
-  // buildDem's Tilezen→Mapbox fallback relies on throwing when >half the tiles fail
+  // buildDem's Tilezen→Mapbox fallback relies on throwing when >half the tiles fail.
+  // Antimeridian: wrap x to canonical [0, scale) and pre-seed tileMap synchronously
+  // so the dedupe check fires within one call (see landcoverTiles.ts for full rationale).
   const tileMap = new Map<string, CachedTile | null>();
   let failureCount = 0;
   const jobs: Promise<void>[] = [];
   for (let x = xMin; x <= xMax; x++) {
+    const fetchX = ((x % scale) + scale) % scale;
     for (let y = yMin; y <= yMax; y++) {
-      const key = `${zoom}/${x}/${y}`;
+      const key = `${zoom}/${fetchX}/${y}`;
+      if (tileMap.has(key)) continue;
+      tileMap.set(key, null);
       jobs.push(
-        fetchTilezenTile(zoom, x, y)
+        fetchTilezenTile(zoom, fetchX, y)
           .then((t) => void tileMap.set(key, t))
           .catch((err) => {
             failureCount += 1;
@@ -439,7 +445,9 @@ export async function buildDemFromTilezen(opts: BuildDemOptions): Promise<DEM> {
   }
   await Promise.all(jobs);
 
-  const totalTiles = (xMax - xMin + 1) * (yMax - yMin + 1);
+  // Use the dedupe-aware unique-tile count so the 50% threshold stays meaningful
+  // when an antimeridian-spanning bbox would otherwise inflate the denominator.
+  const totalTiles = tileMap.size;
   // >50% failure → throw so buildDem falls back to Mapbox
   if (failureCount > totalTiles / 2) {
     throw new Error(
@@ -448,7 +456,6 @@ export async function buildDemFromTilezen(opts: BuildDemOptions): Promise<DEM> {
   }
 
   const data = new Float32Array(targetWidth * targetHeight);
-  const scale = Math.pow(2, zoom);
 
   let tileSize = TILEZEN_TILE_SIZE;
   for (const t of tileMap.values()) {

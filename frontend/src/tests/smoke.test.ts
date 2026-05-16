@@ -19,20 +19,23 @@ import { _resetBuildingCacheForTests, buildBuildingRaster } from "../pages/map/b
 import { _resetCanopyCacheForTests, buildCanopyRaster } from "../pages/map/canopyTiles";
 import { _resetLandcoverCacheForTests, buildClutterRaster } from "../pages/map/landcoverTiles";
 import type { DEMBounds } from "../pages/map/terrainDEM";
+import { buildDemFromTilezen } from "../pages/map/terrainRgb";
 
 // Antimeridian-crossing bbox produced by demBoundsAround(origin=[180, 0], radiusKm=50).
 const STRADDLE_BOUNDS: DEMBounds = { west: 179.5, east: 180.5, south: -0.5, north: 0.5 };
 
 /**
- * Stub global fetch and record every (z, x) tuple that the fetcher asks for.
+ * Stub global fetch and record every (z, x, y) tuple that the fetcher asks for.
  * Returns 404 so the caller falls through to the "missing tile" path without
- * touching the canvas decoder (jsdom has no OffscreenCanvas).
+ * touching the canvas decoder (jsdom has no OffscreenCanvas). Matches both the
+ * baked-tile URL shape (`/tiles/<layer>/{z}/{x}/{y}.png`) and the external
+ * Tilezen CDN shape (`.../{z}/{x}/{y}.png`).
  */
 function captureFetchedTileCoords() {
   const requests: Array<{ z: number; x: number; y: number }> = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any) => {
     const url = typeof input === "string" ? input : input?.url ?? String(input);
-    const m = url.match(/\/tiles\/[^/]+\/(\d+)\/(\d+)\/(\d+)\.png/);
+    const m = url.match(/\/(\d+)\/(\d+)\/(\d+)\.png/);
     if (m) {
       requests.push({
         z: parseInt(m[1], 10),
@@ -91,6 +94,25 @@ describe("Antimeridian: tile fetchers wrap x into [0, 2^zoom)", () => {
       targetWidth: 32,
       targetHeight: 32,
     });
+    assertAllInRange(requests);
+  });
+
+  it("tilezen DEM bbox crossing ±180", async () => {
+    // Tilezen is the primary terrain source (see project_coverage_terrain_accuracy_options).
+    // The Mapbox-fallback path is exercised by the production buildDem(); the Tilezen
+    // path is what most users actually hit, and it shipped its wrap separately from the
+    // tile-bake files.
+    const requests = captureFetchedTileCoords();
+    // All-404 path: buildDemFromTilezen throws (>50% failure) — that's expected; we
+    // just need to verify the URLs it issued before throwing were canonical.
+    await expect(
+      buildDemFromTilezen({
+        bounds: STRADDLE_BOUNDS,
+        targetWidth: 32,
+        targetHeight: 32,
+        token: "", // Tilezen path doesn't use the Mapbox token; satisfy the typing.
+      }),
+    ).rejects.toThrow();
     assertAllInRange(requests);
   });
 
