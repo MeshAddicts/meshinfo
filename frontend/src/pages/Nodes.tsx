@@ -642,6 +642,7 @@ export const Nodes = () => {
 
   useEffect(() => {
     if (!selectedId) return;
+    if (!isLgUp) return;
 
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node | null;
@@ -656,7 +657,7 @@ export const Nodes = () => {
 
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
-  }, [selectedId, clearSelection]);
+  }, [selectedId, clearSelection, isLgUp]);
 
   // Keyboard shortcuts
   useEffect(() => {
