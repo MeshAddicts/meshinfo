@@ -321,16 +321,21 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
   const xMax = Math.floor(lng2tileX(bounds.east, zoom));
   const yMin = Math.floor(lat2tileY(bounds.north, zoom));
   const yMax = Math.floor(lat2tileY(bounds.south, zoom));
+  const scale = Math.pow(2, zoom);
 
 
-  // Parallel fetch; individual failures → null tile
+  // Parallel fetch; individual failures → null tile.
+  // Antimeridian wrap + sync pre-seed for in-flight dedupe — see landcoverTiles.ts.
   const tileMap = new Map<string, CachedTile | null>();
   const jobs: Promise<void>[] = [];
   for (let x = xMin; x <= xMax; x++) {
+    const fetchX = ((x % scale) + scale) % scale;
     for (let y = yMin; y <= yMax; y++) {
-      const key = `${zoom}/${x}/${y}`;
+      const key = `${zoom}/${fetchX}/${y}`;
+      if (tileMap.has(key)) continue;
+      tileMap.set(key, null);
       jobs.push(
-        fetchTile(zoom, x, y, token)
+        fetchTile(zoom, fetchX, y, token)
           .then((t) => void tileMap.set(key, t))
           .catch((err) => {
             console.warn("[terrainRgb]", err);
@@ -343,7 +348,6 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
 
   // Bilinear resample; nearest-neighbor dropped narrow peaks (~500 m underread on CA buttes)
   const data = new Float32Array(targetWidth * targetHeight);
-  const scale = Math.pow(2, zoom);
 
   // Pick tile size from any non-null tile; 256 fallback
   let tileSize = 256;
@@ -413,16 +417,21 @@ export async function buildDemFromTilezen(opts: BuildDemOptions): Promise<DEM> {
   const xMax = Math.floor(lng2tileX(bounds.east, zoom));
   const yMin = Math.floor(lat2tileY(bounds.north, zoom));
   const yMax = Math.floor(lat2tileY(bounds.south, zoom));
+  const scale = Math.pow(2, zoom);
 
-  // buildDem's Tilezen→Mapbox fallback relies on throwing when >half the tiles fail
+  // buildDem's Tilezen→Mapbox fallback throws when >half the tiles fail.
+  // Antimeridian wrap + sync pre-seed for in-flight dedupe — see landcoverTiles.ts.
   const tileMap = new Map<string, CachedTile | null>();
   let failureCount = 0;
   const jobs: Promise<void>[] = [];
   for (let x = xMin; x <= xMax; x++) {
+    const fetchX = ((x % scale) + scale) % scale;
     for (let y = yMin; y <= yMax; y++) {
-      const key = `${zoom}/${x}/${y}`;
+      const key = `${zoom}/${fetchX}/${y}`;
+      if (tileMap.has(key)) continue;
+      tileMap.set(key, null);
       jobs.push(
-        fetchTilezenTile(zoom, x, y)
+        fetchTilezenTile(zoom, fetchX, y)
           .then((t) => void tileMap.set(key, t))
           .catch((err) => {
             failureCount += 1;
@@ -434,8 +443,8 @@ export async function buildDemFromTilezen(opts: BuildDemOptions): Promise<DEM> {
   }
   await Promise.all(jobs);
 
-  const totalTiles = (xMax - xMin + 1) * (yMax - yMin + 1);
-  // >50% failure → throw so buildDem falls back to Mapbox
+  // Use the dedupe-aware count so the 50% threshold survives antimeridian spans.
+  const totalTiles = tileMap.size;
   if (failureCount > totalTiles / 2) {
     throw new Error(
       `tilezen bulk DEM failed: ${failureCount}/${totalTiles} tiles errored`,
@@ -443,7 +452,6 @@ export async function buildDemFromTilezen(opts: BuildDemOptions): Promise<DEM> {
   }
 
   const data = new Float32Array(targetWidth * targetHeight);
-  const scale = Math.pow(2, zoom);
 
   let tileSize = TILEZEN_TILE_SIZE;
   for (const t of tileMap.values()) {

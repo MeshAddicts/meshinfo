@@ -135,7 +135,7 @@ MeshInfo supports two map providers, configured in `frontend/.env`:
 
 ### Backend
 
-Requires Python 3.12.4+ and a running PostgreSQL instance.
+Requires Python 3.14+ and a running PostgreSQL 16 instance.
 
 ```sh
 pip install -r requirements.txt
@@ -145,7 +145,7 @@ python main.py
 
 ### Frontend
 
-Requires Node.js 20.19+ and Yarn.
+Requires Node.js 22+ and Yarn 4 (managed via Corepack — no manual install needed).
 
 ```sh
 cd frontend

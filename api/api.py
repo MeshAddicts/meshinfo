@@ -36,6 +36,21 @@ class API:
         self.data = data
 
     @staticmethod
+    def _coerce_node_id(raw: str) -> str:
+        """Normalize a URL `{id}` path param to canonical 8-char lowercase hex.
+        Accepts hex (with or without leading '!', any case, short ones padded)
+        and decimal uint32. Invalid inputs pass through → 404 naturally.
+        """
+        # Hex first — '99005060' is a valid hex id, not a decimal to convert.
+        direct = utils.normalize_node_id(raw)
+        if direct:
+            return direct
+        try:
+            return utils.normalize_node_id(int(raw)) or raw
+        except (TypeError, ValueError):
+            return raw
+
+    @staticmethod
     def _parse_range(value: str | None) -> int | None:
         """Convert a range string like '1h', '24h', '7d' to seconds. Returns None for 'all' or missing, defaults invalid values to 24h."""
         DEFAULT_RANGE = 24 * 3600
@@ -66,12 +81,13 @@ class API:
         @app.get("/v1/nodes")
         async def nodes(request: Request) -> JSONResponse:
             days_to_limit = 7
-            if "days" in request.query_params.keys():
-                days_param: str|None = request.query_params.get("days")
-                if days_param is not None:
+            days_param = request.query_params.get("days")
+            if days_param is not None:
+                try:
                     days_to_limit = int(days_param)
-            if days_to_limit < 1:
-                days_to_limit = 1
+                except ValueError:
+                    return JSONResponse({"error": "days must be an integer"}, status_code=400)
+            days_to_limit = max(1, days_to_limit)
 
             node_ids = None
             if "ids" in request.query_params.keys():
@@ -120,12 +136,7 @@ class API:
 
         @app.get("/v1/nodes/{id}")
         async def node(request: Request, id: str) -> JSONResponse:
-            try:
-                node_id = int(id)
-                node_id = utils.convert_node_id_from_int_to_hex(node_id)
-            except ValueError:
-                node_id = id
-
+            node_id = self._coerce_node_id(id)
             node_data = await self.data.pg_storage.query_node_by_id(node_id)
             if node_data:
                 return jsonable_encoder({ "node": node_data })
@@ -133,12 +144,7 @@ class API:
 
         @app.get("/v1/nodes/{id}/telemetry")
         async def node_telemetry(request: Request, id: str) -> JSONResponse:
-            try:
-                node_id = int(id)
-                node_id = utils.convert_node_id_from_int_to_hex(node_id)
-            except ValueError:
-                node_id = id
-
+            node_id = self._coerce_node_id(id)
             telemetry_data = await self.data.pg_storage.query_node_telemetry(node_id)
             if telemetry_data:
                 return jsonable_encoder({ "telemetry": telemetry_data })
@@ -146,23 +152,13 @@ class API:
 
         @app.get("/v1/nodes/{id}/texts")
         async def node_text(request: Request, id: str) -> JSONResponse:
-            try:
-                node_id = int(id)
-                node_id = utils.convert_node_id_from_int_to_hex(node_id)
-            except ValueError:
-                node_id = id
-
+            node_id = self._coerce_node_id(id)
             texts = await self.data.pg_storage.query_node_texts(node_id)
             return jsonable_encoder({ "texts": texts })
 
         @app.get("/v1/nodes/{id}/packets")
         async def node_packets(request: Request, id: str) -> JSONResponse:
-            try:
-                node_id = int(id)
-                node_id = utils.convert_node_id_from_int_to_hex(node_id)
-            except ValueError:
-                node_id = id.lstrip("!")
-
+            node_id = self._coerce_node_id(id)
             try:
                 limit = int(request.query_params.get("limit", 50))
             except (TypeError, ValueError):
@@ -174,12 +170,7 @@ class API:
 
         @app.get("/v1/nodes/{id}/traceroutes")
         async def node_traceroutes(request: Request, id: str) -> JSONResponse:
-            try:
-                node_id = int(id)
-                node_id = utils.convert_node_id_from_int_to_hex(node_id)
-            except ValueError:
-                node_id = id
-
+            node_id = self._coerce_node_id(id)
             traceroutes = await self.data.pg_storage.query_node_traceroutes(node_id)
             return jsonable_encoder({ "traceroutes": traceroutes })
 
@@ -194,9 +185,8 @@ class API:
                 "7d": 604800,
                 "all": None,
             }
-            range_seconds = range_map.get(range_param)
-            if range_param not in range_map:
-                range_seconds = 86400
+            # Membership check, not `.get() is None` — "all" maps to None on purpose.
+            range_seconds = range_map[range_param] if range_param in range_map else 86400
 
             chat_data = await self.data.pg_storage.query_chat_filtered(
                 channel_id=channel,
@@ -218,7 +208,10 @@ class API:
         async def messages(request: Request) -> JSONResponse:
             search = request.query_params.get("q")
             range_seconds = self._parse_range(request.query_params.get("range"))
-            limit = int(request.query_params.get("limit", 5000))
+            try:
+                limit = int(request.query_params.get("limit", 5000))
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "limit must be an integer"}, status_code=400)
             limit = max(1, min(limit, 50000))
             results = await self.data.pg_storage.query_mqtt_messages(
                 limit=limit, search=search, range_seconds=range_seconds,
@@ -228,7 +221,10 @@ class API:
         @app.get("/v1/mqtt_messages")
         async def mqtt_messages(request: Request) -> JSONResponse:
             range_seconds = self._parse_range(request.query_params.get("range"))
-            limit = int(request.query_params.get("limit", 5000))
+            try:
+                limit = int(request.query_params.get("limit", 5000))
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "limit must be an integer"}, status_code=400)
             limit = max(1, min(limit, 50000))
             results = await self.data.pg_storage.query_mqtt_messages(
                 limit=limit, range_seconds=range_seconds,
@@ -243,17 +239,19 @@ class API:
         @app.get("/v1/static-map")
         async def static_map(request: Request) -> Response:
             """Generate a static map PNG image for given coordinates."""
+            # Presence check, not (0,0) reject — Null Island is a valid coordinate.
+            lat_param = request.query_params.get("lat")
+            lon_param = request.query_params.get("lon")
+            if lat_param is None or lon_param is None:
+                return JSONResponse({"error": "lat and lon are required"}, status_code=400)
             try:
-                lat = float(request.query_params.get("lat", 0))
-                lon = float(request.query_params.get("lon", 0))
+                lat = float(lat_param)
+                lon = float(lon_param)
                 zoom = int(request.query_params.get("zoom", 12))
                 width = int(request.query_params.get("width", 300))
                 height = int(request.query_params.get("height", 200))
             except (ValueError, TypeError):
                 return JSONResponse({"error": "Invalid parameters"}, status_code=400)
-
-            if lat == 0 and lon == 0:
-                return JSONResponse({"error": "lat and lon are required"}, status_code=400)
 
             zoom = max(1, min(zoom, 18))
             width = max(100, min(width, 800))
@@ -334,17 +332,23 @@ class API:
                     tile_dir,
                 )
 
-        allow_origins = os.getenv("ALLOW_ORIGINS", "").split(",")
-        logger.info("Allowed origins: %s (%d)", allow_origins, len(allow_origins))
+        # Strip stray quote chars — compose YAML can wrap values producing `'"*"'`.
+        # Empty env → no middleware (the previous `[""]` was a deny-all that looked configured).
+        raw_origins = os.getenv("ALLOW_ORIGINS", "")
+        allow_origins = [o.strip().strip('"').strip("'") for o in raw_origins.split(",")]
+        allow_origins = [o for o in allow_origins if o]
 
-        if(len(allow_origins) > 0):
+        if allow_origins:
+            logger.info("Allowed origins: %s (%d)", allow_origins, len(allow_origins))
             app.add_middleware(
                 CORSMiddleware,
                 allow_origins=allow_origins,
                 allow_credentials=True,
                 allow_methods=["*"],
-                allow_headers=["*"]
+                allow_headers=["*"],
             )
+        else:
+            logger.info("ALLOW_ORIGINS not set — CORS middleware disabled")
 
         conf = uvicorn.Config(app=app, host="0.0.0.0", port=9000, loop="asyncio", log_config=None)
         server = uvicorn.Server(conf)

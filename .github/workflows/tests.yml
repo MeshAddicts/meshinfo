@@ -15,7 +15,8 @@ jobs:
         with:
           python-version: "3.14"
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install pytest pytest-cov
+      # Tests import real modules at collection time, so runtime deps are needed.
+      - run: python -m pip install -r requirements-dev.txt
       - run: python -m pytest -q tests
 
   frontend-tests:
@@ -29,8 +30,10 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "25"
+      # Corepack picks the yarn version up from frontend/package.json `packageManager`.
       - run: corepack enable
-      - run: corepack prepare yarn@4.2.2 --activate
       - run: yarn install
       - run: yarn tsc --noEmit
       - run: yarn test
+      # Production bundle — catches asset/dynamic-import issues vitest doesn't.
+      - run: yarn build

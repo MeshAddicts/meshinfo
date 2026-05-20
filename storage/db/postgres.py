@@ -2,16 +2,18 @@
 """
 PostgreSQL storage backend for MeshInfo.
 
-This module provides real-time write capabilities to PostgreSQL while maintaining
-the exact same data structure as JSON files for API compatibility.
+Owns the asyncpg connection pool, the in-process node LRU cache, and the
+schema/migration lifecycle. All node/chat/telemetry state lives here.
 """
 
+import asyncio
 import asyncpg
+import base64
 import datetime
 import json
 import logging
-import base64
 from collections import OrderedDict
+from pathlib import Path
 from typing import Any, Dict, Optional, List, Tuple
 from zoneinfo import ZoneInfo
 
@@ -84,10 +86,14 @@ class PostgresStorage:
         # Optional: enable to make migrations "honest" (fail fast / count failures correctly)
         self.raise_on_write_error = bool(self.pg_config.get("raise_on_write_error", False))
 
-        # LRU node cache. Stores live refs so read-modify-write callers update
-        # the cache directly; pair mutations with cache_node_set after a write.
+        # LRU node cache holding live refs — callers read-modify-write directly
+        # and pair the mutation with cache_node_set on a successful DB write.
         self._node_lru: "OrderedDict[str, dict]" = OrderedDict()
         self._node_lru_max = max(1, int(self.pg_config.get("node_cache_size", 10000)))
+
+        # Tracked so close() can cancel before tearing down the pool (otherwise
+        # this task errors mid-batch with "InterfaceError: pool is closing").
+        self._backfill_task: Optional[asyncio.Task] = None
 
     async def connect(self) -> bool:
         """
@@ -111,8 +117,9 @@ class PostgresStorage:
                 database=self.pg_config.get("database", "meshinfo"),
                 user=self.pg_config.get("username", "postgres"),
                 password=self.pg_config.get("password", "password"),
-                min_size=self.pg_config.get("min_pool_size", 5),
-                max_size=self.pg_config.get("max_pool_size", 20),
+                # Tune via storage.postgres.{min,max}_pool_size.
+                min_size=self.pg_config.get("min_pool_size", 1),
+                max_size=self.pg_config.get("max_pool_size", 5),
                 command_timeout=10,
             )
             logger.info("PostgreSQL connection pool established")
@@ -125,7 +132,15 @@ class PostgresStorage:
             return False
 
     async def close(self):
-        """Close the connection pool."""
+        """Cancel background tasks (so they don't touch a closing pool) and tear down."""
+        if self._backfill_task is not None and not self._backfill_task.done():
+            self._backfill_task.cancel()
+            try:
+                await asyncio.wait_for(self._backfill_task, timeout=5.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                pass  # best-effort; shutdown shouldn't block on this
+        self._backfill_task = None
+
         if self.pool is not None:
             try:
                 await self.pool.close()
@@ -138,11 +153,27 @@ class PostgresStorage:
         if not self.enabled or not self.pool:
             return
 
+        # Resolve relative to this file so we don't depend on CWD.
+        schema_path = Path(__file__).resolve().parents[2] / "postgres" / "sql" / "schema.sql"
+        try:
+            schema_sql = schema_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            logger.error(
+                "schema.sql not found at %s — Postgres mode requires the postgres/ tree "
+                "to be present (or mounted) alongside the running process.",
+                schema_path,
+            )
+            if self.raise_on_write_error:
+                raise
+            return
+        except OSError as e:
+            logger.error("Failed to read schema.sql at %s: %s", schema_path, e)
+            if self.raise_on_write_error:
+                raise
+            return
+
         try:
             async with self.pool.acquire() as conn:
-                # Read and execute schema file
-                with open("postgres/sql/schema.sql", "r") as f:
-                    schema_sql = f.read()
                 await conn.execute(schema_sql)
                 logger.info("PostgreSQL schema verified/created")
         except Exception as e:
@@ -228,9 +259,8 @@ class PostgresStorage:
         except Exception as e:
             logger.warning(f"MQTT node-ID trigger setup skipped: {e}")
 
-        # Backfill existing rows in the background — don't block startup
-        import asyncio
-        asyncio.ensure_future(self._backfill_mqtt_node_ids())
+        # Don't block startup; close() cancels via self._backfill_task on shutdown.
+        self._backfill_task = asyncio.create_task(self._backfill_mqtt_node_ids())
 
     async def _backfill_mqtt_node_ids(self):
         """Backfill from_node_id/to_node_id for existing mqtt_messages rows in batches."""
@@ -1171,261 +1201,6 @@ class PostgresStorage:
             return []
 
     # ============================================================================
-    # READ OPERATIONS - Load data from PostgreSQL matching JSON structure
-    # ============================================================================
-
-    async def load_nodes(self) -> Dict[str, Any]:
-        """
-        Load all nodes from PostgreSQL in JSON-compatible format.
-
-        Returns:
-            Dict mapping node_id to node data (same structure as JSON)
-        """
-        if not self.enabled or not self.pool:
-            return {}
-
-        try:
-            async with self.pool.acquire() as conn:
-                # Load nodes
-                nodes = {}
-                rows = await conn.fetch("SELECT * FROM nodes")
-
-                for row in rows:
-                    node_id = row["id"]
-                    nodes[node_id] = {
-                        "id": node_id,
-                        "longname": row["longname"],
-                        "shortname": row["shortname"],
-                        "hardware": row["hardware"],
-                        "role": row["role"],
-                        "active": row["active"],
-                        "tc2_bbs": row["tc2_bbs"],
-                        "gateway": row["gateway"] if "gateway" in row.keys() else None,
-                        "last_channel": row["last_channel"] if "last_channel" in row.keys() else None,
-                        "last_seen": row["last_seen"].isoformat() if row["last_seen"] else None,
-                        "since": datetime.timedelta(seconds=row["since_seconds"]) if row["since_seconds"] else None,
-                        "position": None,
-                        "neighborinfo": None,
-                        "telemetry": None,
-                    }
-
-                # Load positions (most recent per node)
-                position_rows = await conn.fetch(
-                    """
-                    SELECT DISTINCT ON (node_id) *
-                    FROM node_positions
-                    ORDER BY node_id, created_at DESC
-                    """
-                )
-
-                for row in position_rows:
-                    node_id = row["node_id"]
-                    if node_id in nodes:
-                        nodes[node_id]["position"] = {
-                            "latitude_i": row["latitude_i"],
-                            "longitude_i": row["longitude_i"],
-                            "altitude": row["altitude"],
-                            "time": row["time"],
-                            "precision_bits": row["precision_bits"],
-                            "geocoded": self._jsonb(row["geocoded"], None),
-                            "last_geocoding": row["last_geocoding"].isoformat() if row["last_geocoding"] else None,
-                        }
-
-                # Load neighborinfo (most recent per node)
-                neighbor_rows = await conn.fetch(
-                    """
-                    SELECT DISTINCT ON (node_id) *
-                    FROM node_neighborinfo
-                    ORDER BY node_id, created_at DESC
-                    """
-                )
-
-                for row in neighbor_rows:
-                    node_id = row["node_id"]
-                    if node_id in nodes:
-                        nodes[node_id]["neighborinfo"] = {
-                            "node_broadcast_interval_secs": row["node_broadcast_interval_secs"],
-                            "neighbors": self._jsonb(row["neighbors"], []),
-                        }
-
-                # Load current telemetry
-                telemetry_rows = await conn.fetch("SELECT * FROM node_telemetry_current")
-
-                for row in telemetry_rows:
-                    node_id = row["node_id"]
-                    if node_id in nodes:
-                        nodes[node_id]["telemetry"] = self._build_telemetry_dict_from_row(row)
-
-                logger.info(f"Loaded {len(nodes)} nodes from PostgreSQL")
-                return nodes
-
-        except Exception as e:
-            logger.error(f"Failed to load nodes from PostgreSQL: {e}")
-            return {}
-
-    async def load_chat(self) -> Dict[str, Any]:
-        """
-        Load chat data from PostgreSQL in JSON-compatible format.
-
-        Returns:
-            Chat structure matching JSON format
-        """
-        if not self.enabled or not self.pool:
-            return {"channels": {"0": {"name": "General", "messages": []}}}
-
-        try:
-            async with self.pool.acquire() as conn:
-                chat = {"channels": {}}
-
-                # Load channels
-                channel_rows = await conn.fetch("SELECT * FROM chat_channels ORDER BY id")
-                for row in channel_rows:
-                    chat["channels"][row["id"]] = {"name": row["name"], "messages": []}
-
-                # Load messages (most recent first)
-                message_rows = await conn.fetch(
-                    """
-                    SELECT * FROM chat_messages
-                    ORDER BY created_at DESC
-                    LIMIT 10000
-                    """
-                )
-
-                for row in message_rows:
-                    channel_id = row["channel_id"] or "0"
-                    if channel_id not in chat["channels"]:
-                        chat["channels"][channel_id] = {"name": f"Channel {channel_id}", "messages": []}
-
-                    chat["channels"][channel_id]["messages"].append(
-                        {
-                            "id": row["id"],
-                            "from": row["from_node_id"],
-                            "to": row["to_node_id"],
-                            "sender": row["sender_node_id"],
-                            "channel": channel_id,
-                            "text": row["text"],
-                            "timestamp": row["timestamp"],
-                            "hops_away": row["hops_away"],
-                            "rssi": row["rssi"],
-                            "snr": row["snr"],
-                        }
-                    )
-
-                logger.info(f"Loaded {len(message_rows)} chat messages from PostgreSQL")
-                return chat
-
-        except Exception as e:
-            logger.error(f"Failed to load chat from PostgreSQL: {e}")
-            return {"channels": {"0": {"name": "General", "messages": []}}}
-
-    async def load_telemetry(self) -> tuple[List[Dict[str, Any]], Dict[str, List[Dict[str, Any]]]]:
-        """
-        Load telemetry data from PostgreSQL.
-
-        Returns:
-            Tuple of (telemetry_list, telemetry_by_node)
-        """
-        if not self.enabled or not self.pool:
-            return [], {}
-
-        try:
-            async with self.pool.acquire() as conn:
-                rows = await conn.fetch(
-                    """
-                    SELECT * FROM telemetry
-                    ORDER BY created_at DESC
-                    LIMIT 10000
-                    """
-                )
-
-                telemetry = []
-                telemetry_by_node = {}
-
-                for row in rows:
-                    msg = {
-                        "from": row["from_node_id"],
-                        "to": row["to_node_id"],
-                        "sender": row["sender_node_id"],
-                        "id": row["message_id"],
-                        "channel": row["channel"],
-                        "packet_id": row["packet_id"],
-                        "hops_away": row["hops_away"],
-                        "rssi": row["rssi"],
-                        "snr": row["snr"],
-                        "timestamp": row["timestamp"],
-                        "telemetry_type": row.get("telemetry_type"),
-                        "payload": self._jsonb(row["payload"], {}),
-                    }
-
-                    telemetry.append(msg)
-
-                    node_id = row["from_node_id"]
-                    if node_id not in telemetry_by_node:
-                        telemetry_by_node[node_id] = []
-                    telemetry_by_node[node_id].append(msg)
-
-                logger.info(f"Loaded {len(telemetry)} telemetry records from PostgreSQL")
-                return telemetry, telemetry_by_node
-
-        except Exception as e:
-            logger.error(f"Failed to load telemetry from PostgreSQL: {e}")
-            return [], {}
-
-    async def load_traceroutes(self) -> tuple[List[Dict[str, Any]], Dict[str, List[Dict[str, Any]]]]:
-        """
-        Load traceroute data from PostgreSQL.
-
-        Returns:
-            Tuple of (traceroutes_list, traceroutes_by_node)
-        """
-        if not self.enabled or not self.pool:
-            return [], {}
-
-        try:
-            async with self.pool.acquire() as conn:
-                rows = await conn.fetch(
-                    """
-                    SELECT * FROM traceroutes
-                    ORDER BY created_at DESC
-                    LIMIT 10000
-                    """
-                )
-
-                traceroutes = []
-                traceroutes_by_node = {}
-
-                for row in rows:
-                    msg = {
-                        "from": row["from_node_id"],
-                        "to": row["to_node_id"],
-                        "sender": row["sender_node_id"],
-                        "id": row["message_id"],
-                        "channel": row["channel"],
-                        "packet_id": row["packet_id"],
-                        "hops_away": row["hops_away"],
-                        "rssi": row["rssi"],
-                        "snr": row["snr"],
-                        "timestamp": row["timestamp"],
-                        "route": self._jsonb(row["route"], []),
-                        "route_ids": self._jsonb(row["route_ids"], []),
-                        "payload": self._jsonb(row["payload"], {}),
-                    }
-
-                    traceroutes.append(msg)
-
-                    node_id = row["from_node_id"]
-                    if node_id not in traceroutes_by_node:
-                        traceroutes_by_node[node_id] = []
-                    traceroutes_by_node[node_id].append(msg)
-
-                logger.info(f"Loaded {len(traceroutes)} traceroutes from PostgreSQL")
-                return traceroutes, traceroutes_by_node
-
-        except Exception as e:
-            logger.error(f"Failed to load traceroutes from PostgreSQL: {e}")
-            return [], {}
-
-    # ============================================================================
     # DIRECT QUERY OPERATIONS - For API endpoints when reading from Postgres
     # ============================================================================
 
@@ -1609,7 +1384,14 @@ class PostgresStorage:
         self._node_lru.clear()
 
     async def get_node_cached(self, node_id: str) -> Optional[Dict[str, Any]]:
-        """Get a single node, hitting LRU cache first then PostgreSQL. Returns the live cache ref."""
+        """Single node from LRU cache then DB.
+
+        Returns the **live** cache reference (not a copy). MQTT handlers do
+        read-mutate-write directly; concurrent handlers for the same id may
+        interleave at await points and merge their changes — intended for
+        disjoint-field updates like position vs telemetry. Snapshot at the
+        call site if you need isolation.
+        """
         cached = self._node_lru.get(node_id)
         if cached is not None:
             self._node_lru.move_to_end(node_id)
@@ -1653,34 +1435,44 @@ class PostgresStorage:
             logger.error("find_node_by_shortname failed for %r: %s", shortname, e)
             return None
 
-    async def find_nodes_needing_enrichment(self, limit: int = 200) -> Dict[str, Dict[str, Any]]:
-        """Return nodes whose name fields look unenriched (Unknown/UNK or NULL)."""
+    async def find_nodes_needing_enrichment(self, limit: Optional[int] = None) -> List[str]:
+        """Return ids of nodes whose name fields look unenriched (Unknown/UNK or NULL).
+        IDs only — fetching full node rows would be one extra query per match.
+        limit=None returns every match; pass an int to cap.
+        """
         if not self._ready("find_nodes_needing_enrichment"):
-            return {}
+            return []
         try:
             async with self.pool.acquire() as conn:
-                rows = await conn.fetch(
-                    """
-                    SELECT id FROM nodes
-                    WHERE longname IS NULL
-                       OR shortname IS NULL
-                       OR longname = 'Unknown'
-                       OR shortname = 'UNK'
-                    ORDER BY last_seen DESC NULLS LAST
-                    LIMIT $1
-                    """,
-                    limit,
-                )
+                if limit is None:
+                    rows = await conn.fetch(
+                        """
+                        SELECT id FROM nodes
+                        WHERE longname IS NULL
+                           OR shortname IS NULL
+                           OR longname = 'Unknown'
+                           OR shortname = 'UNK'
+                        ORDER BY last_seen DESC NULLS LAST
+                        """
+                    )
+                else:
+                    rows = await conn.fetch(
+                        """
+                        SELECT id FROM nodes
+                        WHERE longname IS NULL
+                           OR shortname IS NULL
+                           OR longname = 'Unknown'
+                           OR shortname = 'UNK'
+                        ORDER BY last_seen DESC NULLS LAST
+                        LIMIT $1
+                        """,
+                        limit,
+                    )
         except Exception as e:
             logger.error("find_nodes_needing_enrichment failed: %s", e)
-            return {}
+            return []
 
-        result: Dict[str, Dict[str, Any]] = {}
-        for row in rows:
-            n = await self.get_node_cached(row["id"])
-            if n is not None:
-                result[row["id"]] = n
-        return result
+        return [row["id"] for row in rows]
 
     async def mark_nodes_inactive_by_age(self, threshold_seconds: int) -> int:
         """Bulk-mark stale nodes inactive and evict them from cache. Returns rows updated."""

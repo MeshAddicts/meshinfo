@@ -1,5 +1,4 @@
--- Comprehensive Postgres Schema for MeshInfo
--- This schema stores all data from the JSON files with proper relational structure
+-- Postgres schema for MeshInfo. Postgres is the sole storage backend.
 
 -- Nodes table - stores basic node information
 CREATE TABLE IF NOT EXISTS nodes (

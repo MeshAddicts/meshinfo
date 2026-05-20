@@ -35,11 +35,17 @@ timezone = "America/Los_Angeles"      # IANA timezone (e.g. "UTC", "Europe/Londo
 [server.intervals]
 data_save = 300                       # seconds between graph rebuilds
 
-# Node enrichment via external data sources
+# Node enrichment: ask other MeshInfo deployments for the names of nodes we
+# heard via position/telemetry but never received a local NODEINFO for. Useful
+# when a node's NODEINFO travelled over a different region/broker than the one
+# this instance subscribes to.
 [server.enrich]
 enabled = true
-interval = 900                        # seconds between enrichment runs
-provider = "world.meshinfo.network"
+interval = 900                        # seconds between enrichment runs (±10% jitter applied)
+# Named presets currently shipped: "bayme" (https://data.bayme.sh)
+# To add another MeshInfo instance, drop in a URL template with {ids} placeholder:
+#   providers = ["bayme", "https://other.meshinfo.example/api/v1/nodes?ids={ids}"]
+providers = ["bayme"]
 
 # Network graph generation
 [server.graph]
