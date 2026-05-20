@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16
+    image: postgres:18
     restart: unless-stopped
     environment:
       POSTGRES_DB: meshinfo
@@ -9,7 +9,9 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - meshinfo_pgdata:/var/lib/postgresql/data
+      # postgres:18+ stores data in a version-specific subdir; mount the
+      # parent (/var/lib/postgresql), not /data. See POSTGRES.md.
+      - meshinfo_pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d meshinfo"]
       interval: 5s

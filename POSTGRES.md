@@ -124,6 +124,48 @@ docker exec -it meshinfo-meshinfo-1 python3 scripts/migrate_json_to_postgres.py
 
 This reads your existing JSON data files and imports them into PostgreSQL. Once complete, update your config to the new PostgreSQL-only format (see `config.toml.sample`) and restart.
 
+## Upgrading PostgreSQL major versions
+
+PostgreSQL major versions (16 → 18, etc.) use **incompatible on-disk storage
+formats**. A newer `postgres` container will refuse to start against a data
+volume initialised by an older one, failing with:
+
+```
+FATAL: database files are incompatible with server
+DETAIL: The data directory was initialized by PostgreSQL version 16,
+        which is not compatible with this version 18.x.
+```
+
+When a MeshInfo release bumps the `postgres` image major version, run the
+included migration script once. It dumps the database with a temporary
+container of the *old* version, recreates the volume, and restores into the
+*new* version — using only official `postgres` images.
+
+```sh
+git pull
+docker compose pull               # fetch the new postgres image
+bash scripts/migrate-postgres.sh  # one-time: dump old → restore new
+docker compose up -d
+```
+
+For a development stack, point the script at the dev compose file:
+
+```sh
+COMPOSE_FILE=docker-compose-dev.yml bash scripts/migrate-postgres.sh
+```
+
+Notes:
+
+- The script writes a compressed SQL dump to `backups/` and **verifies it
+  before** recreating the volume — that file is your recovery artifact.
+- It is a no-op on fresh installs and when the volume is already current, so
+  it is safe to run unconditionally as part of an update.
+- Set `KEEP_VOLUME_BACKUP=1` to also snapshot the old data volume to
+  `<volume>_oldpg_backup` for an instant rollback (uses extra disk; delete it
+  once the upgrade is verified).
+- Roll back from the dump by restoring it into a container of the old version:
+  `gzip -dc backups/<dump>.sql.gz | psql -U postgres -d meshinfo`.
+
 ## Security
 
 - Use strong passwords for PostgreSQL
