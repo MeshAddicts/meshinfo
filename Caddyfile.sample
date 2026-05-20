@@ -6,27 +6,52 @@ YOUR_FQDN_OR_HOSTNAME {
 		output file /var/log/caddy.log
 	}
 
-	# --- Tile API (land-cover / canopy / buildings) ---
-	handle_path /api/tiles/* {
-		rewrite * /tiles{uri}
-		reverse_proxy meshinfo:9000
-	}
-	handle /tiles/* {
-		reverse_proxy meshinfo:9000
-	}
-
-	# --- API ---
-	handle_path /api/* {
-		reverse_proxy meshinfo:9000
+	# --- Maintenance mode ---
+	# Toggle with `scripts/maintenance.sh on|off`, or create/delete the flag
+	# file ./public/maintenance/ON directly. The `file` matcher is evaluated
+	# per-request, so flipping it takes effect immediately — no reload needed.
+	# Requires the ./public/maintenance:/srv/maintenance mount on the caddy
+	# service (already set in docker-compose.yml).
+	@maintenance file {
+		root /srv/maintenance
+		try_files ON
 	}
 
-	# --- API (direct /v1/* access, used by the SPA) ---
-	handle /v1/* {
-		reverse_proxy meshinfo:9000
-	}
+	route {
+		# When the flag is present, the maintenance page takes over every
+		# path and returns 503 so clients know the outage is temporary.
+		handle @maintenance {
+			root * /srv/maintenance
+			rewrite * /index.html
+			header Retry-After "3600"
+			header Cache-Control "no-store"
+			file_server {
+				status 503
+			}
+		}
 
-	# --- Frontend ---
-	handle {
-		reverse_proxy frontend:80
+		# --- Tile API (land-cover / canopy / buildings) ---
+		handle_path /api/tiles/* {
+			rewrite * /tiles{uri}
+			reverse_proxy meshinfo:9000
+		}
+		handle /tiles/* {
+			reverse_proxy meshinfo:9000
+		}
+
+		# --- API ---
+		handle_path /api/* {
+			reverse_proxy meshinfo:9000
+		}
+
+		# --- API (direct /v1/* access, used by the SPA) ---
+		handle /v1/* {
+			reverse_proxy meshinfo:9000
+		}
+
+		# --- Frontend ---
+		handle {
+			reverse_proxy frontend:80
+		}
 	}
 }

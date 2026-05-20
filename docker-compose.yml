@@ -78,6 +78,8 @@ services:
       - ./caddy/data:/data/caddy
       - ./Caddyfile:/etc/caddy/Caddyfile
       - ./public/images:/srv/images
+      # Maintenance landing page + toggle flag (see scripts/maintenance.sh).
+      - ./public/maintenance:/srv/maintenance:ro
     environment:
       - CADDY_AGREE=true
     restart: unless-stopped

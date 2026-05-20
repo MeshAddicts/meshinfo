@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="robots" content="noindex" />
+    <!-- Auto-retry: once maintenance mode is turned off, the next refresh
+         lands the visitor straight on the live site. -->
+    <meta http-equiv="refresh" content="60" />
+    <title>Under Maintenance &middot; MeshInfo</title>
+    <style>
+      :root {
+        --cyan: #06b6d4;
+        --cyan-bright: #22d3ee;
+        --text: #e5e7eb;
+        --muted: #94a3b8;
+        --faint: #64748b;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+        color: var(--text);
+        background:
+          radial-gradient(ellipse 120% 90% at 50% -10%, #1e293b 0%, transparent 60%),
+          radial-gradient(ellipse 100% 80% at 50% 110%, #0e2a33 0%, transparent 55%),
+          #0b1120;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        -webkit-font-smoothing: antialiased;
+      }
+      .card {
+        width: 100%;
+        max-width: 520px;
+        text-align: center;
+        padding: 44px 36px 36px;
+        border: 1px solid rgba(6, 182, 212, 0.22);
+        border-radius: 16px;
+        background: rgba(15, 23, 42, 0.6);
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.02) inset,
+          0 30px 80px -20px rgba(0, 0, 0, 0.7);
+      }
+
+      /* --- Animated radio-wave mesh motif --- */
+      .mesh { width: 168px; height: 168px; margin: 0 auto 28px; display: block; }
+      .ring {
+        transform-origin: 110px 110px;
+        animation: pulse 3s ease-out infinite;
+      }
+      .ring:nth-of-type(2) { animation-delay: 1s; }
+      .ring:nth-of-type(3) { animation-delay: 2s; }
+      @keyframes pulse {
+        0%   { transform: scale(0.25); opacity: 0.9; }
+        80%  { opacity: 0; }
+        100% { transform: scale(1); opacity: 0; }
+      }
+      .node { animation: blink 2.4s ease-in-out infinite; }
+      .node:nth-of-type(5) { animation-delay: 0.4s; }
+      .node:nth-of-type(6) { animation-delay: 0.8s; }
+      .node:nth-of-type(7) { animation-delay: 1.2s; }
+      .node:nth-of-type(8) { animation-delay: 1.6s; }
+      @keyframes blink {
+        0%, 100% { opacity: 0.35; }
+        50%      { opacity: 1; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .ring, .node { animation: none; }
+        .ring { opacity: 0.18; }
+      }
+
+      h1 {
+        margin: 0 0 14px;
+        font-size: 22px;
+        letter-spacing: 0.04em;
+        color: #f8fafc;
+      }
+      .accent { color: var(--cyan-bright); }
+      p {
+        margin: 0 auto 14px;
+        max-width: 38ch;
+        font-size: 13.5px;
+        line-height: 1.7;
+        color: var(--muted);
+      }
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 6px;
+        padding: 7px 14px;
+        font-size: 12px;
+        color: var(--cyan-bright);
+        border: 1px solid rgba(6, 182, 212, 0.3);
+        border-radius: 999px;
+        background: rgba(6, 182, 212, 0.07);
+      }
+      .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--cyan-bright);
+        box-shadow: 0 0 8px var(--cyan-bright);
+        animation: blink 1.8s ease-in-out infinite;
+      }
+      .footer {
+        margin-top: 30px;
+        padding-top: 18px;
+        border-top: 1px solid rgba(148, 163, 184, 0.12);
+        font-size: 11px;
+        color: var(--faint);
+        letter-spacing: 0.03em;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <!-- Radio-wave mesh: a central node broadcasting to its neighbors. -->
+      <svg class="mesh" viewBox="0 0 220 220" fill="none" aria-hidden="true">
+        <!-- expanding signal rings -->
+        <circle class="ring" cx="110" cy="110" r="100" stroke="#22d3ee" stroke-width="2" />
+        <circle class="ring" cx="110" cy="110" r="100" stroke="#22d3ee" stroke-width="2" />
+        <circle class="ring" cx="110" cy="110" r="100" stroke="#22d3ee" stroke-width="2" />
+        <!-- links from the hub to each neighbor -->
+        <g stroke="#0e7490" stroke-width="2">
+          <line x1="110" y1="110" x2="40"  y2="58" />
+          <line x1="110" y1="110" x2="182" y2="74" />
+          <line x1="110" y1="110" x2="170" y2="170" />
+          <line x1="110" y1="110" x2="52"  y2="166" />
+        </g>
+        <!-- neighbor nodes -->
+        <circle class="node" cx="40"  cy="58"  r="7" fill="#0891b2" />
+        <circle class="node" cx="182" cy="74"  r="7" fill="#0891b2" />
+        <circle class="node" cx="170" cy="170" r="7" fill="#0891b2" />
+        <circle class="node" cx="52"  cy="166" r="7" fill="#0891b2" />
+        <!-- central hub -->
+        <circle cx="110" cy="110" r="11" fill="#22d3ee" />
+        <circle cx="110" cy="110" r="11" fill="none" stroke="#0b1120" stroke-width="3" />
+      </svg>
+
+      <!-- Customize the copy below for your mesh if you like. -->
+      <h1>We&rsquo;re <span class="accent">briefly offline</span></h1>
+      <p>MeshInfo is undergoing maintenance.</p>
+      <p>Thanks for your patience. We&rsquo;ll be back shortly.</p>
+
+      <div class="status">
+        <span class="dot"></span>
+        This page checks for you every 60&nbsp;seconds
+      </div>
+
+      <div class="footer">Powered by MeshInfo</div>
+    </main>
+  </body>
+</html>
