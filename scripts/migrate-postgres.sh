@@ -117,9 +117,9 @@ fi
 log "Migrating volume '$VOLUME': PostgreSQL ${OLD_VER} → ${NEW_VER}"
 mkdir -p "$DUMP_DIR"
 
-# --- 1. Stop the stack (volumes preserved) -----------------------------------
-log "Stopping the MeshInfo stack…"
-docker compose down --remove-orphans 2>/dev/null || true
+# --- 1. Stop the app + database containers -----------------------------------
+log "Stopping the meshinfo and postgres containers…"
+docker compose rm -sf meshinfo postgres 2>/dev/null || true
 
 # --- 2. Dump from a temporary old-version container --------------------------
 log "Starting a temporary PostgreSQL ${OLD_VER} container to read the old data…"
