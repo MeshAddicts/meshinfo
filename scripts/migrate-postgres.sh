@@ -10,14 +10,14 @@
 #   1. Dumps the existing database with a temporary container running the
 #      OLD PostgreSQL version (read from the volume's PG_VERSION file).
 #   2. Verifies the dump, then recreates the volume empty.
-#   3. Starts the NEW postgres version (from docker-compose.yml) and restores.
+#   3. Starts the NEW postgres version (from the compose file) and restores.
 #
 # Run this ONCE, after pulling the release that bumps the postgres image and
 # BEFORE `docker compose up -d`:
 #
 #   git pull
 #   docker compose pull
-#   ./scripts/migrate-postgres.sh
+#   bash scripts/migrate-postgres.sh
 #   docker compose up -d
 #
 # The compressed SQL dump in ./backups/ is your recovery artifact — it is
@@ -56,11 +56,27 @@ cd "$REPO_ROOT"
 
 # --- Pre-flight --------------------------------------------------------------
 command -v docker >/dev/null 2>&1 || { err "docker not found on PATH"; exit 1; }
+docker compose version >/dev/null 2>&1 || {
+  err "docker compose (v2) is required — install the Compose plugin or upgrade Docker."
+  exit 1
+}
 
 VOLUME="${PGDATA_VOLUME:-}"
 if [ -z "$VOLUME" ]; then
-  VOLUME="$(docker volume ls -q | grep -E '_meshinfo_pgdata$' | head -n1 || true)"
-  VOLUME="${VOLUME:-meshinfo_meshinfo_pgdata}"
+  # Auto-detect the compose pgdata volume. Refuse to guess when a host runs
+  # several MeshInfo deployments — picking the wrong one here destroys data.
+  MATCHES="$(docker volume ls -q | grep -E '_meshinfo_pgdata$' || true)"
+  COUNT="$(printf '%s\n' "$MATCHES" | grep -c . || true)"
+  if [ "$COUNT" -gt 1 ]; then
+    err "Multiple candidate pgdata volumes found:"
+    printf '       %s\n' $MATCHES >&2
+    err "Set PGDATA_VOLUME=<name> to choose which one to migrate."
+    exit 1
+  elif [ "$COUNT" -eq 1 ]; then
+    VOLUME="$MATCHES"
+  else
+    VOLUME="meshinfo_meshinfo_pgdata"
+  fi
 fi
 
 if ! docker volume inspect "$VOLUME" >/dev/null 2>&1; then

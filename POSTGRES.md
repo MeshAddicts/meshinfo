@@ -160,11 +160,16 @@ Notes:
   before** recreating the volume — that file is your recovery artifact.
 - It is a no-op on fresh installs and when the volume is already current, so
   it is safe to run unconditionally as part of an update.
+- On Windows, run it from **Git Bash** (bundled with Git) — `bash
+  scripts/migrate-postgres.sh`. The script is MSYS-path-safe, so the single
+  bash version covers every platform.
 - Set `KEEP_VOLUME_BACKUP=1` to also snapshot the old data volume to
   `<volume>_oldpg_backup` for an instant rollback (uses extra disk; delete it
   once the upgrade is verified).
-- Roll back from the dump by restoring it into a container of the old version:
-  `gzip -dc backups/<dump>.sql.gz | psql -U postgres -d meshinfo`.
+- To roll back from the SQL dump: set the `postgres` image (and volume mount)
+  in your compose file back to the old version, remove the data volume so it
+  re-initialises empty, `docker compose up -d postgres`, then restore —
+  `gzip -dc backups/<dump>.sql.gz | docker compose exec -T postgres psql -U postgres -d meshinfo`.
 
 ## Security
 
