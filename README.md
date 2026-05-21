@@ -32,7 +32,7 @@ See a live instance at [Central Valley Mesh](https://meshinfo.cvme.sh).
 ```
 MQTT Broker(s)  -->  MeshInfo Backend (Python / FastAPI / uvicorn)
                           |
-                     PostgreSQL 16
+                     PostgreSQL 18
                           |
                      MeshInfo Frontend (React 19 / TypeScript / Vite)
                           |
@@ -93,6 +93,11 @@ MeshInfo will be available at `https://your-domain` (or `http://localhost` if us
 ```sh
 git pull && docker compose pull && docker compose down && docker compose up -d
 ```
+
+> **PostgreSQL major version bumps:** if a release changes the `postgres` image
+> to a new major version (e.g. 16 → 18), run the one-time migration **before**
+> the final `up -d` — `docker compose pull` then `bash scripts/migrate-postgres.sh`.
+> See [POSTGRES.md](POSTGRES.md#upgrading-postgresql-major-versions).
 
 ### Configuration
 
@@ -162,7 +167,7 @@ MeshInfo supports two map providers, configured in `frontend/.env`:
 
 ### Backend
 
-Requires Python 3.14+ and a running PostgreSQL 16 instance.
+Requires Python 3.14+ and a running PostgreSQL 18 instance.
 
 ```sh
 pip install -r requirements.txt
