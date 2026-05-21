@@ -129,6 +129,33 @@ The included `Caddyfile.sample` routes `/api/*` and `/v1/*` to the backend and e
 
 If you use a different reverse proxy, point `/api/*` and `/v1/*` at the backend container (port 9000) and `/` at the frontend container (port 80).
 
+### Maintenance Mode
+
+When you need to take the stack down — for example to upgrade PostgreSQL — Caddy can serve a branded maintenance page instead of a broken site. Caddy and the page itself stay up the whole time, so visitors get a clean "we'll be back shortly" landing page rather than a connection error.
+
+```sh
+scripts/maintenance.sh on       # show the maintenance page
+# ... perform the upgrade ...
+scripts/maintenance.sh off      # back to normal
+scripts/maintenance.sh status   # check current state
+```
+
+On Windows, use the PowerShell port instead — `scripts\maintenance.ps1 on|off|status`.
+
+The toggle creates/removes the flag file `public/maintenance/ON`. Caddy checks for it on every request, so it takes effect immediately — no reload or restart. While enabled, every path (including `/api/*`) returns the page with HTTP `503` and a `Retry-After` header. The page auto-refreshes every 60 seconds, so visitors land on the live site automatically once you turn it off.
+
+A typical database upgrade then looks like:
+
+```sh
+scripts/maintenance.sh on
+docker compose stop meshinfo postgres
+# ... upgrade / migrate ...
+docker compose up -d meshinfo postgres
+scripts/maintenance.sh off
+```
+
+Customize the look by editing [public/maintenance/index.html](public/maintenance/index.html) — it is a single self-contained file.
+
 ### Map Providers
 
 MeshInfo supports two map providers, configured in `frontend/.env`:

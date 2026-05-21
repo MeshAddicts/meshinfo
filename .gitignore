@@ -13,6 +13,9 @@ node_modules/
 backups/*
 caddy
 Caddyfile
+
+# Maintenance-mode toggle flag — runtime state, never commit it enabled.
+public/maintenance/ON
 output/*
 mosquitto/data/*
 mosquitto/config/mosquitto.conf
