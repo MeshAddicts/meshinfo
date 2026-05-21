@@ -5,25 +5,46 @@
 http://localhost {
 	encode gzip
 
-	# Tile API (land-cover / canopy / buildings)
-	handle_path /api/tiles/* {
-		rewrite * /tiles{uri}
-		reverse_proxy meshinfo:9000
-	}
-	handle /tiles/* {
-		reverse_proxy meshinfo:9000
+	# ---- Maintenance mode ----
+	# Toggle with `scripts/maintenance.sh on|off`, or create/delete the flag
+	# file ./public/maintenance/ON directly. The `file` matcher is checked
+	# per-request, so toggling needs no reload.
+	@maintenance file {
+		root /srv/maintenance
+		try_files ON
 	}
 
-	handle_path /api/* {
-		reverse_proxy meshinfo:9000
-	}
-	handle /next {
-		respond "Gone" 410
-	}
-	handle /next/* {
-		respond "Gone" 410
-	}
-	handle {
-		reverse_proxy frontend:5173
+	route {
+		handle @maintenance {
+			root * /srv/maintenance
+			rewrite * /index.html
+			header Retry-After "3600"
+			header Cache-Control "no-store"
+			file_server {
+				status 503
+			}
+		}
+
+		# Tile API (land-cover / canopy / buildings)
+		handle_path /api/tiles/* {
+			rewrite * /tiles{uri}
+			reverse_proxy meshinfo:9000
+		}
+		handle /tiles/* {
+			reverse_proxy meshinfo:9000
+		}
+
+		handle_path /api/* {
+			reverse_proxy meshinfo:9000
+		}
+		handle /next {
+			respond "Gone" 410
+		}
+		handle /next/* {
+			respond "Gone" 410
+		}
+		handle {
+			reverse_proxy frontend:5173
+		}
 	}
 }
