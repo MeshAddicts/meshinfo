@@ -20,6 +20,17 @@ from zoneinfo import ZoneInfo
 logger = logging.getLogger(__name__)
 
 
+def _json_default(obj: Any) -> Any:
+    """json.dumps fallback for JSONB writes. The JSON-decoder path coerces
+    last_seen/last_geocoding into datetimes, which plain json.dumps can't
+    encode — without this the whole write is silently dropped."""
+    if isinstance(obj, (datetime.datetime, datetime.date, datetime.time)):
+        return obj.isoformat()
+    if isinstance(obj, datetime.timedelta):
+        return obj.total_seconds()
+    return str(obj)
+
+
 class PostgresStorage:
     """PostgreSQL storage backend with connection pooling and error handling."""
 
@@ -567,7 +578,11 @@ class PostgresStorage:
 
     async def _write_node_position(self, conn, node_id: str, position: Dict[str, Any]):
         """Write/replace node position data (latest only)."""
-        geocoded = json.dumps(position.get("geocoded")) if position.get("geocoded") else None
+        geocoded = (
+            json.dumps(position.get("geocoded"), default=_json_default)
+            if position.get("geocoded")
+            else None
+        )
 
         last_geocoding = position.get("last_geocoding")
         if isinstance(last_geocoding, str):
@@ -621,7 +636,9 @@ class PostgresStorage:
 
     async def _write_node_neighborinfo(self, conn, node_id: str, neighborinfo: Dict[str, Any]):
         """Write node neighborinfo data (latest snapshot per node) + optional history snapshots."""
-        neighbors_json = json.dumps(neighborinfo.get("neighbors", []), ensure_ascii=False)
+        neighbors_json = json.dumps(
+            neighborinfo.get("neighbors", []), ensure_ascii=False, default=_json_default
+        )
 
         await conn.execute(
             """
@@ -667,7 +684,7 @@ class PostgresStorage:
         # Check if this is a JSONB variant type
         if telemetry_type and telemetry_type in self.TELEMETRY_JSONB_VARIANTS:
             col_name = self.TELEMETRY_JSONB_VARIANTS[telemetry_type]
-            payload_json = json.dumps(telemetry, ensure_ascii=False)
+            payload_json = json.dumps(telemetry, ensure_ascii=False, default=_json_default)
 
             sql = f"""
                 INSERT INTO node_telemetry_current (node_id, {col_name})
@@ -767,7 +784,7 @@ class PostgresStorage:
                 sender_id = await self._ensure_node_stub(conn, telemetry_msg.get("sender"))
                 to_id = await self._ensure_node_stub(conn, telemetry_msg.get("to"))
 
-                payload_json = json.dumps(telemetry_msg.get("payload", {}))
+                payload_json = json.dumps(telemetry_msg.get("payload", {}), default=_json_default)
 
                 rx_time = self._ts_to_dt(telemetry_msg.get("timestamp"))
 
@@ -949,9 +966,9 @@ class PostgresStorage:
                     else None
                 )
 
-                payload_json = json.dumps(traceroute_msg.get("payload", {}))
-                route_json = json.dumps(traceroute_msg.get("route", []))
-                route_ids_json = json.dumps(traceroute_msg.get("route_ids", []))
+                payload_json = json.dumps(traceroute_msg.get("payload", {}), default=_json_default)
+                route_json = json.dumps(traceroute_msg.get("route", []), default=_json_default)
+                route_ids_json = json.dumps(traceroute_msg.get("route_ids", []), default=_json_default)
 
                 rx_time = self._ts_to_dt(traceroute_msg.get("timestamp"))
 
@@ -1009,7 +1026,7 @@ class PostgresStorage:
             return None
 
         if isinstance(value, (dict, list)):
-            return json.dumps(value, ensure_ascii=False, default=str)
+            return json.dumps(value, ensure_ascii=False, default=_json_default)
 
         if isinstance(value, (bytes, bytearray, memoryview)):
             b = bytes(value)
