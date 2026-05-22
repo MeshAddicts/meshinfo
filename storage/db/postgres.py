@@ -31,6 +31,23 @@ def _json_default(obj: Any) -> Any:
     return str(obj)
 
 
+def _encode_cursor(created_at: datetime.datetime, row_id: int) -> str:
+    """Opaque keyset-pagination cursor for mqtt_messages ordered by (created_at, id) DESC."""
+    raw = f"{created_at.isoformat()}|{row_id}".encode()
+    return base64.urlsafe_b64encode(raw).decode("ascii")
+
+
+def _decode_cursor(cursor: str) -> Optional[Tuple[datetime.datetime, int]]:
+    """Decode a cursor from _encode_cursor. None if malformed — caller then
+    treats it as no cursor (first page) rather than erroring."""
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode("ascii")).decode()
+        ts_str, id_str = raw.rsplit("|", 1)
+        return datetime.datetime.fromisoformat(ts_str), int(id_str)
+    except Exception:
+        return None
+
+
 class PostgresStorage:
     """PostgreSQL storage backend with connection pooling and error handling."""
 
@@ -1118,28 +1135,36 @@ class PostgresStorage:
         limit: int = 1000,
         search: str | None = None,
         range_seconds: int | None = None,
-    ) -> list:
-        """Query mqtt_messages from PostgreSQL, returning parsed message dicts.
+        start: datetime.datetime | None = None,
+        end: datetime.datetime | None = None,
+        before: str | None = None,
+    ) -> dict:
+        """Query mqtt_messages, returning a keyset-paginated page.
 
         Args:
-            limit: Max messages to return.
-            search: Optional search term to filter by topic or payload content.
-            range_seconds: If provided, only include messages with
-                        timestamp >= (now_unix - range_seconds).
+            limit: Max messages per page.
+            search: Optional term to filter by topic or payload content.
+            range_seconds: Rolling window — only messages with
+                timestamp >= (now_unix - range_seconds). Filters the MQTT-reported
+                `timestamp`; kept for back-compat with the legacy `range` param.
+            start/end: Absolute window on ingest time (`created_at`), inclusive.
+            before: Opaque cursor from a prior page; returns rows older than it.
+
+        Returns {"messages": [...], "next_cursor": str | None}. next_cursor is
+        None when this is the last page.
         """
         if not self._ready("query_mqtt_messages"):
-            return []
+            return {"messages": [], "next_cursor": None}
         try:
             import time
             async with self.pool.acquire() as conn:
-                conditions = []
+                conditions: list = []
                 params: list = []
                 idx = 1
 
                 if range_seconds is not None:
-                    threshold = int(time.time()) - range_seconds
                     conditions.append(f"timestamp >= ${idx}")
-                    params.append(threshold)
+                    params.append(int(time.time()) - range_seconds)
                     idx += 1
 
                 if search:
@@ -1150,72 +1175,103 @@ class PostgresStorage:
                     params.append(search)
                     idx += 1
 
+                idx = self._append_window_conditions(conditions, params, idx, start, end, before)
+
                 where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-                params.append(limit)
+                params.append(limit + 1)  # +1 row tells us whether another page exists
 
                 rows = await conn.fetch(
-                    f"""SELECT topic, payload, qos, retain, timestamp, created_at
+                    f"""SELECT id, topic, payload, qos, retain, timestamp, created_at
                         FROM mqtt_messages
                         {where}
-                        ORDER BY created_at DESC LIMIT ${idx}""",
+                        ORDER BY created_at DESC, id DESC LIMIT ${idx}""",
                     *params,
                 )
-
-            results = []
-            for row in rows:
-                payload_text = row["payload"]
-                if payload_text:
-                    try:
-                        msg = json.loads(payload_text)
-                    except (json.JSONDecodeError, TypeError):
-                        msg = {"raw": payload_text}
-                else:
-                    msg = {}
-                # Ensure top-level fields are present
-                if "topic" not in msg:
-                    msg["topic"] = row["topic"]
-                if "timestamp" not in msg:
-                    msg["timestamp"] = row["timestamp"]
-                results.append(msg)
-            return results
+            return self._build_mqtt_message_page(rows, limit)
         except Exception as e:
             logger.error("Failed to query mqtt_messages: %s", e)
-            return []
+            return {"messages": [], "next_cursor": None}
 
-    async def query_node_mqtt_messages(self, node_id: str, limit: int = 50) -> list:
-        """Query mqtt_messages for a specific node (as sender or recipient)."""
+    async def query_node_mqtt_messages(
+        self,
+        node_id: str,
+        limit: int = 50,
+        start: datetime.datetime | None = None,
+        end: datetime.datetime | None = None,
+        before: str | None = None,
+    ) -> dict:
+        """Query mqtt_messages for one node (as sender or recipient), keyset-paginated.
+
+        See query_mqtt_messages for start/end/before semantics and the return shape.
+        """
         if not self._ready("query_node_mqtt_messages"):
-            return []
+            return {"messages": [], "next_cursor": None}
         node_id = self._normalize_node_id(node_id) or node_id
         try:
             async with self.pool.acquire() as conn:
+                conditions: list = ["(from_node_id = $1 OR to_node_id = $1)"]
+                params: list = [node_id]
+                idx = self._append_window_conditions(conditions, params, 2, start, end, before)
+                params.append(limit + 1)
                 rows = await conn.fetch(
-                    """SELECT topic, payload, qos, retain, timestamp, created_at
-                       FROM mqtt_messages
-                       WHERE from_node_id = $1 OR to_node_id = $1
-                       ORDER BY created_at DESC LIMIT $2""",
-                    node_id, limit,
+                    f"""SELECT id, topic, payload, qos, retain, timestamp, created_at
+                        FROM mqtt_messages
+                        WHERE {" AND ".join(conditions)}
+                        ORDER BY created_at DESC, id DESC LIMIT ${idx}""",
+                    *params,
                 )
-
-            results = []
-            for row in rows:
-                payload_text = row["payload"]
-                if payload_text:
-                    try:
-                        msg = json.loads(payload_text)
-                    except (json.JSONDecodeError, TypeError):
-                        msg = {"raw": payload_text}
-                else:
-                    msg = {}
-                if "topic" not in msg:
-                    msg["topic"] = row["topic"]
-                if "timestamp" not in msg:
-                    msg["timestamp"] = row["timestamp"]
-                results.append(msg)
-            return results
+            return self._build_mqtt_message_page(rows, limit)
         except Exception as e:
             logger.error("Failed to query node mqtt_messages: %s", e)
-            return []
+            return {"messages": [], "next_cursor": None}
+
+    @staticmethod
+    def _append_window_conditions(conditions: list, params: list, idx: int,
+                                  start, end, before) -> int:
+        """Append created_at start/end bounds + a `before` keyset cursor to a
+        WHERE-clause builder. Returns the next free parameter index."""
+        if start is not None:
+            conditions.append(f"created_at >= ${idx}")
+            params.append(start)
+            idx += 1
+        if end is not None:
+            conditions.append(f"created_at <= ${idx}")
+            params.append(end)
+            idx += 1
+        cursor = _decode_cursor(before) if before else None
+        if cursor is not None:
+            conditions.append(f"(created_at, id) < (${idx}, ${idx + 1})")
+            params.append(cursor[0])
+            params.append(cursor[1])
+            idx += 2
+        return idx
+
+    @staticmethod
+    def _build_mqtt_message_page(rows, limit: int) -> dict:
+        """Parse fetched rows (queried with LIMIT limit+1) into message dicts and
+        derive the next-page cursor. The extra row, if present, signals more pages."""
+        has_more = len(rows) > limit
+        page = rows[:limit]
+        messages = []
+        for row in page:
+            payload_text = row["payload"]
+            if payload_text:
+                try:
+                    msg = json.loads(payload_text)
+                except (json.JSONDecodeError, TypeError):
+                    msg = {"raw": payload_text}
+            else:
+                msg = {}
+            if "topic" not in msg:
+                msg["topic"] = row["topic"]
+            if "timestamp" not in msg:
+                msg["timestamp"] = row["timestamp"]
+            messages.append(msg)
+        next_cursor = None
+        if has_more and page:
+            last = page[-1]
+            next_cursor = _encode_cursor(last["created_at"], last["id"])
+        return {"messages": messages, "next_cursor": next_cursor}
 
     # ============================================================================
     # DIRECT QUERY OPERATIONS - For API endpoints when reading from Postgres

@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from storage.db.postgres import _json_default
+from storage.db.postgres import _decode_cursor, _encode_cursor, _json_default
 
 
 class TestJsonDefault:
@@ -47,3 +47,29 @@ class TestDumpsWithDefault:
 
         with pytest.raises(TypeError):
             json.dumps({"ts": datetime.datetime.now()})
+
+
+class TestCursorCodec:
+    """Keyset-pagination cursor for mqtt_messages — see _encode_cursor/_decode_cursor."""
+
+    def test_roundtrip(self):
+        ts = datetime.datetime(2026, 5, 21, 12, 0, 0, tzinfo=datetime.timezone.utc)
+        cursor = _encode_cursor(ts, 4242)
+        assert isinstance(cursor, str)
+        assert _decode_cursor(cursor) == (ts, 4242)
+
+    def test_roundtrip_preserves_microseconds(self):
+        # Real created_at values carry microseconds; the tiebreaker must survive.
+        ts = datetime.datetime(2026, 1, 25, 4, 3, 47, 136380, tzinfo=datetime.timezone.utc)
+        assert _decode_cursor(_encode_cursor(ts, 1)) == (ts, 1)
+
+    def test_decode_garbage_returns_none(self):
+        assert _decode_cursor("not-a-real-cursor") is None
+
+    def test_decode_empty_returns_none(self):
+        assert _decode_cursor("") is None
+
+    def test_decode_valid_base64_wrong_shape_returns_none(self):
+        import base64
+        bad = base64.urlsafe_b64encode(b"missing-the-id-separator").decode()
+        assert _decode_cursor(bad) is None
