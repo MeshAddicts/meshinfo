@@ -20,6 +20,17 @@ services:
       POSTGRES_DB: meshinfo
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
+    # Postgres memory tuning — conservative defaults; size to host via .env (see POSTGRES.md).
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=${PG_SHARED_BUFFERS:-256MB}"
+      - "-c"
+      - "work_mem=${PG_WORK_MEM:-8MB}"
+      - "-c"
+      - "maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM:-64MB}"
+      - "-c"
+      - "effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-1GB}"
     ports:
       - "5432:5432"
     volumes:

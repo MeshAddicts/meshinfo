@@ -65,6 +65,44 @@ The schema is automatically created on first run. Key tables:
 
 ## Performance Considerations
 
+### Memory tuning
+
+The `postgres` service in both compose files sets a few core memory
+parameters via its `command:`. The defaults are deliberately conservative so
+the stack runs on a small host, but they are already well above the stock
+`postgres` image defaults (`shared_buffers` 128 MB, `work_mem` 4 MB).
+
+Size them to your host: copy `.env.sample` to `.env` next to the compose file
+(Docker Compose reads it automatically) and set any of:
+
+| Variable                   | Default | What it does                                  |
+|----------------------------|---------|-----------------------------------------------|
+| `PG_SHARED_BUFFERS`        | `256MB` | Dedicated PG page cache (real RAM allocation). |
+| `PG_WORK_MEM`              | `8MB`   | Per-sort/hash memory; multiplied by concurrency. |
+| `PG_MAINTENANCE_WORK_MEM`  | `64MB`  | VACUUM / CREATE INDEX working memory.          |
+| `PG_EFFECTIVE_CACHE_SIZE`  | `1GB`   | Planner hint for OS+PG cache (not an allocation). |
+
+Suggested starting points by **total host RAM** (assuming Postgres shares the
+box with the rest of the MeshInfo stack — give it less than a dedicated DB
+host would get):
+
+| Host RAM | `PG_SHARED_BUFFERS` | `PG_WORK_MEM` | `PG_MAINTENANCE_WORK_MEM` | `PG_EFFECTIVE_CACHE_SIZE` |
+|----------|---------------------|---------------|---------------------------|---------------------------|
+| 4 GB     | `512MB`             | `16MB`        | `128MB`                   | `2GB`                     |
+| 8 GB     | `1GB`               | `32MB`        | `256MB`                   | `4GB`                     |
+| 16 GB    | `2GB`               | `64MB`        | `512MB`                   | `10GB`                    |
+
+Example `.env`:
+
+```
+PG_SHARED_BUFFERS=512MB
+PG_WORK_MEM=16MB
+PG_MAINTENANCE_WORK_MEM=128MB
+PG_EFFECTIVE_CACHE_SIZE=2GB
+```
+
+Recreate the container to apply: `docker compose up -d postgres`.
+
 ### Real-time Writes
 
 All writes happen in real-time as data arrives from MQTT, ensuring minimal data loss on crash.
