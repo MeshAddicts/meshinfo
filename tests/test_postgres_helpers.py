@@ -11,7 +11,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from storage.db.postgres import _decode_cursor, _encode_cursor, _json_default
+from storage.db.postgres import (
+    PostgresStorage,
+    _decode_cursor,
+    _encode_cursor,
+    _json_default,
+)
 
 
 class TestJsonDefault:
@@ -73,3 +78,36 @@ class TestCursorCodec:
         import base64
         bad = base64.urlsafe_b64encode(b"missing-the-id-separator").decode()
         assert _decode_cursor(bad) is None
+
+
+class TestBuildMessagePage:
+    """PostgresStorage._build_mqtt_message_page — row parsing + keyset cursor."""
+
+    @staticmethod
+    def _row(row_id, payload, created_at, topic="msh/x", ts=1000):
+        return {"id": row_id, "topic": topic, "payload": payload, "qos": 0,
+                "retain": False, "timestamp": ts, "created_at": created_at}
+
+    def test_injects_mqtt_row_id(self):
+        ca = datetime.datetime(2026, 5, 1, tzinfo=datetime.timezone.utc)
+        rows = [self._row(7, '{"type": "text", "from": "abcd"}', ca)]
+        page = PostgresStorage._build_mqtt_message_page(rows, 10)
+        assert page["messages"][0]["mqtt_row_id"] == 7
+        assert page["messages"][0]["type"] == "text"
+        assert page["next_cursor"] is None  # fewer rows than limit -> last page
+
+    def test_has_more_sets_cursor_and_trims_to_limit(self):
+        ca = datetime.datetime(2026, 5, 1, tzinfo=datetime.timezone.utc)
+        # limit 2, fetched 3 (the +1 sentinel) -> 2 returned, cursor at last returned
+        rows = [self._row(i, '{"type": "position"}', ca) for i in (3, 2, 1)]
+        page = PostgresStorage._build_mqtt_message_page(rows, 2)
+        assert len(page["messages"]) == 2
+        assert _decode_cursor(page["next_cursor"]) == (ca, 2)
+
+    def test_payload_topic_and_timestamp_win_over_row_columns(self):
+        ca = datetime.datetime(2026, 5, 1, tzinfo=datetime.timezone.utc)
+        rows = [self._row(1, '{"topic": "payload-topic", "timestamp": 42}', ca,
+                          topic="row-topic", ts=999)]
+        msg = PostgresStorage._build_mqtt_message_page(rows, 10)["messages"][0]
+        assert msg["topic"] == "payload-topic"
+        assert msg["timestamp"] == 42

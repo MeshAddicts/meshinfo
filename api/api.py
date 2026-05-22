@@ -266,12 +266,25 @@ class API:
             result = await self.data.pg_storage.query_mqtt_messages(
                 limit=limit,
                 search=search,
+                topic=request.query_params.get("topic"),
                 range_seconds=range_seconds,
                 start=self._parse_epoch(request.query_params.get("start")),
                 end=self._parse_epoch(request.query_params.get("end")),
                 before=request.query_params.get("before"),
             )
             return jsonable_encoder(result)
+
+        @app.get("/v1/packets/{packet_id}")
+        async def packet_by_id(request: Request, packet_id: str) -> JSONResponse:
+            """Single packet by `mqtt_messages` row id — backs per-packet deeplinks."""
+            try:
+                row_id = int(packet_id)
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "packet id must be an integer"}, status_code=400)
+            packet = await self.data.pg_storage.query_mqtt_message_by_id(row_id)
+            if packet is None:
+                return JSONResponse({"error": "packet not found"}, status_code=404)
+            return jsonable_encoder({"packet": packet})
 
         @app.get("/v1/stats")
         async def stats(request: Request) -> JSONResponse:

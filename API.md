@@ -24,7 +24,8 @@ directly for integrations. Responses are JSON unless noted.
 | GET | `/v1/chat` | Chat in a channel. Query params: `channel` (default `"0"`), `range` (`1h`/`24h`/`7d`/`all`, default `24h`). |
 | GET | `/v1/messages` | Raw MQTT messages, newest window only. Query params: `q` (search), `range`, `limit` (1–50000, default 5000). |
 | GET | `/v1/mqtt_messages` | Same as `/v1/messages` without search. |
-| GET | `/v1/packets` | Keyset-paginated packet archive — reaches the full history, not just the newest window. Query params: `q` (search), `range`, `start`/`end` (unix-epoch seconds, absolute window on ingest time), `before` (cursor from a prior page), `limit` (1–50000, default 1000). Returns `{"messages": [...], "next_cursor": str \| null}`; pass `next_cursor` back as `before` for the next page. |
+| GET | `/v1/packets` | Keyset-paginated packet archive — reaches the full history, not just the newest window. Query params: `q` (search), `topic` (substring filter on topic only), `range`, `start`/`end` (unix-epoch seconds, absolute window on ingest time), `before` (cursor from a prior page), `limit` (1–50000, default 1000). Returns `{"messages": [...], "next_cursor": str \| null}`; pass `next_cursor` back as `before` for the next page. Each message carries `mqtt_row_id` (stable DB id). |
+| GET | `/v1/packets/{id}` | Single packet by `mqtt_row_id` — backs per-packet deeplinks. Returns `{"packet": {...}}`, or 404 if not found. |
 
 ### Telemetry / Traceroutes / Stats
 

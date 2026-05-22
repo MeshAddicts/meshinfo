@@ -1138,12 +1138,15 @@ class PostgresStorage:
         start: datetime.datetime | None = None,
         end: datetime.datetime | None = None,
         before: str | None = None,
+        topic: str | None = None,
     ) -> dict:
         """Query mqtt_messages, returning a keyset-paginated page.
 
         Args:
             limit: Max messages per page.
             search: Optional term to filter by topic or payload content.
+            topic: Optional substring filter on the MQTT topic only (used by
+                the preset pills, which key off the topic's preset segment).
             range_seconds: Rolling window — only messages with
                 timestamp >= (now_unix - range_seconds). Filters the MQTT-reported
                 `timestamp`; kept for back-compat with the legacy `range` param.
@@ -1173,6 +1176,11 @@ class PostgresStorage:
                         f" OR payload ILIKE '%' || ${idx} || '%')"
                     )
                     params.append(search)
+                    idx += 1
+
+                if topic:
+                    conditions.append(f"topic ILIKE '%' || ${idx} || '%'")
+                    params.append(topic)
                     idx += 1
 
                 idx = self._append_window_conditions(conditions, params, idx, start, end, before)
@@ -1266,12 +1274,36 @@ class PostgresStorage:
                 msg["topic"] = row["topic"]
             if "timestamp" not in msg:
                 msg["timestamp"] = row["timestamp"]
+            # Stable DB row id — backs per-packet deeplinks. Namespaced so it
+            # can't collide with the mesh packet's own `id` payload field.
+            if isinstance(msg, dict):
+                msg["mqtt_row_id"] = row["id"]
             messages.append(msg)
         next_cursor = None
         if has_more and page:
             last = page[-1]
             next_cursor = _encode_cursor(last["created_at"], last["id"])
         return {"messages": messages, "next_cursor": next_cursor}
+
+    async def query_mqtt_message_by_id(self, row_id: int) -> Optional[dict]:
+        """Fetch one mqtt_messages row by its DB id — backs per-packet deeplinks.
+        Returns the parsed message dict (with mqtt_row_id), or None if not found."""
+        if not self._ready("query_mqtt_message_by_id"):
+            return None
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """SELECT id, topic, payload, qos, retain, timestamp, created_at
+                       FROM mqtt_messages WHERE id = $1""",
+                    row_id,
+                )
+            if row is None:
+                return None
+            page = self._build_mqtt_message_page([row], 1)
+            return page["messages"][0] if page["messages"] else None
+        except Exception as e:
+            logger.error("Failed to query mqtt_message by id: %s", e)
+            return None
 
     # ============================================================================
     # DIRECT QUERY OPERATIONS - For API endpoints when reading from Postgres
