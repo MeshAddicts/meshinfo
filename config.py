@@ -82,10 +82,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "enrich": {
             "enabled": False,
             "interval": 900,
-            # List of upstream MeshInfo-compatible name lookups. Each entry is either
-            # a named preset (currently: "bayme") or a URL template like
-            # "https://other.meshinfo.example/api/v1/nodes?ids={ids}".
-            "providers": ["bayme"],
+            # Meshview bulk dicts or MeshInfo URL templates; see config.toml.sample.
+            "providers": [],
         },
         "graph": {
             "enabled": True,
