@@ -320,7 +320,7 @@ class PostgresStorage:
         try:
             async with self.pool.acquire() as conn:
                 relkind = await conn.fetchval(
-                    "SELECT relkind FROM pg_class "
+                    "SELECT relkind::text FROM pg_class "
                     "WHERE relname = 'mqtt_messages' "
                     "AND relnamespace = 'public'::regnamespace"
                 )
