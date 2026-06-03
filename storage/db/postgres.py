@@ -335,7 +335,8 @@ class PostgresStorage:
                     await conn.execute(
                         f"CREATE TABLE IF NOT EXISTS {name} "
                         f"PARTITION OF mqtt_messages "
-                        f"FOR VALUES FROM ('{lo}') TO ('{hi}')"
+                        f"FOR VALUES FROM (TIMESTAMPTZ '{lo} 00:00:00+00') "
+                        f"TO (TIMESTAMPTZ '{hi} 00:00:00+00')"
                     )
         except Exception as e:
             logger.error("ensure_mqtt_partitions failed: %s", e)

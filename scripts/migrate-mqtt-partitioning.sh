@@ -99,6 +99,8 @@ docker compose stop meshinfo >/dev/null 2>&1 || true
 log "Running the partitioning migration (atomic — rolls back fully on any error)…"
 if ! docker compose exec -T -e PGPASSWORD="$DB_PASSWORD" postgres \
        psql --single-transaction -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" -q <<'SQL'
+-- Make the monthly boundaries deterministic regardless of the server's TimeZone.
+SET LOCAL TIME ZONE 'UTC';
 -- 1. Move the existing table + its objects aside (frees the canonical names).
 ALTER TABLE mqtt_messages RENAME TO mqtt_messages_old;
 DROP TRIGGER IF EXISTS trg_mqtt_messages_extract_node_ids ON mqtt_messages_old;

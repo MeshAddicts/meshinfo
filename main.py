@@ -91,7 +91,7 @@ async def maintenance_loop(config, data, interval_seconds: float = MAINTENANCE_I
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("Prune loop iteration failed")
+            logger.exception("Maintenance loop iteration failed")
         tick += 1
         await asyncio.sleep(interval_seconds)
 

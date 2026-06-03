@@ -70,11 +70,17 @@ def _resolve_providers(config) -> list:
       url = entry["url"]
       if kind == "meshview":
         # Bulk fetch + local filter; no {ids} placeholder needed.
+        try:
+          days_active = int(entry.get("days_active", 7))
+        except (TypeError, ValueError):
+          logger.warning("Enrichment provider %r has invalid days_active %r; using 7",
+                         entry.get("name", url), entry.get("days_active"))
+          days_active = 7
         result.append({
           "name": entry.get("name", url),
           "kind": "meshview",
           "url": url,
-          "days_active": int(entry.get("days_active", 7)),
+          "days_active": days_active,
         })
       elif kind == "meshinfo":
         if "{ids}" not in url:
