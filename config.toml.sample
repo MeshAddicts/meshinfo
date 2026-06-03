@@ -35,17 +35,18 @@ timezone = "America/Los_Angeles"      # IANA timezone (e.g. "UTC", "Europe/Londo
 [server.intervals]
 data_save = 300                       # seconds between graph rebuilds
 
-# Node enrichment: ask other MeshInfo deployments for the names of nodes we
-# heard via position/telemetry but never received a local NODEINFO for. Useful
-# when a node's NODEINFO travelled over a different region/broker than the one
-# this instance subscribes to.
+# Node enrichment: ask other MeshInfo / Meshview deployments for the names of
+# nodes we have positions/telemetry for but no local NODEINFO.
+#
+# Provider entry forms:
+#   { kind = "meshview", url = "...", name = "...", days_active = 7 }   # Meshview bulk
+#   "https://other.meshinfo.example/api/v1/nodes?ids={ids}"             # MeshInfo URL template
 [server.enrich]
 enabled = true
 interval = 900                        # seconds between enrichment runs (±10% jitter applied)
-# Named presets currently shipped: "bayme" (https://data.bayme.sh)
-# To add another MeshInfo instance, drop in a URL template with {ids} placeholder:
-#   providers = ["bayme", "https://other.meshinfo.example/api/v1/nodes?ids={ids}"]
-providers = ["bayme"]
+providers = [
+    { kind = "meshview", url = "https://meshview.bayme.sh/api/nodes", name = "baymesh", days_active = 7 },
+]
 
 # Network graph generation
 [server.graph]

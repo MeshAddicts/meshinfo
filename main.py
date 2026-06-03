@@ -72,21 +72,27 @@ def _read_json_file(path: str) -> dict | None:
         return None
 
 
-PRUNE_INTERVAL_SEC = 60.0
+MAINTENANCE_INTERVAL_SEC = 60.0
 
 
-async def prune_loop(config, data, interval_seconds: float = PRUNE_INTERVAL_SEC) -> None:
-    """Periodically mark nodes inactive past the activity threshold."""
+async def maintenance_loop(config, data, interval_seconds: float = MAINTENANCE_INTERVAL_SEC) -> None:
+    """Periodic DB maintenance: mark nodes inactive past the activity threshold,
+    and keep the mqtt_messages monthly partitions rolled forward."""
     threshold = config['server']['node_activity_prune_threshold']
+    tick = 0
     while True:
         try:
             pruned = await data.pg_storage.mark_nodes_inactive_by_age(threshold)
             if pruned:
                 logger.debug("Pruned %d node(s) inactive for >= %ds", pruned, threshold)
+            # Hourly: create next month's partition ahead of the rollover.
+            if tick % 60 == 0:
+                await data.pg_storage.ensure_mqtt_partitions()
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("Prune loop iteration failed")
+            logger.exception("Maintenance loop iteration failed")
+        tick += 1
         await asyncio.sleep(interval_seconds)
 
 
@@ -205,7 +211,7 @@ async def main() -> None:
         logger.info("MQTT disabled in config")
 
     background_tasks.append(
-        asyncio.create_task(supervise("Prune", lambda: prune_loop(config, data)))
+        asyncio.create_task(supervise("Maintenance", lambda: maintenance_loop(config, data)))
     )
 
     if config['server'].get('enrich', {}).get('enabled'):

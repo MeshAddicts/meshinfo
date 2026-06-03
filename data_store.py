@@ -13,17 +13,20 @@ import utils
 
 logger = logging.getLogger(__name__)
 
-# Named enrichment provider presets. URL templates substitute {ids} with a
-# comma-joined id list (or single id when single_id_per_request=True).
-_PROVIDER_PRESETS: dict = {
-    "bayme": {
-        "url_template": "https://data.bayme.sh/api/node/infos?ids={ids}",
-        "single_id_per_request": True,
-    },
+# Named provider presets (none shipped — configure explicitly).
+_PROVIDER_PRESETS: dict = {}
+
+# Dead legacy names dropped with a warning so stale configs still start.
+_DEAD_LEGACY_PROVIDERS: dict = {
+    "world.meshinfo.network": "upstream service is gone — use a Meshview entry",
+    "bayme": "data.bayme.sh was never valid — use kind=\"meshview\" pointed at "
+             "https://meshview.bayme.sh/api/nodes",
 }
 
 _PER_REQUEST_DELAY_SEC = 0.1
 _REQUEST_TIMEOUT_SEC = 10.0
+# Safety cap on a Meshview bulk /api/nodes body so one huge response can't blow up memory.
+_MESHVIEW_BULK_MAX_BYTES = 50 * 1024 * 1024
 # Stop hammering a provider after N consecutive failures in one cycle; resets next cycle.
 _PROVIDER_FAIL_THRESHOLD = 10
 
@@ -31,26 +34,24 @@ _PROVIDER_FAIL_THRESHOLD = 10
 def _resolve_providers(config) -> list:
   """Resolve config.server.enrich.providers (or legacy 'provider') into a runtime list.
 
-  Accepts preset names ("bayme") or dicts with at least a `url` template. The dead
-  'world.meshinfo.network' legacy value is dropped with a warning.
+  Accepts dicts (Meshview bulk or MeshInfo URL template) and bare URL templates.
+  Dead legacy names are dropped with a warning.
   """
   cfg = config.get('server', {}).get('enrich', {}) or {}
   raw = cfg.get('providers')
   if raw is None and cfg.get('provider') is not None:
-    legacy = cfg['provider']
-    if legacy == 'world.meshinfo.network':
-      logger.warning(
-        "server.enrich.provider='world.meshinfo.network' is no longer reachable; "
-        "configure providers=[\"bayme\"] (or another MeshInfo URL) to re-enable enrichment"
-      )
-      raw = []
-    else:
-      raw = [legacy]
+    raw = [cfg['provider']]
   if not raw:
     return []
   result = []
   for entry in raw:
     if isinstance(entry, str):
+      if entry in _DEAD_LEGACY_PROVIDERS:
+        logger.warning(
+          "server.enrich provider %r is no longer reachable; %s",
+          entry, _DEAD_LEGACY_PROVIDERS[entry],
+        )
+        continue
       preset = _PROVIDER_PRESETS.get(entry)
       if preset is None:
         # Bare URLs with an {ids} placeholder are generic templates.
@@ -65,16 +66,33 @@ def _resolve_providers(config) -> list:
       else:
         result.append({"name": entry, **preset})
     elif isinstance(entry, dict) and entry.get("url"):
+      kind = entry.get("kind", "meshinfo")
       url = entry["url"]
-      # Without {ids} the substitution is a no-op; requests would silently miss ids.
-      if "{ids}" not in url:
-        logger.warning("Enrichment provider %r is missing {ids} placeholder; skipping", entry.get("name", url))
-        continue
-      result.append({
-        "name": entry.get("name", url),
-        "url_template": url,
-        "single_id_per_request": bool(entry.get("single_id_per_request", False)),
-      })
+      if kind == "meshview":
+        # Bulk fetch + local filter; no {ids} placeholder needed.
+        try:
+          days_active = int(entry.get("days_active", 7))
+        except (TypeError, ValueError):
+          logger.warning("Enrichment provider %r has invalid days_active %r; using 7",
+                         entry.get("name", url), entry.get("days_active"))
+          days_active = 7
+        result.append({
+          "name": entry.get("name", url),
+          "kind": "meshview",
+          "url": url,
+          "days_active": days_active,
+        })
+      elif kind == "meshinfo":
+        if "{ids}" not in url:
+          logger.warning("Enrichment provider %r is missing {ids} placeholder; skipping", entry.get("name", url))
+          continue
+        result.append({
+          "name": entry.get("name", url),
+          "url_template": url,
+          "single_id_per_request": bool(entry.get("single_id_per_request", False)),
+        })
+      else:
+        logger.warning("Unknown enrichment provider kind %r; skipping", kind)
     else:
       logger.warning("Invalid enrichment provider entry %r; skipping", entry)
   return result
@@ -199,7 +217,10 @@ class DataStore:
         if not pending:
           break
         before_count = len(pending)
-        result = await self._enrich_via_provider(session, prov, sorted(pending))
+        if prov.get("kind") == "meshview":
+          result = await self._enrich_via_meshview_bulk(session, prov, pending)
+        else:
+          result = await self._enrich_via_provider(session, prov, sorted(pending))
         # One log line per provider per cycle. WARNING when the provider looks
         # unreachable (0/N succeeded or circuit-breaker fired), INFO otherwise.
         attempted = result["attempted"]
@@ -243,7 +264,7 @@ class DataStore:
     consecutive_failures = 0
     aborted = False
     if prov["single_id_per_request"]:
-      # bayme rejects multi-id requests; iterate, paced so we don't hammer it.
+      # Provider rejects multi-id requests; iterate, paced so we don't hammer it.
       for node_id in node_ids:
         attempted += 1
         data = await self._fetch_provider(session, prov, [node_id])
@@ -283,6 +304,44 @@ class DataStore:
     except Exception as e:
       logger.debug("%s: request failed for %d id(s): %s", prov["name"], len(ids), e)
     return None
+
+  async def _enrich_via_meshview_bulk(self, session, prov: dict, pending: set) -> dict:
+    """One bulk GET against a Meshview /api/nodes; filter locally.
+    Cheaper than per-id requests when many unknowns are covered by one response."""
+    named: set = set()
+    sep = "&" if "?" in prov["url"] else "?"
+    url = f"{prov['url']}{sep}days_active={prov['days_active']}"
+    try:
+      async with session.get(url) as response:
+        if response.status != 200:
+          logger.debug("%s: HTTP %d", prov["name"], response.status)
+          return {"named": named, "attempted": 1, "succeeded": 0, "aborted": False}
+        # Bound memory: skip a pathologically large bulk body rather than load it.
+        clen = getattr(response, "content_length", None)
+        if clen is not None and clen > _MESHVIEW_BULK_MAX_BYTES:
+          logger.warning("%s: bulk response too large (%d bytes); skipping", prov["name"], clen)
+          return {"named": named, "attempted": 1, "succeeded": 0, "aborted": False}
+        data = await response.json()
+    except Exception as e:
+      logger.debug("%s: bulk fetch failed: %s", prov["name"], e)
+      return {"named": named, "attempted": 1, "succeeded": 0, "aborted": False}
+    # Meshview gives node_id as uint32 decimal + snake_case names; adapt to our shape.
+    lookup: dict = {}
+    for node in (data.get("nodes") or []):
+      nid = utils.normalize_node_id(node.get("node_id"))
+      if nid is None:
+        continue
+      long_ = (node.get("long_name") or "").strip()
+      short = (node.get("short_name") or "").strip()
+      if long_ or short:
+        lookup[nid] = {"longName": long_, "shortName": short}
+    for nid in list(pending):
+      info = lookup.get(nid)
+      if info is None:
+        continue
+      if await self._apply_enrichment(nid, info):
+        named.add(nid)
+    return {"named": named, "attempted": 1, "succeeded": 1, "aborted": False}
 
   async def _apply_enrichment(self, node_id: str, info: dict) -> bool:
     """Write enriched name fields direct to Postgres + cache; returns True if applied.

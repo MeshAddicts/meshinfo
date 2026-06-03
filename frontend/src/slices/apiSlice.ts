@@ -12,6 +12,32 @@ import {
 } from "../types";
 import { IConfigResponse } from "../types/config";
 
+/** A parsed packet from the mqtt_messages archive. Loosely typed — the payload
+ *  shape varies by packet type. `mqtt_row_id` is the stable DB id (deeplinks). */
+export type IPacketMessage = Record<string, unknown> & {
+  mqtt_row_id?: number;
+  topic?: string;
+  timestamp?: number;
+  type?: string;
+  from?: string;
+};
+
+/** One keyset-paginated page from /v1/packets. */
+export interface IPacketPage {
+  messages: IPacketMessage[];
+  next_cursor: string | null;
+}
+
+/** Filters for the packet archive query (the cursor is handled separately). */
+export interface IPacketsArg {
+  q?: string;
+  topic?: string;
+  range?: string;
+  start?: number;
+  end?: number;
+  limit?: number;
+}
+
 export const apiSlice = createApi({
   reducerPath: "api",
   tagTypes: [
@@ -153,6 +179,29 @@ export const apiSlice = createApi({
         { type: "MqttMessages", id: nodeId },
       ],
     }),
+    // Cursor-paginated packet archive — reaches the full mqtt_messages history.
+    getPackets: builder.infiniteQuery<IPacketPage, IPacketsArg, string | undefined>({
+      infiniteQueryOptions: {
+        initialPageParam: undefined,
+        getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
+      },
+      query: ({ queryArg, pageParam }) => {
+        const sp = new URLSearchParams();
+        if (queryArg.q) sp.set("q", queryArg.q);
+        if (queryArg.topic) sp.set("topic", queryArg.topic);
+        if (queryArg.range) sp.set("range", queryArg.range);
+        if (queryArg.start) sp.set("start", String(queryArg.start));
+        if (queryArg.end) sp.set("end", String(queryArg.end));
+        sp.set("limit", String(queryArg.limit ?? 200));
+        if (pageParam) sp.set("before", pageParam);
+        return `packets?${sp.toString()}`;
+      },
+      providesTags: [{ type: "MqttMessages", id: "PACKETS" }],
+    }),
+    // Single packet by mqtt_row_id — backs per-packet deeplinks.
+    getPacket: builder.query<{ packet: IPacketMessage }, number>({
+      query: (id) => `packets/${id}`,
+    }),
   }),
 });
 
@@ -167,4 +216,6 @@ export const {
   useGetMessagesQuery,
   useGetMqttMessagesQuery,
   useGetNodePacketsQuery,
+  useGetPacketsInfiniteQuery,
+  useGetPacketQuery,
 } = apiSlice;

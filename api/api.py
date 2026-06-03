@@ -73,6 +73,17 @@ class API:
                 return DEFAULT_RANGE
         return DEFAULT_RANGE
 
+    @staticmethod
+    def _parse_epoch(value: str | None) -> datetime.datetime | None:
+        """Parse a unix-epoch-seconds query param into an aware UTC datetime.
+        Returns None when absent or unparseable (treated as no bound)."""
+        if not value:
+            return None
+        try:
+            return datetime.datetime.fromtimestamp(int(value), tz=datetime.timezone.utc)
+        except (TypeError, ValueError, OSError, OverflowError):
+            return None
+
     async def serve(self):
         @app.get("/")
         async def root():
@@ -165,8 +176,16 @@ class API:
                 limit = 50
             limit = max(1, min(limit, 200))
 
-            packets = await self.data.pg_storage.query_node_mqtt_messages(node_id, limit=limit)
-            return jsonable_encoder({"packets": packets})
+            result = await self.data.pg_storage.query_node_mqtt_messages(
+                node_id,
+                limit=limit,
+                start=self._parse_epoch(request.query_params.get("start")),
+                end=self._parse_epoch(request.query_params.get("end")),
+                before=request.query_params.get("before"),
+            )
+            return jsonable_encoder(
+                {"packets": result["messages"], "next_cursor": result["next_cursor"]}
+            )
 
         @app.get("/v1/nodes/{id}/traceroutes")
         async def node_traceroutes(request: Request, id: str) -> JSONResponse:
@@ -216,7 +235,7 @@ class API:
             results = await self.data.pg_storage.query_mqtt_messages(
                 limit=limit, search=search, range_seconds=range_seconds,
             )
-            return jsonable_encoder(results)
+            return jsonable_encoder(results["messages"])
 
         @app.get("/v1/mqtt_messages")
         async def mqtt_messages(request: Request) -> JSONResponse:
@@ -229,7 +248,43 @@ class API:
             results = await self.data.pg_storage.query_mqtt_messages(
                 limit=limit, range_seconds=range_seconds,
             )
-            return jsonable_encoder(results)
+            return jsonable_encoder(results["messages"])
+
+        @app.get("/v1/packets")
+        async def packets(request: Request) -> JSONResponse:
+            """Keyset-paginated packet archive. Unlike /v1/mqtt_messages (which
+            returns only the newest window), this reaches the full history via
+            absolute start/end (unix-epoch seconds) and a `before` cursor.
+            Response: {"messages": [...], "next_cursor": str | null}."""
+            search = request.query_params.get("q")
+            range_seconds = self._parse_range(request.query_params.get("range"))
+            try:
+                limit = int(request.query_params.get("limit", 1000))
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "limit must be an integer"}, status_code=400)
+            limit = max(1, min(limit, 50000))
+            result = await self.data.pg_storage.query_mqtt_messages(
+                limit=limit,
+                search=search,
+                topic=request.query_params.get("topic"),
+                range_seconds=range_seconds,
+                start=self._parse_epoch(request.query_params.get("start")),
+                end=self._parse_epoch(request.query_params.get("end")),
+                before=request.query_params.get("before"),
+            )
+            return jsonable_encoder(result)
+
+        @app.get("/v1/packets/{packet_id}")
+        async def packet_by_id(request: Request, packet_id: str) -> JSONResponse:
+            """Single packet by `mqtt_messages` row id — backs per-packet deeplinks."""
+            try:
+                row_id = int(packet_id)
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "packet id must be an integer"}, status_code=400)
+            packet = await self.data.pg_storage.query_mqtt_message_by_id(row_id)
+            if packet is None:
+                return JSONResponse({"error": "packet not found"}, status_code=404)
+            return jsonable_encoder({"packet": packet})
 
         @app.get("/v1/stats")
         async def stats(request: Request) -> JSONResponse:
