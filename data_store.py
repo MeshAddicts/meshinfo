@@ -25,6 +25,8 @@ _DEAD_LEGACY_PROVIDERS: dict = {
 
 _PER_REQUEST_DELAY_SEC = 0.1
 _REQUEST_TIMEOUT_SEC = 10.0
+# Safety cap on a Meshview bulk /api/nodes body so one huge response can't blow up memory.
+_MESHVIEW_BULK_MAX_BYTES = 50 * 1024 * 1024
 # Stop hammering a provider after N consecutive failures in one cycle; resets next cycle.
 _PROVIDER_FAIL_THRESHOLD = 10
 
@@ -307,6 +309,11 @@ class DataStore:
       async with session.get(url) as response:
         if response.status != 200:
           logger.debug("%s: HTTP %d", prov["name"], response.status)
+          return {"named": named, "attempted": 1, "succeeded": 0, "aborted": False}
+        # Bound memory: skip a pathologically large bulk body rather than load it.
+        clen = getattr(response, "content_length", None)
+        if clen is not None and clen > _MESHVIEW_BULK_MAX_BYTES:
+          logger.warning("%s: bulk response too large (%d bytes); skipping", prov["name"], clen)
           return {"named": named, "attempted": 1, "succeeded": 0, "aborted": False}
         data = await response.json()
     except Exception as e:

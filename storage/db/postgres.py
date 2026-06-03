@@ -48,6 +48,23 @@ def _decode_cursor(cursor: str) -> Optional[Tuple[datetime.datetime, int]]:
         return None
 
 
+def _month_partition_specs(
+    start: datetime.date, months_ahead: int
+) -> List[Tuple[str, str, str]]:
+    """Monthly partition (name, lo, hi) tuples for start's month through
+    months_ahead months later. lo/hi are 'YYYY-MM-DD' strings; each range is
+    half-open [lo, hi). Used to keep mqtt_messages' partitions rolled forward."""
+    specs: List[Tuple[str, str, str]] = []
+    month = start.replace(day=1)
+    for _ in range(months_ahead + 1):
+        nxt = (month + datetime.timedelta(days=32)).replace(day=1)
+        specs.append(
+            (f"mqtt_messages_{month:%Y_%m}", f"{month:%Y-%m-%d}", f"{nxt:%Y-%m-%d}")
+        )
+        month = nxt
+    return specs
+
+
 class PostgresStorage:
     """PostgreSQL storage backend with connection pooling and error handling."""
 
@@ -287,8 +304,41 @@ class PostgresStorage:
         except Exception as e:
             logger.warning(f"MQTT node-ID trigger setup skipped: {e}")
 
+        # Ensure monthly partitions exist before MQTT starts inserting.
+        # No-op on a non-partitioned install (pre-migration).
+        await self.ensure_mqtt_partitions()
+
         # Don't block startup; close() cancels via self._backfill_task on shutdown.
         self._backfill_task = asyncio.create_task(self._backfill_mqtt_node_ids())
+
+    async def ensure_mqtt_partitions(self, months_ahead: int = 2) -> None:
+        """Create the current + next monthly partitions for mqtt_messages when
+        missing. No-op when the table isn't partitioned — i.e. an existing
+        install that hasn't run scripts/migrate-mqtt-partitioning.sh yet."""
+        if not self._ready("ensure_mqtt_partitions"):
+            return
+        try:
+            async with self.pool.acquire() as conn:
+                relkind = await conn.fetchval(
+                    "SELECT relkind FROM pg_class "
+                    "WHERE relname = 'mqtt_messages' "
+                    "AND relnamespace = 'public'::regnamespace"
+                )
+                if relkind != "p":
+                    return  # regular table — nothing to manage
+                # Anchor on the DB's UTC date, not the app process's local date:
+                # created_at is TIMESTAMPTZ (stored UTC), so a local-time today()
+                # could select the wrong month around the boundary and leave the
+                # currently-active month unpartitioned.
+                today = await conn.fetchval("SELECT (now() AT TIME ZONE 'UTC')::date")
+                for name, lo, hi in _month_partition_specs(today, months_ahead):
+                    await conn.execute(
+                        f"CREATE TABLE IF NOT EXISTS {name} "
+                        f"PARTITION OF mqtt_messages "
+                        f"FOR VALUES FROM ('{lo}') TO ('{hi}')"
+                    )
+        except Exception as e:
+            logger.error("ensure_mqtt_partitions failed: %s", e)
 
     async def _backfill_mqtt_node_ids(self):
         """Backfill from_node_id/to_node_id for existing mqtt_messages rows in batches."""
@@ -1270,14 +1320,18 @@ class PostgresStorage:
                     msg = {"raw": payload_text}
             else:
                 msg = {}
+            # A payload that parses as valid JSON but isn't an object (a scalar
+            # or array) can't carry topic/timestamp/mqtt_row_id — wrap it so one
+            # odd row can't throw and blank the entire page.
+            if not isinstance(msg, dict):
+                msg = {"raw": msg}
             if "topic" not in msg:
                 msg["topic"] = row["topic"]
             if "timestamp" not in msg:
                 msg["timestamp"] = row["timestamp"]
             # Stable DB row id — backs per-packet deeplinks. Namespaced so it
             # can't collide with the mesh packet's own `id` payload field.
-            if isinstance(msg, dict):
-                msg["mqtt_row_id"] = row["id"]
+            msg["mqtt_row_id"] = row["id"]
             messages.append(msg)
         next_cursor = None
         if has_more and page:

@@ -209,6 +209,61 @@ Notes:
   re-initialises empty, `docker compose up -d postgres`, then restore —
   `gzip -dc backups/<dump>.sql.gz | docker compose exec -T postgres psql -U postgres -d meshinfo`.
 
+## Partitioning the mqtt_messages archive
+
+`mqtt_messages` is the raw packet firehose and dominates the database — it
+typically holds 98%+ of all rows. Fresh installs since this change get a
+**partitioned table** (RANGE partitioned by month on `created_at`), so the
+table stays operationally manageable as it grows: each date-range query
+prunes to the relevant month(s) instead of scanning everything, and
+maintenance runs at partition scale, not table scale. The app
+(`ensure_mqtt_partitions`) keeps next month's partition created ahead of
+the rollover.
+
+Databases created before partitioning landed need a **one-time conversion**:
+
+```sh
+bash scripts/migrate-mqtt-partitioning.sh
+# dev stack:  COMPOSE_FILE=docker-compose-dev.yml bash scripts/migrate-mqtt-partitioning.sh
+```
+
+What it does, inside a **single atomic transaction**:
+
+1. Renames the existing table to `mqtt_messages_old`.
+2. Creates a new month-partitioned `mqtt_messages` (with the `payload`
+   column `lz4`-compressed).
+3. Creates one partition per month spanned by the data, copies every row,
+   and verifies the row count matches before committing.
+4. Rebuilds indexes, re-homes the `id` sequence, reinstalls the trigger.
+
+Any failure rolls the whole thing back — `mqtt_messages` is untouched.
+The script stops `meshinfo` for the duration and restarts it on success.
+
+Notes:
+
+- **Requires lz4:** the partitioned `mqtt_messages` `payload` column uses
+  `COMPRESSION lz4`, so Postgres must be built with lz4 support (PG 14+ — the
+  official `postgres:18` image this stack ships with includes it). A self-hosted
+  Postgres compiled without lz4 will reject both the fresh-install schema and the
+  migration with `compression method lz4 not supported`.
+- **Disk:** the migration needs ~3× the current `mqtt_messages` size free
+  on the data volume transiently (new copy + WAL + headroom). The pre-flight
+  check aborts with a clear message if there's not enough. Expand the data
+  volume first if you're short.
+- **Rollback safety:** the original data is kept as `mqtt_messages_old`
+  until you drop it. Disk is not reclaimed until then. Once you've
+  confirmed the app + Logs page look right, run:
+  ```sh
+  docker compose exec postgres psql -U postgres -d meshinfo \
+    -c 'DROP TABLE mqtt_messages_old;'
+  ```
+- **Idempotent**: re-running the script when the table is already
+  partitioned (or doesn't exist yet) is a no-op.
+- **On Windows**, run from Git Bash, like `migrate-postgres.sh`.
+- Partitioning does not shrink disk — it makes a huge table manageable.
+  Complete-history retention still implies the data volume must be
+  allowed to grow.
+
 ## Security
 
 - Use strong passwords for PostgreSQL

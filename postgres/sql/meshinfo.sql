@@ -1,3 +1,12 @@
+-- ============================================================================
+-- LEGACY REFERENCE ONLY — NOT the live schema and NOT executed by the app.
+-- The authoritative schema the app applies at startup is postgres/sql/schema.sql
+-- (see storage/db/postgres.py). This file is an outdated snapshot kept for
+-- historical reference and has diverged: e.g. mqtt_messages is now month-RANGE
+-- partitioned with a composite PK (id, created_at), so the `messages.mqtt_message_id
+-- REFERENCES mqtt_messages(id)` FK below no longer reflects reality. Do not rely on it.
+-- ============================================================================
+
 CREATE TABLE nodes (
   id bigint NOT NULL PRIMARY KEY,
   first_heard_at timestamp with time zone DEFAULT now() NOT NULL,

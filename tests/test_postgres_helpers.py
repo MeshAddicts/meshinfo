@@ -16,6 +16,7 @@ from storage.db.postgres import (
     _decode_cursor,
     _encode_cursor,
     _json_default,
+    _month_partition_specs,
 )
 
 
@@ -111,3 +112,32 @@ class TestBuildMessagePage:
         msg = PostgresStorage._build_mqtt_message_page(rows, 10)["messages"][0]
         assert msg["topic"] == "payload-topic"
         assert msg["timestamp"] == 42
+
+
+class TestMonthPartitionSpecs:
+    """_month_partition_specs — names + half-open [lo, hi) bounds for the
+    mqtt_messages monthly partitions."""
+
+    def test_current_plus_two_months(self):
+        specs = _month_partition_specs(datetime.date(2026, 5, 15), 2)
+        assert specs == [
+            ("mqtt_messages_2026_05", "2026-05-01", "2026-06-01"),
+            ("mqtt_messages_2026_06", "2026-06-01", "2026-07-01"),
+            ("mqtt_messages_2026_07", "2026-07-01", "2026-08-01"),
+        ]
+
+    def test_months_ahead_zero_is_current_month_only(self):
+        specs = _month_partition_specs(datetime.date(2026, 5, 1), 0)
+        assert specs == [("mqtt_messages_2026_05", "2026-05-01", "2026-06-01")]
+
+    def test_crosses_year_boundary(self):
+        specs = _month_partition_specs(datetime.date(2026, 12, 20), 1)
+        assert specs == [
+            ("mqtt_messages_2026_12", "2026-12-01", "2027-01-01"),
+            ("mqtt_messages_2027_01", "2027-01-01", "2027-02-01"),
+        ]
+
+    def test_ranges_are_contiguous_and_half_open(self):
+        specs = _month_partition_specs(datetime.date(2026, 1, 31), 5)
+        for prev, nxt in zip(specs, specs[1:]):
+            assert prev[2] == nxt[1]  # each hi is the next lo — no gaps, no overlap

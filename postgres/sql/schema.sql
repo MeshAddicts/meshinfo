@@ -181,16 +181,33 @@ CREATE INDEX IF NOT EXISTS idx_traceroutes_from_node_id ON traceroutes(from_node
 CREATE INDEX IF NOT EXISTS idx_traceroutes_to_node_id ON traceroutes(to_node_id);
 CREATE INDEX IF NOT EXISTS idx_traceroutes_created_at ON traceroutes(created_at DESC);
 
--- MQTT messages table (optional, for debugging)
-CREATE TABLE IF NOT EXISTS mqtt_messages (
-    id BIGSERIAL PRIMARY KEY,
-    topic TEXT,
-    payload TEXT,
-    qos INTEGER,
-    retain BOOLEAN,
-    timestamp BIGINT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
+-- MQTT messages: the raw packet archive. Partitioned by month on created_at
+-- so it stays manageable as it grows. This block only fires on a fresh install
+-- (the table does not yet exist); existing non-partitioned installs are
+-- converted by scripts/migrate-mqtt-partitioning.sh and are left untouched here.
+-- The app (ensure_mqtt_partitions) creates the real monthly partitions.
+DO $mqtt$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_class
+        WHERE relname = 'mqtt_messages' AND relnamespace = 'public'::regnamespace
+    ) THEN
+        CREATE TABLE mqtt_messages (
+            id           BIGSERIAL,
+            topic        TEXT,
+            payload      TEXT COMPRESSION lz4,
+            qos          INTEGER,
+            retain       BOOLEAN,
+            timestamp    BIGINT,
+            created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            from_node_id VARCHAR(8),
+            to_node_id   VARCHAR(8),
+            PRIMARY KEY (id, created_at)
+        ) PARTITION BY RANGE (created_at);
+        -- Safety net so an insert never fails for a missing month.
+        CREATE TABLE mqtt_messages_default PARTITION OF mqtt_messages DEFAULT;
+    END IF;
+END $mqtt$;
 
 CREATE INDEX IF NOT EXISTS idx_mqtt_messages_created_at ON mqtt_messages(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_mqtt_messages_timestamp ON mqtt_messages(timestamp DESC);
