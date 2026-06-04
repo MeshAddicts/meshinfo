@@ -7,7 +7,7 @@
 # The container runs fetch-vendor.sh + build.sh, then copies artifacts
 # (itm.js and itm.d.ts) out to the volume mount.
 
-FROM emscripten/emsdk:3.1.74 AS builder
+FROM emscripten/emsdk:6.0.0 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
