@@ -104,6 +104,7 @@ function NavRow({
       to={item.to}
       onClick={onNavigate}
       title={collapsed ? item.label : undefined}
+      aria-label={collapsed ? item.label : undefined}
       className={({ isActive }) =>
         `${rowBase} ${collapsed ? "justify-center p-2.5" : "gap-3 px-3 py-2.5"} ${
           isActive ? rowActive : rowIdle
@@ -120,7 +121,7 @@ function NavRow({
               className={`w-5 h-5 ${
                 isActive
                   ? "text-cyan-600 dark:text-cyan-300"
-                  : "text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-200"
+                  : "text-gray-500 dark:text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-200"
               }`}
             />
             {collapsed && item.badge && (
@@ -158,11 +159,12 @@ function ExternalRow({
       rel="noopener noreferrer"
       onClick={onNavigate}
       title={collapsed ? link.name : undefined}
+      aria-label={collapsed ? link.name : undefined}
       className={`${rowBase} ${rowIdle} ${
         collapsed ? "justify-center p-2.5" : "gap-3 px-3 py-2.5"
       }`}
     >
-      <ExternalLinkIcon className="w-5 h-5 shrink-0 text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-200" />
+      <ExternalLinkIcon className="w-5 h-5 shrink-0 text-gray-500 dark:text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-200" />
       {!collapsed && (
         <span className="text-sm font-medium truncate">{link.name}</span>
       )}
@@ -208,6 +210,10 @@ export const Menu = ({
   const [expanded, setExpanded] = useState(false);
   const collapsed = !expanded;
   const asideRef = useRef<HTMLElement>(null);
+  const expandBtnRef = useRef<HTMLButtonElement>(null);
+  // True when a keyboard action retracts the rail, so focus returns to the
+  // expand button instead of falling to <body> as the flyout unmounts.
+  const restoreFocusRef = useRef(false);
 
   const tools = config?.mesh?.tools?.length
     ? (config.mesh.tools as ExternalLinkDef[])
@@ -230,6 +236,14 @@ export const Menu = ({
     setExpanded(false);
   }, [pathname]);
 
+  // After a keyboard retract, return focus to the expand button.
+  useEffect(() => {
+    if (!expanded && restoreFocusRef.current) {
+      restoreFocusRef.current = false;
+      expandBtnRef.current?.focus();
+    }
+  }, [expanded]);
+
   // While expanded, retract on outside-click or Escape (flyout behavior).
   useEffect(() => {
     if (!expanded) return;
@@ -238,7 +252,10 @@ export const Menu = ({
         setExpanded(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setExpanded(false);
+      if (e.key === "Escape") {
+        restoreFocusRef.current = true;
+        setExpanded(false);
+      }
     };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
@@ -383,6 +400,7 @@ export const Menu = ({
           panels) without moving the page. z-[1200] clears the map's z-1100 pills. */}
       <aside
         ref={asideRef}
+        id="nav-rail"
         className={`hidden lg:flex lg:fixed lg:inset-y-0 lg:left-0 lg:z-1200 lg:flex-col overflow-hidden bg-gray-50 dark:bg-gray-900/80 dark:backdrop-blur-xl border-r border-gray-200 dark:border-white/10 transition-[width] duration-200 ${
           collapsed ? "lg:w-18" : "lg:w-60 lg:shadow-2xl"
         }`}
@@ -391,10 +409,13 @@ export const Menu = ({
           <div className="shrink-0 border-b border-gray-200 dark:border-white/10">
             {collapsed ? (
               <button
+                ref={expandBtnRef}
                 type="button"
-                onClick={() => setExpanded((v) => !v)}
+                onClick={() => setExpanded(true)}
                 title="Expand sidebar"
                 aria-label="Expand sidebar"
+                aria-expanded={expanded}
+                aria-controls="nav-rail"
                 className="flex items-center justify-center w-full h-16 text-lg font-bold text-gray-800 dark:text-gray-100 hover:bg-gray-500/10 dark:hover:bg-gray-700/50 transition-colors"
               >
                 <BrandMark
@@ -406,9 +427,14 @@ export const Menu = ({
               <div className="relative px-4 pt-4 pb-3">
                 <button
                   type="button"
-                  onClick={() => setExpanded((v) => !v)}
+                  onClick={() => {
+                    restoreFocusRef.current = true;
+                    setExpanded(false);
+                  }}
                   title="Collapse sidebar"
                   aria-label="Collapse sidebar"
+                  aria-expanded={expanded}
+                  aria-controls="nav-rail"
                   className="absolute top-3 right-3 p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-100 hover:bg-gray-500/10 dark:hover:bg-gray-700/50 transition-colors"
                 >
                   <ChevronDoubleLeftIcon className="w-4 h-4" />
