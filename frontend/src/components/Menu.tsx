@@ -42,6 +42,20 @@ function MeshName({ name, className }: { name?: string; className?: string }) {
   );
 }
 
+/** Collapsed-rail brand: the deployer's logo (mesh.icon) if set, else the
+ *  mesh name's first letter. */
+function BrandMark({ icon, name }: { icon?: string; name?: string }) {
+  if (icon)
+    return (
+      <img
+        src={icon}
+        alt={name ? `${name} logo` : "Logo"}
+        className="w-7 h-7 object-contain"
+      />
+    );
+  return <>{name?.[0] ?? "≡"}</>;
+}
+
 /** Brand header content shared by the rail and the drawer so their vertical
  *  metrics stay identical — no nav shift when moving between map and other pages. */
 function BrandBlock({
@@ -385,7 +399,10 @@ export const Menu = ({
                 aria-label="Expand sidebar"
                 className="flex items-center justify-center w-full h-16 text-lg font-bold text-gray-800 dark:text-gray-100 hover:bg-gray-500/10 dark:hover:bg-gray-700/50 transition-colors"
               >
-                {config?.mesh?.name?.[0] ?? "≡"}
+                <BrandMark
+                  icon={config?.mesh?.icon}
+                  name={config?.mesh?.name}
+                />
               </button>
             ) : (
               <div className="relative px-4 pt-4 pb-3">

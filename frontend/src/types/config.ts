@@ -64,6 +64,9 @@ export interface Mesh {
   name?: string;
   shortname?: string;
   description?: string;
+  /** Optional logo (path or URL) shown in the collapsed nav rail; falls back
+   *  to the mesh name's first letter when unset. */
+  icon?: string;
   url?: string;
   contact?: string;
   country?: string;
