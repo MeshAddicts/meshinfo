@@ -351,7 +351,7 @@ export function MapCoveragePanel({
     return (
       <div className="fixed z-1050 shadow-2xl border border-amber-500/30 bg-gray-900/90 backdrop-blur-xl
         inset-x-0 bottom-0 rounded-t-2xl p-4 pb-6 max-h-[75dvh] overflow-y-auto
-        sm:inset-x-auto sm:bottom-3 sm:left-1/2 sm:-translate-x-1/2 sm:w-[min(520px,calc(100vw-2rem))]
+        sm:inset-x-auto sm:bottom-3 sm:left-[calc(50%+var(--map-pad)/2)] sm:-translate-x-1/2 sm:w-[min(520px,calc(100vw-2rem))]
         sm:rounded-xl sm:pb-4 sm:max-h-none sm:overflow-visible">
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1">
@@ -393,7 +393,7 @@ export function MapCoveragePanel({
       return (
         <div className="fixed z-1050 shadow-2xl border border-red-500/40 bg-gray-900/90 backdrop-blur-xl
           inset-x-0 bottom-0 rounded-t-2xl p-3 pb-5
-          sm:inset-x-auto sm:bottom-3 sm:left-1/2 sm:-translate-x-1/2 sm:w-[min(520px,calc(100vw-2rem))]
+          sm:inset-x-auto sm:bottom-3 sm:left-[calc(50%+var(--map-pad)/2)] sm:-translate-x-1/2 sm:w-[min(520px,calc(100vw-2rem))]
           sm:rounded-xl sm:pb-3">
           <div className="flex items-start justify-between gap-3">
             <div className="flex-1 min-w-0">
@@ -434,7 +434,7 @@ export function MapCoveragePanel({
     return (
       <div className="fixed z-1050 shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
         inset-x-0 bottom-0 rounded-t-2xl p-3 pb-5
-        sm:inset-x-auto sm:bottom-3 sm:left-1/2 sm:-translate-x-1/2 sm:w-[min(520px,calc(100vw-2rem))]
+        sm:inset-x-auto sm:bottom-3 sm:left-[calc(50%+var(--map-pad)/2)] sm:-translate-x-1/2 sm:w-[min(520px,calc(100vw-2rem))]
         sm:rounded-xl sm:pb-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-xs text-gray-400 min-w-0">
@@ -519,7 +519,7 @@ export function MapCoveragePanel({
       className="fixed z-1050 shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
         inset-x-0 bottom-0 rounded-t-2xl max-h-[78dvh] flex flex-col
         animate-[slideInUp_200ms_ease-out]
-        sm:inset-x-auto sm:bottom-3 sm:left-1/2 sm:-translate-x-1/2 sm:w-[min(560px,calc(100vw-2rem))]
+        sm:inset-x-auto sm:bottom-3 sm:left-[calc(50%+var(--map-pad)/2)] sm:-translate-x-1/2 sm:w-[min(560px,calc(100vw-2rem))]
         sm:rounded-xl sm:max-h-[calc(100dvh-2rem)] sm:flex sm:flex-col"
     >
       <div

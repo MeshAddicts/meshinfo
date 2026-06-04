@@ -918,7 +918,7 @@ export const Neighbors = () => {
     <div className="w-full h-dvh overflow-hidden flex flex-col">
       {/* Sticky header */}
       <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
-        <div className="mx-auto max-w-[1600px] pl-3 pr-14 sm:px-5 py-2 sm:py-3">
+        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 py-2 sm:py-3">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
               <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">

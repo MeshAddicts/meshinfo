@@ -230,6 +230,10 @@ channels = ["31"]
 name = "Central Valley Mesh"
 shortname = "CVM"
 description = "Serving Meshtastic to the California Central Valley and surrounding areas."
+# Optional logo shown in the collapsed (slim) nav rail. Path or URL; falls back
+# to the mesh name's first letter when empty. Drop a file in public/images and
+# point here, e.g. "/images/logo.svg", or use a full https:// URL.
+icon = ""
 url = "https://CVME.sh"
 contact = "https://CVME.sh"
 country = "US"

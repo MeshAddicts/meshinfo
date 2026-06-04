@@ -100,7 +100,7 @@ export function FiltersResetPill({
   return (
     <div
       ref={ref}
-      className={`fixed bottom-4 left-4 z-1100 ${hidden ? "max-sm:hidden" : ""}`}
+      className={`fixed bottom-4 left-[calc(var(--map-pad)+1rem)] z-1100 transition-[left] duration-200 ${hidden ? "max-sm:hidden" : ""}`}
     >
       {open && hasFilters && (
         <div className="mb-2 w-56 rounded-xl p-2 space-y-1
