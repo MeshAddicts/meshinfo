@@ -2,10 +2,6 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/*
-  Tailwind v4 uses oklch colors which shift the indigo palette more blue.
-  Override with v3 hex values to preserve the original softer indigo look.
-*/
 @theme {
   --color-indigo-300: #a5b4fc;
   --color-indigo-400: #818cf8;
@@ -16,16 +12,10 @@
   --z-index-1050: 1050;
   --z-index-1060: 1060;
   --z-index-1100: 1100;
+  /* Expanded nav rail floats above the map's overlay stack. */
+  --z-index-1200: 1200;
 }
 
-/*
-  The default border color has changed to `currentcolor` in Tailwind CSS v4,
-  so we've added these compatibility styles to make sure everything still
-  looks the same as it did with Tailwind CSS v3.
-
-  If we ever want to remove these styles, we need to add an explicit border
-  color utility to any element that depends on these defaults.
-*/
 @layer base {
   *,
   ::after,
@@ -36,11 +26,6 @@
   }
 }
 
-/*
-  Tailwind v4 puts utilities in @layer, which loses to unlayered styles.
-  External CSS (ol.css, mapbox-gl.css) sets link colors outside layers,
-  overriding dark mode utilities. These unlayered rules fix dark mode links.
-*/
 .dark a {
   color: #818cf8;
 }
@@ -55,18 +40,11 @@
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
-/*
-  Persistent nav rail width. --nav-w is the single source of truth, set by
-  Layout (expanded vs collapsed); both the rail's width and the page's left
-  offset read it so they can never drift. Only offsets at lg+ (where the rail
-  is shown); the mobile drawer needs no gutter.
-*/
-:root { --nav-w: 15rem; }
+:root { --nav-rail: 4.5rem; --map-pad: 0px; }
 @media (min-width: 1024px) {
-  .nav-offset {
-    padding-left: var(--nav-w);
-    transition: padding-left 200ms ease;
-  }
+  .nav-offset { padding-left: var(--nav-rail); }
+  .nav-offset-map { margin-left: var(--nav-rail); }
+  :root { --map-pad: var(--nav-rail); }
 }
 
 /* Disable iOS pull-to-refresh — the app has no content feed to refresh. */
@@ -89,9 +67,6 @@ html, body {
   border-top-color: rgba(0, 0, 0, 0.85);
 }
 
-/* Link hover card. Compound `.maplibregl-popup.map-link-tooltip` selector wins
- *  over MapLibre's default popup styles. All four border-*-color slots set so
- *  the tip stays dark at any anchor direction. */
 .maplibregl-popup.map-link-tooltip .maplibregl-popup-content {
   background: rgba(0, 0, 0, 0.85);
   color: white;

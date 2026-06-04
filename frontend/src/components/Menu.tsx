@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { NavLink } from "react-router";
+import { NavLink, useLocation } from "react-router";
 
 import { useGetConfigQuery } from "../slices/apiSlice";
 import {
   ChevronDoubleLeftIcon,
   DEFAULT_TOOLS,
-  EllipsisIcon,
   type ExternalLinkDef,
   ExternalLinkIcon,
   GitHubIcon,
@@ -157,77 +156,6 @@ function ExternalRow({
   );
 }
 
-/** Collapsed-rail "More" popover holding the off-site Tools + Addons. */
-function MoreMenu({
-  tools,
-  addons,
-}: {
-  tools: ExternalLinkDef[];
-  addons: ExternalLinkDef[];
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        title="More links"
-        aria-label="More links"
-        aria-expanded={open}
-        className={`w-full flex items-center justify-center p-2.5 rounded-lg transition-colors ${
-          open
-            ? "bg-cyan-500/15 text-cyan-600 dark:text-cyan-300"
-            : "text-gray-400 hover:bg-gray-500/10 dark:hover:bg-gray-700/50 hover:text-gray-600 dark:hover:text-gray-200"
-        }`}
-      >
-        <EllipsisIcon className="w-5 h-5" />
-      </button>
-      {open && (
-        <div className="absolute left-full bottom-0 ml-2 w-56 z-50 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-gray-900/95 dark:backdrop-blur-xl shadow-2xl p-2 space-y-2">
-          <div className="space-y-0.5">
-            <h3 className={`${sectionHeader} px-2 pt-1 pb-1`}>Tools</h3>
-            {tools.map((t, i) => (
-              <ExternalRow
-                key={`more-tool-${i}`}
-                link={t}
-                collapsed={false}
-                onNavigate={() => setOpen(false)}
-              />
-            ))}
-          </div>
-          <div className="space-y-0.5">
-            <h3 className={`${sectionHeader} px-2 pt-1 pb-1`}>Addons</h3>
-            {addons.map((t, i) => (
-              <ExternalRow
-                key={`more-addon-${i}`}
-                link={t}
-                collapsed={false}
-                onNavigate={() => setOpen(false)}
-              />
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function ThemeToggle({
   isDark,
   onToggle,
@@ -252,25 +180,27 @@ export const Menu = ({
   isDark,
   onDarkChange,
   overlayMode = false,
-  collapsed = false,
-  onCollapseToggle,
 }: {
   isDark: boolean;
   onDarkChange: (dark: boolean) => void;
   overlayMode?: boolean;
-  collapsed?: boolean;
-  onCollapseToggle?: () => void;
 }) => {
   const { data: config } = useGetConfigQuery();
+  const { pathname } = useLocation();
   const [showMenu, setShowMenu] = useState(false);
+  // The desktop rail rests slim; expanding flies it out OVER the content as a
+  // transient overlay (the page never reflows). Auto-retracts on navigate,
+  // outside-click, or Escape, so it never lingers covering the page.
+  const [expanded, setExpanded] = useState(false);
+  const collapsed = !expanded;
+  const asideRef = useRef<HTMLElement>(null);
 
   const tools = config?.mesh?.tools?.length
     ? (config.mesh.tools as ExternalLinkDef[])
     : DEFAULT_TOOLS;
   const addons = MESHTASTIC_ADDONS;
   const closeDrawer = () => setShowMenu(false);
-  // On the map the rail runs as an overlay — close it after navigating.
-  const railNavigate = overlayMode ? closeDrawer : undefined;
+  const collapseRail = () => setExpanded(false);
 
   useEffect(() => {
     if (!showMenu) return;
@@ -281,6 +211,29 @@ export const Menu = ({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [showMenu]);
 
+  // Retract the expanded rail when the route changes (e.g. a nav click).
+  useEffect(() => {
+    setExpanded(false);
+  }, [pathname]);
+
+  // While expanded, retract on outside-click or Escape (flyout behavior).
+  useEffect(() => {
+    if (!expanded) return;
+    const onDown = (e: MouseEvent) => {
+      if (asideRef.current && !asideRef.current.contains(e.target as Node))
+        setExpanded(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExpanded(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [expanded]);
+
   const handleDarkChange = (dark: boolean) => {
     onDarkChange(dark);
     localStorage.setItem("theme", dark ? "dark" : "light");
@@ -288,10 +241,11 @@ export const Menu = ({
 
   return (
     <>
-      {/* Hamburger — always visible in overlay mode (map), mobile-only otherwise */}
+      {/* Hamburger — small screens only (every page incl. map). At lg the
+          persistent rail replaces it. Sits left on the map, right elsewhere. */}
       <button
         type="button"
-        className={`${overlayMode ? "" : "lg:hidden"} fixed z-50 top-4 ${
+        className={`lg:hidden fixed z-50 top-4 ${
           overlayMode ? "left-4" : "right-4 left-auto"
         } p-2 rounded-lg shadow-lg backdrop-blur-xs border transition-all duration-200 ${
           showMenu
@@ -337,17 +291,16 @@ export const Menu = ({
         </div>
       </button>
 
-      {/* Backdrop for the drawer */}
+      {/* Backdrop for the mobile drawer (small screens only). */}
       <div
-        className={`${overlayMode ? "" : "lg:hidden"} fixed inset-0 bg-black/20 backdrop-blur-xs z-40 transition-opacity duration-200 ${
+        className={`lg:hidden fixed inset-0 bg-black/20 backdrop-blur-xs z-40 transition-opacity duration-200 ${
           showMenu ? "opacity-100" : "opacity-0 pointer-events-none"
         }`}
         onClick={() => setShowMenu(false)}
       />
 
       {/* Mobile drawer — small screens only, every page. At lg the persistent
-          rail (below) takes over, including on the map where it opens as an
-          overlay, so the map nav matches the rest of the site. */}
+          rail (below) takes over on every page, including the map. */}
       <div
         className={`lg:hidden fixed inset-y-0 left-0 z-50 w-80 max-w-[80vw] flex flex-col bg-white dark:bg-gray-900 shadow-xl border-r border-gray-200 dark:border-gray-700 ${
           showMenu ? "" : "hidden"
@@ -413,17 +366,13 @@ export const Menu = ({
         </div>
       </div>
 
-      {/* Desktop rail (lg+). On normal pages it's persistent; on the map it
-          runs as an overlay toggled by the hamburger, so the map gets the same
-          rail — collapse button and all. Width tracks the --nav-w CSS var. */}
+      {/* Desktop rail (lg+) — rests slim in a fixed gutter on every page; when
+          expanded it grows to w-60 OVER the content (overlay, z above the map
+          panels) without moving the page. z-[1200] clears the map's z-1100 pills. */}
       <aside
-        style={{ width: "var(--nav-w)" }}
-        className={`hidden lg:fixed lg:inset-y-0 lg:left-0 lg:flex-col overflow-hidden bg-gray-50 dark:bg-gray-900/80 dark:backdrop-blur-xl border-r border-gray-200 dark:border-white/10 transition-[width] duration-200 ${
-          overlayMode
-            ? showMenu
-              ? "lg:flex lg:z-50 lg:shadow-2xl"
-              : "lg:hidden"
-            : "lg:flex lg:z-40"
+        ref={asideRef}
+        className={`hidden lg:flex lg:fixed lg:inset-y-0 lg:left-0 lg:z-1200 lg:flex-col overflow-hidden bg-gray-50 dark:bg-gray-900/80 dark:backdrop-blur-xl border-r border-gray-200 dark:border-white/10 transition-[width] duration-200 ${
+          collapsed ? "lg:w-18" : "lg:w-60 lg:shadow-2xl"
         }`}
       >
           {/* Brand / collapse toggle */}
@@ -431,7 +380,7 @@ export const Menu = ({
             {collapsed ? (
               <button
                 type="button"
-                onClick={onCollapseToggle}
+                onClick={() => setExpanded((v) => !v)}
                 title="Expand sidebar"
                 aria-label="Expand sidebar"
                 className="flex items-center justify-center w-full h-16 text-lg font-bold text-gray-800 dark:text-gray-100 hover:bg-gray-500/10 dark:hover:bg-gray-700/50 transition-colors"
@@ -442,7 +391,7 @@ export const Menu = ({
               <div className="relative px-4 pt-4 pb-3">
                 <button
                   type="button"
-                  onClick={onCollapseToggle}
+                  onClick={() => setExpanded((v) => !v)}
                   title="Collapse sidebar"
                   aria-label="Collapse sidebar"
                   className="absolute top-3 right-3 p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-100 hover:bg-gray-500/10 dark:hover:bg-gray-700/50 transition-colors"
@@ -470,11 +419,9 @@ export const Menu = ({
                     key={item.to}
                     item={item}
                     collapsed
-                    onNavigate={railNavigate}
+                    onNavigate={collapseRail}
                   />
                 ))}
-                <div className="mx-2 my-2 h-px bg-gray-200 dark:bg-white/10" />
-                <MoreMenu tools={tools} addons={addons} />
               </div>
             ) : (
               <div className="space-y-4">
@@ -485,14 +432,19 @@ export const Menu = ({
                       key={item.to}
                       item={item}
                       collapsed={false}
-                      onNavigate={railNavigate}
+                      onNavigate={collapseRail}
                     />
                   ))}
                 </div>
                 <div className="space-y-0.5">
                   <h3 className={`${sectionHeader} px-3 pt-1 pb-1`}>Tools</h3>
                   {tools.map((t, i) => (
-                    <ExternalRow key={`tool-${i}`} link={t} collapsed={false} />
+                    <ExternalRow
+                      key={`tool-${i}`}
+                      link={t}
+                      collapsed={false}
+                      onNavigate={collapseRail}
+                    />
                   ))}
                 </div>
                 <div className="space-y-0.5">
@@ -500,7 +452,12 @@ export const Menu = ({
                     Meshtastic Addons
                   </h3>
                   {addons.map((t, i) => (
-                    <ExternalRow key={`addon-${i}`} link={t} collapsed={false} />
+                    <ExternalRow
+                      key={`addon-${i}`}
+                      link={t}
+                      collapsed={false}
+                      onNavigate={collapseRail}
+                    />
                   ))}
                 </div>
               </div>

@@ -85,7 +85,7 @@ export function MapSearchBar({
 
   return (
     <div
-      className="fixed top-3 left-14 z-30 transition-[width] duration-200
+      className="fixed top-3 left-[calc(var(--map-pad)+3.5rem)] z-30 transition-[left,width] duration-200
         w-28 sm:w-64
         focus-within:w-[calc(100vw-4.5rem)] focus-within:z-50
         sm:focus-within:w-64 sm:focus-within:z-30"

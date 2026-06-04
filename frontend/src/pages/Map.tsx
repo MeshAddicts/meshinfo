@@ -2246,7 +2246,7 @@ export function Map() {
       {/* Live terrain elevation under the cursor — helps sanity-check coverage
           paints. Only renders when 3D terrain is on and we got a valid sample. */}
       {terrain3D && hoverElevationM != null && (
-        <div className="fixed top-3 left-120 sm:left-135 z-30 px-2.5 py-1 rounded-full text-[11px] font-medium border border-white/10 bg-gray-900/80 backdrop-blur-xl text-gray-300 shadow-2xl pointer-events-none select-none flex items-center gap-1.5">
+        <div className="fixed top-3 left-[calc(var(--map-pad)+30rem)] sm:left-[calc(var(--map-pad)+33.75rem)] z-30 px-2.5 py-1 rounded-full text-[11px] font-medium border border-white/10 bg-gray-900/80 backdrop-blur-xl text-gray-300 shadow-2xl pointer-events-none select-none flex items-center gap-1.5">
           <svg className="w-3 h-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21l6-6 4 4 8-8" />
           </svg>

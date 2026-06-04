@@ -102,7 +102,10 @@ export function MapToolsDrawer({
   const pillIdle = "bg-gray-900/80 border-white/10 text-gray-300 hover:bg-gray-900/90 hover:border-white/20 hover:text-gray-100";
 
   return (
-    <div ref={ref} className="fixed top-3 left-44 sm:left-81 z-30">
+    <div
+      ref={ref}
+      className="fixed top-3 left-[calc(var(--map-pad)+11rem)] sm:left-[calc(var(--map-pad)+20.25rem)] z-30 transition-[left] duration-200"
+    >
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
