@@ -132,7 +132,7 @@ export function applyClusterVisibility(map: MlMap, enabled: boolean): void {
   set("plain-nodes", !enabled);
   set("plain-labels", !enabled);
 
-  if (!enabled) {
-    removeSpiderfyLayers(map);
-  }
+  // Either toggle direction invalidates the current fans (they belong to the
+  // mode we're leaving); the matching auto-spiderfy pass re-creates them.
+  removeSpiderfyLayers(map);
 }
