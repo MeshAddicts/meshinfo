@@ -255,13 +255,11 @@ export const Menu = ({
 
   return (
     <>
-      {/* Hamburger — small screens only (every page incl. map). At lg the
-          persistent rail replaces it. Sits left on the map, right elsewhere. */}
+      {/* Hamburger — small screens only (every page incl. map); top-right on
+          every page (overlays the header). At lg the persistent rail replaces it. */}
       <button
         type="button"
-        className={`lg:hidden fixed z-50 top-4 ${
-          overlayMode ? "left-4" : "right-4 left-auto"
-        } p-2 rounded-lg shadow-lg backdrop-blur-xs border transition-all duration-200 ${
+        className={`lg:hidden fixed z-50 top-4 right-4 p-2 rounded-lg shadow-lg backdrop-blur-xs border transition-all duration-200 ${
           showMenu
             ? "bg-gray-800 dark:bg-gray-200 border-gray-600 dark:border-gray-400"
             : overlayMode
