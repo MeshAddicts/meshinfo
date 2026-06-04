@@ -6,6 +6,33 @@ import { Menu } from "./Menu";
 export const Layout = ({ children }: { children: React.ReactNode }) => {
   const { pathname } = useLocation();
   const [isDark, setIsDark] = useState(false);
+  const [navCollapsed, setNavCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem("meshinfo.nav.collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleNav = () =>
+    setNavCollapsed((c) => {
+      const next = !c;
+      try {
+        localStorage.setItem("meshinfo.nav.collapsed", next ? "1" : "0");
+      } catch {
+        // ignore storage failures (private mode, etc.)
+      }
+      return next;
+    });
+
+  // Single source of truth for the rail width + content offset (see index.css
+  // .nav-offset). The rail reads the same var so the two never drift.
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--nav-w",
+      navCollapsed ? "4.5rem" : "15rem",
+    );
+  }, [navCollapsed]);
 
   const isMap = pathname === "/map";
   const isChat = pathname === "/chat";
@@ -68,10 +95,16 @@ const isFullBleed = isMap || isChat || isLog || isTraceroutes || isTelemetry || 
 
   return (
     <div className={isFullBleed ? "h-dvh overflow-hidden" : ""}>
-      <Menu isDark={isDark} onDarkChange={(dark) => setIsDark(dark)} overlayMode={isMap} />
+      <Menu
+        isDark={isDark}
+        onDarkChange={(dark) => setIsDark(dark)}
+        overlayMode={isMap}
+        collapsed={navCollapsed}
+        onCollapseToggle={toggleNav}
+      />
 
       <div
-        className={`${isMap ? "" : "lg:pl-60"} dark:bg-gray-950 dark:text-gray-100 lg:pt-0
+        className={`${isMap ? "" : "nav-offset"} dark:bg-gray-950 dark:text-gray-100 lg:pt-0
           ${isFullBleed ? "pt-0 h-full overflow-hidden" : "pt-14"}`}
       >
         <main className={isFullBleed ? "h-full" : "py-1"}>

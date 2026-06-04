@@ -55,6 +55,20 @@
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
+/*
+  Persistent nav rail width. --nav-w is the single source of truth, set by
+  Layout (expanded vs collapsed); both the rail's width and the page's left
+  offset read it so they can never drift. Only offsets at lg+ (where the rail
+  is shown); the mobile drawer needs no gutter.
+*/
+:root { --nav-w: 15rem; }
+@media (min-width: 1024px) {
+  .nav-offset {
+    padding-left: var(--nav-w);
+    transition: padding-left 200ms ease;
+  }
+}
+
 /* Disable iOS pull-to-refresh — the app has no content feed to refresh. */
 html, body {
   overscroll-behavior-y: none;
