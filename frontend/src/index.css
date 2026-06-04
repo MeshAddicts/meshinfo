@@ -47,6 +47,15 @@
   :root { --map-pad: var(--nav-rail); }
 }
 
+/* Respect the OS "reduce motion" preference. */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 /* Disable iOS pull-to-refresh — the app has no content feed to refresh. */
 html, body {
   overscroll-behavior-y: none;
