@@ -28,12 +28,16 @@ import { MapToolPrompt, MapToolsDrawer } from "./map/MapToolsDrawer";
 import { MapTraceroutePanel } from "./map/MapTraceroutePanel";
 import { findPathsBetween } from "./map/pathAnalysis";
 import {
+  autoSpiderfyOverlappingPlainNodes,
   autoSpiderfyVisibleClusters,
+  dismissPlainSpiderfy,
+  isSpiderfied,
   removeSpiderfyLayers,
   spiderfy,
   SPIDERFY_LAYER_LABELS,
   SPIDERFY_LAYER_NODES,
   SPIDERFY_SOURCE_NODES,
+  spiderfyFeatures,
   unspiderfy,
   updateSpiderfyPositions,
 } from "./map/spiderfy";
@@ -1668,6 +1672,29 @@ export function Map() {
       // Cluster hover cursor (donut icons are GL-native, no HTML to highlight)
       bindHover("clusters");
 
+      // Distinct plain nodes whose circles overlap near `point` (clustering off).
+      // Circle radius is 8px, so a one-radius box catches genuinely-stacked nodes.
+      const OVERLAP_PX = 8;
+      const findOverlappingPlainNodes = (
+        point: maplibregl.Point,
+      ): GeoJSON.Feature<GeoJSON.Point>[] => {
+        if (!map.getLayer("plain-nodes")) return [];
+        const bbox: [maplibregl.PointLike, maplibregl.PointLike] = [
+          [point.x - OVERLAP_PX, point.y - OVERLAP_PX],
+          [point.x + OVERLAP_PX, point.y + OVERLAP_PX],
+        ];
+        const feats = map.queryRenderedFeatures(bbox, { layers: ["plain-nodes"] });
+        const seen = new Set<string>();
+        const out: GeoJSON.Feature<GeoJSON.Point>[] = [];
+        for (const f of feats) {
+          const id = (f.properties?.id ?? "") as string;
+          if (!id || seen.has(id) || f.geometry?.type !== "Point") continue;
+          seen.add(id);
+          out.push(f as unknown as GeoJSON.Feature<GeoJSON.Point>);
+        }
+        return out;
+      };
+
       const onNodeLayerClick = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
         const feature = e.features?.[0];
         if (!feature) return;
@@ -1694,6 +1721,21 @@ export function Map() {
           setToolStep("result");
           map.getCanvas().style.cursor = "";
           return;
+        }
+
+        // Clustering OFF: co-located nodes stack so only the top one is
+        // clickable. If several overlap at the click, fan them out instead of
+        // selecting whichever rendered on top. (#475)
+        if (!clusterEnabledRef.current && !isSpiderfied(map)) {
+          const overlap = findOverlappingPlainNodes(e.point);
+          if (overlap.length >= 2) {
+            const center: [number, number] = [
+              overlap.reduce((s, f) => s + f.geometry.coordinates[0], 0) / overlap.length,
+              overlap.reduce((s, f) => s + f.geometry.coordinates[1], 0) / overlap.length,
+            ];
+            void spiderfyFeatures(map, center, overlap as any, map.getZoom(), true);
+            return;
+          }
         }
 
         void handleNodeClick(id);
@@ -1744,7 +1786,11 @@ export function Map() {
           map.queryRenderedFeatures(e.point, { layers: ["clusters"] }).length > 0;
         if (hitNode || hitCluster) return;
 
-        void unspiderfy(map);
+        // Clustering off: fans are automatic, so dismiss-and-remember (the auto
+        // pass won't immediately re-open the same set). Clustering on: a cluster
+        // donut stays put, so a plain collapse is fine.
+        if (clusterEnabledRef.current) void unspiderfy(map);
+        else dismissPlainSpiderfy(map);
         clearMapboxSelectionAndOverlays();
       });
 
@@ -1753,19 +1799,24 @@ export function Map() {
         updateSpiderfyPositions(map);
       });
 
-      // Auto-spiderfy clusters whose children can't be separated by further zoom.
+      // Auto-spiderfy stacked nodes once zoomed in. Clustering ON: fan clusters
+      // whose children can't be separated by further zoom. Clustering OFF: fan
+      // the largest group of plain nodes whose circles overlap at this zoom.
       // Driven by moveend (reliable, independent of GL render state) with `idle`
       // as a backup and a one-shot on `load` for the initial view. Debounced so
       // a single gesture doesn't run multiple passes.
       let spiderfyDebounce: number | null = null;
       const triggerAutoSpiderfy = () => {
-        if (!clusterEnabledRef.current) return;
         if (spiderfyDebounce != null) window.clearTimeout(spiderfyDebounce);
         spiderfyDebounce = window.setTimeout(() => {
           spiderfyDebounce = null;
-          const pool = buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()).features
-            .filter((f) => f.geometry?.type === "Point") as any;
-          void autoSpiderfyVisibleClusters(map, pool);
+          if (clusterEnabledRef.current) {
+            const pool = buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()).features
+              .filter((f) => f.geometry?.type === "Point") as any;
+            void autoSpiderfyVisibleClusters(map, pool);
+          } else {
+            void autoSpiderfyOverlappingPlainNodes(map);
+          }
         }, 150);
       };
       map.on("moveend", triggerAutoSpiderfy);
