@@ -202,7 +202,7 @@ export function MapScanPanel({
     return (
       <div className="fixed z-1050 shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
         inset-x-0 bottom-0 rounded-t-2xl p-4 pb-6 max-h-[75dvh] overflow-y-auto
-        sm:inset-x-auto sm:left-3 sm:top-1/2 sm:-translate-y-1/2 sm:bottom-auto sm:w-85
+        sm:inset-x-auto sm:left-[calc(var(--map-pad)+1rem)] sm:top-1/2 sm:-translate-y-1/2 sm:bottom-auto sm:w-85
         sm:rounded-xl sm:pb-4 sm:max-h-none sm:overflow-visible
         sm:animate-[slideInLeft_220ms_ease-out]">
         <div className="text-xs text-gray-200 mb-3">
@@ -279,7 +279,7 @@ export function MapScanPanel({
       className={`fixed z-1050 shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl flex flex-col
         inset-x-0 bottom-0 rounded-t-2xl max-h-[78dvh]
         animate-[slideInUp_200ms_ease-out]
-        sm:inset-x-auto sm:left-3 sm:top-16 sm:w-85 sm:max-w-[calc(100vw-1.5rem)]
+        sm:inset-x-auto sm:left-[calc(var(--map-pad)+1rem)] sm:top-16 sm:w-85 sm:max-w-[calc(100vw-1.5rem)]
         sm:rounded-xl sm:max-h-none
         sm:animate-[slideInLeft_220ms_ease-out]
         ${minimized ? "sm:bottom-auto" : "sm:bottom-16"}`}
@@ -359,7 +359,7 @@ export function MapScanPanel({
             {/* Fixed so it escapes the side-panel's overflow. */}
             <div className="fixed z-1060 overflow-y-auto p-2 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl space-y-2
               inset-x-3 top-4 bottom-4 w-auto max-w-none
-              sm:inset-auto sm:top-16 sm:left-90 sm:w-90 sm:max-h-[calc(100vh-8rem)]">
+              sm:inset-auto sm:top-16 sm:left-[calc(var(--map-pad)+22.5rem)] sm:w-90 sm:max-h-[calc(100vh-8rem)]">
               <div className="text-[10px] uppercase tracking-wider text-gray-500 font-medium px-0.5 pb-0.5">
                 Scan settings
               </div>
