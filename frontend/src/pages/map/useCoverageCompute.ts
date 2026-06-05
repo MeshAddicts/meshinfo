@@ -52,7 +52,7 @@ export function useCoverageCompute(params: CoverageComputeParams) {
     coverage: c,
     activeTool, toolStep, toolFromId, toolVirtualPos,
     setToolFromId, setToolVirtualPos,
-    provider, terrain3D, nodes,
+    terrain3D, nodes,
     mbMapRef, isDraggingMarkerRef,
     coverageMergeOrigins, setCoverageMergeOrigins,
     pickingMergeOrigin, setPickingMergeOrigin,
@@ -83,6 +83,21 @@ export function useCoverageCompute(params: CoverageComputeParams) {
     const maxKm = Math.pow(10, (budget - plConstant) / 20);
     return Math.max(5, Math.min(200, Math.round(maxKm)));
   }, [c.coverageAntennaDbi, c.coverageRxAntennaDbi, c.coverageTxDbm, c.coverageEffectiveSensitivityDbm, c.coverageAggressionIdx, c.coverageClutterEnabled]);
+
+  // Resolved origin coords so the compute effect depends on the position, not the
+  // whole nodes-map identity (which is a new object every 5s poll → wasteful recompute).
+  const coverageOrigin = useMemo<{ lng: number; lat: number; alt: number | null } | null>(() => {
+    if (toolFromId) {
+      const n = nodes[toolFromId] ?? nodes[`!${toolFromId}`];
+      if (!n?.map_position) return null;
+      return { lng: n.map_position[0], lat: n.map_position[1], alt: n.position?.altitude ?? null };
+    }
+    if (toolVirtualPos) return { lng: toolVirtualPos[0], lat: toolVirtualPos[1], alt: null };
+    return null;
+  }, [toolFromId, toolVirtualPos, nodes]);
+  const originLng = coverageOrigin?.lng ?? null;
+  const originLat = coverageOrigin?.lat ?? null;
+  const originAlt = coverageOrigin?.alt ?? null;
 
   /** DOM pin for the Coverage origin (draggable). */
   const coverageOriginMarkerRef = useRef<maplibregl.Marker | null>(null);
@@ -770,7 +785,7 @@ export function useCoverageCompute(params: CoverageComputeParams) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, c.coverageAntennaDbi, c.coverageRxAntennaDbi, c.coverageRxHeightM, c.coverageTxDbm, c.coverageAggressionIdx, c.coverageClutterEnabled, c.coverageCanopyEnabled, c.coverageBuildingsEnabled, coverageMergeOrigins, c.coverageSensitivityDbm, c.coverageDetail, c.coverageAntennaHeightM, c.coverageReliability, provider, terrain3D, nodes, c.coverageRetryNonce, c.keepCoveragePaint]);
+  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, c.coverageAntennaDbi, c.coverageRxAntennaDbi, c.coverageRxHeightM, c.coverageTxDbm, c.coverageAggressionIdx, c.coverageClutterEnabled, c.coverageCanopyEnabled, c.coverageBuildingsEnabled, coverageMergeOrigins, c.coverageSensitivityDbm, c.coverageDetail, c.coverageAntennaHeightM, c.coverageReliability, terrain3D, originLng, originLat, originAlt, c.coverageRetryNonce, c.keepCoveragePaint]);
 
   // Hide coverage layers when leaving tool; sources/layers stay for fast
   // re-entry. keepCoveragePaint exempts the Scan-from-here overlay.

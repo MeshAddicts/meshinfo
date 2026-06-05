@@ -12,14 +12,21 @@ export function MapSearchBar({
   onSelect: (nodeId: string) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [highlightIdx, setHighlightIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
+  // Debounce the (up to ~3k-node) scan so typing stays smooth.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query), 150);
+    return () => clearTimeout(t);
+  }, [query]);
+
   const results = useMemo(() => {
-    if (!query.trim()) return [];
-    const q = query.toLowerCase();
+    if (!debouncedQuery.trim()) return [];
+    const q = debouncedQuery.toLowerCase();
     return Object.entries(nodes)
       .filter(([id, n]) => {
         if (!n.map_position) return false;
@@ -31,7 +38,7 @@ export function MapSearchBar({
       })
       .slice(0, 20)
       .map(([id, n]) => ({ id, node: n }));
-  }, [query, nodes]);
+  }, [debouncedQuery, nodes]);
 
   useEffect(() => setHighlightIdx(0), [results]);
 

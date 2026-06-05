@@ -14,10 +14,9 @@ import type { IMapNode } from "./types";
 // `from "./utils"` call sites keep working unchanged.
 export { DEFAULT_NODE_COLOR, OFFLINE_NODE_COLOR, ROLE_COLORS } from "../../palette";
 
+const HTML_ESCAPES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;" };
 export function escapeHtml(text: string): string {
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
+  return String(text).replace(/[&<>]/g, (c) => HTML_ESCAPES[c]);
 }
 
 export function calculateGeodesicDistance(

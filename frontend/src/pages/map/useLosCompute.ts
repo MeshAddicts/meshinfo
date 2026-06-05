@@ -49,6 +49,12 @@ export function useLosCompute(params: LosComputeParams) {
   // Skips fitBounds re-zoom when the user changes config without moving endpoints
   const losFitKeyRef = useRef<string | null>(null);
 
+  // Remove the hover marker on unmount (resetTool covers tool changes, not navigation away).
+  useEffect(() => () => {
+    losHoverMarkerRef.current?.remove();
+    losHoverMarkerRef.current = null;
+  }, []);
+
   const handleLosProfileHover = useCallback((fraction: number | null) => {
     const mb = mbMapRef.current;
     if (!mb) return;
