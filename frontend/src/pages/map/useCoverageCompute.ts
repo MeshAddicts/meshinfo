@@ -4,6 +4,7 @@ import maplibregl, {
 } from "maplibre-gl";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
+import { toast } from "../../components/toast";
 import { env } from "../../env";
 import { buildBuildingRaster, type BuildingRaster, downsampleBuildingRaster } from "./buildingTiles";
 import { buildCanopyRaster, type CanopyRaster, downsampleCanopyRaster } from "./canopyTiles";
@@ -153,7 +154,12 @@ export function useCoverageCompute(params: CoverageComputeParams) {
 
   /** Export coverage as GeoJSON or KML (iso-margin 0/10/20 dB contours + metadata). */
   const handleCoverageExport = useCallback((format: "geojson" | "kml") => {
+    if (!coverageResultRef.current || !coverageContoursRef.current) {
+      toast("Nothing to export yet — run a coverage prediction first.");
+      return;
+    }
     exportCoverage(format, coverageContoursRef.current, coverageResultRef.current);
+    toast(`Coverage exported as ${format.toUpperCase()}.`, { kind: "success" });
   }, []);
 
   /** Run pool over a DEM, stitch slices, paint RGBA to `coverage-raster`.
@@ -634,7 +640,17 @@ export function useCoverageCompute(params: CoverageComputeParams) {
         });
         mark("poolComputeMs", tDispatch);
         if (cancelled || requestId !== coverageRequestIdRef.current) return;
-        if (!rendered) return;
+        if (!rendered) {
+          // Current request (supersession returned above) → hard failure; a
+          // vanished map is a benign teardown, so only surface a real failure.
+          c.setIsComputingCoverage(false);
+          c.setCoverageProgress({ completed: 0, total: 0 });
+          if (mbMapRef.current) {
+            c.setCoverageResult(null);
+            c.setCoverageError("Coverage compute failed. See the developer console and try again.");
+          }
+          return;
+        }
         if (rendered.itmUnavailable) {
           console.warn(
             "[Map] Coverage compute: ITM WASM not built. Run `yarn build:wasm`.",

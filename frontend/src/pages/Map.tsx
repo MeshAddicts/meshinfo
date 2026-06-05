@@ -6,6 +6,7 @@ import maplibregl, {
 } from "maplibre-gl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { toast } from "../components/toast";
 import { env } from "../env";
 import { reverseGeocode } from "../maps/geocoder";
 import { buildMapStyle, ensureBuildings3D, ensureTerrain, type OsmBasemap, removeBuildings3D, removeTerrain } from "../maps/mapStyle";
@@ -70,7 +71,10 @@ export function Map() {
   const persistentLinksMbJsonRef = useRef<string>("");
 
   const mbMapRef = useRef<MlMap | null>(null);
+  const authErrorToastedRef = useRef(false);
   const clusterDonutLayerRef = useRef<ClusterDonutLayer | null>(null);
+  const [mapLoaded, setMapLoaded] = useState(false);
+  const mapLoadFallbackRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   /** Currently hover-focused node id, or null. Drives focus-on-hover dimming
    *  alongside the per-tool dim — the cluster layer applies whichever is dimmer. */
   const focusedNodeIdRef = useRef<string | null>(null);
@@ -89,7 +93,7 @@ export function Map() {
 
   const { data: rawNodes = {} } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
-  const { data: rawTraceroutes = [] } = useGetTraceroutesQuery();
+  const { data: rawTraceroutes = [], isLoading: rawTraceroutesLoading } = useGetTraceroutesQuery();
 
   const resolveChannelLabel = useCallback(
     (channelId: string | null | undefined): string | null => {
@@ -794,7 +798,12 @@ export function Map() {
 
     // Surface style/source/tile load failures instead of a silent blank map.
     map.on("error", (e) => {
-      if (import.meta.env.DEV) console.warn("[Map] GL error:", e.error ?? e);
+      const err = e.error as { status?: number } | undefined;
+      if (import.meta.env.DEV) console.warn("[Map] GL error:", err ?? e);
+      if (!authErrorToastedRef.current && (err?.status === 401 || err?.status === 403)) {
+        authErrorToastedRef.current = true;
+        toast("Map tiles failed to load — the Mapbox token may be missing or invalid.", { kind: "error" });
+      }
     });
 
     const NODE_SOURCES = ["nodes_clustered", "nodes_plain", SPIDERFY_SOURCE_NODES] as const;
@@ -1833,6 +1842,10 @@ export function Map() {
       map.on("moveend", triggerAutoSpiderfy);
       map.on("idle", triggerAutoSpiderfy);
       map.once("load", triggerAutoSpiderfy);
+      // Clear the loading overlay on first render; backstop in case 'load' never
+      // fires (hard style/tile/token failure emits 'error', not 'load').
+      mapLoadFallbackRef.current = window.setTimeout(() => setMapLoaded(true), 10000);
+      map.once("load", () => { setMapLoaded(true); if (mapLoadFallbackRef.current) clearTimeout(mapLoadFallbackRef.current); });
 
       // Right-click / long-press: "Set as My Node"
       const findNodeIdAtPoint = (point: maplibregl.PointLike): string | null => {
@@ -2065,6 +2078,7 @@ export function Map() {
     map.on("style.load", ensureSourcesAndLayers);
 
     return () => {
+      if (mapLoadFallbackRef.current) clearTimeout(mapLoadFallbackRef.current);
       if (mbKeydownHandlerRef.current) {
         document.removeEventListener("keydown", mbKeydownHandlerRef.current);
         mbKeydownHandlerRef.current = null;
@@ -2213,6 +2227,12 @@ export function Map() {
   return (
     <div className="relative w-full h-full min-h-0 overflow-hidden overscroll-none">
       <div id="map" ref={mapRef} className="absolute inset-0" />
+
+      {!mapLoaded && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+          <div className="w-8 h-8 rounded-full border-2 border-white/20 border-t-cyan-400 animate-spin" />
+        </div>
+      )}
 
       <MapSearchBar
         nodes={nodes}
@@ -2528,6 +2548,7 @@ export function Map() {
           fromColor="#06b6d4"
           toColor="#d946ef"
           traceroutes={rawTraceroutes}
+          loading={rawTraceroutesLoading}
           liveNodes={nodes}
           onNodeSelect={(id) => handleNodeSelectRef.current(id)}
           onHoverLink={(id) => handleLinkHoverRef.current(id)}

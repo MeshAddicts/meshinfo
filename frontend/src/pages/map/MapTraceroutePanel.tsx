@@ -11,6 +11,7 @@ export function MapTraceroutePanel({
   fromColor = "#22c55e",
   toColor = "#06b6d4",
   traceroutes,
+  loading,
   liveNodes,
   onNodeSelect,
   onHoverLink,
@@ -23,6 +24,7 @@ export function MapTraceroutePanel({
   fromColor?: string;
   toColor?: string;
   traceroutes: ITraceroutesResponse[];
+  loading?: boolean;
   liveNodes: Record<string, IMapNode>;
   onNodeSelect: (id: string) => void;
   onHoverLink?: (id: string | null) => void;
@@ -63,7 +65,11 @@ export function MapTraceroutePanel({
       </div>
 
       <div className="p-3">
-        {paths.length === 0 ? (
+        {loading && traceroutes.length === 0 ? (
+          <div className="px-2 py-3 text-xs text-gray-500">
+            Loading traceroutes…
+          </div>
+        ) : paths.length === 0 ? (
           <div className="px-2 py-3 text-xs text-gray-500">
             No known traceroute path between these nodes.
           </div>
