@@ -52,7 +52,9 @@ export function sampleDEMAt(dem: DEM, lng: number, lat: number): number {
   const { width, height, bounds, data } = dem;
   const { west, south, east, north } = bounds;
 
-  const fx = ((lng - west) / (east - west)) * (width - 1);
+  // Shift into the bounds frame so a seam-crossing bbox (e.g. [179,181]) matches.
+  const sLng = lng < west ? lng + 360 : lng > east ? lng - 360 : lng;
+  const fx = ((sLng - west) / (east - west)) * (width - 1);
   const fy = ((north - lat) / (north - south)) * (height - 1);
 
   if (fx < 0 || fx > width - 1 || fy < 0 || fy > height - 1) return NaN;

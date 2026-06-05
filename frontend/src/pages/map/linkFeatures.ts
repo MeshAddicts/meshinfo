@@ -6,7 +6,13 @@ import type {
 } from "geojson";
 
 import type { ITraceroutesResponse } from "../../types";
+import { unwrapLngTo } from "./geo";
 import type { IMapNeighbor, IMapNode, NodeLike } from "./types";
+
+/** Straight link coords, destination unwrapped so a seam-crossing link draws short. */
+function straightCoords(from: [number, number], to: [number, number]): [number, number][] {
+  return [from, [unwrapLngTo(from[0], to[0]), to[1]]];
+}
 
 /** Time-since-heard → opacity multiplier. Stale links taper to 0.3 (still visible). */
 function recencyOpacityFromAgeMs(ageMs: number | null): number {
@@ -54,7 +60,8 @@ function arcCoordinates(
   segments: number = 16,
   offsetFactor: number = 0.15,
 ): [number, number][] {
-  const dx = to[0] - from[0];
+  const toLng = unwrapLngTo(from[0], to[0]);
+  const dx = toLng - from[0];
   const dy = to[1] - from[1];
   const nx = -dy * offsetFactor;
   const ny = dx * offsetFactor;
@@ -122,7 +129,7 @@ export function buildMapboxLinkFeatureCollection(opts: {
       },
       geometry: {
         type: "LineString",
-        coordinates: kind === "both" ? arcCoordinates(from, to) : [from, to],
+        coordinates: kind === "both" ? arcCoordinates(from, to) : straightCoords(from, to),
       },
     });
   });
@@ -175,7 +182,7 @@ export function buildAllLinksFeatureCollection(
         },
         geometry: {
           type: "LineString",
-          coordinates: kind === "both" ? arcCoordinates(from, to) : [from, to],
+          coordinates: kind === "both" ? arcCoordinates(from, to) : straightCoords(from, to),
         },
       });
     }
@@ -252,10 +259,10 @@ export function buildTracerouteLinkFeatureCollection(
         },
         geometry: {
           type: "LineString",
-          coordinates: [
+          coordinates: straightCoords(
             [nodeA.map_position[0], nodeA.map_position[1]],
             [nodeB.map_position[0], nodeB.map_position[1]],
-          ],
+          ),
         },
       });
     }

@@ -13,7 +13,7 @@ export function PathHopList({
   onHoverLink?: (id: string | null) => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-1 mt-1">
+    <div className="flex items-center gap-1 mt-1 overflow-x-auto">
       {hops.map((hop, i) => {
         const lookup = liveNodes[hop] ?? liveNodes[`!${hop}`];
         const label = lookup?.shortname ?? hop.slice(0, 8);

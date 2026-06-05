@@ -10,6 +10,8 @@ export function useLosState() {
   const [losDemSource, setLosDemSource] = useState<DemSource | null>(null);
   /** Last LoS compute error, or null. */
   const [losError, setLosError] = useState<string | null>(null);
+  /** True while a LoS compute (initial or config-recompute) is in flight. */
+  const [isComputingLos, setIsComputingLos] = useState(false);
   // LOS virtual pins — endpoints can be arbitrary map points, not just nodes
   const [losVirtualFrom, setLosVirtualFrom] = useState<[number, number] | null>(null);
   const [losVirtualTo, setLosVirtualTo] = useState<[number, number] | null>(null);
@@ -25,6 +27,7 @@ export function useLosState() {
     losResult, setLosResult,
     losDemSource, setLosDemSource,
     losError, setLosError,
+    isComputingLos, setIsComputingLos,
     losVirtualFrom, setLosVirtualFrom,
     losVirtualTo, setLosVirtualTo,
     losFromHwIdx, setLosFromHwIdx,

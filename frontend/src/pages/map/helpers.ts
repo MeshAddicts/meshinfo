@@ -2,6 +2,7 @@ import type { Map as MlMap } from "maplibre-gl";
 
 import type { ITraceroutesResponse } from "../../types";
 import { AGGRESSION_STOPS, DEFAULT_AGGRESSION_IDX } from "./coverageAnalysis";
+import { normalizeLng } from "./geo";
 import { normNodeId } from "./linkFeatures";
 import type { IMapNode } from "./types";
 import { calculateGeodesicDistance } from "./utils";
@@ -41,6 +42,15 @@ export function clampAggressionIdx(idx: number): number {
   if (idx < 0) return 0;
   if (idx >= AGGRESSION_STOPS.length) return AGGRESSION_STOPS.length - 1;
   return idx;
+}
+
+/** Parse a draft, clamp to [min,max]; blank/non-finite → fallback. */
+export function commitNumericDraft(draft: string, min: number, max: number, fallback: number): number {
+  const trimmed = draft.trim();
+  if (trimmed === "") return fallback;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
 }
 
 /** SVG signal bars (1-4) colored by best SNR. */
@@ -94,7 +104,7 @@ export function geodesicCircleCoords(
         Math.sin(brng) * Math.sin(d) * Math.cos(lat1),
         Math.cos(d) - Math.sin(lat1) * Math.sin(lat2),
       );
-    coords.push([(lon2 * 180) / Math.PI, (lat2 * 180) / Math.PI]);
+    coords.push([normalizeLng((lon2 * 180) / Math.PI), (lat2 * 180) / Math.PI]);
   }
   return coords;
 }

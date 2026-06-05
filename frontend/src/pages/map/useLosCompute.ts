@@ -5,8 +5,10 @@ import maplibregl, {
 import { useCallback, useEffect, useRef } from "react";
 
 import { env } from "../../env";
-import { Climate, computeP2PLoss, Polarization } from "./itm";
-import { analyzeLineOfSight, type LoSResult } from "./losAnalysis";
+import { normalizeLng, shortestLngDelta } from "./geo";
+import { computeP2PLoss } from "./itm";
+import { DEFAULT_ITM_ENV } from "./itmEnv";
+import { analyzeLineOfSight, haversineKm, type LoSResult } from "./losAnalysis";
 import { losPointsToTubeData, LosTubeLayer, obstructionsToGeoJSON, pickObstructions } from "./losTubeLayer";
 import { type DEM, demBoundsAround, sampleDEMAt } from "./terrainDEM";
 import { buildDem, type DemSource } from "./terrainRgb";
@@ -30,6 +32,7 @@ type LosComputeParams = {
   setLosResult: (r: LoSResult | null) => void;
   setLosDemSource: (s: DemSource | null) => void;
   setLosError: (e: string | null) => void;
+  setIsComputingLos: (v: boolean) => void;
 };
 
 export function useLosCompute(params: LosComputeParams) {
@@ -38,7 +41,7 @@ export function useLosCompute(params: LosComputeParams) {
     losVirtualFrom, losVirtualTo, losFromHeightM, losToHeightM,
     provider, terrain3D, nodes, losResult,
     mbMapRef, losTubeLayerRef,
-    setLosResult, setLosDemSource, setLosError,
+    setLosResult, setLosDemSource, setLosError, setIsComputingLos,
   } = params;
 
   // LOS endpoints from the compute effect; refs so the hover-marker callback reads them without deps churn
@@ -68,7 +71,7 @@ export function useLosCompute(params: LosComputeParams) {
     const from = losFromPosRef.current;
     const to = losToPosRef.current;
     if (!from || !to) return;
-    const lng = from[0] + (to[0] - from[0]) * fraction;
+    const lng = normalizeLng(from[0] + shortestLngDelta(from[0], to[0]) * fraction);
     const lat = from[1] + (to[1] - from[1]) * fraction;
     if (!losHoverMarkerRef.current) {
       const el = document.createElement("div");
@@ -125,13 +128,22 @@ export function useLosCompute(params: LosComputeParams) {
     losFromPosRef.current = fromPos;
     losToPosRef.current = toPos;
 
+    if (haversineKm(fromPos, toPos) < 0.01) {
+      setLosError("Endpoints are the same — choose two different points.");
+      setLosResult(null);
+      setIsComputingLos(false);
+      return;
+    }
+
     const run = async () => {
       setLosError(null);
+      setIsComputingLos(true);
+      try {
       // Fetch our own DEM sized to the link bbox; queryTerrainElevation is viewport-limited (~400 m peak underread at low zoom)
-      const midLng = (fromPos[0] + toPos[0]) / 2;
+      const midLng = normalizeLng(fromPos[0] + shortestLngDelta(fromPos[0], toPos[0]) / 2);
       const midLat = (fromPos[1] + toPos[1]) / 2;
       const dLat = (toPos[1] - fromPos[1]) * Math.PI / 180;
-      const dLng = (toPos[0] - fromPos[0]) * Math.PI / 180;
+      const dLng = shortestLngDelta(fromPos[0], toPos[0]) * Math.PI / 180;
       const midLatRad = midLat * Math.PI / 180;
       const linkKm = 6371 * Math.sqrt(
         dLat * dLat + (dLng * Math.cos(midLatRad)) ** 2,
@@ -213,12 +225,8 @@ export function useLosCompute(params: LosComputeParams) {
           rxHeightM: Math.max(0.5, result.toHeightM - toGroundM),
           profileM,
           pointSpacingM: spacingM,
-          climate: Climate.ContinentalTemperate,
-          surfaceRefractivityN: 301,
+          ...DEFAULT_ITM_ENV,
           freqMhz: result.frequencyGHz * 1000,
-          polarization: Polarization.Vertical,
-          groundDielectric: 15,
-          groundConductivity: 0.005,
         });
         if (cancelled) return;
         setLosResult({
@@ -229,6 +237,9 @@ export function useLosCompute(params: LosComputeParams) {
         });
       } catch (itmErr) {
         console.warn("[Map] LoS ITM enhancement unavailable:", itmErr);
+      }
+      } finally {
+        if (!cancelled) setIsComputingLos(false);
       }
     };
 
@@ -245,7 +256,7 @@ export function useLosCompute(params: LosComputeParams) {
       if (!cancelled) console.warn("[Map] LoS run failed:", err);
     });
     return () => { cancelled = true; };
-  }, [activeTool, toolStep, toolFromId, toolToId, losVirtualFrom, losVirtualTo, losFromHeightM, losToHeightM, provider, terrain3D, nodes, mbMapRef, setLosResult, setLosDemSource, setLosError]);
+  }, [activeTool, toolStep, toolFromId, toolToId, losVirtualFrom, losVirtualTo, losFromHeightM, losToHeightM, provider, terrain3D, nodes, mbMapRef, setLosResult, setLosDemSource, setLosError, setIsComputingLos]);
 
   // Push LoS result → 3D tube layer + obstruction source.
   // Altitudes are scaled by terrain exaggeration to stay pinned to the visual surface.

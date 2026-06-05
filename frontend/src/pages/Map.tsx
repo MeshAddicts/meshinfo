@@ -9,12 +9,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "../components/toast";
 import { env } from "../env";
 import { reverseGeocode } from "../maps/geocoder";
-import { buildMapStyle, ensureBuildings3D, ensureTerrain, type OsmBasemap, removeBuildings3D, removeTerrain } from "../maps/mapStyle";
+import { buildMapStyle, ensureBuildings3D, ensureTerrain, isDarkBasemap, type OsmBasemap, removeBuildings3D, removeTerrain } from "../maps/mapStyle";
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { NodeRole, roleTitles } from "../types";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { ClusterDonutLayer } from "./map/clusterDonutLayer";
 import { FiltersResetPill } from "./map/FiltersResetPill";
+import { circularMeanLng } from "./map/geo";
 import { bestSnr, computeMaxRange, geodesicCircleCoords, mbRoleColorExpr, queryTerrainElevationMSL, relativeTime, signalBarsHtml, TRANSPARENT_1PX_PNG } from "./map/helpers";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
 import { LosTubeLayer } from "./map/losTubeLayer";
@@ -350,6 +351,7 @@ export function Map() {
     setLosResult: losState.setLosResult,
     setLosDemSource: losState.setLosDemSource,
     setLosError: losState.setLosError,
+    setIsComputingLos: losState.setIsComputingLos,
   });
 
   // Scan compute + per-class visibility + clear-on-tool-change + hover effects
@@ -1399,7 +1401,7 @@ export function Map() {
       // Re-apply terrain if it was enabled (style.load wipes this)
       if (terrain3DRef.current) {
         try {
-          ensureTerrain(map, terrainExaggeration);
+          ensureTerrain(map, terrainExaggeration, isDarkBasemap(provider, osmBasemap, mapboxStyle));
         } catch (err) {
           console.warn("[Map] Terrain re-apply failed after style load:", err);
         }
@@ -1419,15 +1421,13 @@ export function Map() {
       if (mbHandlersBoundRef.current) return;
       mbHandlersBoundRef.current = true;
 
-      const handleNodeClick = async (id: string) => {
+      const handleNodeClick = (id: string) => {
         const liveNodes = nodesRef.current;
         const node = liveNodes[id];
         if (!node?.map_position) return;
 
         selectedNodeIdRef.current = id;
         setSelected(id);
-
-        const displayName = await reverseGeocode(node.map_position[0], node.map_position[1]);
 
         const nodeLike: NodeLike = {
           id,
@@ -1458,13 +1458,23 @@ export function Map() {
         setDetailsDataRef.current({
           node: nodeLike,
           liveNodes,
-          displayName: displayName || "Unknown",
+          displayName: "Locating…",
           elsewhereLinks: configRef.current?.mesh?.elsewhere_links,
           traceroutes: traceroutesRef.current,
           channelLabel: resolveChannelLabel((node as any).last_channel),
           heardBy,
           maxRangeKm,
         });
+
+        // Geocode without blocking the panel; ignore the result if selection moved on.
+        void reverseGeocode(node.map_position[0], node.map_position[1])
+          .then((name) => {
+            if (selectedNodeIdRef.current !== id) return;
+            setDetailsDataRef.current((prev) =>
+              prev && prev.node.id === id ? { ...prev, displayName: name || "Unknown" } : prev,
+            );
+          })
+          .catch(() => {});
 
         // Draw links (neighbor + traceroute)
         const neighborFC = buildMapboxLinkFeatureCollection({ node: nodeLike, liveNodes, heardBy });
@@ -1750,7 +1760,7 @@ export function Map() {
           const overlap = findOverlappingPlainNodes(e.point);
           if (overlap.length >= 2) {
             const center: [number, number] = [
-              overlap.reduce((s, f) => s + f.geometry.coordinates[0], 0) / overlap.length,
+              circularMeanLng(overlap.map((f) => f.geometry.coordinates[0])),
               overlap.reduce((s, f) => s + f.geometry.coordinates[1], 0) / overlap.length,
             ];
             void spiderfyFeatures(map, center, overlap as any, map.getZoom(), true);
@@ -2154,7 +2164,7 @@ export function Map() {
 
     try {
       if (terrain3D) {
-        ensureTerrain(map, terrainExaggeration);
+        ensureTerrain(map, terrainExaggeration, isDarkBasemap(provider, osmBasemap, mapboxStyle));
       } else {
         removeTerrain(map);
       }
@@ -2190,7 +2200,8 @@ export function Map() {
     // If selected node disappears, clear selection + links/panel
     const selectedId = mbSelectedIdRef.current;
     if (selectedId) {
-      const stillExists = data.features.some((f) => (f.properties?.id as string | undefined) === selectedId);
+      // Check the unfiltered nodes: a filtered-out node keeps its panel open.
+      const stillExists = Boolean(nodes[selectedId]);
       if (!stillExists) {
         try {
           map.setFeatureState({ source: "nodes_clustered", id: selectedId }, { selected: false });
@@ -2447,6 +2458,7 @@ export function Map() {
           onEnableTerrain={() => setTerrain3D(true)}
           onClose={resetTool}
           isComputing={terrain3D && !losState.losResult && !losState.losError}
+          isRecomputing={losState.isComputingLos && !!losState.losResult}
           error={losState.losError}
           fromHwIdx={losState.losFromHwIdx} onFromHwIdxChange={losState.setLosFromHwIdx}
           fromAntIdx={losState.losFromAntIdx} onFromAntIdxChange={losState.setLosFromAntIdx}

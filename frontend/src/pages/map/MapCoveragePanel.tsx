@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AggressionSlider, BuildingStatusChip, CanopyStatusChip, ClassLegend, ClutterStatusChip } from "./ClutterUI";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, type MergeOrigin, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
 import { COVERAGE_DETAIL_SIZE,type CoverageDetail } from "./coverageDetail";
+import { NumericDraftInput } from "./NumericDraftInput";
 import { Segmented } from "./Segmented";
 import type { DemSource } from "./terrainRgb";
 import { useBottomSheetGesture } from "./useBottomSheet";
@@ -1005,15 +1006,14 @@ export function MapCoveragePanel({
                   ))}
                 </select>
                 {isCustomHardware && (
-                  <input
-                    type="number"
+                  <NumericDraftInput
                     value={customTxDbm}
-                    onChange={(e) => onCustomTxDbmChange(Number(e.target.value))}
+                    onCommit={onCustomTxDbmChange}
                     min={10}
                     max={35}
-                    step={1}
-                    aria-label="Custom TX power (dBm)"
-                    title="TX power in dBm"
+                    inputMode="numeric"
+                    ariaLabel="Custom TX power (dBm)"
+                    title="TX power in dBm (10–35)"
                     className="w-12 rounded-lg border border-white/10 bg-white/5 px-1 py-1 text-xs text-gray-200 text-center
                       focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50"
                   />
@@ -1040,14 +1040,12 @@ export function MapCoveragePanel({
                   ))}
                 </select>
                 {isCustomPreset && (
-                  <input
-                    type="number"
+                  <NumericDraftInput
                     value={customSensitivityDbm}
-                    onChange={(e) => onCustomSensitivityChange(Number(e.target.value))}
+                    onCommit={onCustomSensitivityChange}
                     min={-150}
                     max={-100}
-                    step={1}
-                    aria-label="Custom RX sensitivity (dBm)"
+                    ariaLabel="Custom RX sensitivity (dBm)"
                     title="RX sensitivity in dBm (e.g. −133)"
                     className="w-14 rounded-lg border border-white/10 bg-white/5 px-1 py-1 text-xs text-gray-200 text-center
                       focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50"

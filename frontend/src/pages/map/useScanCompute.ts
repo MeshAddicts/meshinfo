@@ -4,12 +4,13 @@ import maplibregl, {
 } from "maplibre-gl";
 import { useEffect, useRef } from "react";
 
-import { ORIGIN_COLOR } from "../../palette";
 import { env } from "../../env";
+import { ORIGIN_COLOR } from "../../palette";
 import { buildBuildingRaster, type BuildingRaster } from "./buildingTiles";
 import { buildCanopyRaster, type CanopyRaster } from "./canopyTiles";
 import { AGGRESSION_STOPS, type CoverageReliability, reliabilityPreset } from "./coverageAnalysis";
 import { type ItmContext, loadItmContext } from "./itm";
+import { DEFAULT_ITM_ENV } from "./itmEnv";
 import { buildClutterRaster, type ClutterRaster } from "./landcoverTiles";
 import { runScan, type ScanClass, type ScanSummary, type ScanTarget, scanToGeoJSON } from "./scanAnalysis";
 import { type DEM, demBoundsAround, sampleDEMAt } from "./terrainDEM";
@@ -282,11 +283,7 @@ export function useScanCompute(params: ScanComputeParams) {
           itm: scanItmContextRef.current
             ? {
                 context: scanItmContextRef.current,
-                climate: 5 /* ContinentalTemperate */,
-                surfaceRefractivityN: 301,
-                polarization: 1 /* Vertical */,
-                groundDielectric: 15,
-                groundConductivity: 0.005,
+                ...DEFAULT_ITM_ENV,
                 // Without these, scanAnalysis falls back to 50/50/50 — much
                 // more optimistic than coverage's 90/50/70 default.
                 timePct: reliabilityPreset(scanReliability).time,

@@ -6,6 +6,7 @@
  */
 import { env } from "../../env";
 import { NLCD_DEFAULT_CLASS_ID } from "./clutterClasses";
+import { fetchWithTimeout } from "./fetchWithTimeout";
 import type { DEMBounds } from "./terrainDEM";
 
 const TILE_SIZE = 256;
@@ -112,7 +113,7 @@ export async function fetchLandcoverTile(
   if (hit) return hit;
 
   const url = `${tileBaseUrl()}/${z}/${x}/${y}.png`;
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url);
   if (res.status === 404) {
     tileCache.set(key, TILE_MISSING);
     return TILE_MISSING;
@@ -191,7 +192,6 @@ export async function buildClutterRaster(
   const yMin = Math.floor(lat2tileY(bounds.north, zoom));
   const yMax = Math.floor(lat2tileY(bounds.south, zoom));
   const scale = Math.pow(2, zoom);
-  const tilesTotal = (xMax - xMin + 1) * (yMax - yMin + 1);
 
   const tileMap = new Map<string, CachedLandcoverTile>();
   const jobs: Promise<void>[] = [];
@@ -221,6 +221,8 @@ export async function buildClutterRaster(
   for (const t of tileMap.values()) {
     if (t !== TILE_MISSING && t.data.length > 0) tilesPresent++;
   }
+  // Deduped count (a seam-straddling bbox wraps to shared fetch indices).
+  const tilesTotal = tileMap.size;
 
   const data = new Uint8Array(targetWidth * targetHeight);
   data.fill(NLCD_DEFAULT_CLASS_ID);

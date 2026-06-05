@@ -17,6 +17,7 @@ import { extractCoverageRays, type VisibilityRayFeatureCollection } from "./cove
 import type { CoverageSliceRequest, SliceOrigin } from "./coverageSliceWorker";
 import { CoverageWorkerPool } from "./coverageWorkerPool";
 import { queryTerrainElevationMSL } from "./helpers";
+import { CABLE_LOSS_DB, clampRxHeightM, DEFAULT_ITM_ENV, FADE_MARGIN_DB, FREQ_MHZ } from "./itmEnv";
 import { buildClutterRaster, type ClutterRaster, downsampleClutterRaster } from "./landcoverTiles";
 import { type DEM, type DEMBounds, demBoundsAround, downsampleDEM, sampleDEMAt } from "./terrainDEM";
 import { buildDem, fetchElevationAt } from "./terrainRgb";
@@ -65,8 +66,8 @@ export function useCoverageCompute(params: CoverageComputeParams) {
   // it uses REPRESENTATIVE_CLUTTER_DB scaled by aggression as a sizing heuristic.
   // When the user disables the model entirely, drop the clutter term to 0.
   const coverageRadiusKm = useMemo(() => {
-    const CABLE = 0.5;
-    const FADE = 15;
+    const CABLE = CABLE_LOSS_DB;
+    const FADE = FADE_MARGIN_DB;
     const aggression = c.coverageClutterEnabled
       ? (AGGRESSION_STOPS[c.coverageAggressionIdx]?.value ?? 1.0)
       : 0;
@@ -79,7 +80,7 @@ export function useCoverageCompute(params: CoverageComputeParams) {
       FADE -
       CABLE -
       clutter;
-    const plConstant = 32.45 + 20 * Math.log10(915);
+    const plConstant = 32.45 + 20 * Math.log10(FREQ_MHZ);
     const maxKm = Math.pow(10, (budget - plConstant) / 20);
     return Math.max(5, Math.min(200, Math.round(maxKm)));
   }, [c.coverageAntennaDbi, c.coverageRxAntennaDbi, c.coverageTxDbm, c.coverageEffectiveSensitivityDbm, c.coverageAggressionIdx, c.coverageClutterEnabled]);
@@ -476,23 +477,18 @@ export function useCoverageCompute(params: CoverageComputeParams) {
     const OUTPUT_SIZE = COVERAGE_DETAIL_SIZE[c.coverageDetail];
     const rel = reliabilityPreset(c.coverageReliability);
     const rasterParams: RasterParams = {
-      freqMhz: 915,
+      freqMhz: FREQ_MHZ,
       txDbm: c.coverageTxDbm,
       txAntennaDbi: c.coverageAntennaDbi,
       rxAntennaDbi: c.coverageRxAntennaDbi,
       rxAntennaHeightAboveGroundM: c.coverageRxHeightM,
       rxSensitivityDbm: c.coverageEffectiveSensitivityDbm,
-      fadeMarginDb: 15,
-      cableLossDb: 0.5,
+      fadeMarginDb: FADE_MARGIN_DB,
+      cableLossDb: CABLE_LOSS_DB,
       clutterAggression: c.coverageClutterEnabled
         ? (AGGRESSION_STOPS[c.coverageAggressionIdx]?.value ?? 1.0)
         : 0,
-      // Continental Temperate + N=301 is the NA Meshtastic default
-      climate: 5 /* Climate.ContinentalTemperate */,
-      surfaceRefractivityN: 301,
-      polarization: 1 /* Polarization.Vertical */,
-      groundDielectric: 15,
-      groundConductivity: 0.005,
+      ...DEFAULT_ITM_ENV,
       timePct: rel.time,
       locationPct: rel.location,
       situationPct: rel.situation,
@@ -721,6 +717,7 @@ export function useCoverageCompute(params: CoverageComputeParams) {
           bounds: dem.bounds,
           origin: origin!,
           originHeightM,
+          rxHeightM: clampRxHeightM(c.coverageRxHeightM),
           azimuthStepDeg: 1,
         });
         coverageRaysRef.current = rays;
@@ -785,7 +782,7 @@ export function useCoverageCompute(params: CoverageComputeParams) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, c.coverageAntennaDbi, c.coverageRxAntennaDbi, c.coverageRxHeightM, c.coverageTxDbm, c.coverageAggressionIdx, c.coverageClutterEnabled, c.coverageCanopyEnabled, c.coverageBuildingsEnabled, coverageMergeOrigins, c.coverageSensitivityDbm, c.coverageDetail, c.coverageAntennaHeightM, c.coverageReliability, terrain3D, originLng, originLat, originAlt, c.coverageRetryNonce, c.keepCoveragePaint]);
+  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, c.coverageAntennaDbi, c.coverageRxAntennaDbi, c.coverageRxHeightM, c.coverageTxDbm, c.coverageAggressionIdx, c.coverageClutterEnabled, c.coverageCanopyEnabled, c.coverageBuildingsEnabled, coverageMergeOrigins, c.coverageEffectiveSensitivityDbm, c.coverageDetail, c.coverageAntennaHeightM, c.coverageReliability, terrain3D, originLng, originLat, originAlt, c.coverageRetryNonce, c.keepCoveragePaint]);
 
   // Hide coverage layers when leaving tool; sources/layers stay for fast
   // re-entry. keepCoveragePaint exempts the Scan-from-here overlay.

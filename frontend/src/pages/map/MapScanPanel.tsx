@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AggressionSlider, BuildingStatusChip, CanopyStatusChip, ClassLegend, ClutterStatusChip } from "./ClutterUI";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
+import { NumericDraftInput } from "./NumericDraftInput";
 import { type ScanClass, type ScanResult, scanSortKey, type ScanSummary } from "./scanAnalysis";
 import { Segmented } from "./Segmented";
 import type { DemSource } from "./terrainRgb";
@@ -438,13 +439,13 @@ export function MapScanPanel({
                         ))}
                       </select>
                       {isCustomHardware && (
-                        <input
-                          type="number"
+                        <NumericDraftInput
                           value={customTxDbm}
-                          onChange={(e) => onCustomTxDbmChange(Number(e.target.value))}
-                          min={10} max={35} step={1}
-                          aria-label="Custom TX power (dBm)"
-                          title="TX power in dBm"
+                          onCommit={onCustomTxDbmChange}
+                          min={10} max={35}
+                          inputMode="numeric"
+                          ariaLabel="Custom TX power (dBm)"
+                          title="TX power in dBm (10–35)"
                           className="w-12 rounded-lg border border-white/10 bg-white/5 px-1 py-1 text-xs text-gray-200 text-center
                             focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50"
                         />
@@ -471,12 +472,11 @@ export function MapScanPanel({
                         ))}
                       </select>
                       {isCustomPreset && (
-                        <input
-                          type="number"
+                        <NumericDraftInput
                           value={customSensitivityDbm}
-                          onChange={(e) => onCustomSensitivityChange(Number(e.target.value))}
-                          min={-150} max={-100} step={1}
-                          aria-label="Custom RX sensitivity (dBm)"
+                          onCommit={onCustomSensitivityChange}
+                          min={-150} max={-100}
+                          ariaLabel="Custom RX sensitivity (dBm)"
                           title="RX sensitivity in dBm"
                           className="w-14 rounded-lg border border-white/10 bg-white/5 px-1 py-1 text-xs text-gray-200 text-center
                             focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50"

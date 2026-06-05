@@ -44,6 +44,7 @@ function EndpointConfig({
   hwIdx, onHwIdxChange,
   antIdx, onAntIdxChange,
   heightM, onHeightChange,
+  usingGpsAltitude = false,
 }: {
   label: string;
   color: string;
@@ -53,6 +54,8 @@ function EndpointConfig({
   onAntIdxChange: (idx: number) => void;
   heightM: number;
   onHeightChange: (m: number) => void;
+  /** Node reported a GPS altitude, so the Height field doesn't affect the result. */
+  usingGpsAltitude?: boolean;
 }) {
   const [heightInput, setHeightInput] = useState(String(heightM));
   useEffect(() => { setHeightInput(String(heightM)); }, [heightM]);
@@ -99,11 +102,12 @@ function EndpointConfig({
       </div>
       <div>
         <div className="text-gray-500 uppercase tracking-wider mb-0.5">Height</div>
-        <div className="flex items-center gap-1 rounded border border-white/10 bg-white/5 px-1 py-0.5">
+        <div className={`flex items-center gap-1 rounded border border-white/10 bg-white/5 px-1 py-0.5 ${usingGpsAltitude ? "opacity-50" : ""}`}>
           <input
             type="text"
             inputMode="decimal"
             value={heightInput}
+            disabled={usingGpsAltitude}
             onChange={(e) => setHeightInput(e.target.value)}
             onBlur={commitHeight}
             onKeyDown={(e) => {
@@ -113,12 +117,19 @@ function EndpointConfig({
                 (e.currentTarget as HTMLInputElement).blur();
               }
             }}
-            className="min-w-0 flex-1 bg-transparent text-[10px] text-gray-200 text-center focus:outline-hidden"
+            className="min-w-0 flex-1 bg-transparent text-[10px] text-gray-200 text-center focus:outline-hidden disabled:cursor-not-allowed"
             aria-label={`${label} antenna height in meters`}
-            title="Antenna height above ground (m). Blank = 2 m."
+            title={usingGpsAltitude
+              ? "Ignored — this node reports a GPS altitude, which is used instead."
+              : "Antenna height above ground (m). Blank = 2 m."}
           />
           <span className="text-gray-500 shrink-0">m</span>
         </div>
+        {usingGpsAltitude && (
+          <div className="text-[9px] text-gray-500 mt-0.5 leading-snug">
+            Using GPS altitude — height ignored.
+          </div>
+        )}
       </div>
     </div>
   );
@@ -134,6 +145,7 @@ export function MapLosPanel({
   onEnableTerrain,
   onClose,
   isComputing,
+  isRecomputing = false,
   error,
   fromHwIdx, onFromHwIdxChange,
   fromAntIdx, onFromAntIdxChange,
@@ -153,6 +165,8 @@ export function MapLosPanel({
   onEnableTerrain?: () => void;
   onClose: () => void;
   isComputing: boolean;
+  /** A recompute is in flight while a result is already shown (height/config tweak). */
+  isRecomputing?: boolean;
   /** Compute error; shows an error state instead of the spinner. */
   error?: string | null;
   fromHwIdx: number; onFromHwIdxChange: (idx: number) => void;
@@ -449,6 +463,12 @@ export function MapLosPanel({
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          {isRecomputing && (
+            <span className="inline-flex items-center gap-1 text-[10px] text-gray-400" role="status">
+              <span className="w-2.5 h-2.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+              <span className="hidden sm:inline">Updating…</span>
+            </span>
+          )}
           <details className="text-[10px] text-gray-500 relative">
             <summary className="cursor-pointer hover:text-gray-400 select-none list-none" aria-label="About this analysis">
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -512,6 +532,7 @@ export function MapLosPanel({
             hwIdx={fromHwIdx} onHwIdxChange={onFromHwIdxChange}
             antIdx={fromAntIdx} onAntIdxChange={onFromAntIdxChange}
             heightM={fromHeightM} onHeightChange={onFromHeightChange}
+            usingGpsAltitude={!los.fromIsFallback}
           />
         </div>
         <div className="order-1 sm:order-2 flex-1 min-w-0 px-2 py-1.5 sm:border-x border-white/5">
@@ -531,6 +552,7 @@ export function MapLosPanel({
             hwIdx={toHwIdx} onHwIdxChange={onToHwIdxChange}
             antIdx={toAntIdx} onAntIdxChange={onToAntIdxChange}
             heightM={toHeightM} onHeightChange={onToHeightChange}
+            usingGpsAltitude={!los.toIsFallback}
           />
         </div>
       </div>

@@ -2,6 +2,7 @@ import type { ITraceroutesResponse } from "../../types";
 import { findPathsBetween } from "./pathAnalysis";
 import { PathHopList } from "./PathHopList";
 import type { IMapNode } from "./types";
+import { useBottomSheetGesture } from "./useBottomSheet";
 
 export function MapTraceroutePanel({
   fromId,
@@ -32,13 +33,34 @@ export function MapTraceroutePanel({
 }) {
   const paths = findPathsBetween(fromId, toId, traceroutes);
   const shortest = paths[0];
+  const sheet = useBottomSheetGesture(onClose);
 
   return (
-    <div className="fixed bottom-3 left-1/2 -translate-x-1/2 z-1050 w-[min(520px,calc(100vw-2rem))] max-h-[60vh] overflow-y-auto
-      rounded-xl shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
-      animate-[slideInUp_200ms_ease-out]">
+    <div
+      ref={sheet.sheetRef}
+      role="dialog"
+      aria-label={`Traceroute: ${fromLabel} to ${toLabel}`}
+      className="fixed z-1050 flex flex-col shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
+        inset-x-0 bottom-0 rounded-t-2xl max-h-[70dvh]
+        animate-[slideInUp_200ms_ease-out]
+        sm:inset-x-auto sm:bottom-3 sm:left-1/2 sm:-translate-x-1/2 sm:w-[min(520px,calc(100vw-2rem))]
+        sm:rounded-xl sm:max-h-[60vh]">
 
-      <div className="flex items-center justify-between gap-3 px-3 py-2 border-b border-white/5 sticky top-0 bg-gray-900/90 backdrop-blur-xl">
+      <div
+        className="sm:hidden flex justify-center pt-2 pb-1 cursor-grab active:cursor-grabbing touch-none shrink-0"
+        onTouchStart={sheet.onTouchStart}
+        onTouchMove={sheet.onTouchMove}
+        onTouchEnd={sheet.onTouchEnd}
+      >
+        <div className="w-10 h-1 rounded-full bg-white/20" />
+      </div>
+
+      <div
+        className="flex items-center justify-between gap-3 px-3 py-2 border-b border-white/5 shrink-0 max-sm:touch-none"
+        onTouchStart={sheet.onTouchStart}
+        onTouchMove={sheet.onTouchMove}
+        onTouchEnd={sheet.onTouchEnd}
+      >
         <div className="flex items-center gap-2 min-w-0">
           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border border-cyan-500/30 bg-cyan-500/15 text-cyan-300 shrink-0">
             <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -64,7 +86,7 @@ export function MapTraceroutePanel({
         </button>
       </div>
 
-      <div className="p-3">
+      <div className="p-3 overflow-y-auto overscroll-contain flex-1 min-h-0">
         {loading && traceroutes.length === 0 ? (
           <div className="px-2 py-3 text-xs text-gray-500">
             Loading traceroutes…

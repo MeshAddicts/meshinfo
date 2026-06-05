@@ -39,6 +39,17 @@ const SKY_SPEC: SkySpecification = {
   "atmosphere-blend": 1.0,
 };
 
+/** Sky/fog for dark basemaps; the daytime SKY_SPEC clashes over a dark map. */
+const DARK_SKY_SPEC: SkySpecification = {
+  "sky-color": "#0b1220",
+  "sky-horizon-blend": 0.5,
+  "horizon-color": "#1e2a3a",
+  "horizon-fog-blend": 0.5,
+  "fog-color": "#0f172a",
+  "fog-ground-blend": 0.5,
+  "atmosphere-blend": 0.6,
+};
+
 function normalizeMapboxStylePath(style: string): string {
   return style.startsWith("mapbox://styles/")
     ? style.slice("mapbox://styles/".length)
@@ -148,12 +159,17 @@ export function demSourceSpec(): RasterDEMSourceSpecification {
 }
 
 /** Idempotent — safe to re-call after style reloads. */
-export function ensureTerrain(map: MlMap, exaggeration: number): void {
+export function ensureTerrain(map: MlMap, exaggeration: number, isDark = false): void {
   if (!map.getSource(TERRAIN_SOURCE_ID)) {
     map.addSource(TERRAIN_SOURCE_ID, demSourceSpec());
   }
   map.setTerrain({ source: TERRAIN_SOURCE_ID, exaggeration });
-  map.setSky(SKY_SPEC);
+  map.setSky(isDark ? DARK_SKY_SPEC : SKY_SPEC);
+}
+
+/** A basemap whose tiles are dark (so the daytime sky/fog would clash). */
+export function isDarkBasemap(provider: MapProvider, osmBasemap: OsmBasemap, mapboxStyle: string): boolean {
+  return provider === "mapbox" ? mapboxStyle.includes("dark") : osmBasemap === "carto_dark";
 }
 
 /** `setTerrain(null)` alone leaves MapLibre 5's depth pass referencing destroyed

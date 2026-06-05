@@ -5,6 +5,7 @@
  * Mapbox terrain-rgb decode:  elev_m = -10000 + ((R*256² + G*256 + B) * 0.1)
  * Tilezen terrarium decode:   elev_m = (R*256 + G + B/256) - 32768
  */
+import { fetchWithTimeout } from "./fetchWithTimeout";
 import type { DEM, DEMBounds } from "./terrainDEM";
 
 /** Nominal output tile size; real size taken from each decoded tile (256 or 512). */
@@ -127,7 +128,7 @@ async function fetchTile(
   if (hit) return hit;
 
   const url = `${TILE_URL}/${z}/${x}/${y}.pngraw?access_token=${encodeURIComponent(token)}`;
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url);
   if (!res.ok) {
     const auth = res.status === 401 || res.status === 403 ? " (check Mapbox token)" : "";
     throw new Error(`terrain-rgb tile fetch failed ${z}/${x}/${y}: HTTP ${res.status}${auth}`);
@@ -172,7 +173,7 @@ async function fetchTilezenTile(
   if (hit) return hit;
 
   const url = `${TILEZEN_URL}/${z}/${x}/${y}.png`;
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url);
   if (!res.ok) {
     throw new Error(`tilezen tile fetch failed ${z}/${x}/${y}: HTTP ${res.status}`);
   }
