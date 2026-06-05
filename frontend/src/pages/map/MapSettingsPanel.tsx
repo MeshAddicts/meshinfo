@@ -146,6 +146,44 @@ function FiltersSection({
   );
 }
 
+/** Collapsible section — module-scope so re-renders don't remount it (which
+ *  would drop the search input's focus). */
+function Section({
+  open,
+  onToggle,
+  title,
+  subtitle,
+  children,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="border-t border-white/5 first:border-t-0">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center justify-between py-2.5 text-left hover:text-gray-100 transition-colors"
+      >
+        <div>
+          <div className="text-xs font-semibold text-gray-200">{title}</div>
+          {subtitle && <div className="text-[10px] text-gray-500 mt-0.5">{subtitle}</div>}
+        </div>
+        <svg
+          className={`w-3.5 h-3.5 text-gray-500 transition-transform ${open ? "rotate-180" : ""}`}
+          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && <div className="pb-3 space-y-3">{children}</div>}
+    </div>
+  );
+}
+
 export function MapSettingsPanel({
   settingsPanelRef,
   settingsToggleRef,
@@ -283,41 +321,6 @@ export function MapSettingsPanel({
     });
   };
 
-  const Section = ({
-    id,
-    title,
-    subtitle,
-    children,
-  }: {
-    id: string;
-    title: string;
-    subtitle?: string;
-    children: React.ReactNode;
-  }) => {
-    const open = openSections.has(id);
-    return (
-      <div className="border-t border-white/5 first:border-t-0">
-        <button
-          type="button"
-          onClick={() => toggleSection(id)}
-          className="w-full flex items-center justify-between py-2.5 text-left hover:text-gray-100 transition-colors"
-        >
-          <div>
-            <div className="text-xs font-semibold text-gray-200">{title}</div>
-            {subtitle && <div className="text-[10px] text-gray-500 mt-0.5">{subtitle}</div>}
-          </div>
-          <svg
-            className={`w-3.5 h-3.5 text-gray-500 transition-transform ${open ? "rotate-180" : ""}`}
-            fill="none" stroke="currentColor" viewBox="0 0 24 24"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-        {open && <div className="pb-3 space-y-3">{children}</div>}
-      </div>
-    );
-  };
-
   return (
     <div ref={containerRef} className={`fixed bottom-4 right-4 z-1100 flex flex-col items-end ${hidden ? "max-sm:hidden" : ""}`}>
       {legendOpen && !settingsPanelOpen && (
@@ -369,7 +372,8 @@ export function MapSettingsPanel({
             </div>
 
             <Section
-              id="filters"
+              open={openSections.has("filters")}
+              onToggle={() => toggleSection("filters")}
               title="Filters"
               subtitle={filtersSubtitle(recentDays, linkMode, clusterEnabled, roleFilter, channelFilter)}
             >
@@ -389,7 +393,7 @@ export function MapSettingsPanel({
               />
             </Section>
 
-            <Section id="appearance" title="Appearance" subtitle="Basemap">
+            <Section open={openSections.has("appearance")} onToggle={() => toggleSection("appearance")} title="Appearance" subtitle="Basemap">
               <div>
                 <label
                   htmlFor="basemap-select"
@@ -439,7 +443,8 @@ export function MapSettingsPanel({
             </Section>
 
             <Section
-              id="terrain"
+              open={openSections.has("terrain")}
+              onToggle={() => toggleSection("terrain")}
               title="3D Layers"
               subtitle={[terrain3D && "Terrain", buildings3D && "Buildings"].filter(Boolean).join(" + ") || "Off"}
             >
@@ -490,7 +495,7 @@ export function MapSettingsPanel({
                 )}
               </Section>
 
-            <Section id="mynode" title="My Node" subtitle={myNodeLabel || "Not set"}>
+            <Section open={openSections.has("mynode")} onToggle={() => toggleSection("mynode")} title="My Node" subtitle={myNodeLabel || "Not set"}>
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label
@@ -549,7 +554,7 @@ export function MapSettingsPanel({
             </Section>
 
             {onExport && (
-              <Section id="export" title="Export" subtitle="Save current view as image">
+              <Section open={openSections.has("export")} onToggle={() => toggleSection("export")} title="Export" subtitle="Save current view as image">
                 <button
                   type="button"
                   onClick={onExport}

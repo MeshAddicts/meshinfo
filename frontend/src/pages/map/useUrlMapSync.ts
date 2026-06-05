@@ -1,5 +1,5 @@
 import type { Map as MlMap } from "maplibre-gl";
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router";
 
 import type { IMapNode } from "./types";
@@ -10,6 +10,12 @@ export function useUrlMapSync(
   mbMapRef: React.RefObject<MlMap | null>,
 ) {
   const [searchParams, setSearchParams] = useSearchParams();
+  // Ref'd so writes don't depend on setSearchParams' rotating identity.
+  const setSearchParamsRef = useRef(setSearchParams);
+  setSearchParamsRef.current = setSearchParams;
+  const searchParamsRef = useRef(searchParams);
+  searchParamsRef.current = searchParams;
+
   const urlNodeId = searchParams.get("node") ?? "";
   const urlNodeIdRef = useRef(urlNodeId);
   urlNodeIdRef.current = urlNodeId;
@@ -59,42 +65,24 @@ export function useUrlMapSync(
     return () => timers.forEach(clearTimeout);
   }, [urlNodeId, flyToTarget, setSearchParams, mbMapRef]);
 
-  // Debounced URL sync for center/zoom
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
-    const syncUrl = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        let lat: number | undefined;
-        let lng: number | undefined;
-        let z: number | undefined;
+  // Debounced ?lat/lng/z writer. Called from Map.tsx's moveend (always the live
+  // map) — a listener bound here would go stale when the map is recreated.
+  const viewSyncTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pushViewToUrl = useCallback(() => {
+    if (viewSyncTimerRef.current) clearTimeout(viewSyncTimerRef.current);
+    viewSyncTimerRef.current = setTimeout(() => {
+      const mb = mbMapRef.current;
+      if (!mb) return;
+      const c = mb.getCenter();
+      const sp = new URLSearchParams(searchParamsRef.current);
+      sp.set("lat", String(+c.lat.toFixed(5)));
+      sp.set("lng", String(+c.lng.toFixed(5)));
+      sp.set("z", String(+mb.getZoom().toFixed(2)));
+      setSearchParamsRef.current(sp, { replace: true });
+    }, 600);
+  }, [mbMapRef]);
+  const pushViewToUrlRef = useRef(pushViewToUrl);
+  pushViewToUrlRef.current = pushViewToUrl;
 
-        const mb = mbMapRef.current;
-        if (mb) {
-          const c = mb.getCenter();
-          lat = +c.lat.toFixed(5);
-          lng = +c.lng.toFixed(5);
-          z = +mb.getZoom().toFixed(2);
-        }
-
-        if (lat != null && lng != null && z != null) {
-          setSearchParams((prev) => {
-            prev.set("lat", String(lat));
-            prev.set("lng", String(lng));
-            prev.set("z", String(z));
-            return prev;
-          }, { replace: true });
-        }
-      }, 800);
-    };
-
-    const mb = mbMapRef.current;
-    if (mb) {
-      mb.on("moveend", syncUrl);
-      return () => { clearTimeout(timer); mb.off("moveend", syncUrl); };
-    }
-    return () => clearTimeout(timer);
-  }, [setSearchParams, mbMapRef]);
-
-  return { searchParams, flyToTargetRef };
+  return { searchParams, flyToTargetRef, pushViewToUrlRef };
 }

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AggressionSlider, BuildingStatusChip, CanopyStatusChip, ClassLegend, ClutterStatusChip } from "./ClutterUI";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
-import type { ScanClass, ScanResult,ScanSummary } from "./scanAnalysis";
+import { scanSortKey, type ScanClass, type ScanResult, type ScanSummary } from "./scanAnalysis";
 import type { DemSource } from "./terrainRgb";
 import { useBottomSheetGesture } from "./useBottomSheet";
 
@@ -160,6 +160,9 @@ export function MapScanPanel({
   const [expandedSettingsRow, setExpandedSettingsRow] = useState<SettingsRowKey | null>(null);
   const [minimized, setMinimized] = useState(false);
 
+  // Clear stale class filter when a new scan lands.
+  useEffect(() => { setFilter(null); }, [summary]);
+
   // Without a snapshot, unchecking "Same as transmitter" would be a visual
   // no-op — rxMatchesTx is derived, so the values still match TX.
   const rxSnapshotRef = useRef<{ hw: number; ant: number } | null>(null);
@@ -188,7 +191,8 @@ export function MapScanPanel({
     const filtered = filter
       ? summary.results.filter((r) => r.cls === filter)
       : summary.results;
-    return [...filtered].sort((a, b) => b.marginDb - a.marginDb);
+    // Rank by scanSortKey (matches map order), not raw margin.
+    return [...filtered].sort((a, b) => scanSortKey(b) - scanSortKey(a));
   }, [summary, filter]);
 
   if (terrainNeeded && onEnableTerrain) {

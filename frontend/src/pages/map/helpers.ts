@@ -65,7 +65,7 @@ export function bestSnr(nodeId: string, nodes: Record<string, IMapNode>): number
   if (!node?.neighbors?.length) return null;
   let max = -Infinity;
   for (const n of node.neighbors) {
-    if (n.snr > max) max = n.snr;
+    if (typeof n.snr === "number" && Number.isFinite(n.snr) && n.snr > max) max = n.snr;
   }
   return max === -Infinity ? null : max;
 }

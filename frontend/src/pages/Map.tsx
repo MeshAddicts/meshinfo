@@ -289,7 +289,7 @@ export function Map() {
   const mergeOrigins = useCoverageMergeOrigins(nodes, toolFromId);
 
   // URL deep-link + view sync
-  const { searchParams, flyToTargetRef } = useUrlMapSync(nodes, mbMapRef);
+  const { searchParams, flyToTargetRef, pushViewToUrlRef } = useUrlMapSync(nodes, mbMapRef);
 
   // Refs mirroring state — read from MapLibre event handlers + setStyle re-init
   const nodesRef = useRef(nodes);
@@ -345,6 +345,7 @@ export function Map() {
     mbMapRef, losTubeLayerRef,
     setLosResult: losState.setLosResult,
     setLosDemSource: losState.setLosDemSource,
+    setLosError: losState.setLosError,
   });
 
   // Scan compute + per-class visibility + clear-on-tool-change + hover effects
@@ -405,6 +406,7 @@ export function Map() {
     losCompute.losHoverMarkerRef.current?.remove();
     losCompute.losHoverMarkerRef.current = null;
     losState.setLosResult(null);
+    losState.setLosError(null);
     coverage.setCoverageResult(null);
     coverage.setKeepCoveragePaint(false);
     scan.setScanSummary(null);
@@ -849,6 +851,8 @@ export function Map() {
       localStorage.setItem("savedZoom", map.getZoom().toString());
       localStorage.setItem("savedPitch", map.getPitch().toString());
       localStorage.setItem("savedBearing", map.getBearing().toString());
+      // Mirror view into ?lat/lng/z (debounced); here so it follows recreation.
+      pushViewToUrlRef.current();
     });
 
     const ensureSourcesAndLayers = () => {
@@ -1160,7 +1164,8 @@ export function Map() {
       // Initial line-opacity bakes recencyOpacity from the feature; focus-on-hover
       // swaps these expressions in to dim non-connected links.
       const linkOpacityInitial = (base: number) =>
-        ["*", base, ["coalesce", ["get", "recencyOpacity"], 1.0]] as any;
+        // 0.6 = unknown-recency default (see recencyOpacityFromAgeMs).
+        ["*", base, ["coalesce", ["get", "recencyOpacity"], 0.6]] as any;
 
       // Neighbor + both links (solid; "both" uses curved arcs)
       if (!map.getLayer("links-solid")) {
@@ -1546,7 +1551,7 @@ export function Map() {
       const LINK_DIM_OPACITY = 0.1;
       // const NODE_DIM_OPACITY = 0.2;  // Re-enable with the disabled block in applyLinkFocus.
 
-      const recencyExpr = ["coalesce", ["get", "recencyOpacity"], 1.0] as any;
+      const recencyExpr = ["coalesce", ["get", "recencyOpacity"], 0.6] as any;
 
       const linkOpacityForFocus = (base: number, focusedId: string | null) => {
         if (!focusedId) return ["*", base, recencyExpr] as any;
@@ -2378,7 +2383,8 @@ export function Map() {
           terrainNeeded={!terrain3D}
           onEnableTerrain={() => setTerrain3D(true)}
           onClose={resetTool}
-          isComputing={terrain3D && !losState.losResult}
+          isComputing={terrain3D && !losState.losResult && !losState.losError}
+          error={losState.losError}
           fromHwIdx={losState.losFromHwIdx} onFromHwIdxChange={losState.setLosFromHwIdx}
           fromAntIdx={losState.losFromAntIdx} onFromAntIdxChange={losState.setLosFromAntIdx}
           fromHeightM={losState.losFromHeightM} onFromHeightChange={losState.setLosFromHeightM}

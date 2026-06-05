@@ -133,6 +133,7 @@ export function MapLosPanel({
   onEnableTerrain,
   onClose,
   isComputing,
+  error,
   fromHwIdx, onFromHwIdxChange,
   fromAntIdx, onFromAntIdxChange,
   fromHeightM, onFromHeightChange,
@@ -151,6 +152,8 @@ export function MapLosPanel({
   onEnableTerrain?: () => void;
   onClose: () => void;
   isComputing: boolean;
+  /** Compute error; shows an error state instead of the spinner. */
+  error?: string | null;
   fromHwIdx: number; onFromHwIdxChange: (idx: number) => void;
   fromAntIdx: number; onFromAntIdxChange: (idx: number) => void;
   fromHeightM: number; onFromHeightChange: (m: number) => void;
@@ -207,6 +210,34 @@ export function MapLosPanel({
             onClick={onClose}
             className="p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors shrink-0"
             aria-label="Close LoS analysis"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (error && !result) {
+    return (
+      <div className="fixed z-1050 shadow-2xl border border-red-500/30 bg-gray-900/90 backdrop-blur-xl
+        inset-x-0 bottom-0 rounded-t-2xl p-3 pb-5
+        sm:inset-x-auto sm:bottom-3 sm:left-1/2 sm:-translate-x-1/2 sm:w-[min(900px,calc(100vw-2rem))]
+        sm:rounded-xl sm:pb-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-xs text-red-300">
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            </svg>
+            {error}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors shrink-0"
+            aria-label="Close"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

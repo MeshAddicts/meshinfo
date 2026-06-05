@@ -94,7 +94,9 @@ export function useBottomSheetGesture(onClose: () => void) {
 
   const onTouchMove = useCallback((e: React.TouchEvent) => {
     if (!dragging.current) return;
-    const dy = e.touches[0].clientY - startY.current;
+    const touch = e.touches[0];
+    if (!touch) return;
+    const dy = touch.clientY - startY.current;
     // Up direction = rubber-band resistance (drag feels heavier).
     const visualDy = dy < 0 ? dy * 0.4 : dy;
     if (sheetRef.current) {
@@ -108,7 +110,9 @@ export function useBottomSheetGesture(onClose: () => void) {
     const sheet = sheetRef.current;
     if (!sheet) return;
 
-    const dy = e.changedTouches[0].clientY - startY.current;
+    const touch = e.changedTouches[0];
+    if (!touch) return;
+    const dy = touch.clientY - startY.current;
     // Capped at 100px so a tall collapsed sheet still dismisses with a flick.
     const threshold = Math.min(sheet.offsetHeight * 0.2, 100);
 

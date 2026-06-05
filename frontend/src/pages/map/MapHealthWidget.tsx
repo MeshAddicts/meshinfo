@@ -25,8 +25,10 @@ function computeHealth(nodes: Record<string, IMapNode>) {
     }
   }
 
-  // BFS diameter, sampled to first 100 nodes
-  const nodeIds = [...adj.keys()].slice(0, 100);
+  // BFS diameter, sampled to first 100 nodes (perf cap)
+  const adjKeys = [...adj.keys()];
+  const nodeIds = adjKeys.slice(0, 100);
+  const diameterSampled = adjKeys.length > 100;
   let diameter = 0;
   for (const start of nodeIds) {
     const dist = new Map<string, number>();
@@ -52,7 +54,8 @@ function computeHealth(nodes: Record<string, IMapNode>) {
     offline: total - online,
     avgSnr: snrCount > 0 ? snrSum / snrCount : null,
     diameter,
-    linkCount: [...adj.values()].reduce((sum, s) => sum + s.size, 0) / 2,
+    diameterSampled,
+    linkCount: Math.round([...adj.values()].reduce((sum, s) => sum + s.size, 0) / 2),
   };
 }
 
@@ -108,7 +111,12 @@ export function MapHealthWidget({ nodes }: { nodes: Record<string, IMapNode> }) 
           </div>
           <div className="flex items-center justify-between">
             <span className="text-gray-500">Mesh diameter</span>
-            <span className="text-gray-300">{health.diameter} hops</span>
+            <span
+              className="text-gray-300"
+              title={health.diameterSampled ? "Approximate — BFS sampled to the first 100 nodes" : undefined}
+            >
+              {health.diameterSampled ? "~" : ""}{health.diameter} hops
+            </span>
           </div>
         </div>
       )}

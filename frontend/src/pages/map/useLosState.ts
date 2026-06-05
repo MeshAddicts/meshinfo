@@ -8,6 +8,8 @@ export function useLosState() {
   const [losResult, setLosResult] = useState<LoSResult | null>(null);
   /** DEM tile source used for the last LoS compute. */
   const [losDemSource, setLosDemSource] = useState<DemSource | null>(null);
+  /** Last LoS compute error, or null. */
+  const [losError, setLosError] = useState<string | null>(null);
   // LOS virtual pins — endpoints can be arbitrary map points, not just nodes
   const [losVirtualFrom, setLosVirtualFrom] = useState<[number, number] | null>(null);
   const [losVirtualTo, setLosVirtualTo] = useState<[number, number] | null>(null);
@@ -22,6 +24,7 @@ export function useLosState() {
   return {
     losResult, setLosResult,
     losDemSource, setLosDemSource,
+    losError, setLosError,
     losVirtualFrom, setLosVirtualFrom,
     losVirtualTo, setLosVirtualTo,
     losFromHwIdx, setLosFromHwIdx,

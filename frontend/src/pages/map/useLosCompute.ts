@@ -29,6 +29,7 @@ type LosComputeParams = {
   losTubeLayerRef: React.RefObject<LosTubeLayer | null>;
   setLosResult: (r: LoSResult | null) => void;
   setLosDemSource: (s: DemSource | null) => void;
+  setLosError: (e: string | null) => void;
 };
 
 export function useLosCompute(params: LosComputeParams) {
@@ -37,7 +38,7 @@ export function useLosCompute(params: LosComputeParams) {
     losVirtualFrom, losVirtualTo, losFromHeightM, losToHeightM,
     provider, terrain3D, nodes, losResult,
     mbMapRef, losTubeLayerRef,
-    setLosResult, setLosDemSource,
+    setLosResult, setLosDemSource, setLosError,
   } = params;
 
   // LOS endpoints from the compute effect; refs so the hover-marker callback reads them without deps churn
@@ -79,6 +80,7 @@ export function useLosCompute(params: LosComputeParams) {
   useEffect(() => {
     if (activeTool !== "los" || toolStep !== "result") {
       setLosResult(null);
+      setLosError(null);
       return;
     }
     const hasFrom = toolFromId || losVirtualFrom;
@@ -115,6 +117,7 @@ export function useLosCompute(params: LosComputeParams) {
     losToPosRef.current = toPos;
 
     const run = async () => {
+      setLosError(null);
       // Fetch our own DEM sized to the link bbox; queryTerrainElevation is viewport-limited (~400 m peak underread at low zoom)
       const midLng = (fromPos[0] + toPos[0]) / 2;
       const midLat = (fromPos[1] + toPos[1]) / 2;
@@ -131,6 +134,7 @@ export function useLosCompute(params: LosComputeParams) {
       const mapboxToken = env.MAPBOX_TOKEN;
       if (!mapboxToken) {
         console.warn("[Map] LoS aborted — Mapbox token missing.");
+        setLosError("Terrain elevation source unavailable (Mapbox token not configured).");
         setLosResult(null);
         return;
       }
@@ -148,6 +152,7 @@ export function useLosCompute(params: LosComputeParams) {
         setLosDemSource(demSourceUsedForLos);
       } catch (err) {
         console.warn("[Map] LoS DEM fetch failed:", err);
+        setLosError("Couldn't load terrain elevation data. Check your connection and try again.");
         setLosResult(null);
         return;
       }
@@ -170,6 +175,7 @@ export function useLosCompute(params: LosComputeParams) {
         });
       } catch (err) {
         console.warn("[Map] LoS analysis failed:", err);
+        setLosError("Line-of-sight analysis failed for this path.");
         setLosResult(null);
         return;
       }
@@ -219,7 +225,7 @@ export function useLosCompute(params: LosComputeParams) {
       if (!cancelled) console.warn("[Map] LoS run failed:", err);
     });
     return () => { cancelled = true; };
-  }, [activeTool, toolStep, toolFromId, toolToId, losVirtualFrom, losVirtualTo, losFromHeightM, losToHeightM, provider, terrain3D, nodes, mbMapRef, setLosResult, setLosDemSource]);
+  }, [activeTool, toolStep, toolFromId, toolToId, losVirtualFrom, losVirtualTo, losFromHeightM, losToHeightM, provider, terrain3D, nodes, mbMapRef, setLosResult, setLosDemSource, setLosError]);
 
   // Push LoS result → 3D tube layer + obstruction source.
   // Altitudes are scaled by terrain exaggeration to stay pinned to the visual surface.
