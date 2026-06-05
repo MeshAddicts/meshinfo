@@ -61,7 +61,15 @@ function computeHealth(nodes: Record<string, IMapNode>) {
 
 export function MapHealthWidget({ nodes }: { nodes: Record<string, IMapNode> }) {
   const [expanded, setExpanded] = useState(false);
-  const health = useMemo(() => computeHealth(nodes), [nodes]);
+  // Cheap online/total for the always-visible pill; the BFS diameter + link counts
+  // only matter when expanded, so skip that work every poll while collapsed.
+  const basic = useMemo(() => {
+    const vals = Object.values(nodes);
+    let online = 0;
+    for (const n of vals) if (n.online) online++;
+    return { online, total: vals.length };
+  }, [nodes]);
+  const health = useMemo(() => (expanded ? computeHealth(nodes) : null), [expanded, nodes]);
 
   return (
     <div className="fixed top-3 right-20 sm:right-40 z-30 flex flex-col items-end">
@@ -76,13 +84,13 @@ export function MapHealthWidget({ nodes }: { nodes: Record<string, IMapNode> }) 
       >
         <span className="inline-flex items-center gap-1">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-          {health.online}
+          {basic.online}
         </span>
         <span className="hidden sm:inline text-gray-500">/</span>
-        <span className="hidden sm:inline text-gray-400">{health.total}</span>
+        <span className="hidden sm:inline text-gray-400">{basic.total}</span>
       </button>
 
-      {expanded && (
+      {expanded && health && (
         <div className="mt-2 min-w-[220px] rounded-xl p-3
           bg-gray-900/90 backdrop-blur-xl border border-white/10 shadow-2xl
           space-y-2 text-xs">

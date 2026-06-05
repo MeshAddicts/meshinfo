@@ -2052,20 +2052,28 @@ export function Map() {
         );
       };
 
+      // Only rebuild the popup HTML when the hovered link changes; otherwise just
+      // move it (setLngLat) as the cursor travels along the same link.
+      let lastLinkKey: string | null = null;
       const showLinkPopup = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
         const f = e.features?.[0];
         if (!f) return;
-        linkPopup
-          .setLngLat(e.lngLat)
-          .setHTML(buildLinkPopupHtml(f.properties ?? {}))
-          .addTo(map);
+        const props = f.properties ?? {};
+        lastLinkKey = `${props.aId}|${props.bId}`;
+        linkPopup.setLngLat(e.lngLat).setHTML(buildLinkPopupHtml(props)).addTo(map);
       };
       const moveLinkPopup = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
         const f = e.features?.[0];
         if (!f) return;
-        linkPopup.setLngLat(e.lngLat).setHTML(buildLinkPopupHtml(f.properties ?? {}));
+        const props = f.properties ?? {};
+        const key = `${props.aId}|${props.bId}`;
+        if (key !== lastLinkKey) {
+          lastLinkKey = key;
+          linkPopup.setHTML(buildLinkPopupHtml(props));
+        }
+        linkPopup.setLngLat(e.lngLat);
       };
-      const hideLinkPopup = () => linkPopup.remove();
+      const hideLinkPopup = () => { lastLinkKey = null; linkPopup.remove(); };
 
       for (const layerId of ["links-solid", "links-dashed", "links-dotted"]) {
         map.on("mouseenter", layerId, showLinkPopup);
