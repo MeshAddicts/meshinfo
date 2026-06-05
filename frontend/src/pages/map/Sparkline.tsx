@@ -15,7 +15,7 @@ export function Sparkline({
   if (values.length === 0) return null;
   if (values.length === 1) {
     return (
-      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
         <circle cx={width / 2} cy={height / 2} r={2} fill={color} />
       </svg>
     );

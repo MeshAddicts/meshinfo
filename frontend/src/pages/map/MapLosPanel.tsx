@@ -114,6 +114,7 @@ function EndpointConfig({
               }
             }}
             className="min-w-0 flex-1 bg-transparent text-[10px] text-gray-200 text-center focus:outline-hidden"
+            aria-label={`${label} antenna height in meters`}
             title="Antenna height above ground (m). Blank = 2 m."
           />
           <span className="text-gray-500 shrink-0">m</span>

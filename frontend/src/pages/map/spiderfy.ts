@@ -12,6 +12,7 @@ import type {
 } from "geojson";
 
 import { mbRoleColorExpr } from "../../palette";
+import { prefersReducedMotion } from "../../reducedMotion";
 import type { GeoJSONSource as MlGeoJSONSource, Map as MlMap } from "maplibre-gl";
 
 export const SPIDERFY_SOURCE_NODES = "spiderfy-nodes";
@@ -308,7 +309,7 @@ function renderSpiderfy(
   activeState = { groups, lastZoom: zoom };
   if (fresh) addSpiderfyLayers(map);
 
-  if (!animate || !fresh) {
+  if (!animate || !fresh || prefersReducedMotion()) {
     applyData(map, composeData(groups, zoom, 1));
     return Promise.resolve();
   }
@@ -382,6 +383,8 @@ export async function unspiderfy(map: MlMap): Promise<void> {
   const groups = state.groups;
   const zoom = map.getZoom();
   activeState = null;
+
+  if (prefersReducedMotion()) { removeSpiderfyLayers(map); return; }
 
   return new Promise<void>((resolve) => {
     const start = performance.now();

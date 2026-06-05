@@ -697,7 +697,7 @@ export function MapScanPanel({
 
       <div className={`overflow-y-auto overscroll-contain flex-1 ${minimized ? "hidden" : ""}`}>
         {isScanning && (
-          <div className="px-3 py-6 text-center text-[11px] text-gray-400">
+          <div role="status" className="px-3 py-6 text-center text-[11px] text-gray-400">
             <div className="inline-flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
               Scanning targets in view…
@@ -706,7 +706,7 @@ export function MapScanPanel({
         )}
 
         {!isScanning && !summary && scanError && (
-          <div className="px-3 py-6 text-center text-[11px] text-red-300">
+          <div role="alert" className="px-3 py-6 text-center text-[11px] text-red-300">
             {scanError}
           </div>
         )}
@@ -766,10 +766,17 @@ export function MapScanPanel({
                 return (
                   <li
                     key={r.id}
-                    className="px-3 py-1.5 hover:bg-white/5 cursor-pointer transition-colors"
+                    role="button"
+                    tabIndex={0}
+                    className="px-3 py-1.5 hover:bg-white/5 focus:bg-white/10 focus:outline-none cursor-pointer transition-colors"
                     onClick={() => onSelectResult(r.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelectResult(r.id); }
+                    }}
                     onMouseEnter={() => onHoverResult?.(r.id)}
                     onMouseLeave={() => onHoverResult?.(null)}
+                    onFocus={() => onHoverResult?.(r.id)}
+                    onBlur={() => onHoverResult?.(null)}
                   >
                     <div className="flex items-center gap-2 min-w-0">
                       <span className={`shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium border ${s.bg} ${s.text} ${s.border}`}>

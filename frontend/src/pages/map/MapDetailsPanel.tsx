@@ -195,6 +195,12 @@ export function MapDetailsPanel({
 }) {
   const { sheetRef, clearStyles, onTouchStart, onTouchMove, onTouchEnd } = useBottomSheetGesture(onClose);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   // Reset gesture when the selected node changes
   const prevNodeId = useRef<string | null>(null);
   if (data && data.node.id !== prevNodeId.current) {
@@ -246,6 +252,8 @@ export function MapDetailsPanel({
   return (
     <div
       ref={sheetRef}
+      role="dialog"
+      aria-label={node.longname || node.shortname || node.id}
       className="fixed z-1050 flex flex-col
         bg-gray-900/80 backdrop-blur-xl shadow-2xl
         bottom-0 left-0 right-0 max-h-[70vh] rounded-t-2xl border-t border-white/10

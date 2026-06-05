@@ -148,7 +148,7 @@ export function MapToolsDrawer({
               <button
                 key={tool.id}
                 type="button"
-                disabled={hardDisabled}
+                aria-disabled={hardDisabled}
                 onClick={() => {
                   if (hardDisabled) return;
                   if (terrainGated) {
