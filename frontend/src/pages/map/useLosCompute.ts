@@ -48,6 +48,8 @@ export function useLosCompute(params: LosComputeParams) {
   const losHoverMarkerRef = useRef<maplibregl.Marker | null>(null);
   // Skips fitBounds re-zoom when the user changes config without moving endpoints
   const losFitKeyRef = useRef<string | null>(null);
+  // Cache the bbox-derived DEM so height tweaks reuse it instead of re-stitching.
+  const losDemCacheRef = useRef<{ key: string; dem: DEM; source: DemSource } | null>(null);
 
   // Remove the hover marker on unmount (resetTool covers tool changes, not navigation away).
   useEffect(() => () => {
@@ -145,22 +147,32 @@ export function useLosCompute(params: LosComputeParams) {
         return;
       }
 
+      const demKey = `${demBounds.west.toFixed(4)},${demBounds.south.toFixed(4)},${demBounds.east.toFixed(4)},${demBounds.north.toFixed(4)}`;
       let dem: DEM;
       let demSourceUsedForLos: DemSource;
-      try {
-        // 2048² → ~115 m/px at 200 km. buildDem tries Tilezen first, falls back to Mapbox.
-        ({ dem, source: demSourceUsedForLos } = await buildDem({
-          bounds: demBounds,
-          targetWidth: 2048,
-          targetHeight: 2048,
-          token: mapboxToken,
-        }));
+      const demCache = losDemCacheRef.current;
+      if (demCache && demCache.key === demKey) {
+        dem = demCache.dem;
+        demSourceUsedForLos = demCache.source;
         setLosDemSource(demSourceUsedForLos);
-      } catch (err) {
-        console.warn("[Map] LoS DEM fetch failed:", err);
-        setLosError("Couldn't load terrain elevation data. Check your connection and try again.");
-        setLosResult(null);
-        return;
+      } else {
+        try {
+          // 2048² → ~115 m/px at 200 km. buildDem tries Tilezen first, falls back to Mapbox.
+          ({ dem, source: demSourceUsedForLos } = await buildDem({
+            bounds: demBounds,
+            targetWidth: 2048,
+            targetHeight: 2048,
+            token: mapboxToken,
+          }));
+          if (cancelled) return;
+          losDemCacheRef.current = { key: demKey, dem, source: demSourceUsedForLos };
+          setLosDemSource(demSourceUsedForLos);
+        } catch (err) {
+          console.warn("[Map] LoS DEM fetch failed:", err);
+          setLosError("Couldn't load terrain elevation data. Check your connection and try again.");
+          setLosResult(null);
+          return;
+        }
       }
 
       let result: LoSResult;
@@ -207,6 +219,7 @@ export function useLosCompute(params: LosComputeParams) {
           groundDielectric: 15,
           groundConductivity: 0.005,
         });
+        if (cancelled) return;
         setLosResult({
           ...result,
           itmLossDb: itm.lossDb,

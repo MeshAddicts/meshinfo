@@ -6,13 +6,13 @@ import { useEffect, useRef } from "react";
 
 import { ORIGIN_COLOR } from "../../palette";
 import { env } from "../../env";
-import { buildBuildingRaster } from "./buildingTiles";
-import { buildCanopyRaster } from "./canopyTiles";
+import { buildBuildingRaster, type BuildingRaster } from "./buildingTiles";
+import { buildCanopyRaster, type CanopyRaster } from "./canopyTiles";
 import { AGGRESSION_STOPS, type CoverageReliability, reliabilityPreset } from "./coverageAnalysis";
 import { type ItmContext, loadItmContext } from "./itm";
-import { buildClutterRaster } from "./landcoverTiles";
+import { buildClutterRaster, type ClutterRaster } from "./landcoverTiles";
 import { runScan, type ScanClass, type ScanSummary, type ScanTarget, scanToGeoJSON } from "./scanAnalysis";
-import { demBoundsAround, sampleDEMAt } from "./terrainDEM";
+import { type DEM, demBoundsAround, sampleDEMAt } from "./terrainDEM";
 import { buildDem, type DemSource } from "./terrainRgb";
 import type { IMapNode } from "./types";
 
@@ -71,6 +71,12 @@ export function useScanCompute(params: ScanComputeParams) {
   const scanOriginKeyRef = useRef<string | null>(null);
   // Lazily loaded, reused across scans; same WASM module as the coverage workers (main thread)
   const scanItmContextRef = useRef<ItmContext | null>(null);
+  // Cache the bbox-derived rasters so link-budget tweaks reuse them (no refetch).
+  const scanRasterCacheRef = useRef<{
+    key: string;
+    dem: DEM; source: DemSource;
+    clutter: ClutterRaster | null; canopy: CanopyRaster | null; buildings: BuildingRaster | null;
+  } | null>(null);
 
   // Scan tool: batch LoS to every node in radius from a chosen origin
   useEffect(() => {
@@ -189,38 +195,38 @@ export function useScanCompute(params: ScanComputeParams) {
           return;
         }
         const scanBounds = demBoundsAround(origin!, SCAN_RADIUS_KM, 1.05);
-        // 2048² rasters match coverage's resolution so per-target ITM sees
-        // the same terrain detail the painted prediction does.
-        const [{ dem, source: demSourceUsedForScan }, scanClutter, scanCanopy, scanBuildings] = await Promise.all([
-          buildDem({
-            bounds: scanBounds,
-            targetWidth: 2048,
-            targetHeight: 2048,
-            token: mapboxToken,
-          }),
-          // Skip individual fetches when their respective models are toggled off.
-          scanClutterEnabled
-            ? buildClutterRaster({
-                bounds: scanBounds,
-                targetWidth: 2048,
-                targetHeight: 2048,
-              })
-            : Promise.resolve(null),
-          scanCanopyEnabled
-            ? buildCanopyRaster({
-                bounds: scanBounds,
-                targetWidth: 2048,
-                targetHeight: 2048,
-              })
-            : Promise.resolve(null),
-          scanBuildingsEnabled
-            ? buildBuildingRaster({
-                bounds: scanBounds,
-                targetWidth: 2048,
-                targetHeight: 2048,
-              })
-            : Promise.resolve(null),
-        ]);
+        // 2048² rasters match coverage's resolution so per-target ITM sees the same
+        // terrain detail. Cached by bbox + enabled flags so link-budget tweaks reuse
+        // them instead of refetching ~800 tiles per config change.
+        const rasterKey = `${scanBounds.west.toFixed(4)},${scanBounds.south.toFixed(4)},${scanBounds.east.toFixed(4)},${scanBounds.north.toFixed(4)}|${scanClutterEnabled}|${scanCanopyEnabled}|${scanBuildingsEnabled}`;
+        let dem: DEM;
+        let demSourceUsedForScan: DemSource;
+        let scanClutter: ClutterRaster | null;
+        let scanCanopy: CanopyRaster | null;
+        let scanBuildings: BuildingRaster | null;
+        const rasterCache = scanRasterCacheRef.current;
+        if (rasterCache && rasterCache.key === rasterKey) {
+          dem = rasterCache.dem;
+          demSourceUsedForScan = rasterCache.source;
+          scanClutter = rasterCache.clutter;
+          scanCanopy = rasterCache.canopy;
+          scanBuildings = rasterCache.buildings;
+        } else {
+          const [demRes, clutterRes, canopyRes, buildingsRes] = await Promise.all([
+            buildDem({ bounds: scanBounds, targetWidth: 2048, targetHeight: 2048, token: mapboxToken }),
+            // Skip individual fetches when their respective models are toggled off.
+            scanClutterEnabled ? buildClutterRaster({ bounds: scanBounds, targetWidth: 2048, targetHeight: 2048 }) : Promise.resolve(null),
+            scanCanopyEnabled ? buildCanopyRaster({ bounds: scanBounds, targetWidth: 2048, targetHeight: 2048 }) : Promise.resolve(null),
+            scanBuildingsEnabled ? buildBuildingRaster({ bounds: scanBounds, targetWidth: 2048, targetHeight: 2048 }) : Promise.resolve(null),
+          ]);
+          if (cancelled) return;
+          dem = demRes.dem;
+          demSourceUsedForScan = demRes.source;
+          scanClutter = clutterRes;
+          scanCanopy = canopyRes;
+          scanBuildings = buildingsRes;
+          scanRasterCacheRef.current = { key: rasterKey, dem, source: demSourceUsedForScan, clutter: scanClutter, canopy: scanCanopy, buildings: scanBuildings };
+        }
         if (cancelled) return;
         setScanDemSource(demSourceUsedForScan);
         setScanClutterStatus(
@@ -344,6 +350,7 @@ export function useScanCompute(params: ScanComputeParams) {
       }
       scanInitialViewRef.current = null;
       scanOriginKeyRef.current = null;
+      scanRasterCacheRef.current = null;
     }
   }, [activeTool, mbMapRef]);
 
