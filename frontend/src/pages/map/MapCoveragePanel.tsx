@@ -689,22 +689,24 @@ export function MapCoveragePanel({
               </div>
               <button
                 type="button"
+                disabled={!result}
                 onClick={(e) => {
                   (e.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open");
                   onExport("geojson");
                 }}
-                className="text-left px-2 py-1.5 rounded text-[11px] text-gray-200 hover:bg-cyan-500/20 hover:text-cyan-200 transition-colors"
+                className="text-left px-2 py-1.5 rounded text-[11px] text-gray-200 hover:bg-cyan-500/20 hover:text-cyan-200 transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-200 disabled:cursor-not-allowed"
               >
                 <div className="font-medium">GeoJSON</div>
                 <div className="text-[9px] text-gray-500">QGIS · Leaflet · geojson.io</div>
               </button>
               <button
                 type="button"
+                disabled={!result}
                 onClick={(e) => {
                   (e.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open");
                   onExport("kml");
                 }}
-                className="text-left px-2 py-1.5 rounded text-[11px] text-gray-200 hover:bg-cyan-500/20 hover:text-cyan-200 transition-colors"
+                className="text-left px-2 py-1.5 rounded text-[11px] text-gray-200 hover:bg-cyan-500/20 hover:text-cyan-200 transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-200 disabled:cursor-not-allowed"
               >
                 <div className="font-medium">KML</div>
                 <div className="text-[9px] text-gray-500">Google Earth · SPLAT!</div>

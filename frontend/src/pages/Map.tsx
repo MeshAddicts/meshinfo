@@ -368,6 +368,7 @@ export function Map() {
     mbMapRef, isDraggingMarkerRef,
     setScanSummary: scan.setScanSummary,
     setIsScanning: scan.setIsScanning,
+    setScanError: scan.setScanError,
     setScanDemSource: scan.setScanDemSource,
     setScanClutterStatus: scan.setScanClutterStatus,
     setScanCanopyStatus: scan.setScanCanopyStatus,
@@ -790,6 +791,11 @@ export function Map() {
     }
 
     mbMapRef.current = map;
+
+    // Surface style/source/tile load failures instead of a silent blank map.
+    map.on("error", (e) => {
+      if (import.meta.env.DEV) console.warn("[Map] GL error:", e.error ?? e);
+    });
 
     const NODE_SOURCES = ["nodes_clustered", "nodes_plain", SPIDERFY_SOURCE_NODES] as const;
 
@@ -2539,6 +2545,7 @@ export function Map() {
               : "Virtual location"
           }
           isScanning={scan.isScanning}
+          scanError={scan.scanError}
           demSource={scan.scanDemSource}
           terrainNeeded={!terrain3D}
           onEnableTerrain={() => setTerrain3D(true)}

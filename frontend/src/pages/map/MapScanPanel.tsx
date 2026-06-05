@@ -98,10 +98,13 @@ export function MapScanPanel({
   onCustomSensitivityChange,
   reliability,
   onReliabilityChange,
+  scanError,
 }: {
   summary: ScanSummary | null;
   originLabel: string;
   isScanning: boolean;
+  /** Last scan error; shows an error row instead of a blank panel. */
+  scanError?: string | null;
   /** null = scan hasn't run yet; otherwise the bulk DEM source actually used. */
   demSource: DemSource | null;
   terrainNeeded?: boolean;
@@ -702,6 +705,12 @@ export function MapScanPanel({
           </div>
         )}
 
+        {!isScanning && !summary && scanError && (
+          <div className="px-3 py-6 text-center text-[11px] text-red-300">
+            {scanError}
+          </div>
+        )}
+
         {!isScanning && summary && summary.results.length === 0 && (
           <div className="px-3 py-6 text-center text-[11px] text-gray-400">
             No target nodes within 200 km of the origin. Try a different location.
@@ -743,6 +752,14 @@ export function MapScanPanel({
               </span>
             </button>
 
+            {filter && displayResults.length === 0 && (
+              <div className="px-3 py-4 text-center text-[11px] text-gray-500">
+                No {filter} nodes in range.{" "}
+                <button type="button" onClick={() => setFilter(null)} className="text-cyan-400 hover:text-cyan-300">
+                  Show all
+                </button>
+              </div>
+            )}
             <ul className="divide-y divide-white/5">
               {displayResults.map((r) => {
                 const s = CLASS_STYLES[r.cls];

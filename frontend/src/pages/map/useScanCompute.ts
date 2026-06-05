@@ -40,6 +40,7 @@ type ScanComputeParams = {
   isDraggingMarkerRef: React.RefObject<boolean>;
   setScanSummary: (s: ScanSummary | null) => void;
   setIsScanning: (b: boolean) => void;
+  setScanError: (e: string | null) => void;
   setScanDemSource: (s: DemSource | null) => void;
   setScanClutterStatus: (s: { tilesPresent: number; tilesTotal: number } | null) => void;
   setScanCanopyStatus: (s: { tilesPresent: number; tilesTotal: number } | null) => void;
@@ -57,7 +58,7 @@ export function useScanCompute(params: ScanComputeParams) {
     scanAntennaHeightM, scanReliability,
     hiddenScanClasses, scanSummary, scanHoverId,
     mbMapRef, isDraggingMarkerRef,
-    setScanSummary, setIsScanning, setScanDemSource,
+    setScanSummary, setIsScanning, setScanDemSource, setScanError,
     setScanClutterStatus, setScanCanopyStatus, setScanBuildingsStatus,
     setToolFromId, setToolVirtualPos,
   } = params;
@@ -75,6 +76,7 @@ export function useScanCompute(params: ScanComputeParams) {
     if (activeTool !== "scan" || toolStep !== "result") {
       setScanSummary(null);
       setIsScanning(false);
+      setScanError(null);
       return;
     }
     if (!terrain3D) {
@@ -138,6 +140,7 @@ export function useScanCompute(params: ScanComputeParams) {
     }
 
     setIsScanning(true);
+    setScanError(null);
     let cancelled = false;
 
     const SCAN_RADIUS_KM = 200;
@@ -180,6 +183,7 @@ export function useScanCompute(params: ScanComputeParams) {
         const mapboxToken = env.MAPBOX_TOKEN;
         if (!mapboxToken) {
           console.warn("[Map] Scan aborted — Mapbox token missing.");
+          setScanError("Mapbox token not configured — scanning needs terrain elevation data.");
           setIsScanning(false);
           return;
         }
@@ -291,6 +295,7 @@ export function useScanCompute(params: ScanComputeParams) {
         src?.setData(scanToGeoJSON(summary));
       } catch (err) {
         console.warn("[Map] Scan failed:", err);
+        setScanError("Scan failed. Adjust settings and try again.");
         setScanSummary(null);
       } finally {
         if (!cancelled) setIsScanning(false);
@@ -304,7 +309,7 @@ export function useScanCompute(params: ScanComputeParams) {
       scanAggressionIdx, scanClutterEnabled, scanCanopyEnabled, scanBuildingsEnabled,
       scanAntennaHeightM, scanReliability,
       mbMapRef, isDraggingMarkerRef,
-      setScanSummary, setIsScanning, setScanDemSource,
+      setScanSummary, setIsScanning, setScanDemSource, setScanError,
       setScanClutterStatus, setScanCanopyStatus, setScanBuildingsStatus,
       setToolFromId, setToolVirtualPos]);
 

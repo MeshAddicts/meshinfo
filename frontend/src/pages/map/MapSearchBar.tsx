@@ -124,12 +124,15 @@ export function MapSearchBar({
         />
       </div>
 
-      {open && results.length > 0 && (
+      {open && query.trim() !== "" && (
         <div
           ref={listRef}
           className="mt-1 max-h-64 overflow-y-auto rounded-xl
             bg-gray-900/90 backdrop-blur-xl border border-white/10 shadow-2xl"
         >
+          {results.length === 0 && (
+            <div className="px-3 py-2 text-xs text-gray-500">No matching nodes</div>
+          )}
           {results.map(({ id, node }, i) => {
             const roleVal = (node as any).role as number | undefined;
             const roleName = roleVal != null ? roleTitles[roleVal as NodeRole]?.title : null;

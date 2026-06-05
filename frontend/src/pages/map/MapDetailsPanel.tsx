@@ -455,6 +455,7 @@ export function MapDetailsPanel({
           )}
         </CollapsibleSection>
 
+        {elsewhereLinks.length > 0 && (
         <CollapsibleSection title="Elsewhere">
           <div className="space-y-1 px-2">
             {elsewhereLinks.map((link) => {
@@ -476,6 +477,7 @@ export function MapDetailsPanel({
             })}
           </div>
         </CollapsibleSection>
+        )}
       </div>
     </div>
   );

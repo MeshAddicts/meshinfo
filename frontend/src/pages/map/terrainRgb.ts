@@ -129,7 +129,8 @@ async function fetchTile(
   const url = `${TILE_URL}/${z}/${x}/${y}.pngraw?access_token=${encodeURIComponent(token)}`;
   const res = await fetch(url);
   if (!res.ok) {
-    throw new Error(`terrain-rgb tile fetch failed ${z}/${x}/${y}: HTTP ${res.status}`);
+    const auth = res.status === 401 || res.status === 403 ? " (check Mapbox token)" : "";
+    throw new Error(`terrain-rgb tile fetch failed ${z}/${x}/${y}: HTTP ${res.status}${auth}`);
   }
   const blob = await res.blob();
   const bitmap = await createImageBitmap(blob);
@@ -327,6 +328,7 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
   // Parallel fetch; individual failures → null tile.
   // Antimeridian wrap + sync pre-seed for in-flight dedupe — see landcoverTiles.ts.
   const tileMap = new Map<string, CachedTile | null>();
+  let failureCount = 0;
   const jobs: Promise<void>[] = [];
   for (let x = xMin; x <= xMax; x++) {
     const fetchX = ((x % scale) + scale) % scale;
@@ -338,6 +340,7 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
         fetchTile(zoom, fetchX, y, token)
           .then((t) => void tileMap.set(key, t))
           .catch((err) => {
+            failureCount += 1;
             console.warn("[terrainRgb]", err);
             tileMap.set(key, null);
           }),
@@ -345,6 +348,12 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
     }
   }
   await Promise.all(jobs);
+
+  // Mirror the Tilezen twin: wholesale failure surfaces as an error, not a hollow DEM.
+  const totalTiles = tileMap.size;
+  if (failureCount > totalTiles / 2) {
+    throw new Error(`terrain-rgb bulk DEM failed: ${failureCount}/${totalTiles} tiles errored`);
+  }
 
   // Bilinear resample; nearest-neighbor dropped narrow peaks (~500 m underread on CA buttes)
   const data = new Float32Array(targetWidth * targetHeight);

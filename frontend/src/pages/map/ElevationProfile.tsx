@@ -63,7 +63,13 @@ export function ElevationProfile({
     return { xScale: xs, yScale: ys, yTicks: ticks };
   }, [result, plotW, plotH]);
 
-  if (result.points.length === 0) return null;
+  if (result.points.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full min-h-16 text-[11px] text-gray-500">
+        Elevation profile unavailable for this path.
+      </div>
+    );
+  }
 
   const terrainPath =
     `M ${xScale(0)},${plotH} ` +
