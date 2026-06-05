@@ -1,11 +1,23 @@
 import { useCallback, useRef } from "react";
 
 /**
- * Mobile bottom-sheet gesture: swipe down to dismiss (or collapse if expanded),
- * swipe up to expand. Imperative DOM ops so React re-renders can't fight the
- * pointer.
+ * Mobile bottom-sheet gesture. Function form `(onClose)` = drag down dismisses,
+ * drag up expands (Settings/Details). Options form with `minimized`/`onMinimize`/
+ * `onExpand` = drag down collapses to a peek, again from peek dismisses, drag up
+ * expands the body (RF tool sheets). Imperative DOM ops so re-renders can't fight
+ * the pointer.
  */
-export function useBottomSheetGesture(onClose: () => void) {
+type SheetOpts = {
+  onClose: () => void;
+  minimized?: boolean;
+  onMinimize?: () => void;
+  onExpand?: () => void;
+};
+
+export function useBottomSheetGesture(arg: (() => void) | SheetOpts) {
+  const optsRef = useRef<SheetOpts>(typeof arg === "function" ? { onClose: arg } : arg);
+  optsRef.current = typeof arg === "function" ? { onClose: arg } : arg;
+
   const sheetRef = useRef<HTMLDivElement>(null);
   const startY = useRef(0);
   const dragging = useRef(false);
@@ -83,6 +95,25 @@ export function useBottomSheetGesture(onClose: () => void) {
     }, 280);
   }, [animateHeightTo]);
 
+  /** Settle the inline transform; a React state change (minimize/expand) re-renders the height. */
+  const snapBack = useCallback(() => {
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+    sheet.style.transition = "transform 200ms ease-out";
+    sheet.style.transform = "translateY(0)";
+  }, []);
+
+  const closeWithAnim = useCallback(() => {
+    const sheet = sheetRef.current;
+    if (!sheet) return;
+    sheet.style.transition = "transform 200ms ease-in";
+    sheet.style.transform = "translateY(100%)";
+    let closed = false;
+    const finishClose = () => { if (closed) return; closed = true; optsRef.current.onClose(); };
+    sheet.addEventListener("transitionend", finishClose, { once: true });
+    window.setTimeout(finishClose, 250); // fallback if transitionend never fires
+  }, []);
+
   const onTouchStart = useCallback((e: React.TouchEvent) => {
     if (e.touches.length !== 1) return;
     dragging.current = true;
@@ -113,27 +144,34 @@ export function useBottomSheetGesture(onClose: () => void) {
     const touch = e.changedTouches[0];
     if (!touch) return;
     const dy = touch.clientY - startY.current;
-    // Capped at 100px so a tall collapsed sheet still dismisses with a flick.
+    // Capped at 100px so a tall sheet still dismisses with a flick.
     const threshold = Math.min(sheet.offsetHeight * 0.2, 100);
+    const { minimized, onMinimize, onExpand } = optsRef.current;
 
     if (dy > threshold) {
-      if (expandedRef.current) {
+      // Dragged down: collapse expanded→peek first; from peek (or legacy) dismiss.
+      if (onMinimize && !minimized) {
+        onMinimize();
+        snapBack();
+      } else if (expandedRef.current) {
         collapseFromExpanded();
       } else {
-        sheet.style.transition = "transform 200ms ease-in";
-        sheet.style.transform = "translateY(100%)";
-        let closed = false;
-        const finishClose = () => { if (closed) return; closed = true; onClose(); };
-        sheet.addEventListener("transitionend", finishClose, { once: true });
-        window.setTimeout(finishClose, 250); // fallback if transitionend never fires
+        closeWithAnim();
       }
-    } else if (dy < -40 && !expandedRef.current) {
-      expand();
+    } else if (dy < -40) {
+      // Dragged up: expand the body (peek sheets) or grow to full height (legacy).
+      if (onExpand) {
+        onExpand();
+        snapBack();
+      } else if (!expandedRef.current) {
+        expand();
+      } else {
+        snapBack();
+      }
     } else {
-      sheet.style.transition = "transform 200ms ease-out";
-      sheet.style.transform = "translateY(0)";
+      snapBack();
     }
-  }, [onClose, expand, collapseFromExpanded]);
+  }, [snapBack, closeWithAnim, expand, collapseFromExpanded]);
 
   return { sheetRef, clearStyles, expand, onTouchStart, onTouchMove, onTouchEnd };
 }

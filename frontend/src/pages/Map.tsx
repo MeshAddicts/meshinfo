@@ -2331,7 +2331,7 @@ export function Map() {
         buildings3D={buildings3D}
         setBuildings3D={setBuildings3D}
         onExport={handleExport}
-        hidden={!!detailsData}
+        hidden={!!detailsData || activeTool != null}
         recentDays={recentDays}
         setRecentDays={setRecentDays}
         clusterEnabled={clusterEnabled}
@@ -2361,7 +2361,7 @@ export function Map() {
           });
           setSettingsPanelOpen(true);
         }}
-        hidden={!!detailsData}
+        hidden={!!detailsData || activeTool != null}
       />
 
       {myNodeLabel && (

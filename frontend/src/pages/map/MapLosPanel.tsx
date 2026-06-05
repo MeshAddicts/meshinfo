@@ -180,7 +180,24 @@ export function MapLosPanel({
   /** Fires with 0-1 distance fraction on chart hover. */
   onProfileHover?: (fraction: number | null) => void;
 }) {
-  const sheet = useBottomSheetGesture(onClose);
+  // Mobile peek after a result: summary + graph stay; configs reveal on drag-up.
+  const [minimized, setMinimized] = useState(false);
+  const sheet = useBottomSheetGesture({
+    onClose,
+    minimized,
+    onMinimize: () => setMinimized(true),
+    onExpand: () => setMinimized(false),
+  });
+
+  const losKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!result) { losKeyRef.current = null; return; }
+    const key = `${fromLabel}->${toLabel}`;
+    if (losKeyRef.current !== key) {
+      losKeyRef.current = key;
+      setMinimized(true);
+    }
+  }, [result, fromLabel, toLabel]);
 
   // Modal terrain prompt: focus its primary action on mount.
   const terrainBtnRef = useRef<HTMLButtonElement>(null);
@@ -469,6 +486,17 @@ export function MapLosPanel({
               <span className="hidden sm:inline">Updating…</span>
             </span>
           )}
+          <button
+            type="button"
+            onClick={() => setMinimized((m) => !m)}
+            className="sm:hidden p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors"
+            aria-label={minimized ? "Show details" : "Collapse to summary"}
+            aria-expanded={!minimized}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={minimized ? "M5 15l7-7 7 7" : "M5 9l7 7 7-7"} />
+            </svg>
+          </button>
           <details className="text-[10px] text-gray-500 relative">
             <summary className="cursor-pointer hover:text-gray-400 select-none list-none" aria-label="About this analysis">
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -524,8 +552,8 @@ export function MapLosPanel({
 
       {/* Body: 3-column row on desktop (From | Profile | To); mobile stacks vertically
           with the profile on top, then the two endpoint configs. */}
-      <div className="flex flex-col sm:flex-row overflow-y-auto overscroll-contain min-h-0 flex-1 sm:overflow-visible sm:flex-initial">
-        <div className="order-2 sm:order-1 w-full sm:w-36 sm:shrink-0 border-t sm:border-t-0 border-white/5">
+      <div className={`flex flex-col sm:flex-row overscroll-contain min-h-0 sm:overflow-visible sm:flex-initial ${minimized ? "" : "flex-1 overflow-y-auto"}`}>
+        <div className={`order-2 sm:order-1 w-full sm:w-36 sm:shrink-0 border-t sm:border-t-0 border-white/5 ${minimized ? "max-sm:hidden" : ""}`}>
           <EndpointConfig
             label={fromLabel}
             color={fromColor}
@@ -545,7 +573,7 @@ export function MapLosPanel({
             onHoverFraction={onProfileHover}
           />
         </div>
-        <div className="order-3 w-full sm:w-36 sm:shrink-0 border-t sm:border-t-0 border-white/5">
+        <div className={`order-3 w-full sm:w-36 sm:shrink-0 border-t sm:border-t-0 border-white/5 ${minimized ? "max-sm:hidden" : ""}`}>
           <EndpointConfig
             label={toLabel}
             color={toColor}

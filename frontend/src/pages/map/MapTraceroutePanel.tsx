@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import type { ITraceroutesResponse } from "../../types";
 import { findPathsBetween } from "./pathAnalysis";
 import { PathHopList } from "./PathHopList";
@@ -33,7 +35,13 @@ export function MapTraceroutePanel({
 }) {
   const paths = findPathsBetween(fromId, toId, traceroutes);
   const shortest = paths[0];
-  const sheet = useBottomSheetGesture(onClose);
+  const [minimized, setMinimized] = useState(false);
+  const sheet = useBottomSheetGesture({
+    onClose,
+    minimized,
+    onMinimize: () => setMinimized(true),
+    onExpand: () => setMinimized(false),
+  });
 
   return (
     <div
@@ -86,7 +94,7 @@ export function MapTraceroutePanel({
         </button>
       </div>
 
-      <div className="p-3 overflow-y-auto overscroll-contain flex-1 min-h-0">
+      <div className={`p-3 overflow-y-auto overscroll-contain flex-1 min-h-0 ${minimized ? "max-sm:hidden" : ""}`}>
         {loading && traceroutes.length === 0 ? (
           <div className="px-2 py-3 text-xs text-gray-500">
             Loading traceroutes…

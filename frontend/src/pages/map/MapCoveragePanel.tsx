@@ -380,7 +380,12 @@ export function MapCoveragePanel({
   // no-op — rxMatchesTx is derived, so the values still match TX.
   const rxSnapshotRef = useRef<{ hw: number; ant: number; height: number } | null>(null);
 
-  const sheet = useBottomSheetGesture(onClose);
+  const sheet = useBottomSheetGesture({
+    onClose,
+    minimized,
+    onMinimize: () => setMinimized(true),
+    onExpand: () => setMinimized(false),
+  });
 
   // Close any open <details> popovers (the ⋯ menu, stats info) on outside-click
   // or Escape; pointerdown covers touch.
@@ -814,7 +819,7 @@ export function MapCoveragePanel({
         </div>
       </div>
 
-      <div className={`p-3 pb-5 space-y-2 overflow-y-auto overscroll-contain min-h-0 flex-1 sm:pb-3 ${minimized ? "hidden" : ""}`}>
+      <div className="px-3 pt-2 pb-1 shrink-0">
         {(() => {
           const reachablePx = result.clearCount + result.fresnelCount;
           const totalPx = reachablePx + result.blockedCount;
@@ -1014,7 +1019,9 @@ export function MapCoveragePanel({
             </div>
           );
         })()}
+      </div>
 
+      <div className={`px-3 pb-5 space-y-2 overflow-y-auto overscroll-contain min-h-0 flex-1 sm:pb-3 ${minimized ? "hidden" : ""}`}>
         <Row
           icon={
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

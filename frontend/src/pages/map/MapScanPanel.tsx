@@ -168,11 +168,26 @@ export function MapScanPanel({
   // Clear stale class filter when a new scan lands.
   useEffect(() => { setFilter(null); }, [summary]);
 
+  // Peek when a scan first lands for a new origin; config re-runs keep expansion.
+  const scanMinKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!summary) { scanMinKeyRef.current = null; return; }
+    if (scanMinKeyRef.current !== originLabel) {
+      scanMinKeyRef.current = originLabel;
+      setMinimized(true);
+    }
+  }, [summary, originLabel]);
+
   // Without a snapshot, unchecking "Same as transmitter" would be a visual
   // no-op — rxMatchesTx is derived, so the values still match TX.
   const rxSnapshotRef = useRef<{ hw: number; ant: number } | null>(null);
 
-  const sheet = useBottomSheetGesture(onClose);
+  const sheet = useBottomSheetGesture({
+    onClose,
+    minimized,
+    onMinimize: () => setMinimized(true),
+    onExpand: () => setMinimized(false),
+  });
 
   // Modal terrain prompt: focus its primary action on mount.
   const terrainBtnRef = useRef<HTMLButtonElement>(null);
