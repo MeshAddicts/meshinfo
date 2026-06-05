@@ -374,7 +374,9 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
     const xWrapped = ((tileX % scale) + scale) % scale;
     const t = tileMap.get(`${zoom}/${xWrapped}/${tileY}`);
     if (!t) return NaN;
-    return t.data[py * t.size + px];
+    const cx = px < 0 ? 0 : px >= t.size ? t.size - 1 : px;
+    const cy = py < 0 ? 0 : py >= t.size ? t.size - 1 : py;
+    return t.data[cy * t.size + cx];
   };
 
   for (let j = 0; j < targetHeight; j++) {
@@ -476,7 +478,9 @@ export async function buildDemFromTilezen(opts: BuildDemOptions): Promise<DEM> {
     const xWrapped = ((tileX % scale) + scale) % scale;
     const t = tileMap.get(`${zoom}/${xWrapped}/${tileY}`);
     if (!t) return NaN;
-    return t.data[py * t.size + px];
+    const cx = px < 0 ? 0 : px >= t.size ? t.size - 1 : px;
+    const cy = py < 0 ? 0 : py >= t.size ? t.size - 1 : py;
+    return t.data[cy * t.size + cx];
   };
 
   for (let j = 0; j < targetHeight; j++) {

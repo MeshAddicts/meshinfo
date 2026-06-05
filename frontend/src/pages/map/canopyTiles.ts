@@ -338,7 +338,7 @@ export function sampleCanopyAt(
   const { width, height, bounds, heightM, stdM, mask } = raster;
   const fx = ((lng - bounds.west) / (bounds.east - bounds.west)) * (width - 1);
   const fy = ((bounds.north - lat) / (bounds.north - bounds.south)) * (height - 1);
-  if (fx < 0 || fx > width - 1 || fy < 0 || fy > height - 1) return null;
+  if (!Number.isFinite(fx) || !Number.isFinite(fy) || fx < 0 || fx > width - 1 || fy < 0 || fy > height - 1) return null;
 
   const x0 = Math.floor(fx);
   const y0 = Math.floor(fy);

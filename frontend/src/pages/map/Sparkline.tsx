@@ -41,7 +41,7 @@ export function Sparkline({
   const last = points[points.length - 1];
 
   return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
       <path d={fillD} fill={color} fillOpacity={fillOpacity} />
       <path d={pathD} fill="none" stroke={color} strokeWidth={1.25} strokeLinecap="round" strokeLinejoin="round" />
       <circle cx={last[0]} cy={last[1]} r={1.5} fill={color} />

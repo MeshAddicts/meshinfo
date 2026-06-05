@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { commitNumericDraft } from "./helpers";
 import { buildAllLinksFeatureCollection } from "./linkFeatures";
+import { demBoundsAround, unionDemBoundsAround } from "./terrainDEM";
 import type { IMapNode } from "./types";
 
 describe("commitNumericDraft (C4)", () => {
@@ -33,5 +34,25 @@ describe("antimeridian link coords (C16)", () => {
     // from stays 179; to is unwrapped to 181 (short way), not -179 (long way)
     expect(coords[0][0]).toBe(179);
     expect(coords[coords.length - 1][0]).toBeCloseTo(181, 6);
+  });
+});
+
+describe("unionDemBoundsAround (C6)", () => {
+  it("single center equals demBoundsAround", () => {
+    const u = unionDemBoundsAround([[0, 0]], 200);
+    const d = demBoundsAround([0, 0], 200);
+    expect(u).toEqual(d);
+  });
+
+  it("seam-straddling origins stay a tight continuous bbox, not near-global", () => {
+    const u = unionDemBoundsAround([[179, 0], [-179, 0]], 200);
+    expect(u.west).toBeLessThan(u.east);
+    expect(u.east - u.west).toBeLessThan(10); // not ~360
+  });
+
+  it("normal nearby origins union as usual", () => {
+    const u = unionDemBoundsAround([[10, 0], [11, 0]], 50);
+    expect(u.west).toBeLessThan(10);
+    expect(u.east).toBeGreaterThan(11);
   });
 });

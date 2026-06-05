@@ -751,7 +751,9 @@ export function MapCoveragePanel({
                 type="button"
                 disabled={!result}
                 onClick={(e) => {
-                  (e.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open");
+                  const d = e.currentTarget.closest("details") as HTMLDetailsElement | null;
+                  d?.removeAttribute("open");
+                  d?.querySelector<HTMLElement>("summary")?.focus();
                   onExport("geojson");
                 }}
                 className="text-left px-2 py-1.5 rounded text-[11px] text-gray-200 hover:bg-cyan-500/20 hover:text-cyan-200 transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-200 disabled:cursor-not-allowed"
@@ -763,7 +765,9 @@ export function MapCoveragePanel({
                 type="button"
                 disabled={!result}
                 onClick={(e) => {
-                  (e.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open");
+                  const d = e.currentTarget.closest("details") as HTMLDetailsElement | null;
+                  d?.removeAttribute("open");
+                  d?.querySelector<HTMLElement>("summary")?.focus();
                   onExport("kml");
                 }}
                 className="text-left px-2 py-1.5 rounded text-[11px] text-gray-200 hover:bg-cyan-500/20 hover:text-cyan-200 transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-200 disabled:cursor-not-allowed"

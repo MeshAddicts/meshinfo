@@ -19,7 +19,7 @@ import { CoverageWorkerPool } from "./coverageWorkerPool";
 import { queryTerrainElevationMSL } from "./helpers";
 import { CABLE_LOSS_DB, clampRxHeightM, DEFAULT_ITM_ENV, FADE_MARGIN_DB, FREQ_MHZ } from "./itmEnv";
 import { buildClutterRaster, type ClutterRaster, downsampleClutterRaster } from "./landcoverTiles";
-import { type DEM, type DEMBounds, demBoundsAround, downsampleDEM, sampleDEMAt } from "./terrainDEM";
+import { type DEM, type DEMBounds, downsampleDEM, sampleDEMAt, unionDemBoundsAround } from "./terrainDEM";
 import { buildDem, fetchElevationAt } from "./terrainRgb";
 import type { IMapNode } from "./types";
 import type { CoverageState } from "./useCoverageState";
@@ -434,21 +434,12 @@ export function useCoverageCompute(params: CoverageComputeParams) {
 
     const radKm = coverageRadiusKm;
     // Union bbox over primary + merge origins (all share radiusKm since TX
-    // params are global). Empty merge set collapses to the primary's bbox.
-    const primaryBounds = demBoundsAround(origin, radKm, 1.05);
-    let demBounds = primaryBounds;
-    if (coverageMergeOrigins.length > 0) {
-      let west = primaryBounds.west, south = primaryBounds.south;
-      let east = primaryBounds.east, north = primaryBounds.north;
-      for (const m of coverageMergeOrigins) {
-        const b = demBoundsAround(m.position, radKm, 1.05);
-        if (b.west < west) west = b.west;
-        if (b.south < south) south = b.south;
-        if (b.east > east) east = b.east;
-        if (b.north > north) north = b.north;
-      }
-      demBounds = { west, south, east, north };
-    }
+    // params are global); seam-aware so straddling origins don't span the globe.
+    const demBounds = unionDemBoundsAround(
+      [origin, ...coverageMergeOrigins.map((m) => m.position)],
+      radKm,
+      1.05,
+    );
     // Recenter only when the origin actually moved; pure parameter recomputes
     // (TX power, antenna, clutter on/off, etc.) shouldn't yank the user's view.
     const prev = lastRecenteredOriginRef.current;

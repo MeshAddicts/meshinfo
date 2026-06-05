@@ -241,13 +241,13 @@ export async function buildClutterRaster(
 
   for (let j = 0; j < targetHeight; j++) {
     const lat =
-      bounds.north - ((bounds.north - bounds.south) * j) / (targetHeight - 1);
+      bounds.north - ((bounds.north - bounds.south) * j) / Math.max(1, targetHeight - 1);
     const absY = lat2tileY(lat, zoom) * TILE_SIZE;
     const yIdx = Math.floor(absY);
 
     for (let i = 0; i < targetWidth; i++) {
       const lng =
-        bounds.west + ((bounds.east - bounds.west) * i) / (targetWidth - 1);
+        bounds.west + ((bounds.east - bounds.west) * i) / Math.max(1, targetWidth - 1);
       const absX = lng2tileX(lng, zoom) * TILE_SIZE;
       const xIdx = Math.floor(absX);
 
@@ -268,7 +268,7 @@ export function sampleClutterClassAt(
   const { width, height, bounds, data } = raster;
   const fx = ((lng - bounds.west) / (bounds.east - bounds.west)) * (width - 1);
   const fy = ((bounds.north - lat) / (bounds.north - bounds.south)) * (height - 1);
-  if (fx < 0 || fx > width - 1 || fy < 0 || fy > height - 1) return NLCD_DEFAULT_CLASS_ID;
+  if (!Number.isFinite(fx) || !Number.isFinite(fy) || fx < 0 || fx > width - 1 || fy < 0 || fy > height - 1) return NLCD_DEFAULT_CLASS_ID;
   const x = Math.round(fx);
   const y = Math.round(fy);
   return data[y * width + x];

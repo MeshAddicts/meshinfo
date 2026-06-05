@@ -2,6 +2,7 @@
  * DEM sampler. Samples Mapbox's queryTerrainElevation into a Float32Array grid
  * on the main thread, then ships it to a worker.
  */
+import { shortestLngDelta } from "./geo";
 
 export interface MapLike {
   queryTerrainElevation: (lngLat: [number, number] | { lng: number; lat: number }) => number | null | undefined;
@@ -31,8 +32,8 @@ export function sampleDEM(
   height: number,
 ): DEM {
   const data = new Float32Array(width * height);
-  const lonStep = (bounds.east - bounds.west) / (width - 1);
-  const latStep = (bounds.north - bounds.south) / (height - 1);
+  const lonStep = (bounds.east - bounds.west) / Math.max(1, width - 1);
+  const latStep = (bounds.north - bounds.south) / Math.max(1, height - 1);
 
   for (let y = 0; y < height; y++) {
     const lat = bounds.north - y * latStep;
@@ -57,7 +58,7 @@ export function sampleDEMAt(dem: DEM, lng: number, lat: number): number {
   const fx = ((sLng - west) / (east - west)) * (width - 1);
   const fy = ((north - lat) / (north - south)) * (height - 1);
 
-  if (fx < 0 || fx > width - 1 || fy < 0 || fy > height - 1) return NaN;
+  if (!Number.isFinite(fx) || !Number.isFinite(fy) || fx < 0 || fx > width - 1 || fy < 0 || fy > height - 1) return NaN;
 
   const x0 = Math.floor(fx);
   const y0 = Math.floor(fy);
@@ -95,11 +96,32 @@ export function demBoundsAround(
   };
 }
 
+/** Union of per-center bboxes, unwrapping each center into the first center's
+ *  longitude frame so a seam-straddling merge set stays one tight continuous
+ *  bbox instead of a near-global one (naive min/max spans the seam). */
+export function unionDemBoundsAround(
+  centers: [number, number][],
+  radiusKm: number,
+  padFactor = 1.05,
+): DEMBounds {
+  const ref = centers[0];
+  const out = demBoundsAround(ref, radiusKm, padFactor);
+  for (let i = 1; i < centers.length; i++) {
+    const [lng, lat] = centers[i];
+    const b = demBoundsAround([ref[0] + shortestLngDelta(ref[0], lng), lat], radiusKm, padFactor);
+    if (b.west < out.west) out.west = b.west;
+    if (b.east > out.east) out.east = b.east;
+    if (b.south < out.south) out.south = b.south;
+    if (b.north > out.north) out.north = b.north;
+  }
+  return out;
+}
+
 /** Lng/lat for DEM pixel (x, y). */
 export function demPixelToLngLat(dem: DEM, x: number, y: number): [number, number] {
   const { bounds, width, height } = dem;
-  const lng = bounds.west + (x / (width - 1)) * (bounds.east - bounds.west);
-  const lat = bounds.north - (y / (height - 1)) * (bounds.north - bounds.south);
+  const lng = bounds.west + (x / Math.max(1, width - 1)) * (bounds.east - bounds.west);
+  const lat = bounds.north - (y / Math.max(1, height - 1)) * (bounds.north - bounds.south);
   return [lng, lat];
 }
 

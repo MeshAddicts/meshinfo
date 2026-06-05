@@ -636,11 +636,18 @@ export function Map() {
         // Force repaint so custom layers are captured, then wait a frame
         mbMapRef.current.triggerRepaint();
         setTimeout(() => {
-          const canvas = mbMapRef.current!.getCanvas();
-          triggerDownload(canvas.toDataURL("image/png"));
+          try {
+            const canvas = mbMapRef.current!.getCanvas();
+            triggerDownload(canvas.toDataURL("image/png"));
+            toast("Map exported as PNG", { kind: "success" });
+          } catch (err) {
+            console.error("Map export failed:", err);
+            toast("Couldn't export the map", { kind: "error" });
+          }
         }, 100);
       } catch (err) {
         console.error("Map export failed:", err);
+        toast("Couldn't export the map", { kind: "error" });
       }
     }
   }

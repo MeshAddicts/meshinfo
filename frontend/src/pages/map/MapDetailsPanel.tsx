@@ -375,7 +375,9 @@ export function MapDetailsPanel({
         <div>
           <div className="text-gray-500 text-[10px] uppercase tracking-wider">Position</div>
           <div className="text-gray-400 font-mono text-[11px]">
-            {node.position[1].toFixed(5)}, {node.position[0].toFixed(5)}
+            {Math.abs(node.position[0]) < 1e-6 && Math.abs(node.position[1]) < 1e-6
+              ? "No GPS fix"
+              : `${node.position[1].toFixed(5)}, ${node.position[0].toFixed(5)}`}
           </div>
         </div>
         {hardwareLabel && (
