@@ -3,7 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AggressionSlider, BuildingStatusChip, CanopyStatusChip, ClassLegend, ClutterStatusChip } from "./ClutterUI";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
-import { scanSortKey, type ScanClass, type ScanResult, type ScanSummary } from "./scanAnalysis";
+import { type ScanClass, type ScanResult, scanSortKey, type ScanSummary } from "./scanAnalysis";
+import { Segmented } from "./Segmented";
 import type { DemSource } from "./terrainRgb";
 import { useBottomSheetGesture } from "./useBottomSheet";
 
@@ -172,8 +173,14 @@ export function MapScanPanel({
 
   const sheet = useBottomSheetGesture(onClose);
 
+  // Modal terrain prompt: focus its primary action on mount.
+  const terrainBtnRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    const onDocMouseDown = (e: MouseEvent) => {
+    if (terrainNeeded && onEnableTerrain) requestAnimationFrame(() => terrainBtnRef.current?.focus());
+  }, [terrainNeeded, onEnableTerrain]);
+
+  useEffect(() => {
+    const onDocPointerDown = (e: PointerEvent) => {
       const root = sheet.sheetRef.current;
       if (!root) return;
       if (root.contains(e.target as Node)) return;
@@ -181,8 +188,25 @@ export function MapScanPanel({
         d.removeAttribute("open");
       });
     };
-    document.addEventListener("mousedown", onDocMouseDown);
-    return () => document.removeEventListener("mousedown", onDocMouseDown);
+    // Capture phase so an open popover swallows Escape before the global
+    // handler closes the whole tool; refocus the summary on close.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const root = sheet.sheetRef.current;
+      const open = root?.querySelectorAll<HTMLDetailsElement>("details[open]");
+      if (!open || open.length === 0) return;
+      e.stopPropagation();
+      open.forEach((d) => {
+        d.removeAttribute("open");
+        d.querySelector<HTMLElement>("summary")?.focus();
+      });
+    };
+    document.addEventListener("pointerdown", onDocPointerDown);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onDocPointerDown);
+      document.removeEventListener("keydown", onKey, true);
+    };
   }, [sheet.sheetRef]);
 
   // Text-mode input; commit on blur/Enter, blank → 2 m default.
@@ -200,7 +224,11 @@ export function MapScanPanel({
 
   if (terrainNeeded && onEnableTerrain) {
     return (
-      <div className="fixed z-1050 shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Scanning requires 3D terrain"
+        className="fixed z-1050 shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
         inset-x-0 bottom-0 rounded-t-2xl p-4 pb-6 max-h-[75dvh] overflow-y-auto
         sm:inset-x-auto sm:left-[calc(var(--map-pad)+1rem)] sm:top-1/2 sm:-translate-y-1/2 sm:bottom-auto sm:w-85
         sm:rounded-xl sm:pb-4 sm:max-h-none sm:overflow-visible
@@ -216,6 +244,7 @@ export function MapScanPanel({
             Cancel
           </button>
           <button
+            ref={terrainBtnRef}
             className="px-2.5 py-1 rounded-md text-[11px] bg-cyan-500/20 border border-cyan-500/40 text-cyan-200 hover:bg-cyan-500/30"
             onClick={onEnableTerrain}
           >
@@ -276,6 +305,8 @@ export function MapScanPanel({
   return (
     <div
       ref={sheet.sheetRef}
+      role="dialog"
+      aria-label={`Scan results from ${originLabel}`}
       className={`fixed z-1050 shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl flex flex-col
         inset-x-0 bottom-0 rounded-t-2xl max-h-[78dvh]
         animate-[slideInUp_200ms_ease-out]
@@ -360,8 +391,24 @@ export function MapScanPanel({
             <div className="fixed z-1060 overflow-y-auto p-2 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl space-y-2
               inset-x-3 top-4 bottom-4 w-auto max-w-none
               sm:inset-auto sm:top-16 sm:left-[calc(var(--map-pad)+22.5rem)] sm:w-90 sm:max-h-[calc(100vh-8rem)]">
-              <div className="text-[10px] uppercase tracking-wider text-gray-500 font-medium px-0.5 pb-0.5">
-                Scan settings
+              <div className="flex items-center justify-between px-0.5 pb-0.5">
+                <span className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">
+                  Scan settings
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    const d = e.currentTarget.closest("details") as HTMLDetailsElement | null;
+                    d?.removeAttribute("open");
+                    d?.querySelector<HTMLElement>("summary")?.focus();
+                  }}
+                  className="p-0.5 rounded text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors"
+                  aria-label="Close scan settings"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
               </div>
 
               <SettingsRow
@@ -643,29 +690,17 @@ export function MapScanPanel({
                   <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
                     Reliability
                   </label>
-                  <div className="flex gap-1 rounded-lg border border-white/10 bg-white/5 p-0.5 text-[10px] font-medium">
-                    {RELIABILITY_PRESETS.map((p) => {
-                      const active = reliability === p.id;
-                      return (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => onReliabilityChange(p.id)}
-                          title={p.desc}
-                          className={`flex-1 rounded-md px-1.5 py-1 transition-colors ${
-                            active
-                              ? "bg-cyan-500/20 text-cyan-200"
-                              : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
-                          }`}
-                        >
-                          <div>{p.label}</div>
-                          <div className="text-[9px] text-gray-500 font-normal">
-                            {p.time}/{p.location}/{p.situation}
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <Segmented
+                    ariaLabel="Reliability"
+                    value={reliability}
+                    onChange={onReliabilityChange}
+                    options={RELIABILITY_PRESETS.map((p) => ({
+                      value: p.id,
+                      label: p.label,
+                      sub: `${p.time}/${p.location}/${p.situation}`,
+                      title: p.desc,
+                    }))}
+                  />
                   <div className="text-[9px] text-gray-500 mt-1 leading-relaxed">
                     Higher = "works most of the time" instead of "works half the time."
                     Typical (90/50/70) matches the coverage panel default.
@@ -832,13 +867,37 @@ function StatPill({
   onContextMenu?: () => void;
 }) {
   const s = CLASS_STYLES[cls];
+  // Long-press (touch) and "h" (keyboard) mirror the desktop right-click
+  // hide-on-map action so it isn't pointer-and-desktop-only.
+  const lpTimer = useRef<number | null>(null);
+  const didLongPress = useRef(false);
+  const startLongPress = () => {
+    didLongPress.current = false;
+    lpTimer.current = window.setTimeout(() => {
+      didLongPress.current = true;
+      onContextMenu?.();
+    }, 500);
+  };
+  const cancelLongPress = () => {
+    if (lpTimer.current != null) { clearTimeout(lpTimer.current); lpTimer.current = null; }
+  };
   return (
     <button
       type="button"
-      onClick={onClick}
+      aria-pressed={active}
+      onClick={() => {
+        if (didLongPress.current) { didLongPress.current = false; return; }
+        onClick?.();
+      }}
       onContextMenu={(e) => {
         e.preventDefault();
         onContextMenu?.();
+      }}
+      onPointerDown={startLongPress}
+      onPointerUp={cancelLongPress}
+      onPointerLeave={cancelLongPress}
+      onKeyDown={(e) => {
+        if (e.key === "h" || e.key === "H") { e.preventDefault(); onContextMenu?.(); }
       }}
       className={`rounded border px-1.5 py-0.5 text-center transition-all cursor-pointer ${
         hidden
@@ -849,10 +908,10 @@ function StatPill({
       }`}
       title={
         hidden
-          ? `${label} hidden on map — right-click to show`
+          ? `${label} hidden on map — click to show · long-press or "h" to toggle`
           : active
-            ? `Showing ${label.toLowerCase()} only — click to show all · right-click to hide on map`
-            : `Filter to ${label.toLowerCase()} · right-click to hide on map`
+            ? `Showing ${label.toLowerCase()} only — click to show all · right-click, long-press, or "h" to hide on map`
+            : `Filter to ${label.toLowerCase()} · right-click, long-press, or "h" to hide on map`
       }
     >
       <div className="text-[9px] opacity-80">{label}</div>

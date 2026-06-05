@@ -152,12 +152,15 @@ function CollapsibleSection({
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const contentId = `details-section-${title.toLowerCase().replace(/\s+/g, "-")}`;
 
   return (
     <div className="border-t border-white/10">
       <button
         type="button"
         onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        aria-controls={contentId}
         className="w-full flex items-center justify-between py-2.5 px-1 text-xs font-medium text-gray-300 hover:text-gray-100 transition-colors"
       >
         <span className="flex items-center gap-2">
@@ -173,11 +176,12 @@ function CollapsibleSection({
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
+          aria-hidden="true"
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
-      {open && <div className="pb-2.5">{children}</div>}
+      {open && <div id={contentId} className="pb-2.5">{children}</div>}
     </div>
   );
 }
@@ -200,6 +204,18 @@ export function MapDetailsPanel({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Move focus into the panel when it opens (or switches to a new node), but
+  // not on the 5 s poll re-render of the same node.
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const focusedNodeRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!data) { focusedNodeRef.current = null; return; }
+    if (focusedNodeRef.current !== data.node.id) {
+      focusedNodeRef.current = data.node.id;
+      requestAnimationFrame(() => headingRef.current?.focus());
+    }
+  }, [data]);
 
   // Reset gesture when the selected node changes
   const prevNodeId = useRef<string | null>(null);
@@ -281,7 +297,7 @@ export function MapDetailsPanel({
       >
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
-            <h2 className="text-base font-semibold text-gray-100 truncate leading-tight">
+            <h2 ref={headingRef} tabIndex={-1} className="text-base font-semibold text-gray-100 truncate leading-tight focus:outline-none">
               {node.longname ?? ""}
             </h2>
             <div className="text-xs text-gray-500 mt-0.5 truncate">

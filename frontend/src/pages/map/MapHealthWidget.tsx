@@ -76,6 +76,9 @@ export function MapHealthWidget({ nodes }: { nodes: Record<string, IMapNode> }) 
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
+        aria-expanded={expanded}
+        aria-controls="mesh-health-panel"
+        aria-label={`Mesh health: ${basic.online} of ${basic.total} nodes online`}
         className="px-2 sm:px-3 py-1.5 rounded-xl text-xs font-medium
           bg-gray-900/80 backdrop-blur-xl border border-white/10 shadow-2xl
           text-gray-300 hover:text-gray-100 hover:bg-gray-900/90 transition-colors
@@ -83,15 +86,15 @@ export function MapHealthWidget({ nodes }: { nodes: Record<string, IMapNode> }) 
         title="Mesh health"
       >
         <span className="inline-flex items-center gap-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" aria-hidden="true" />
           {basic.online}
         </span>
-        <span className="hidden sm:inline text-gray-500">/</span>
+        <span className="hidden sm:inline text-gray-500" aria-hidden="true">/</span>
         <span className="hidden sm:inline text-gray-400">{basic.total}</span>
       </button>
 
       {expanded && health && (
-        <div className="mt-2 min-w-[220px] rounded-xl p-3
+        <div id="mesh-health-panel" className="mt-2 min-w-[220px] rounded-xl p-3
           bg-gray-900/90 backdrop-blur-xl border border-white/10 shadow-2xl
           space-y-2 text-xs">
           <div className="flex items-center justify-between">

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   COMMON_ANTENNAS,
@@ -168,8 +168,14 @@ export function MapLosPanel({
 }) {
   const sheet = useBottomSheetGesture(onClose);
 
+  // Modal terrain prompt: focus its primary action on mount.
+  const terrainBtnRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    const onDocMouseDown = (e: MouseEvent) => {
+    if (terrainNeeded) requestAnimationFrame(() => terrainBtnRef.current?.focus());
+  }, [terrainNeeded]);
+
+  useEffect(() => {
+    const onDocPointerDown = (e: PointerEvent) => {
       const root = sheet.sheetRef.current;
       if (!root) return;
       if (root.contains(e.target as Node)) return;
@@ -177,13 +183,34 @@ export function MapLosPanel({
         d.removeAttribute("open");
       });
     };
-    document.addEventListener("mousedown", onDocMouseDown);
-    return () => document.removeEventListener("mousedown", onDocMouseDown);
+    // Capture phase so an open popover swallows Escape before the global
+    // handler closes the whole tool; refocus the summary on close.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const root = sheet.sheetRef.current;
+      const open = root?.querySelectorAll<HTMLDetailsElement>("details[open]");
+      if (!open || open.length === 0) return;
+      e.stopPropagation();
+      open.forEach((d) => {
+        d.removeAttribute("open");
+        d.querySelector<HTMLElement>("summary")?.focus();
+      });
+    };
+    document.addEventListener("pointerdown", onDocPointerDown);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onDocPointerDown);
+      document.removeEventListener("keydown", onKey, true);
+    };
   }, [sheet.sheetRef]);
 
   if (terrainNeeded) {
     return (
-      <div className="fixed z-1050 shadow-2xl border border-amber-500/30 bg-gray-900/90 backdrop-blur-xl
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="3D terrain required for line-of-sight analysis"
+        className="fixed z-1050 shadow-2xl border border-amber-500/30 bg-gray-900/90 backdrop-blur-xl
         inset-x-0 bottom-0 rounded-t-2xl p-4 pb-6 max-h-[75dvh] overflow-y-auto
         sm:inset-x-auto sm:bottom-3 sm:left-1/2 sm:-translate-x-1/2 sm:w-[min(900px,calc(100vw-2rem))]
         sm:rounded-xl sm:pb-4 sm:max-h-none sm:overflow-visible">
@@ -198,6 +225,7 @@ export function MapLosPanel({
             </p>
             {onEnableTerrain && (
               <button
+                ref={terrainBtnRef}
                 type="button"
                 onClick={onEnableTerrain}
                 className="mt-2.5 text-xs px-3 py-1.5 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-200 hover:bg-amber-500/30 transition-colors font-medium"
@@ -223,12 +251,15 @@ export function MapLosPanel({
 
   if (error && !result) {
     return (
-      <div className="fixed z-1050 shadow-2xl border border-red-500/30 bg-gray-900/90 backdrop-blur-xl
+      <div
+        role="dialog"
+        aria-label="Line-of-sight analysis error"
+        className="fixed z-1050 shadow-2xl border border-red-500/30 bg-gray-900/90 backdrop-blur-xl
         inset-x-0 bottom-0 rounded-t-2xl p-3 pb-5
         sm:inset-x-auto sm:bottom-3 sm:left-1/2 sm:-translate-x-1/2 sm:w-[min(900px,calc(100vw-2rem))]
         sm:rounded-xl sm:pb-3">
         <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-xs text-red-300">
+          <div className="flex items-center gap-2 text-xs text-red-300" role="alert">
             <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
             </svg>
@@ -324,6 +355,8 @@ export function MapLosPanel({
   return (
     <div
       ref={sheet.sheetRef}
+      role="dialog"
+      aria-label={`Line-of-sight analysis: ${fromLabel} to ${toLabel}`}
       className="fixed z-1050 shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
         inset-x-0 bottom-0 rounded-t-2xl max-h-[82dvh] flex flex-col
         animate-[slideInUp_200ms_ease-out]
@@ -417,8 +450,8 @@ export function MapLosPanel({
         </div>
         <div className="flex items-center gap-1 shrink-0">
           <details className="text-[10px] text-gray-500 relative">
-            <summary className="cursor-pointer hover:text-gray-400 select-none list-none">
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <summary className="cursor-pointer hover:text-gray-400 select-none list-none" aria-label="About this analysis">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </summary>

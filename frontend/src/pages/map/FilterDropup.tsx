@@ -72,6 +72,8 @@ export function FilterDropup<T extends string | number | null>({
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
+          aria-haspopup="listbox"
+          aria-expanded={open}
           className={`${pillBase} ${isActive ? pillActive : pillIdle} flex items-center gap-1.5`}
         >
           {currentOpt?.color && (
@@ -81,7 +83,7 @@ export function FilterDropup<T extends string | number | null>({
             />
           )}
           <span>{label}</span>
-          <svg className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
           </svg>
         </button>
@@ -94,6 +96,8 @@ export function FilterDropup<T extends string | number | null>({
           // its parent panel's DOM tree, so callers must opt-out of dismissing
           // their panel when the click lands here.
           data-filter-menu="true"
+          role="listbox"
+          aria-label={label}
           style={{
             position: "fixed",
             left: menuPos.left,
@@ -110,6 +114,8 @@ export function FilterDropup<T extends string | number | null>({
               <button
                 key={String(opt.value ?? "__null")}
                 type="button"
+                role="option"
+                aria-selected={selected}
                 onClick={() => {
                   onChange(opt.value);
                   setOpen(false);
@@ -129,7 +135,7 @@ export function FilterDropup<T extends string | number | null>({
                   <span className="text-[10px] text-gray-500">{opt.description}</span>
                 )}
                 {selected && (
-                  <svg className="w-3 h-3 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-3 h-3 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
                   </svg>
                 )}

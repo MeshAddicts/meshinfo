@@ -72,6 +72,7 @@ export function useLosCompute(params: LosComputeParams) {
     const lat = from[1] + (to[1] - from[1]) * fraction;
     if (!losHoverMarkerRef.current) {
       const el = document.createElement("div");
+      el.setAttribute("aria-hidden", "true");
       el.style.cssText =
         "width:14px;height:14px;border-radius:50%;background:#f97316;" +
         "border:2px solid white;box-shadow:0 0 8px rgba(0,0,0,0.5);" +

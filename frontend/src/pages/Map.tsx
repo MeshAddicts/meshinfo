@@ -1904,6 +1904,19 @@ export function Map() {
         const tag = (e.target as HTMLElement)?.tagName;
         if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
 
+        // Escape works from anywhere; pan/zoom only when focus is on the map
+        // itself (or nothing), so arrowing a focused panel control isn't hijacked.
+        if (e.key !== "Escape") {
+          const ae = document.activeElement as HTMLElement | null;
+          const navOk =
+            !ae ||
+            ae === document.body ||
+            ae === map.getCanvas() ||
+            ae === mapRef.current ||
+            ae.classList?.contains("maplibregl-canvas");
+          if (!navOk) return;
+        }
+
         const PAN_PX = 100;
         switch (e.key) {
           case "Escape":
@@ -2234,7 +2247,23 @@ export function Map() {
 
   return (
     <div className="relative w-full h-full min-h-0 overflow-hidden overscroll-none">
-      <div id="map" ref={mapRef} className="absolute inset-0" />
+      <div
+        id="map"
+        ref={mapRef}
+        role="application"
+        aria-label="Mesh node map"
+        aria-describedby="map-a11y-hint"
+        className="absolute inset-0"
+      />
+      <p id="map-a11y-hint" className="sr-only">
+        Interactive map of mesh nodes. Use the search box to find and select a node by name.
+        Arrow keys pan and plus or minus zoom while the map is focused.
+      </p>
+      <div className="sr-only" aria-live="polite">
+        {detailsData
+          ? `Selected ${detailsData.node.longname || detailsData.node.shortname || detailsData.node.id}`
+          : ""}
+      </div>
 
       {!mapLoaded && (
         <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">

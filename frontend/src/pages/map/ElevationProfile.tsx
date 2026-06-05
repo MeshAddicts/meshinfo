@@ -108,6 +108,30 @@ export function ElevationProfile({
 
   const hoverPoint = hoverIdx != null ? result.points[hoverIdx] : null;
 
+  const setHoverByIndex = (idx: number) => {
+    const clamped = Math.max(0, Math.min(result.points.length - 1, idx));
+    setHoverIdx(clamped);
+    onHoverFraction?.(
+      result.totalDistanceKm > 0 ? result.points[clamped].distanceKm / result.totalDistanceKm : 0,
+    );
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<SVGSVGElement>) => {
+    const cur = hoverIdx ?? 0;
+    if (e.key === "ArrowRight") { e.preventDefault(); setHoverByIndex(cur + 1); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); setHoverByIndex(cur - 1); }
+    else if (e.key === "Home") { e.preventDefault(); setHoverByIndex(0); }
+    else if (e.key === "End") { e.preventDefault(); setHoverByIndex(result.points.length - 1); }
+    else if (e.key === "Escape") { setHoverIdx(null); onHoverFraction?.(null); }
+  };
+
+  const verdict = result.losClear
+    ? (result.fresnelClear ? "clear line of sight" : "line of sight with Fresnel intrusion")
+    : "obstructed";
+  const ariaLabel =
+    `Elevation profile from ${fromLabel} to ${toLabel}, ${result.totalDistanceKm.toFixed(1)} km, ${verdict}. ` +
+    "Focus and use arrow keys to read clearance along the path.";
+
   const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     // SVG has width=100% but fixed viewBox — convert px to viewBox units before subtracting MARGIN.left
@@ -138,7 +162,12 @@ export function ElevationProfile({
       <svg
         width="100%"
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-        className="block"
+        className="block cursor-crosshair focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/60 rounded"
+        role="img"
+        aria-label={ariaLabel}
+        tabIndex={0}
+        onKeyDown={handleKeyDown}
+        onBlur={() => { setHoverIdx(null); onHoverFraction?.(null); }}
         onPointerMove={handlePointerMove}
         onPointerLeave={() => { setHoverIdx(null); onHoverFraction?.(null); }}
       >
