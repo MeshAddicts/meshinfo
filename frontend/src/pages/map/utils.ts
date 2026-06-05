@@ -7,28 +7,12 @@ import type {
 } from "geojson";
 import type { Map as MlMap } from "maplibre-gl";
 
-import { NodeRole } from "../../types";
 import { removeSpiderfyLayers } from "./spiderfy";
 import type { IMapNode } from "./types";
 
-export const ROLE_COLORS: Record<number, string> = {
-  [NodeRole.CLIENT]: "#32f032",       // green (default)
-  [NodeRole.CLIENT_MUTE]: "#6b7280",  // gray
-  [NodeRole.ROUTER]: "#3b82f6",       // blue
-  [NodeRole.ROUTER_CLIENT]: "#60a5fa",// light blue
-  [NodeRole.REPEATER]: "#f59e0b",     // amber
-  [NodeRole.TRACKER]: "#a855f7",      // purple
-  [NodeRole.SENSOR]: "#14b8a6",       // teal
-  [NodeRole.TAK]: "#ef4444",          // red
-  [NodeRole.CLIENT_HIDDEN]: "#4b5563",// dark gray
-  [NodeRole.LOST_AND_FOUND]: "#d946ef",// fuchsia
-  [NodeRole.TAK_TRACKER]: "#f87171",  // light red
-  [NodeRole.ROUTER_LATE]: "#93c5fd",  // pale blue
-  [NodeRole.CLIENT_BASE]: "#22c55e",  // emerald
-};
-
-export const DEFAULT_NODE_COLOR = "#32f032";
-export const OFFLINE_NODE_COLOR = "rgba(0,0,0,0.50)";
+// Canonical palette lives in src/palette.ts; re-exported so the map's many
+// `from "./utils"` call sites keep working unchanged.
+export { DEFAULT_NODE_COLOR, OFFLINE_NODE_COLOR, ROLE_COLORS } from "../../palette";
 
 export function escapeHtml(text: string): string {
   const div = document.createElement("div");

@@ -4,7 +4,9 @@ import type { ITraceroutesResponse } from "../../types";
 import { AGGRESSION_STOPS, DEFAULT_AGGRESSION_IDX } from "./coverageAnalysis";
 import { normNodeId } from "./linkFeatures";
 import type { IMapNode } from "./types";
-import { calculateGeodesicDistance, DEFAULT_NODE_COLOR, OFFLINE_NODE_COLOR, ROLE_COLORS } from "./utils";
+import { calculateGeodesicDistance } from "./utils";
+// Role-color expression now lives in the shared palette; re-export for existing importers.
+export { mbRoleColorExpr } from "../../palette";
 
 // 1×1 transparent PNG placeholder for the coverage-raster source
 export const TRANSPARENT_1PX_PNG =
@@ -140,13 +142,3 @@ export function computeMaxRange(
   return maxDist > 0.05 ? maxDist : null; // skip <50 m
 }
 
-// Role-based node color (offline = gray)
-export const mbRoleColorExpr = [
-  "case",
-  ["!", ["boolean", ["get", "online"], false]],
-  OFFLINE_NODE_COLOR,
-  ["match", ["get", "role"],
-    ...Object.entries(ROLE_COLORS).flatMap(([k, v]) => [Number(k), v]),
-    DEFAULT_NODE_COLOR,
-  ],
-] as any;

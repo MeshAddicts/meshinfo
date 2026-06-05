@@ -24,16 +24,16 @@ export function MapLegend({
       </div>
       <div className="space-y-1.5 text-[11px] text-gray-400">
         <div className="flex items-center gap-2">
-          <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-sm shrink-0" />
+          <div className="w-2.5 h-2.5 rounded-full shadow-sm shrink-0" style={{ backgroundColor: "#32f032" }} />
           <span>Online node</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-2.5 h-2.5 rounded-full bg-gray-600 border border-gray-500 shrink-0" />
+          <div className="w-2.5 h-2.5 rounded-full shadow-sm shrink-0" style={{ backgroundColor: "#72798a" }} />
           <span>Offline node</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="w-3.5 h-3.5 flex items-center justify-center shrink-0">
-            <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-orange-400 shadow-sm" />
+            <div className="w-2.5 h-2.5 rounded-full ring-2 ring-orange-400 shadow-sm" style={{ backgroundColor: "#32f032" }} />
           </div>
           <span>Selected node</span>
         </div>
@@ -42,7 +42,7 @@ export function MapLegend({
             <circle cx="10" cy="10" r="7" fill="none" stroke="#72798a" strokeWidth="3" />
             <circle
               cx="10" cy="10" r="7"
-              fill="none" stroke="#22c55e" strokeWidth="3"
+              fill="none" stroke="#32f032" strokeWidth="3"
               strokeDasharray="30 100"
               transform="rotate(-90 10 10)"
             />

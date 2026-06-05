@@ -4,6 +4,7 @@ import maplibregl, {
 } from "maplibre-gl";
 import { useEffect, useRef } from "react";
 
+import { ORIGIN_COLOR } from "../../palette";
 import { env } from "../../env";
 import { buildBuildingRaster } from "./buildingTiles";
 import { buildCanopyRaster } from "./canopyTiles";
@@ -124,7 +125,7 @@ export function useScanCompute(params: ScanComputeParams) {
     if (scanOriginMarkerRef.current) {
       scanOriginMarkerRef.current.setLngLat(origin);
     } else {
-      const marker = new maplibregl.Marker({ color: "#22d3ee", draggable: true })
+      const marker = new maplibregl.Marker({ color: ORIGIN_COLOR, draggable: true })
         .setLngLat(origin)
         .addTo(mb);
       marker.on("dragstart", () => { isDraggingMarkerRef.current = true; });
