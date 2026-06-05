@@ -15,6 +15,7 @@ function computeHealth(nodes: Record<string, IMapNode>) {
     if (n.online) online++;
     if (!adj.has(id)) adj.set(id, new Set());
     for (const neighbor of n.neighbors ?? []) {
+      if (!nodes[neighbor.id]) continue; // skip edges to nodes we've never seen
       adj.get(id)!.add(neighbor.id);
       if (!adj.has(neighbor.id)) adj.set(neighbor.id, new Set());
       adj.get(neighbor.id)!.add(id);

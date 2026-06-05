@@ -156,7 +156,7 @@ export function analyzeLineOfSight(input: LoSInput): LoSResult {
       console.warn(
         `[losAnalysis] ${label} reports altitude ${alt.toFixed(0)} m at terrain ${ground.toFixed(0)} m ` +
           `(${(alt - ground).toFixed(0)} m above local ground — likely bad data). ` +
-          `Falling back to terrain + ${antennaHeightM} m.`,
+          `Falling back to terrain + ${antH} m.`,
       );
       return { height: ground + antH, isFallback: true };
     }

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 export interface DropupOption<T> {
@@ -29,14 +29,21 @@ export function FilterDropup<T extends string | number | null>({
   const pillRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  useLayoutEffect(() => {
-    if (!open || !pillRef.current) return;
-    const rect = pillRef.current.getBoundingClientRect();
+  // Clamp the portal menu's left so a right-edge pill doesn't push it off-screen.
+  const positionMenu = useCallback(() => {
+    const pill = pillRef.current;
+    if (!pill) return;
+    const rect = pill.getBoundingClientRect();
+    const MENU_W = 280; // matches max-w
     setMenuPos({
-      left: rect.left,
+      left: Math.min(rect.left, window.innerWidth - MENU_W - 8),
       bottom: window.innerHeight - rect.top + 8, // gap
     });
-  }, [open]);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (open) positionMenu();
+  }, [open, positionMenu]);
 
   useEffect(() => {
     if (!open) return;
@@ -48,7 +55,7 @@ export function FilterDropup<T extends string | number | null>({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
-    const onResize = () => setOpen(false);
+    const onResize = () => positionMenu();
     document.addEventListener("mousedown", onDocClick);
     document.addEventListener("keydown", onKey);
     window.addEventListener("resize", onResize);
@@ -57,7 +64,7 @@ export function FilterDropup<T extends string | number | null>({
       document.removeEventListener("keydown", onKey);
       window.removeEventListener("resize", onResize);
     };
-  }, [open]);
+  }, [open, positionMenu]);
 
   const pillBase =
     "shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer select-none shadow-2xl backdrop-blur-xl";

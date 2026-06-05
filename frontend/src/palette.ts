@@ -1,3 +1,5 @@
+import type { ExpressionSpecification } from "maplibre-gl";
+
 import { NodeRole } from "./types";
 
 /** Node-role → color. Single source for map, graph, legend, and role badges. */
@@ -33,4 +35,4 @@ export const mbRoleColorExpr = [
     ...Object.entries(ROLE_COLORS).flatMap(([k, v]) => [Number(k), v]),
     DEFAULT_NODE_COLOR,
   ],
-] as any;
+] as unknown as ExpressionSpecification;

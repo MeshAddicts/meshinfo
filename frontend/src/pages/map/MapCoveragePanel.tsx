@@ -14,13 +14,33 @@ interface MergeNodeOption {
   longname?: string;
 }
 
-/** Parse "lat, lng" (Google Maps format) → [lng, lat]. Returns null if invalid. */
+/** Parse "lat, lng" → [lng, lat]. Accepts a trailing ° and N/S/E/W hemisphere
+ *  (e.g. "37.5° N, 122.3° W"). Returns null if invalid. */
 function parseLatLng(input: string): [number, number] | null {
-  const parts = input.trim().split(/[\s,]+/).filter(Boolean);
-  if (parts.length !== 2) return null;
-  const lat = Number(parts[0]);
-  const lng = Number(parts[1]);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const cleaned = input.trim().replace(/°/g, "");
+  let latStr: string;
+  let lngStr: string;
+  if (cleaned.includes(",")) {
+    const parts = cleaned.split(",");
+    if (parts.length !== 2) return null;
+    [latStr, lngStr] = parts;
+  } else {
+    const toks = cleaned.split(/\s+/).filter(Boolean);
+    if (toks.length === 2) [latStr, lngStr] = toks;
+    else if (toks.length === 4) { latStr = `${toks[0]} ${toks[1]}`; lngStr = `${toks[2]} ${toks[3]}`; }
+    else return null;
+  }
+  const parse = (t: string): number | null => {
+    const m = t.trim().match(/^(-?\d+(?:\.\d+)?)\s*([NSEW])?$/i);
+    if (!m) return null;
+    let v = Number(m[1]);
+    const h = m[2]?.toUpperCase();
+    if (h === "S" || h === "W") v = -Math.abs(v);
+    return Number.isFinite(v) ? v : null;
+  };
+  const lat = parse(latStr);
+  const lng = parse(lngStr);
+  if (lat == null || lng == null) return null;
   if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
   return [lng, lat];
 }
@@ -619,11 +639,11 @@ export function MapCoveragePanel({
             ? `Recomputing · ${progressCompleted}/${progressTotal} slices (${pct}%)`
             : "Recomputing coverage…";
         return (
-          <div className="absolute -top-8 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full
+          <div className="absolute -top-8 left-1/2 -translate-x-1/2 max-w-[calc(100vw-1rem)] px-3 py-1 rounded-full
             bg-gray-900/95 backdrop-blur-xl border border-cyan-500/40 shadow-2xl
             text-[10px] text-cyan-200 flex items-center gap-2 whitespace-nowrap">
-            <div className="w-2.5 h-2.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-            <span>{label}</span>
+            <div className="w-2.5 h-2.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin shrink-0" />
+            <span className="truncate min-w-0">{label}</span>
             {!isFetchingTerrain && (
               <button
                 type="button"
@@ -709,7 +729,10 @@ export function MapCoveragePanel({
               </button>
             )}
             <span className="text-gray-500 ml-1 shrink-0">·</span>
-            <span className="text-gray-500 shrink-0">
+            <span
+              className="text-gray-500 shrink-0"
+              title={result.originIsFallback ? "Elevation sampled from terrain (no GPS altitude for this origin)" : undefined}
+            >
               {Math.round(result.originHeightM)}m{result.originIsFallback ? "~" : ""}
             </span>
           </div>
@@ -810,10 +833,10 @@ export function MapCoveragePanel({
               <div className="flex items-center gap-2 text-[10px]">
                 <span className="text-gray-500 uppercase tracking-wider">Reachable</span>
                 <span className={`text-emerald-300 font-medium tabular-nums transition-opacity ${isComputing ? "opacity-50" : ""}`}>
-                  ~{fmt(reachableKm2)} km²
+                  {reachablePx > 0 && reachableKm2 < 0.1 ? "<0.1" : `~${fmt(reachableKm2)}`} km²
                 </span>
                 <span className={`text-gray-500 tabular-nums transition-opacity ${isComputing ? "opacity-50" : ""}`}>
-                  ({Math.round(pct)}% of {fmt(scannedKm2)} km²)
+                  ({pct > 0 && pct < 1 ? pct.toFixed(1) : Math.round(pct)}% of {fmt(scannedKm2)} km²)
                 </span>
                 {isComputing && (
                   <span className="inline-flex items-center gap-1 text-cyan-300 font-medium">
@@ -844,6 +867,20 @@ export function MapCoveragePanel({
                     <div className="fixed z-50 overflow-y-auto p-2.5 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-gray-400 leading-relaxed space-y-1 text-[10px]
                       inset-x-3 top-4 bottom-4 w-auto max-w-none
                       sm:absolute sm:inset-auto sm:right-0 sm:top-full sm:mt-1 sm:bottom-auto sm:w-85 sm:max-w-[calc(100vw-1rem)] sm:max-h-[60dvh]">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          const d = e.currentTarget.closest("details") as HTMLDetailsElement | null;
+                          d?.removeAttribute("open");
+                          d?.querySelector<HTMLElement>("summary")?.focus();
+                        }}
+                        className="sm:hidden absolute top-1.5 right-1.5 p-1 rounded text-gray-500 hover:text-gray-300 hover:bg-white/10"
+                        aria-label="Close"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
                       <div>Pixel color shows predicted <strong>link margin</strong> (RSSI minus sensitivity and fade margin). Cyan = very reliable, orange = marginal, magenta = at threshold. Unpainted terrain is below sensitivity.</div>
                       <div className="pt-1 border-t border-white/5">
                         <div className="text-gray-300 font-medium">Reliability</div>
@@ -1086,7 +1123,7 @@ export function MapCoveragePanel({
                   altitude. Defaults to 2 m (handheld).
                 </InfoTip>
               </label>
-              <div className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 w-20">
+              <div className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 w-24">
                 <input
                   id="coverage-antenna-height"
                   type="text"
@@ -1339,7 +1376,7 @@ export function MapCoveragePanel({
                     station, 30 m+ for tower-mounted receivers.
                   </InfoTip>
                 </label>
-                <div className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 w-24">
+                <div className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 w-28">
                   <input
                     id="coverage-rx-height"
                     type="text"

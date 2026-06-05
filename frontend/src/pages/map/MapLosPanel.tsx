@@ -83,7 +83,7 @@ function EndpointConfig({
             focus:border-cyan-500/50 focus:outline-hidden [&>option]:bg-gray-800 [&>option]:text-gray-200"
         >
           {COMMON_HARDWARE.map((h, i) => (
-            <option key={i} value={i}>{h.label} ({h.txDbm})</option>
+            <option key={i} value={i}>{h.label} ({h.txDbm} dBm)</option>
           ))}
         </select>
       </div>

@@ -142,8 +142,6 @@ export function useCoverageCompute(params: CoverageComputeParams) {
   const coverageDragBuildingsRef = useRef<BuildingRaster | null>(null);
   /** Latest raster params snapshot (drag preview reuses untouched). */
   const coverageLastRasterParamsRef = useRef<RasterParams | null>(null);
-  /** Last origin context (bounds); drag re-samples DEM per move. */
-  const coverageLastOriginContextRef = useRef<{ bounds: DEMBounds } | null>(null);
   /** Single-flight drag preview; latest pending position fires when current completes. */
   const dragPreviewBusyRef = useRef(false);
   const dragPreviewPendingRef = useRef<[number, number] | null>(null);
@@ -677,7 +675,6 @@ export function useCoverageCompute(params: CoverageComputeParams) {
         coverageBuildingsRef.current = buildings;
         coverageDragBuildingsRef.current = buildings ? downsampleBuildingRaster(buildings, 256, 256) : null;
         coverageLastRasterParamsRef.current = rasterParams;
-        coverageLastOriginContextRef.current = { bounds: dem.bounds };
 
         // 5. Iso-contours (0 dB = edge, +10 reliable, +20 strong) from output-sized margin grid
         coverageMarginRef.current = {
@@ -697,7 +694,7 @@ export function useCoverageCompute(params: CoverageComputeParams) {
         try {
           const src = mb.getSource("coverage-contours") as MlGeoJSONSource | undefined;
           src?.setData(contours);
-        } catch {}
+        } catch (err) { if (import.meta.env.DEV) console.warn("[Map] coverage-contours setData:", err); }
 
         // 6. Visibility rays: R2 viewshed AND margin grid; costs ~50-100 ms
         const rays = extractCoverageRays({
@@ -715,7 +712,7 @@ export function useCoverageCompute(params: CoverageComputeParams) {
         try {
           const src = mb.getSource("coverage-rays") as MlGeoJSONSource | undefined;
           src?.setData(rays);
-        } catch {}
+        } catch (err) { if (import.meta.env.DEV) console.warn("[Map] coverage-rays setData:", err); }
 
         const computeMs = performance.now() - t0;
         if (import.meta.env.DEV) {
@@ -878,7 +875,10 @@ export function useCoverageCompute(params: CoverageComputeParams) {
           // Real MSL — see queryTerrainElevationMSL helper for the exaggeration math.
           const mbGround = queryTerrainElevationMSL(mb, lngLat);
           const mbGroundOk = typeof mbGround === "number" && Number.isFinite(mbGround);
-          const accurateGround = mbGroundOk ? mbGround : (demGroundOk ? demGround : 0);
+          // Never under-report: take the higher of the two sources when both are valid.
+          const accurateGround = mbGroundOk && demGroundOk
+            ? Math.max(mbGround, demGround)
+            : mbGroundOk ? mbGround : demGroundOk ? demGround : 0;
           const antennaH = c.coverageAntennaHeightMRef.current;
           const originH = accurateGround + antennaH;
           const txAboveGroundM = demGroundOk

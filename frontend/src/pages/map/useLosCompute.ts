@@ -308,7 +308,7 @@ export function useLosCompute(params: LosComputeParams) {
     );
     const exagRaw = mb.getTerrain()?.exaggeration;
     const exag = typeof exagRaw === "number" ? exagRaw : 1;
-    const obsGeo = obstructionsToGeoJSON(obstructions, 60);
+    const obsGeo = obstructionsToGeoJSON(obstructions);
     obsGeo.features.forEach((f) => {
       f.properties.baseM *= exag;
       f.properties.topM *= exag;

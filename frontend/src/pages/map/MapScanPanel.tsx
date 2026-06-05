@@ -223,6 +223,9 @@ export function MapScanPanel({
     return [...filtered].sort((a, b) => scanSortKey(b) - scanSortKey(a));
   }, [summary, filter]);
 
+  // Clear a stale map highlight if the row under the cursor re-sorts/filters away.
+  useEffect(() => { onHoverResult?.(null); }, [filter, displayResults, onHoverResult]);
+
   if (terrainNeeded && onEnableTerrain) {
     return (
       <div
@@ -761,12 +764,10 @@ export function MapScanPanel({
               <StatPill label="Diffracted" count={summary.diffractedCount} cls="diffracted" active={filter === "diffracted"} hidden={hiddenClasses.has("diffracted")} onClick={() => toggleFilter("diffracted")} onContextMenu={() => onToggleClassVisibility("diffracted")} />
               <StatPill label="Blocked"    count={summary.blockedCount}    cls="blocked"    active={filter === "blocked"}    hidden={hiddenClasses.has("blocked")}    onClick={() => toggleFilter("blocked")}    onContextMenu={() => onToggleClassVisibility("blocked")} />
             </div>
-            {hiddenClasses.size > 0 && (
-              <div className="px-3 py-1 text-[9px] text-gray-500 border-b border-white/5">
-                <span className="sm:hidden">Long-press a class to toggle its map visibility.</span>
-                <span className="hidden sm:inline">Right-click a class to toggle its map visibility.</span>
-              </div>
-            )}
+            <div className="px-3 py-1 text-[9px] text-gray-500 border-b border-white/5">
+              <span className="sm:hidden">Long-press a class to toggle its map visibility.</span>
+              <span className="hidden sm:inline">Right-click a class to toggle its map visibility.</span>
+            </div>
 
             {/* Pinned origin row — click returns to the scan's starting view. */}
             <button
@@ -903,7 +904,7 @@ function StatPill({
         hidden
           ? `${s.bg} ${s.text} ${s.border} opacity-40 hover:opacity-70 border-dashed`
           : active
-            ? `${s.bg} ${s.text} ${s.border} ring-1 ring-offset-1 ring-offset-gray-900 ${s.border}`
+            ? `${s.bg} ${s.text} ${s.border} ring-1 ring-offset-1 ring-offset-gray-900`
             : `${s.bg} ${s.text} ${s.border} opacity-80 hover:opacity-100`
       }`}
       title={

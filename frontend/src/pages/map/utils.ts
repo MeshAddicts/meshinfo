@@ -41,7 +41,8 @@ export function calculateGeodesicDistance(
 }
 
 export function computeRecentNodes(nodes: Record<string, IMapNode>, recentDays: number) {
-  const recentCutoff = Date.now() - recentDays * 24 * 60 * 60 * 1000;
+  const days = Number.isFinite(recentDays) && recentDays > 0 ? recentDays : 1;
+  const recentCutoff = Date.now() - days * 24 * 60 * 60 * 1000;
 
   return Object.entries(nodes).filter(([_, node]) => {
     if (node.online) return true;
@@ -72,6 +73,8 @@ export function buildNodesGeoJSON(
 
   for (const [id, node] of recentNodeEntries) {
     if (!node.map_position) continue;
+    const [lon, lat] = node.map_position;
+    if (!Number.isFinite(lon) || !Number.isFinite(lat) || Math.abs(lat) > 90 || Math.abs(lon) > 180) continue;
 
     features.push({
       type: "Feature",

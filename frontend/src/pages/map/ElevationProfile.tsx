@@ -252,7 +252,7 @@ export function ElevationProfile({
             fontFamily="monospace"
             style={{ paintOrder: "stroke", stroke: "rgba(0,0,0,0.7)", strokeWidth: 2 }}
           >
-            {fromLabel.slice(0, 10)}
+            {fromLabel.length > 10 ? `${fromLabel.slice(0, 9)}…` : fromLabel}
           </text>
           <circle
             cx={xScale(result.totalDistanceKm)}
@@ -271,7 +271,7 @@ export function ElevationProfile({
             fontFamily="monospace"
             style={{ paintOrder: "stroke", stroke: "rgba(0,0,0,0.7)", strokeWidth: 2 }}
           >
-            {toLabel.slice(0, 10)}
+            {toLabel.length > 10 ? `${toLabel.slice(0, 9)}…` : toLabel}
           </text>
 
           {(!result.losClear || !result.fresnelClear) && result.worstObstructionDistKm > 0 && (

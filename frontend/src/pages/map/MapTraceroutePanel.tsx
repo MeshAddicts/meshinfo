@@ -102,7 +102,7 @@ export function MapTraceroutePanel({
                 <div className="text-cyan-400 text-[10px] uppercase tracking-wider mb-0.5">Shortest Path</div>
                 <div className="text-gray-200">
                   {shortest.hopCount} {shortest.hopCount === 1 ? "hop" : "hops"}
-                  {shortest.snr != null && <span className="text-gray-500 ml-2">SNR {shortest.snr} dB</span>}
+                  {shortest.snr != null && <span className="text-gray-500 ml-2">SNR {shortest.snr.toFixed(1)} dB</span>}
                 </div>
                 <PathHopList hops={shortest.hops} liveNodes={liveNodes} onNodeSelect={onNodeSelect} onHoverLink={onHoverLink} />
               </div>
@@ -111,14 +111,14 @@ export function MapTraceroutePanel({
             {paths.length > 1 && (
               <div className="px-2 pt-1">
                 <div className="text-gray-500 text-[10px] uppercase tracking-wider mb-1">
-                  Alternative Paths ({paths.length - 1})
+                  Alternative Paths ({paths.length - 1 > 5 ? `showing 5 of ${paths.length - 1}` : paths.length - 1})
                 </div>
                 <div className="space-y-1">
-                  {paths.slice(1, 6).map((p, i) => (
-                    <div key={i} className="text-xs px-2 py-1 rounded bg-white/5">
+                  {paths.slice(1, 6).map((p) => (
+                    <div key={p.hops.join(">")} className="text-xs px-2 py-1 rounded bg-white/5">
                       <div className="text-gray-300">
                         {p.hopCount} {p.hopCount === 1 ? "hop" : "hops"}
-                        {p.snr != null && <span className="text-gray-500 ml-2">SNR {p.snr} dB</span>}
+                        {p.snr != null && <span className="text-gray-500 ml-2">SNR {p.snr.toFixed(1)} dB</span>}
                       </div>
                       <PathHopList hops={p.hops} liveNodes={liveNodes} onNodeSelect={onNodeSelect} onHoverLink={onHoverLink} />
                     </div>

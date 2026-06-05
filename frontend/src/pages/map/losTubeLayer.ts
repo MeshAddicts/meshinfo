@@ -251,7 +251,7 @@ export function pickObstructions(
 /** Obstructions → small-square FeatureCollection for a fill-extrusion layer (baseM/topM). */
 export function obstructionsToGeoJSON(
   features: ObstructionFeature[],
-  footprintSideM = 40,
+  footprintSideM = 60,
 ): GeoJSON.FeatureCollection<GeoJSON.Polygon, {
   baseM: number;
   topM: number;

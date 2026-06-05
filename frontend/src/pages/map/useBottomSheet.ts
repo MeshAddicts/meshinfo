@@ -122,7 +122,10 @@ export function useBottomSheetGesture(onClose: () => void) {
       } else {
         sheet.style.transition = "transform 200ms ease-in";
         sheet.style.transform = "translateY(100%)";
-        sheet.addEventListener("transitionend", () => onClose(), { once: true });
+        let closed = false;
+        const finishClose = () => { if (closed) return; closed = true; onClose(); };
+        sheet.addEventListener("transitionend", finishClose, { once: true });
+        window.setTimeout(finishClose, 250); // fallback if transitionend never fires
       }
     } else if (dy < -40 && !expandedRef.current) {
       expand();

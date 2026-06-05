@@ -188,7 +188,7 @@ export function removeTerrain(map: MlMap): void {
  *  of the RF building-height raster. minzoom=14 because OpenFreeMap doesn't
  *  ship buildings below z13 and z13 is too distant to be visually useful.
  *  Idempotent — safe to re-call after style reloads. */
-export function ensureBuildings3D(map: MlMap): void {
+export function ensureBuildings3D(map: MlMap, isDark = false): void {
   if (!map.getSource(BUILDINGS_3D_SOURCE_ID)) {
     map.addSource(BUILDINGS_3D_SOURCE_ID, {
       type: "vector",
@@ -206,16 +206,14 @@ export function ensureBuildings3D(map: MlMap): void {
       // OpenMapTiles schema opt-out flag.
       filter: ["!=", ["get", "hide_3d"], true],
       paint: {
-        // Low opacity so basemap labels under tall buildings stay readable.
-        "fill-extrusion-color": [
-          "interpolate", ["linear"], ["get", "render_height"],
-          0, "#a8b5c4",
-          50, "#8a98aa",
-          200, "#6e7d92",
-        ],
+        // Low opacity so basemap labels under tall buildings stay readable;
+        // darker + dimmer on dark basemaps so extrusions don't glow as bright blocks.
+        "fill-extrusion-color": isDark
+          ? ["interpolate", ["linear"], ["get", "render_height"], 0, "#3a4452", 50, "#2c3340", 200, "#222833"]
+          : ["interpolate", ["linear"], ["get", "render_height"], 0, "#a8b5c4", 50, "#8a98aa", 200, "#6e7d92"],
         "fill-extrusion-height": ["coalesce", ["get", "render_height"], 0],
         "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
-        "fill-extrusion-opacity": 0.65,
+        "fill-extrusion-opacity": isDark ? 0.5 : 0.65,
       },
     });
   }

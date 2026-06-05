@@ -83,7 +83,7 @@ function NeighborTable({
   onNodeSelect,
   onHoverLink,
 }: {
-  rows: { id: string; snr: number }[];
+  rows: { id: string; snr: number | null }[];
   nodePosition: [number, number];
   liveNodes: Record<string, IMapNode>;
   onNodeSelect: (nodeId: string) => void;
@@ -101,7 +101,7 @@ function NeighborTable({
           return (
             <div key={row.id} className="flex items-center justify-between text-xs px-2 py-1 rounded bg-white/5">
               <span className="text-gray-500">UNK</span>
-              <span className="text-gray-400">{row.snr} dB</span>
+              <span className="text-gray-400">{row.snr == null ? "—" : `${row.snr} dB`}</span>
             </div>
           );
         }
@@ -130,7 +130,7 @@ function NeighborTable({
               onNodeSelect={onNodeSelect}
             />
             <div className="flex items-center gap-3 text-gray-400">
-              <span>{row.snr} dB</span>
+              <span>{row.snr == null ? "—" : `${row.snr} dB`}</span>
               {distance != null && <span className="text-gray-500">{distance.toFixed(1)} km</span>}
             </div>
           </div>
@@ -262,7 +262,7 @@ export function MapDetailsPanel({
   const heardByRows = data.heardBy.map((nid) => {
     const nnode = liveNodes[nid];
     const neighbor = nnode?.neighbors?.find((n) => n.id === node.id);
-    return { id: nid, snr: neighbor?.snr ?? 0 };
+    return { id: nid, snr: neighbor?.snr ?? null };
   });
 
   return (
@@ -327,12 +327,14 @@ export function MapDetailsPanel({
         </div>
 
         <div className="flex items-center gap-2 mt-2">
-          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
+          <span
+            title={node.online ? "Seen within the last 6 hours" : "Last seen over 6 hours ago"}
+            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
             node.online
               ? "bg-emerald-500/20 text-emerald-400"
               : "bg-gray-500/20 text-gray-400"
           }`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${node.online ? "bg-emerald-400" : "bg-gray-500"}`} />
+            <span className={`w-1.5 h-1.5 rounded-full ${node.online ? "bg-emerald-400" : "bg-gray-500"}`} aria-hidden="true" />
             {node.online ? "Online" : "Offline"}
           </span>
           {node.role != null && roleTitles[node.role as NodeRole] && (

@@ -334,12 +334,17 @@ export function MapSettingsPanel({
 
   useEffect(() => {
     if (!legendOpen) return;
-    const handleClick = (e: MouseEvent) => {
+    const onPointerDown = (e: PointerEvent) => {
       if (containerRef.current?.contains(e.target as Node)) return;
       setLegendOpen(false);
     };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setLegendOpen(false); };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [legendOpen]);
 
   const sheet = useBottomSheetGesture(() => setSettingsPanelOpen(false));

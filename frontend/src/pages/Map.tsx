@@ -631,20 +631,26 @@ export function Map() {
       document.body.removeChild(a);
     };
 
-    if (mbMapRef.current) {
+    const map = mbMapRef.current;
+    if (map) {
       try {
-        // Force repaint so custom layers are captured, then wait a frame
-        mbMapRef.current.triggerRepaint();
-        setTimeout(() => {
+        // Capture on the next actually-drawn frame (custom layers included);
+        // fall back to a timeout if 'idle' never fires.
+        let done = false;
+        const capture = () => {
+          if (done) return;
+          done = true;
           try {
-            const canvas = mbMapRef.current!.getCanvas();
-            triggerDownload(canvas.toDataURL("image/png"));
+            triggerDownload(map.getCanvas().toDataURL("image/png"));
             toast("Map exported as PNG", { kind: "success" });
           } catch (err) {
             console.error("Map export failed:", err);
             toast("Couldn't export the map", { kind: "error" });
           }
-        }, 100);
+        };
+        map.triggerRepaint();
+        map.once("idle", capture);
+        setTimeout(capture, 1500);
       } catch (err) {
         console.error("Map export failed:", err);
         toast("Couldn't export the map", { kind: "error" });
@@ -1415,7 +1421,7 @@ export function Map() {
       }
       if (buildings3DRef.current) {
         try {
-          ensureBuildings3D(map);
+          ensureBuildings3D(map, isDarkBasemap(provider, osmBasemap, mapboxStyle));
         } catch (err) {
           console.warn("[Map] 3D buildings re-apply failed after style load:", err);
         }
@@ -1478,7 +1484,7 @@ export function Map() {
           .then((name) => {
             if (selectedNodeIdRef.current !== id) return;
             setDetailsDataRef.current((prev) =>
-              prev && prev.node.id === id ? { ...prev, displayName: name || "Unknown" } : prev,
+              prev && prev.node.id === id ? { ...prev, displayName: name || "—" } : prev,
             );
           })
           .catch(() => {});
@@ -1672,7 +1678,8 @@ export function Map() {
           removeSpiderfyLayers(map);
           map.easeTo({ center: [lng, lat], zoom: Math.min(currentZoom + 2, maxZoom) });
         };
-        const timer = setTimeout(zoomFallback, 300);
+        // getClusterExpansionZoom can be slow on first call; don't discard a slightly-late answer.
+        const timer = setTimeout(zoomFallback, 600);
 
         source.getClusterExpansionZoom(clusterId).then((zoom) => {
           if (handled) return;
@@ -1813,6 +1820,10 @@ export function Map() {
 
       // Clicking empty space clears selection and collapses spiderfy
       map.on("click", (e) => {
+        // While an RF tool is mid-pick, an empty click is dropping a virtual
+        // origin — don't also clear the selection/spiderfy.
+        if (activeToolRef.current && toolStepRef.current !== "result") return;
+
         // Build the list of interactive layers, including spiderfy layers if present
         const nodeLayers = ["unclustered-nodes", "plain-nodes", "unclustered-labels", "plain-labels"];
         if (map.getLayer(SPIDERFY_LAYER_NODES)) nodeLayers.push(SPIDERFY_LAYER_NODES);
@@ -2184,7 +2195,7 @@ export function Map() {
     const map = mbMapRef.current;
     if (!map || !styleEverLoadedRef.current) return;
     try {
-      if (buildings3D) ensureBuildings3D(map);
+      if (buildings3D) ensureBuildings3D(map, isDarkBasemap(provider, osmBasemap, mapboxStyle));
       else removeBuildings3D(map);
     } catch (err) {
       console.warn("[Map] 3D buildings apply failed:", err);
@@ -2703,12 +2714,6 @@ export function Map() {
           onReliabilityChange={scan.setScanReliability}
         />
       )}
-
-      <style>
-        {`
-          #map { position: absolute; inset: 0; }
-        `}
-      </style>
     </div>
   );
 }

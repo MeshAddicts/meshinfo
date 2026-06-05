@@ -8,6 +8,12 @@ import { Segmented } from "./Segmented";
 const F_915 = 915;
 const LEGEND_REF_AGL_M = 2;
 
+// CONUS-relevant rows only (AK-only classes + lichen/moss skipped); static.
+const LEGEND_ROWS = Object.values(NLCD_CLASSES)
+  .sort((a, b) => a.id - b.id)
+  .filter((c) => ![51, 72, 73, 74].includes(c.id))
+  .map((cls) => ({ cls, ahDb: endpointClutterDb(cls, LEGEND_REF_AGL_M, F_915) }));
+
 export function AggressionSlider({
   aggressionIdx,
   onChange,
@@ -191,11 +197,6 @@ export function ClutterStatusChip({ status, enabled = true }: ClutterStatusChipP
 export function ClassLegend() {
   const [open, setOpen] = useState(false);
 
-  // CONUS-relevant rows only; AK-only classes and lichen/moss are skipped.
-  const rows = Object.values(NLCD_CLASSES)
-    .sort((a, b) => a.id - b.id)
-    .filter((c) => ![51, 72, 73, 74].includes(c.id));
-
   return (
     <div className="text-[10px]">
       <button
@@ -228,8 +229,7 @@ export function ClassLegend() {
               </tr>
             </thead>
             <tbody className="text-gray-400">
-              {rows.map((cls) => {
-                const ahDb = endpointClutterDb(cls, LEGEND_REF_AGL_M, F_915);
+              {LEGEND_ROWS.map(({ cls, ahDb }) => {
                 return (
                   <tr key={cls.id} className="border-b border-white/5 last:border-b-0">
                     <td className="px-1.5 py-0.5 font-mono">{cls.id}</td>

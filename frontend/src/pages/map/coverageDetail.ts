@@ -1,4 +1,4 @@
-/** Coverage paint resolution. Standard=instant, Survey=2048² (1:1 with DEM, 4× Ultra cost). */
+/** Output raster size (the DEM is always 2048²). Compute cost scales ~size². */
 export type CoverageDetail = "standard" | "high" | "ultra" | "survey";
 
 export const COVERAGE_DETAIL_SIZE: Record<CoverageDetail, number> = {

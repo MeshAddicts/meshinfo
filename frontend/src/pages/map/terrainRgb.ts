@@ -406,7 +406,8 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
 
       const top = v00 + (v10 - v00) * fx;
       const bot = v01 + (v11 - v01) * fx;
-      data[j * targetWidth + i] = top + (bot - top) * fy;
+      const e = top + (bot - top) * fy;
+      data[j * targetWidth + i] = e < -500 || e > 9000 ? NaN : e;
     }
   }
 
@@ -509,7 +510,8 @@ export async function buildDemFromTilezen(opts: BuildDemOptions): Promise<DEM> {
 
       const top = v00 + (v10 - v00) * fx;
       const bot = v01 + (v11 - v01) * fx;
-      data[j * targetWidth + i] = top + (bot - top) * fy;
+      const e = top + (bot - top) * fy;
+      data[j * targetWidth + i] = e < -500 || e > 9000 ? NaN : e;
     }
   }
 
