@@ -81,6 +81,12 @@ export function useUrlMapSync(
       setSearchParamsRef.current(sp, { replace: true });
     }, 600);
   }, [mbMapRef]);
+
+  // Drop a pending debounced URL write if we unmount mid-debounce.
+  useEffect(() => () => {
+    if (viewSyncTimerRef.current) clearTimeout(viewSyncTimerRef.current);
+  }, []);
+
   const pushViewToUrlRef = useRef(pushViewToUrl);
   pushViewToUrlRef.current = pushViewToUrl;
 
