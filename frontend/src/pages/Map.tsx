@@ -314,8 +314,11 @@ export function Map() {
   const terrain3DRef = useRef(terrain3D);
   const buildings3DRef = useRef(buildings3D);
   const setDetailsDataRef = useRef(setDetailsData);
+  const serverNodeRef = useRef(serverNode);
+  const pendingServerCenterRef = useRef(false);
 
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
+  useEffect(() => { serverNodeRef.current = serverNode; }, [serverNode]);
   useEffect(() => { traceroutesRef.current = rawTraceroutes; }, [rawTraceroutes]);
   useEffect(() => { configRef.current = config; }, [config]);
   useEffect(() => { setDetailsDataRef.current = setDetailsData; }, [setDetailsData]);
@@ -713,8 +716,8 @@ export function Map() {
     const defaultPosition = { latitude: 38.5816, longitude: -121.4944 };
 
     const fallbackNodeWithPos =
-      serverNode?.map_position
-        ? serverNode
+      serverNodeRef.current?.map_position
+        ? serverNodeRef.current
         : Object.values(nodesRef.current).find((n) => n.map_position);
 
     const centerPos = fallbackNodeWithPos?.map_position
@@ -740,6 +743,13 @@ export function Map() {
     const urlLat = parseFloat(searchParams.get("lat") ?? "");
     const urlLng = parseFloat(searchParams.get("lng") ?? "");
     const urlZ = parseFloat(searchParams.get("z") ?? "");
+
+    const hasExplicitCenter =
+      !!flyTarget ||
+      (Number.isFinite(urlLng) && Number.isFinite(urlLat)) ||
+      (savedLon !== undefined && savedLat !== undefined);
+
+    pendingServerCenterRef.current = !hasExplicitCenter && !fallbackNodeWithPos;
 
     const initialCenter: [number, number] = flyTarget
       ? [flyTarget[0], flyTarget[1]]
@@ -2145,6 +2155,18 @@ export function Map() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!pendingServerCenterRef.current) return;
+    const map = mbMapRef.current;
+    if (!map) return;
+    const target = serverNode?.map_position
+      ? serverNode
+      : Object.values(nodesRef.current).find((n) => n.map_position);
+    if (!target?.map_position) return;
+    pendingServerCenterRef.current = false;
+    map.jumpTo({ center: [target.map_position[0], target.map_position[1]] });
   }, [serverNode]);
 
   // Style switching (re-style, let style.load re-add layers/sources)
