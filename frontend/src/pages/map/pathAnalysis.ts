@@ -47,8 +47,8 @@ export function findPathsBetween(
     paths.push({
       hops,
       hopCount: hops.length - 1,
-      snr: (tr as any).snr,
-      rssi: (tr as any).rssi,
+      snr: tr.snr,
+      rssi: tr.rssi,
       timestamp: tr.timestamp ?? 0,
     });
   }

@@ -12,14 +12,21 @@ export function MapSearchBar({
   onSelect: (nodeId: string) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [highlightIdx, setHighlightIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
+  // Debounce the (up to ~3k-node) scan so typing stays smooth.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query), 150);
+    return () => clearTimeout(t);
+  }, [query]);
+
   const results = useMemo(() => {
-    if (!query.trim()) return [];
-    const q = query.toLowerCase();
+    if (!debouncedQuery.trim()) return [];
+    const q = debouncedQuery.toLowerCase();
     return Object.entries(nodes)
       .filter(([id, n]) => {
         if (!n.map_position) return false;
@@ -31,7 +38,7 @@ export function MapSearchBar({
       })
       .slice(0, 20)
       .map(([id, n]) => ({ id, node: n }));
-  }, [query, nodes]);
+  }, [debouncedQuery, nodes]);
 
   useEffect(() => setHighlightIdx(0), [results]);
 
@@ -96,6 +103,7 @@ export function MapSearchBar({
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
+          aria-hidden="true"
         >
           <path
             strokeLinecap="round"
@@ -117,6 +125,13 @@ export function MapSearchBar({
           onKeyDown={onKeyDown}
           placeholder="Search nodes… (press /)"
           aria-label="Search nodes"
+          role="combobox"
+          aria-expanded={open && query.trim() !== "" && results.length > 0}
+          aria-controls="node-search-listbox"
+          aria-autocomplete="list"
+          aria-activedescendant={
+            open && results[highlightIdx] ? `node-search-opt-${results[highlightIdx].id}` : undefined
+          }
           className="w-full pl-8 pr-3 py-1.5 rounded-xl text-xs
             bg-gray-900/80 backdrop-blur-xl border border-white/10 shadow-2xl
             text-gray-200 placeholder-gray-500
@@ -124,12 +139,18 @@ export function MapSearchBar({
         />
       </div>
 
-      {open && results.length > 0 && (
+      {open && query.trim() !== "" && (
         <div
           ref={listRef}
+          id="node-search-listbox"
+          role="listbox"
+          aria-label="Node search results"
           className="mt-1 max-h-64 overflow-y-auto rounded-xl
             bg-gray-900/90 backdrop-blur-xl border border-white/10 shadow-2xl"
         >
+          {results.length === 0 && (
+            <div className="px-3 py-2 text-xs text-gray-500">No matching nodes</div>
+          )}
           {results.map(({ id, node }, i) => {
             const roleVal = (node as any).role as number | undefined;
             const roleName = roleVal != null ? roleTitles[roleVal as NodeRole]?.title : null;
@@ -137,7 +158,10 @@ export function MapSearchBar({
             return (
               <button
                 key={id}
+                id={`node-search-opt-${id}`}
                 type="button"
+                role="option"
+                aria-selected={i === highlightIdx}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => selectNode(id)}
                 className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 transition-colors ${
@@ -151,6 +175,7 @@ export function MapSearchBar({
                   style={{
                     backgroundColor: node.online ? roleColor : "rgba(107,114,128,0.5)",
                   }}
+                  aria-hidden="true"
                 />
                 <span className="truncate font-medium text-gray-200">
                   {node.shortname || id}

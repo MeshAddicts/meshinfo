@@ -11,6 +11,7 @@ import {
   computePathClutterLoss,
   makeClutterScratch,
 } from "./clutterPath";
+import { normalizeLng, shortestLngDelta } from "./geo";
 import {
   Climate,
   computeP2PLossFast,
@@ -264,10 +265,11 @@ export function renderCoverageRaster(
         // Linear lng/lat interp is within ~1% of great-circle at Meshtastic distances
         const nSamples = profileSampleCount(distKm);
         const lastIdx = nSamples - 1;
+        const dLng = shortestLngDelta(origLng, lng);
         let validProfile = true;
         for (let s = 0; s < nSamples; s++) {
           const t = s / lastIdx;
-          const sLng = origLng + (lng - origLng) * t;
+          const sLng = normalizeLng(origLng + dLng * t);
           const sLat = origLat + (lat - origLat) * t;
           const elev = sampleDEMAt(dem, sLng, sLat);
           if (Number.isNaN(elev)) {

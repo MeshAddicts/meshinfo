@@ -83,7 +83,7 @@ function NeighborTable({
   onNodeSelect,
   onHoverLink,
 }: {
-  rows: { id: string; snr: number }[];
+  rows: { id: string; snr: number | null }[];
   nodePosition: [number, number];
   liveNodes: Record<string, IMapNode>;
   onNodeSelect: (nodeId: string) => void;
@@ -101,7 +101,7 @@ function NeighborTable({
           return (
             <div key={row.id} className="flex items-center justify-between text-xs px-2 py-1 rounded bg-white/5">
               <span className="text-gray-500">UNK</span>
-              <span className="text-gray-400">{row.snr} dB</span>
+              <span className="text-gray-400">{row.snr == null ? "—" : `${row.snr} dB`}</span>
             </div>
           );
         }
@@ -130,7 +130,7 @@ function NeighborTable({
               onNodeSelect={onNodeSelect}
             />
             <div className="flex items-center gap-3 text-gray-400">
-              <span>{row.snr} dB</span>
+              <span>{row.snr == null ? "—" : `${row.snr} dB`}</span>
               {distance != null && <span className="text-gray-500">{distance.toFixed(1)} km</span>}
             </div>
           </div>
@@ -152,12 +152,15 @@ function CollapsibleSection({
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const contentId = `details-section-${title.toLowerCase().replace(/\s+/g, "-")}`;
 
   return (
     <div className="border-t border-white/10">
       <button
         type="button"
         onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        aria-controls={contentId}
         className="w-full flex items-center justify-between py-2.5 px-1 text-xs font-medium text-gray-300 hover:text-gray-100 transition-colors"
       >
         <span className="flex items-center gap-2">
@@ -173,11 +176,12 @@ function CollapsibleSection({
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
+          aria-hidden="true"
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
-      {open && <div className="pb-2.5">{children}</div>}
+      {open && <div id={contentId} className="pb-2.5">{children}</div>}
     </div>
   );
 }
@@ -194,6 +198,24 @@ export function MapDetailsPanel({
   onHoverLink?: (otherNodeId: string | null) => void;
 }) {
   const { sheetRef, clearStyles, onTouchStart, onTouchMove, onTouchEnd } = useBottomSheetGesture(onClose);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  // Move focus into the panel when it opens (or switches to a new node), but
+  // not on the 5 s poll re-render of the same node.
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const focusedNodeRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!data) { focusedNodeRef.current = null; return; }
+    if (focusedNodeRef.current !== data.node.id) {
+      focusedNodeRef.current = data.node.id;
+      requestAnimationFrame(() => headingRef.current?.focus());
+    }
+  }, [data]);
 
   // Reset gesture when the selected node changes
   const prevNodeId = useRef<string | null>(null);
@@ -240,12 +262,14 @@ export function MapDetailsPanel({
   const heardByRows = data.heardBy.map((nid) => {
     const nnode = liveNodes[nid];
     const neighbor = nnode?.neighbors?.find((n) => n.id === node.id);
-    return { id: nid, snr: neighbor?.snr ?? 0 };
+    return { id: nid, snr: neighbor?.snr ?? null };
   });
 
   return (
     <div
       ref={sheetRef}
+      role="dialog"
+      aria-label={node.longname || node.shortname || node.id}
       className="fixed z-1050 flex flex-col
         bg-gray-900/80 backdrop-blur-xl shadow-2xl
         bottom-0 left-0 right-0 max-h-[70vh] rounded-t-2xl border-t border-white/10
@@ -273,7 +297,7 @@ export function MapDetailsPanel({
       >
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
-            <h2 className="text-base font-semibold text-gray-100 truncate leading-tight">
+            <h2 ref={headingRef} tabIndex={-1} className="text-base font-semibold text-gray-100 truncate leading-tight focus:outline-none">
               {node.longname ?? ""}
             </h2>
             <div className="text-xs text-gray-500 mt-0.5 truncate">
@@ -303,12 +327,14 @@ export function MapDetailsPanel({
         </div>
 
         <div className="flex items-center gap-2 mt-2">
-          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
+          <span
+            title={node.online ? "Seen within the last 6 hours" : "Last seen over 6 hours ago"}
+            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
             node.online
               ? "bg-emerald-500/20 text-emerald-400"
               : "bg-gray-500/20 text-gray-400"
           }`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${node.online ? "bg-emerald-400" : "bg-gray-500"}`} />
+            <span className={`w-1.5 h-1.5 rounded-full ${node.online ? "bg-emerald-400" : "bg-gray-500"}`} aria-hidden="true" />
             {node.online ? "Online" : "Offline"}
           </span>
           {node.role != null && roleTitles[node.role as NodeRole] && (
@@ -351,7 +377,9 @@ export function MapDetailsPanel({
         <div>
           <div className="text-gray-500 text-[10px] uppercase tracking-wider">Position</div>
           <div className="text-gray-400 font-mono text-[11px]">
-            {node.position[1].toFixed(5)}, {node.position[0].toFixed(5)}
+            {Math.abs(node.position[0]) < 1e-6 && Math.abs(node.position[1]) < 1e-6
+              ? "No GPS fix"
+              : `${node.position[1].toFixed(5)}, ${node.position[0].toFixed(5)}`}
           </div>
         </div>
         {hardwareLabel && (
@@ -456,6 +484,9 @@ export function MapDetailsPanel({
         </CollapsibleSection>
 
         <CollapsibleSection title="Elsewhere">
+          {elsewhereLinks.length === 0 ? (
+            <span className="text-gray-500 text-xs ml-2">None</span>
+          ) : (
           <div className="space-y-1 px-2">
             {elsewhereLinks.map((link) => {
               const url = resolveElsewhereUrl(link.url ?? "", node.id, nodeIdInt);
@@ -475,6 +506,7 @@ export function MapDetailsPanel({
               );
             })}
           </div>
+          )}
         </CollapsibleSection>
       </div>
     </div>

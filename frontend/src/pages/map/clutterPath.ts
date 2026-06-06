@@ -20,6 +20,7 @@ import {
   NLCD_CLASSES,
   vegetationPathLossDb,
 } from "./clutterClasses";
+import { normalizeLng, shortestLngDelta } from "./geo";
 
 /** NLCD developed-intensity classes that the building-height raster overrides. */
 const DEVELOPED_CLASS_IDS = new Set([21, 22, 23, 24]);
@@ -149,7 +150,7 @@ export function computePathClutterLoss(
     const zTerrain = profileM[s];
     let canopyHeightM = cls.nominalHeightM;
     if (canopyCtx) {
-      const sLng = canopyCtx.origLng + (canopyCtx.destLng - canopyCtx.origLng) * t;
+      const sLng = normalizeLng(canopyCtx.origLng + shortestLngDelta(canopyCtx.origLng, canopyCtx.destLng) * t);
       const sLat = canopyCtx.origLat + (canopyCtx.destLat - canopyCtx.origLat) * t;
       canopyHeightM = effectiveCanopyHeightM(cls, canopyCtx, sLng, sLat);
     }

@@ -6,14 +6,16 @@ import maplibregl, {
 } from "maplibre-gl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { toast } from "../components/toast";
 import { env } from "../env";
 import { reverseGeocode } from "../maps/geocoder";
-import { buildMapStyle, ensureBuildings3D, ensureTerrain, type OsmBasemap, removeBuildings3D, removeTerrain } from "../maps/mapStyle";
+import { buildMapStyle, ensureBuildings3D, ensureTerrain, isDarkBasemap, type OsmBasemap, removeBuildings3D, removeTerrain } from "../maps/mapStyle";
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { NodeRole, roleTitles } from "../types";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { ClusterDonutLayer } from "./map/clusterDonutLayer";
 import { FiltersResetPill } from "./map/FiltersResetPill";
+import { circularMeanLng } from "./map/geo";
 import { bestSnr, computeMaxRange, geodesicCircleCoords, mbRoleColorExpr, queryTerrainElevationMSL, relativeTime, signalBarsHtml, TRANSPARENT_1PX_PNG } from "./map/helpers";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
 import { LosTubeLayer } from "./map/losTubeLayer";
@@ -70,7 +72,10 @@ export function Map() {
   const persistentLinksMbJsonRef = useRef<string>("");
 
   const mbMapRef = useRef<MlMap | null>(null);
+  const authErrorToastedRef = useRef(false);
   const clusterDonutLayerRef = useRef<ClusterDonutLayer | null>(null);
+  const [mapLoaded, setMapLoaded] = useState(false);
+  const mapLoadFallbackRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   /** Currently hover-focused node id, or null. Drives focus-on-hover dimming
    *  alongside the per-tool dim — the cluster layer applies whichever is dimmer. */
   const focusedNodeIdRef = useRef<string | null>(null);
@@ -89,7 +94,7 @@ export function Map() {
 
   const { data: rawNodes = {} } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
-  const { data: rawTraceroutes = [] } = useGetTraceroutesQuery();
+  const { data: rawTraceroutes = [], isLoading: rawTraceroutesLoading } = useGetTraceroutesQuery();
 
   const resolveChannelLabel = useCallback(
     (channelId: string | null | undefined): string | null => {
@@ -289,7 +294,7 @@ export function Map() {
   const mergeOrigins = useCoverageMergeOrigins(nodes, toolFromId);
 
   // URL deep-link + view sync
-  const { searchParams, flyToTargetRef } = useUrlMapSync(nodes, mbMapRef);
+  const { searchParams, flyToTargetRef, pushViewToUrlRef } = useUrlMapSync(nodes, mbMapRef);
 
   // Refs mirroring state — read from MapLibre event handlers + setStyle re-init
   const nodesRef = useRef(nodes);
@@ -345,6 +350,8 @@ export function Map() {
     mbMapRef, losTubeLayerRef,
     setLosResult: losState.setLosResult,
     setLosDemSource: losState.setLosDemSource,
+    setLosError: losState.setLosError,
+    setIsComputingLos: losState.setIsComputingLos,
   });
 
   // Scan compute + per-class visibility + clear-on-tool-change + hover effects
@@ -367,6 +374,7 @@ export function Map() {
     mbMapRef, isDraggingMarkerRef,
     setScanSummary: scan.setScanSummary,
     setIsScanning: scan.setIsScanning,
+    setScanError: scan.setScanError,
     setScanDemSource: scan.setScanDemSource,
     setScanClutterStatus: scan.setScanClutterStatus,
     setScanCanopyStatus: scan.setScanCanopyStatus,
@@ -405,6 +413,7 @@ export function Map() {
     losCompute.losHoverMarkerRef.current?.remove();
     losCompute.losHoverMarkerRef.current = null;
     losState.setLosResult(null);
+    losState.setLosError(null);
     coverage.setCoverageResult(null);
     coverage.setKeepCoveragePaint(false);
     scan.setScanSummary(null);
@@ -622,16 +631,29 @@ export function Map() {
       document.body.removeChild(a);
     };
 
-    if (mbMapRef.current) {
+    const map = mbMapRef.current;
+    if (map) {
       try {
-        // Force repaint so custom layers are captured, then wait a frame
-        mbMapRef.current.triggerRepaint();
-        setTimeout(() => {
-          const canvas = mbMapRef.current!.getCanvas();
-          triggerDownload(canvas.toDataURL("image/png"));
-        }, 100);
+        // Capture on the next actually-drawn frame (custom layers included);
+        // fall back to a timeout if 'idle' never fires.
+        let done = false;
+        const capture = () => {
+          if (done) return;
+          done = true;
+          try {
+            triggerDownload(map.getCanvas().toDataURL("image/png"));
+            toast("Map exported as PNG", { kind: "success" });
+          } catch (err) {
+            console.error("Map export failed:", err);
+            toast("Couldn't export the map", { kind: "error" });
+          }
+        };
+        map.triggerRepaint();
+        map.once("idle", capture);
+        setTimeout(capture, 1500);
       } catch (err) {
         console.error("Map export failed:", err);
+        toast("Couldn't export the map", { kind: "error" });
       }
     }
   }
@@ -789,6 +811,16 @@ export function Map() {
 
     mbMapRef.current = map;
 
+    // Surface style/source/tile load failures instead of a silent blank map.
+    map.on("error", (e) => {
+      const err = e.error as { status?: number } | undefined;
+      if (import.meta.env.DEV) console.warn("[Map] GL error:", err ?? e);
+      if (!authErrorToastedRef.current && (err?.status === 401 || err?.status === 403)) {
+        authErrorToastedRef.current = true;
+        toast("Map tiles failed to load — the Mapbox token may be missing or invalid.", { kind: "error" });
+      }
+    });
+
     const NODE_SOURCES = ["nodes_clustered", "nodes_plain", SPIDERFY_SOURCE_NODES] as const;
 
     const clearSelected = () => {
@@ -849,6 +881,8 @@ export function Map() {
       localStorage.setItem("savedZoom", map.getZoom().toString());
       localStorage.setItem("savedPitch", map.getPitch().toString());
       localStorage.setItem("savedBearing", map.getBearing().toString());
+      // Mirror view into ?lat/lng/z (debounced); here so it follows recreation.
+      pushViewToUrlRef.current();
     });
 
     const ensureSourcesAndLayers = () => {
@@ -1160,7 +1194,8 @@ export function Map() {
       // Initial line-opacity bakes recencyOpacity from the feature; focus-on-hover
       // swaps these expressions in to dim non-connected links.
       const linkOpacityInitial = (base: number) =>
-        ["*", base, ["coalesce", ["get", "recencyOpacity"], 1.0]] as any;
+        // 0.6 = unknown-recency default (see recencyOpacityFromAgeMs).
+        ["*", base, ["coalesce", ["get", "recencyOpacity"], 0.6]] as any;
 
       // Neighbor + both links (solid; "both" uses curved arcs)
       if (!map.getLayer("links-solid")) {
@@ -1379,14 +1414,14 @@ export function Map() {
       // Re-apply terrain if it was enabled (style.load wipes this)
       if (terrain3DRef.current) {
         try {
-          ensureTerrain(map, terrainExaggeration);
+          ensureTerrain(map, terrainExaggeration, isDarkBasemap(provider, osmBasemap, mapboxStyle));
         } catch (err) {
           console.warn("[Map] Terrain re-apply failed after style load:", err);
         }
       }
       if (buildings3DRef.current) {
         try {
-          ensureBuildings3D(map);
+          ensureBuildings3D(map, isDarkBasemap(provider, osmBasemap, mapboxStyle));
         } catch (err) {
           console.warn("[Map] 3D buildings re-apply failed after style load:", err);
         }
@@ -1399,15 +1434,13 @@ export function Map() {
       if (mbHandlersBoundRef.current) return;
       mbHandlersBoundRef.current = true;
 
-      const handleNodeClick = async (id: string) => {
+      const handleNodeClick = (id: string) => {
         const liveNodes = nodesRef.current;
         const node = liveNodes[id];
         if (!node?.map_position) return;
 
         selectedNodeIdRef.current = id;
         setSelected(id);
-
-        const displayName = await reverseGeocode(node.map_position[0], node.map_position[1]);
 
         const nodeLike: NodeLike = {
           id,
@@ -1438,13 +1471,23 @@ export function Map() {
         setDetailsDataRef.current({
           node: nodeLike,
           liveNodes,
-          displayName: displayName || "Unknown",
+          displayName: "Locating…",
           elsewhereLinks: configRef.current?.mesh?.elsewhere_links,
           traceroutes: traceroutesRef.current,
           channelLabel: resolveChannelLabel((node as any).last_channel),
           heardBy,
           maxRangeKm,
         });
+
+        // Geocode without blocking the panel; ignore the result if selection moved on.
+        void reverseGeocode(node.map_position[0], node.map_position[1])
+          .then((name) => {
+            if (selectedNodeIdRef.current !== id) return;
+            setDetailsDataRef.current((prev) =>
+              prev && prev.node.id === id ? { ...prev, displayName: name || "—" } : prev,
+            );
+          })
+          .catch(() => {});
 
         // Draw links (neighbor + traceroute)
         const neighborFC = buildMapboxLinkFeatureCollection({ node: nodeLike, liveNodes, heardBy });
@@ -1546,7 +1589,7 @@ export function Map() {
       const LINK_DIM_OPACITY = 0.1;
       // const NODE_DIM_OPACITY = 0.2;  // Re-enable with the disabled block in applyLinkFocus.
 
-      const recencyExpr = ["coalesce", ["get", "recencyOpacity"], 1.0] as any;
+      const recencyExpr = ["coalesce", ["get", "recencyOpacity"], 0.6] as any;
 
       const linkOpacityForFocus = (base: number, focusedId: string | null) => {
         if (!focusedId) return ["*", base, recencyExpr] as any;
@@ -1635,7 +1678,8 @@ export function Map() {
           removeSpiderfyLayers(map);
           map.easeTo({ center: [lng, lat], zoom: Math.min(currentZoom + 2, maxZoom) });
         };
-        const timer = setTimeout(zoomFallback, 300);
+        // getClusterExpansionZoom can be slow on first call; don't discard a slightly-late answer.
+        const timer = setTimeout(zoomFallback, 600);
 
         source.getClusterExpansionZoom(clusterId).then((zoom) => {
           if (handled) return;
@@ -1730,7 +1774,7 @@ export function Map() {
           const overlap = findOverlappingPlainNodes(e.point);
           if (overlap.length >= 2) {
             const center: [number, number] = [
-              overlap.reduce((s, f) => s + f.geometry.coordinates[0], 0) / overlap.length,
+              circularMeanLng(overlap.map((f) => f.geometry.coordinates[0])),
               overlap.reduce((s, f) => s + f.geometry.coordinates[1], 0) / overlap.length,
             ];
             void spiderfyFeatures(map, center, overlap as any, map.getZoom(), true);
@@ -1776,6 +1820,10 @@ export function Map() {
 
       // Clicking empty space clears selection and collapses spiderfy
       map.on("click", (e) => {
+        // While an RF tool is mid-pick, an empty click is dropping a virtual
+        // origin — don't also clear the selection/spiderfy.
+        if (activeToolRef.current && toolStepRef.current !== "result") return;
+
         // Build the list of interactive layers, including spiderfy layers if present
         const nodeLayers = ["unclustered-nodes", "plain-nodes", "unclustered-labels", "plain-labels"];
         if (map.getLayer(SPIDERFY_LAYER_NODES)) nodeLayers.push(SPIDERFY_LAYER_NODES);
@@ -1822,6 +1870,10 @@ export function Map() {
       map.on("moveend", triggerAutoSpiderfy);
       map.on("idle", triggerAutoSpiderfy);
       map.once("load", triggerAutoSpiderfy);
+      // Clear the loading overlay on first render; backstop in case 'load' never
+      // fires (hard style/tile/token failure emits 'error', not 'load').
+      mapLoadFallbackRef.current = window.setTimeout(() => setMapLoaded(true), 10000);
+      map.once("load", () => { setMapLoaded(true); if (mapLoadFallbackRef.current) clearTimeout(mapLoadFallbackRef.current); });
 
       // Right-click / long-press: "Set as My Node"
       const findNodeIdAtPoint = (point: maplibregl.PointLike): string | null => {
@@ -1879,6 +1931,19 @@ export function Map() {
       const handleKeydown = (e: KeyboardEvent) => {
         const tag = (e.target as HTMLElement)?.tagName;
         if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+        // Escape works from anywhere; pan/zoom only when focus is on the map
+        // itself (or nothing), so arrowing a focused panel control isn't hijacked.
+        if (e.key !== "Escape") {
+          const ae = document.activeElement as HTMLElement | null;
+          const navOk =
+            !ae ||
+            ae === document.body ||
+            ae === map.getCanvas() ||
+            ae === mapRef.current ||
+            ae.classList?.contains("maplibregl-canvas");
+          if (!navOk) return;
+        }
 
         const PAN_PX = 100;
         switch (e.key) {
@@ -2028,20 +2093,28 @@ export function Map() {
         );
       };
 
+      // Only rebuild the popup HTML when the hovered link changes; otherwise just
+      // move it (setLngLat) as the cursor travels along the same link.
+      let lastLinkKey: string | null = null;
       const showLinkPopup = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
         const f = e.features?.[0];
         if (!f) return;
-        linkPopup
-          .setLngLat(e.lngLat)
-          .setHTML(buildLinkPopupHtml(f.properties ?? {}))
-          .addTo(map);
+        const props = f.properties ?? {};
+        lastLinkKey = `${props.aId}|${props.bId}`;
+        linkPopup.setLngLat(e.lngLat).setHTML(buildLinkPopupHtml(props)).addTo(map);
       };
       const moveLinkPopup = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
         const f = e.features?.[0];
         if (!f) return;
-        linkPopup.setLngLat(e.lngLat).setHTML(buildLinkPopupHtml(f.properties ?? {}));
+        const props = f.properties ?? {};
+        const key = `${props.aId}|${props.bId}`;
+        if (key !== lastLinkKey) {
+          lastLinkKey = key;
+          linkPopup.setHTML(buildLinkPopupHtml(props));
+        }
+        linkPopup.setLngLat(e.lngLat);
       };
-      const hideLinkPopup = () => linkPopup.remove();
+      const hideLinkPopup = () => { lastLinkKey = null; linkPopup.remove(); };
 
       for (const layerId of ["links-solid", "links-dashed", "links-dotted"]) {
         map.on("mouseenter", layerId, showLinkPopup);
@@ -2054,6 +2127,7 @@ export function Map() {
     map.on("style.load", ensureSourcesAndLayers);
 
     return () => {
+      if (mapLoadFallbackRef.current) clearTimeout(mapLoadFallbackRef.current);
       if (mbKeydownHandlerRef.current) {
         document.removeEventListener("keydown", mbKeydownHandlerRef.current);
         mbKeydownHandlerRef.current = null;
@@ -2108,7 +2182,7 @@ export function Map() {
 
     try {
       if (terrain3D) {
-        ensureTerrain(map, terrainExaggeration);
+        ensureTerrain(map, terrainExaggeration, isDarkBasemap(provider, osmBasemap, mapboxStyle));
       } else {
         removeTerrain(map);
       }
@@ -2121,7 +2195,7 @@ export function Map() {
     const map = mbMapRef.current;
     if (!map || !styleEverLoadedRef.current) return;
     try {
-      if (buildings3D) ensureBuildings3D(map);
+      if (buildings3D) ensureBuildings3D(map, isDarkBasemap(provider, osmBasemap, mapboxStyle));
       else removeBuildings3D(map);
     } catch (err) {
       console.warn("[Map] 3D buildings apply failed:", err);
@@ -2144,7 +2218,8 @@ export function Map() {
     // If selected node disappears, clear selection + links/panel
     const selectedId = mbSelectedIdRef.current;
     if (selectedId) {
-      const stillExists = data.features.some((f) => (f.properties?.id as string | undefined) === selectedId);
+      // Check the unfiltered nodes: a filtered-out node keeps its panel open.
+      const stillExists = Boolean(nodes[selectedId]);
       if (!stillExists) {
         try {
           map.setFeatureState({ source: "nodes_clustered", id: selectedId }, { selected: false });
@@ -2201,7 +2276,29 @@ export function Map() {
 
   return (
     <div className="relative w-full h-full min-h-0 overflow-hidden overscroll-none">
-      <div id="map" ref={mapRef} className="absolute inset-0" />
+      <div
+        id="map"
+        ref={mapRef}
+        role="application"
+        aria-label="Mesh node map"
+        aria-describedby="map-a11y-hint"
+        className="absolute inset-0"
+      />
+      <p id="map-a11y-hint" className="sr-only">
+        Interactive map of mesh nodes. Use the search box to find and select a node by name.
+        Arrow keys pan and plus or minus zoom while the map is focused.
+      </p>
+      <div className="sr-only" aria-live="polite">
+        {detailsData
+          ? `Selected ${detailsData.node.longname || detailsData.node.shortname || detailsData.node.id}`
+          : ""}
+      </div>
+
+      {!mapLoaded && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+          <div className="w-8 h-8 rounded-full border-2 border-white/20 border-t-cyan-400 animate-spin" />
+        </div>
+      )}
 
       <MapSearchBar
         nodes={nodes}
@@ -2234,7 +2331,7 @@ export function Map() {
         buildings3D={buildings3D}
         setBuildings3D={setBuildings3D}
         onExport={handleExport}
-        hidden={!!detailsData}
+        hidden={!!detailsData || activeTool != null}
         recentDays={recentDays}
         setRecentDays={setRecentDays}
         clusterEnabled={clusterEnabled}
@@ -2264,7 +2361,7 @@ export function Map() {
           });
           setSettingsPanelOpen(true);
         }}
-        hidden={!!detailsData}
+        hidden={!!detailsData || activeTool != null}
       />
 
       {myNodeLabel && (
@@ -2378,7 +2475,9 @@ export function Map() {
           terrainNeeded={!terrain3D}
           onEnableTerrain={() => setTerrain3D(true)}
           onClose={resetTool}
-          isComputing={terrain3D && !losState.losResult}
+          isComputing={terrain3D && !losState.losResult && !losState.losError}
+          isRecomputing={losState.isComputingLos && !!losState.losResult}
+          error={losState.losError}
           fromHwIdx={losState.losFromHwIdx} onFromHwIdxChange={losState.setLosFromHwIdx}
           fromAntIdx={losState.losFromAntIdx} onFromAntIdxChange={losState.setLosFromAntIdx}
           fromHeightM={losState.losFromHeightM} onFromHeightChange={losState.setLosFromHeightM}
@@ -2516,6 +2615,7 @@ export function Map() {
           fromColor="#06b6d4"
           toColor="#d946ef"
           traceroutes={rawTraceroutes}
+          loading={rawTraceroutesLoading}
           liveNodes={nodes}
           onNodeSelect={(id) => handleNodeSelectRef.current(id)}
           onHoverLink={(id) => handleLinkHoverRef.current(id)}
@@ -2533,6 +2633,7 @@ export function Map() {
               : "Virtual location"
           }
           isScanning={scan.isScanning}
+          scanError={scan.scanError}
           demSource={scan.scanDemSource}
           terrainNeeded={!terrain3D}
           onEnableTerrain={() => setTerrain3D(true)}
@@ -2613,12 +2714,6 @@ export function Map() {
           onReliabilityChange={scan.setScanReliability}
         />
       )}
-
-      <style>
-        {`
-          #map { position: absolute; inset: 0; }
-        `}
-      </style>
     </div>
   );
 }

@@ -15,6 +15,7 @@ function computeHealth(nodes: Record<string, IMapNode>) {
     if (n.online) online++;
     if (!adj.has(id)) adj.set(id, new Set());
     for (const neighbor of n.neighbors ?? []) {
+      if (!nodes[neighbor.id]) continue; // skip edges to nodes we've never seen
       adj.get(id)!.add(neighbor.id);
       if (!adj.has(neighbor.id)) adj.set(neighbor.id, new Set());
       adj.get(neighbor.id)!.add(id);
@@ -25,8 +26,10 @@ function computeHealth(nodes: Record<string, IMapNode>) {
     }
   }
 
-  // BFS diameter, sampled to first 100 nodes
-  const nodeIds = [...adj.keys()].slice(0, 100);
+  // BFS diameter, sampled to first 100 nodes (perf cap)
+  const adjKeys = [...adj.keys()];
+  const nodeIds = adjKeys.slice(0, 100);
+  const diameterSampled = adjKeys.length > 100;
   let diameter = 0;
   for (const start of nodeIds) {
     const dist = new Map<string, number>();
@@ -52,19 +55,31 @@ function computeHealth(nodes: Record<string, IMapNode>) {
     offline: total - online,
     avgSnr: snrCount > 0 ? snrSum / snrCount : null,
     diameter,
-    linkCount: [...adj.values()].reduce((sum, s) => sum + s.size, 0) / 2,
+    diameterSampled,
+    linkCount: Math.round([...adj.values()].reduce((sum, s) => sum + s.size, 0) / 2),
   };
 }
 
 export function MapHealthWidget({ nodes }: { nodes: Record<string, IMapNode> }) {
   const [expanded, setExpanded] = useState(false);
-  const health = useMemo(() => computeHealth(nodes), [nodes]);
+  // Cheap online/total for the always-visible pill; the BFS diameter + link counts
+  // only matter when expanded, so skip that work every poll while collapsed.
+  const basic = useMemo(() => {
+    const vals = Object.values(nodes);
+    let online = 0;
+    for (const n of vals) if (n.online) online++;
+    return { online, total: vals.length };
+  }, [nodes]);
+  const health = useMemo(() => (expanded ? computeHealth(nodes) : null), [expanded, nodes]);
 
   return (
     <div className="fixed top-3 right-20 sm:right-40 z-30 flex flex-col items-end">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
+        aria-expanded={expanded}
+        aria-controls="mesh-health-panel"
+        aria-label={`Mesh health: ${basic.online} of ${basic.total} nodes online`}
         className="px-2 sm:px-3 py-1.5 rounded-xl text-xs font-medium
           bg-gray-900/80 backdrop-blur-xl border border-white/10 shadow-2xl
           text-gray-300 hover:text-gray-100 hover:bg-gray-900/90 transition-colors
@@ -72,15 +87,15 @@ export function MapHealthWidget({ nodes }: { nodes: Record<string, IMapNode> }) 
         title="Mesh health"
       >
         <span className="inline-flex items-center gap-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-          {health.online}
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" aria-hidden="true" />
+          {basic.online}
         </span>
-        <span className="hidden sm:inline text-gray-500">/</span>
-        <span className="hidden sm:inline text-gray-400">{health.total}</span>
+        <span className="hidden sm:inline text-gray-500" aria-hidden="true">/</span>
+        <span className="hidden sm:inline text-gray-400">{basic.total}</span>
       </button>
 
-      {expanded && (
-        <div className="mt-2 min-w-[220px] rounded-xl p-3
+      {expanded && health && (
+        <div id="mesh-health-panel" className="mt-2 min-w-[220px] rounded-xl p-3
           bg-gray-900/90 backdrop-blur-xl border border-white/10 shadow-2xl
           space-y-2 text-xs">
           <div className="flex items-center justify-between">
@@ -108,7 +123,12 @@ export function MapHealthWidget({ nodes }: { nodes: Record<string, IMapNode> }) 
           </div>
           <div className="flex items-center justify-between">
             <span className="text-gray-500">Mesh diameter</span>
-            <span className="text-gray-300">{health.diameter} hops</span>
+            <span
+              className="text-gray-300"
+              title={health.diameterSampled ? "Approximate — BFS sampled to the first 100 nodes" : undefined}
+            >
+              {health.diameterSampled ? "~" : ""}{health.diameter} hops
+            </span>
           </div>
         </div>
       )}

@@ -53,8 +53,8 @@ const float INNER_R = 0.78;
 const float EDGE_AA = 0.035;
 
 const vec4 COL_BG      = vec4(0.059, 0.090, 0.164, 0.88);
-const vec4 COL_ONLINE  = vec4(0.133, 0.773, 0.369, 1.00);
-const vec4 COL_OFFLINE = vec4(0.450, 0.480, 0.530, 0.85);
+const vec4 COL_ONLINE  = vec4(0.196, 0.941, 0.196, 1.00); // #32f032 (DEFAULT_NODE_COLOR)
+const vec4 COL_OFFLINE = vec4(0.447, 0.475, 0.541, 0.85); // #72798a (OFFLINE_NODE_COLOR)
 const vec4 COL_BORDER  = vec4(1.000, 1.000, 1.000, 0.15);
 
 void main() {

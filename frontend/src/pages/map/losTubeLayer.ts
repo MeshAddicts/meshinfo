@@ -4,6 +4,8 @@
  */
 import maplibregl, { type CustomRenderMethodInput } from "maplibre-gl";
 
+import { normalizeLng, shortestLngDelta } from "./geo";
+
 export type LosSegmentColor = "clear" | "fresnel" | "blocked";
 
 export interface LosTubePoint {
@@ -236,7 +238,7 @@ export function pickObstructions(
     const p = points[idx];
     const t = totalDistanceKm > 0 ? p.distanceKm / totalDistanceKm : 0;
     return {
-      lng: from[0] + (to[0] - from[0]) * t,
+      lng: normalizeLng(from[0] + shortestLngDelta(from[0], to[0]) * t),
       lat: from[1] + (to[1] - from[1]) * t,
       baseHeightM: p.chord,
       topHeightM: p.effectiveGround,
@@ -249,7 +251,7 @@ export function pickObstructions(
 /** Obstructions → small-square FeatureCollection for a fill-extrusion layer (baseM/topM). */
 export function obstructionsToGeoJSON(
   features: ObstructionFeature[],
-  footprintSideM = 40,
+  footprintSideM = 60,
 ): GeoJSON.FeatureCollection<GeoJSON.Polygon, {
   baseM: number;
   topM: number;
@@ -295,7 +297,7 @@ export function losPointsToTubeData(
 ): LosTubeData {
   const tubePoints: LosTubePoint[] = points.map((p) => {
     const t = totalDistanceKm > 0 ? p.distanceKm / totalDistanceKm : 0;
-    const lng = from[0] + (to[0] - from[0]) * t;
+    const lng = normalizeLng(from[0] + shortestLngDelta(from[0], to[0]) * t);
     const lat = from[1] + (to[1] - from[1]) * t;
     const color: LosSegmentColor = p.blocked
       ? "blocked"

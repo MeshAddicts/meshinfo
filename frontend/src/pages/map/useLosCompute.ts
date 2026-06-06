@@ -5,8 +5,10 @@ import maplibregl, {
 import { useCallback, useEffect, useRef } from "react";
 
 import { env } from "../../env";
-import { Climate, computeP2PLoss, Polarization } from "./itm";
-import { analyzeLineOfSight, type LoSResult } from "./losAnalysis";
+import { normalizeLng, shortestLngDelta } from "./geo";
+import { computeP2PLoss } from "./itm";
+import { DEFAULT_ITM_ENV } from "./itmEnv";
+import { analyzeLineOfSight, haversineKm, type LoSResult } from "./losAnalysis";
 import { losPointsToTubeData, LosTubeLayer, obstructionsToGeoJSON, pickObstructions } from "./losTubeLayer";
 import { type DEM, demBoundsAround, sampleDEMAt } from "./terrainDEM";
 import { buildDem, type DemSource } from "./terrainRgb";
@@ -29,6 +31,8 @@ type LosComputeParams = {
   losTubeLayerRef: React.RefObject<LosTubeLayer | null>;
   setLosResult: (r: LoSResult | null) => void;
   setLosDemSource: (s: DemSource | null) => void;
+  setLosError: (e: string | null) => void;
+  setIsComputingLos: (v: boolean) => void;
 };
 
 export function useLosCompute(params: LosComputeParams) {
@@ -37,7 +41,7 @@ export function useLosCompute(params: LosComputeParams) {
     losVirtualFrom, losVirtualTo, losFromHeightM, losToHeightM,
     provider, terrain3D, nodes, losResult,
     mbMapRef, losTubeLayerRef,
-    setLosResult, setLosDemSource,
+    setLosResult, setLosDemSource, setLosError, setIsComputingLos,
   } = params;
 
   // LOS endpoints from the compute effect; refs so the hover-marker callback reads them without deps churn
@@ -47,6 +51,14 @@ export function useLosCompute(params: LosComputeParams) {
   const losHoverMarkerRef = useRef<maplibregl.Marker | null>(null);
   // Skips fitBounds re-zoom when the user changes config without moving endpoints
   const losFitKeyRef = useRef<string | null>(null);
+  // Cache the bbox-derived DEM so height tweaks reuse it instead of re-stitching.
+  const losDemCacheRef = useRef<{ key: string; dem: DEM; source: DemSource } | null>(null);
+
+  // Remove the hover marker on unmount (resetTool covers tool changes, not navigation away).
+  useEffect(() => () => {
+    losHoverMarkerRef.current?.remove();
+    losHoverMarkerRef.current = null;
+  }, []);
 
   const handleLosProfileHover = useCallback((fraction: number | null) => {
     const mb = mbMapRef.current;
@@ -59,10 +71,11 @@ export function useLosCompute(params: LosComputeParams) {
     const from = losFromPosRef.current;
     const to = losToPosRef.current;
     if (!from || !to) return;
-    const lng = from[0] + (to[0] - from[0]) * fraction;
+    const lng = normalizeLng(from[0] + shortestLngDelta(from[0], to[0]) * fraction);
     const lat = from[1] + (to[1] - from[1]) * fraction;
     if (!losHoverMarkerRef.current) {
       const el = document.createElement("div");
+      el.setAttribute("aria-hidden", "true");
       el.style.cssText =
         "width:14px;height:14px;border-radius:50%;background:#f97316;" +
         "border:2px solid white;box-shadow:0 0 8px rgba(0,0,0,0.5);" +
@@ -79,6 +92,7 @@ export function useLosCompute(params: LosComputeParams) {
   useEffect(() => {
     if (activeTool !== "los" || toolStep !== "result") {
       setLosResult(null);
+      setLosError(null);
       return;
     }
     const hasFrom = toolFromId || losVirtualFrom;
@@ -114,12 +128,22 @@ export function useLosCompute(params: LosComputeParams) {
     losFromPosRef.current = fromPos;
     losToPosRef.current = toPos;
 
+    if (haversineKm(fromPos, toPos) < 0.01) {
+      setLosError("Endpoints are the same — choose two different points.");
+      setLosResult(null);
+      setIsComputingLos(false);
+      return;
+    }
+
     const run = async () => {
+      setLosError(null);
+      setIsComputingLos(true);
+      try {
       // Fetch our own DEM sized to the link bbox; queryTerrainElevation is viewport-limited (~400 m peak underread at low zoom)
-      const midLng = (fromPos[0] + toPos[0]) / 2;
+      const midLng = normalizeLng(fromPos[0] + shortestLngDelta(fromPos[0], toPos[0]) / 2);
       const midLat = (fromPos[1] + toPos[1]) / 2;
       const dLat = (toPos[1] - fromPos[1]) * Math.PI / 180;
-      const dLng = (toPos[0] - fromPos[0]) * Math.PI / 180;
+      const dLng = shortestLngDelta(fromPos[0], toPos[0]) * Math.PI / 180;
       const midLatRad = midLat * Math.PI / 180;
       const linkKm = 6371 * Math.sqrt(
         dLat * dLat + (dLng * Math.cos(midLatRad)) ** 2,
@@ -131,25 +155,37 @@ export function useLosCompute(params: LosComputeParams) {
       const mapboxToken = env.MAPBOX_TOKEN;
       if (!mapboxToken) {
         console.warn("[Map] LoS aborted — Mapbox token missing.");
+        setLosError("Terrain elevation source unavailable (Mapbox token not configured).");
         setLosResult(null);
         return;
       }
 
+      const demKey = `${demBounds.west.toFixed(4)},${demBounds.south.toFixed(4)},${demBounds.east.toFixed(4)},${demBounds.north.toFixed(4)}`;
       let dem: DEM;
       let demSourceUsedForLos: DemSource;
-      try {
-        // 2048² → ~115 m/px at 200 km. buildDem tries Tilezen first, falls back to Mapbox.
-        ({ dem, source: demSourceUsedForLos } = await buildDem({
-          bounds: demBounds,
-          targetWidth: 2048,
-          targetHeight: 2048,
-          token: mapboxToken,
-        }));
+      const demCache = losDemCacheRef.current;
+      if (demCache && demCache.key === demKey) {
+        dem = demCache.dem;
+        demSourceUsedForLos = demCache.source;
         setLosDemSource(demSourceUsedForLos);
-      } catch (err) {
-        console.warn("[Map] LoS DEM fetch failed:", err);
-        setLosResult(null);
-        return;
+      } else {
+        try {
+          // 2048² → ~115 m/px at 200 km. buildDem tries Tilezen first, falls back to Mapbox.
+          ({ dem, source: demSourceUsedForLos } = await buildDem({
+            bounds: demBounds,
+            targetWidth: 2048,
+            targetHeight: 2048,
+            token: mapboxToken,
+          }));
+          if (cancelled) return;
+          losDemCacheRef.current = { key: demKey, dem, source: demSourceUsedForLos };
+          setLosDemSource(demSourceUsedForLos);
+        } catch (err) {
+          console.warn("[Map] LoS DEM fetch failed:", err);
+          setLosError("Couldn't load terrain elevation data. Check your connection and try again.");
+          setLosResult(null);
+          return;
+        }
       }
 
       let result: LoSResult;
@@ -170,6 +206,7 @@ export function useLosCompute(params: LosComputeParams) {
         });
       } catch (err) {
         console.warn("[Map] LoS analysis failed:", err);
+        setLosError("Line-of-sight analysis failed for this path.");
         setLosResult(null);
         return;
       }
@@ -188,13 +225,10 @@ export function useLosCompute(params: LosComputeParams) {
           rxHeightM: Math.max(0.5, result.toHeightM - toGroundM),
           profileM,
           pointSpacingM: spacingM,
-          climate: Climate.ContinentalTemperate,
-          surfaceRefractivityN: 301,
+          ...DEFAULT_ITM_ENV,
           freqMhz: result.frequencyGHz * 1000,
-          polarization: Polarization.Vertical,
-          groundDielectric: 15,
-          groundConductivity: 0.005,
         });
+        if (cancelled) return;
         setLosResult({
           ...result,
           itmLossDb: itm.lossDb,
@@ -203,6 +237,9 @@ export function useLosCompute(params: LosComputeParams) {
         });
       } catch (itmErr) {
         console.warn("[Map] LoS ITM enhancement unavailable:", itmErr);
+      }
+      } finally {
+        if (!cancelled) setIsComputingLos(false);
       }
     };
 
@@ -219,7 +256,7 @@ export function useLosCompute(params: LosComputeParams) {
       if (!cancelled) console.warn("[Map] LoS run failed:", err);
     });
     return () => { cancelled = true; };
-  }, [activeTool, toolStep, toolFromId, toolToId, losVirtualFrom, losVirtualTo, losFromHeightM, losToHeightM, provider, terrain3D, nodes, mbMapRef, setLosResult, setLosDemSource]);
+  }, [activeTool, toolStep, toolFromId, toolToId, losVirtualFrom, losVirtualTo, losFromHeightM, losToHeightM, provider, terrain3D, nodes, mbMapRef, setLosResult, setLosDemSource, setLosError, setIsComputingLos]);
 
   // Push LoS result → 3D tube layer + obstruction source.
   // Altitudes are scaled by terrain exaggeration to stay pinned to the visual surface.
@@ -271,7 +308,7 @@ export function useLosCompute(params: LosComputeParams) {
     );
     const exagRaw = mb.getTerrain()?.exaggeration;
     const exag = typeof exagRaw === "number" ? exagRaw : 1;
-    const obsGeo = obstructionsToGeoJSON(obstructions, 60);
+    const obsGeo = obstructionsToGeoJSON(obstructions);
     obsGeo.features.forEach((f) => {
       f.properties.baseM *= exag;
       f.properties.topM *= exag;

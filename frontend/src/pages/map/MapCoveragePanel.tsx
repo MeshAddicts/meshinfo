@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AggressionSlider, BuildingStatusChip, CanopyStatusChip, ClassLegend, ClutterStatusChip } from "./ClutterUI";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, type MergeOrigin, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
 import { COVERAGE_DETAIL_SIZE,type CoverageDetail } from "./coverageDetail";
+import { NumericDraftInput } from "./NumericDraftInput";
+import { Segmented } from "./Segmented";
 import type { DemSource } from "./terrainRgb";
 import { useBottomSheetGesture } from "./useBottomSheet";
 
@@ -12,26 +14,52 @@ interface MergeNodeOption {
   longname?: string;
 }
 
-/** Parse "lat, lng" (Google Maps format) → [lng, lat]. Returns null if invalid. */
+/** Parse "lat, lng" → [lng, lat]. Accepts a trailing ° and N/S/E/W hemisphere
+ *  (e.g. "37.5° N, 122.3° W"). Returns null if invalid. */
 function parseLatLng(input: string): [number, number] | null {
-  const parts = input.trim().split(/[\s,]+/).filter(Boolean);
-  if (parts.length !== 2) return null;
-  const lat = Number(parts[0]);
-  const lng = Number(parts[1]);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const cleaned = input.trim().replace(/°/g, "");
+  let latStr: string;
+  let lngStr: string;
+  if (cleaned.includes(",")) {
+    const parts = cleaned.split(",");
+    if (parts.length !== 2) return null;
+    [latStr, lngStr] = parts;
+  } else {
+    const toks = cleaned.split(/\s+/).filter(Boolean);
+    if (toks.length === 2) [latStr, lngStr] = toks;
+    else if (toks.length === 4) { latStr = `${toks[0]} ${toks[1]}`; lngStr = `${toks[2]} ${toks[3]}`; }
+    else return null;
+  }
+  const parse = (t: string): number | null => {
+    const m = t.trim().match(/^(-?\d+(?:\.\d+)?)\s*([NSEW])?$/i);
+    if (!m) return null;
+    let v = Number(m[1]);
+    const h = m[2]?.toUpperCase();
+    if (h === "S" || h === "W") v = -Math.abs(v);
+    return Number.isFinite(v) ? v : null;
+  };
+  const lat = parse(latStr);
+  const lng = parse(lngStr);
+  if (lat == null || lng == null) return null;
   if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
   return [lng, lat];
 }
 
-/** Info icon with hover tooltip. `align` picks the edge it anchors to. */
+/** Info icon with hover/focus tooltip. `align` picks the edge it anchors to. */
 function InfoTip({ children, align = "right" }: { children: React.ReactNode; align?: "left" | "right" }) {
   return (
     <span className="relative inline-flex items-center group">
-      <svg className="w-3 h-3 text-gray-600 group-hover:text-gray-400 transition-colors cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-      </svg>
+      <button
+        type="button"
+        aria-label="More information"
+        className="inline-flex items-center text-gray-600 group-hover:text-gray-400 transition-colors rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/60"
+      >
+        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      </button>
       <span
-        className={`invisible group-hover:visible absolute bottom-full mb-1 w-60 p-2 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-[10px] text-gray-300 leading-relaxed z-50 normal-case tracking-normal font-normal ${
+        className={`invisible group-hover:visible group-focus-within:visible absolute bottom-full mb-1 w-60 max-w-[calc(100vw-1rem)] p-2 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-[10px] text-gray-300 leading-relaxed z-50 normal-case tracking-normal font-normal ${
           align === "left" ? "left-0" : "right-0"
         }`}
       >
@@ -288,6 +316,7 @@ export function MapCoveragePanel({
   // The parent already excludes the primary from `mergeNodeOptions`; we just
   // filter out IDs already in the merge set on top of that.
   const [mergeOriginSearch, setMergeOriginSearch] = useState("");
+  const [mergeHighlight, setMergeHighlight] = useState(0);
   const mergeOriginCandidates = useMemo(() => {
     const q = mergeOriginSearch.trim().toLowerCase();
     if (!q) return [];
@@ -301,6 +330,26 @@ export function MapCoveragePanel({
       )
       .slice(0, 12);
   }, [mergeOriginSearch, mergeOrigins, mergeNodeOptions]);
+  useEffect(() => setMergeHighlight(0), [mergeOriginSearch]);
+
+  const selectMergeOrigin = (id: string) => {
+    onAddMergeOriginById(id);
+    setMergeOriginSearch("");
+  };
+  const onMergeSearchKey = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setMergeHighlight((i) => Math.min(i + 1, mergeOriginCandidates.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setMergeHighlight((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter" && mergeOriginCandidates[mergeHighlight]) {
+      e.preventDefault();
+      selectMergeOrigin(mergeOriginCandidates[mergeHighlight].id);
+    } else if (e.key === "Escape") {
+      setMergeOriginSearch("");
+    }
+  };
 
   const [expandedRow, setExpandedRow] = useState<RowKey | null>(null);
   const toggleRow = (k: RowKey) => setExpandedRow((cur) => (cur === k ? null : k));
@@ -331,11 +380,17 @@ export function MapCoveragePanel({
   // no-op — rxMatchesTx is derived, so the values still match TX.
   const rxSnapshotRef = useRef<{ hw: number; ant: number; height: number } | null>(null);
 
-  const sheet = useBottomSheetGesture(onClose);
+  const sheet = useBottomSheetGesture({
+    onClose,
+    minimized,
+    onMinimize: () => setMinimized(true),
+    onExpand: () => setMinimized(false),
+  });
 
-  // Close any open <details> popovers (the ⋯ menu) on outside-click.
+  // Close any open <details> popovers (the ⋯ menu, stats info) on outside-click
+  // or Escape; pointerdown covers touch.
   useEffect(() => {
-    const onDocMouseDown = (e: MouseEvent) => {
+    const onDocPointerDown = (e: PointerEvent) => {
       const root = sheet.sheetRef.current;
       if (!root) return;
       if (root.contains(e.target as Node)) return;
@@ -343,13 +398,40 @@ export function MapCoveragePanel({
         d.removeAttribute("open");
       });
     };
-    document.addEventListener("mousedown", onDocMouseDown);
-    return () => document.removeEventListener("mousedown", onDocMouseDown);
+    // Capture phase so an open popover swallows Escape before the global
+    // handler closes the whole tool; refocus the summary on close.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const root = sheet.sheetRef.current;
+      const open = root?.querySelectorAll<HTMLDetailsElement>("details[open]");
+      if (!open || open.length === 0) return;
+      e.stopPropagation();
+      open.forEach((d) => {
+        d.removeAttribute("open");
+        d.querySelector<HTMLElement>("summary")?.focus();
+      });
+    };
+    document.addEventListener("pointerdown", onDocPointerDown);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onDocPointerDown);
+      document.removeEventListener("keydown", onKey, true);
+    };
   }, [sheet.sheetRef]);
+
+  // Modal terrain prompt: focus its primary action on mount.
+  const terrainBtnRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (terrainNeeded && onEnableTerrain) requestAnimationFrame(() => terrainBtnRef.current?.focus());
+  }, [terrainNeeded, onEnableTerrain]);
 
   if (terrainNeeded) {
     return (
-      <div className="fixed z-1050 shadow-2xl border border-amber-500/30 bg-gray-900/90 backdrop-blur-xl
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="3D terrain required for coverage prediction"
+        className="fixed z-1050 shadow-2xl border border-amber-500/30 bg-gray-900/90 backdrop-blur-xl
         inset-x-0 bottom-0 rounded-t-2xl p-4 pb-6 max-h-[75dvh] overflow-y-auto
         sm:inset-x-auto sm:bottom-3 sm:left-[calc(50%+var(--map-pad)/2)] sm:-translate-x-1/2 sm:w-[min(520px,calc(100vw-2rem))]
         sm:rounded-xl sm:pb-4 sm:max-h-none sm:overflow-visible">
@@ -364,6 +446,7 @@ export function MapCoveragePanel({
             </p>
             {onEnableTerrain && (
               <button
+                ref={terrainBtnRef}
                 type="button"
                 onClick={onEnableTerrain}
                 className="mt-2.5 text-xs px-3 py-1.5 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-200 hover:bg-amber-500/30 transition-colors font-medium"
@@ -516,6 +599,8 @@ export function MapCoveragePanel({
   return (
     <div
       ref={sheet.sheetRef}
+      role="dialog"
+      aria-label={`Coverage prediction from ${originLabel}`}
       className="fixed z-1050 shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
         inset-x-0 bottom-0 rounded-t-2xl max-h-[78dvh] flex flex-col
         animate-[slideInUp_200ms_ease-out]
@@ -559,11 +644,11 @@ export function MapCoveragePanel({
             ? `Recomputing · ${progressCompleted}/${progressTotal} slices (${pct}%)`
             : "Recomputing coverage…";
         return (
-          <div className="absolute -top-8 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full
+          <div className="absolute -top-8 left-1/2 -translate-x-1/2 max-w-[calc(100vw-1rem)] px-3 py-1 rounded-full
             bg-gray-900/95 backdrop-blur-xl border border-cyan-500/40 shadow-2xl
             text-[10px] text-cyan-200 flex items-center gap-2 whitespace-nowrap">
-            <div className="w-2.5 h-2.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-            <span>{label}</span>
+            <div className="w-2.5 h-2.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin shrink-0" />
+            <span className="truncate min-w-0">{label}</span>
             {!isFetchingTerrain && (
               <button
                 type="button"
@@ -649,7 +734,10 @@ export function MapCoveragePanel({
               </button>
             )}
             <span className="text-gray-500 ml-1 shrink-0">·</span>
-            <span className="text-gray-500 shrink-0">
+            <span
+              className="text-gray-500 shrink-0"
+              title={result.originIsFallback ? "Elevation sampled from terrain (no GPS altitude for this origin)" : undefined}
+            >
               {Math.round(result.originHeightM)}m{result.originIsFallback ? "~" : ""}
             </span>
           </div>
@@ -689,22 +777,28 @@ export function MapCoveragePanel({
               </div>
               <button
                 type="button"
+                disabled={!result}
                 onClick={(e) => {
-                  (e.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open");
+                  const d = e.currentTarget.closest("details") as HTMLDetailsElement | null;
+                  d?.removeAttribute("open");
+                  d?.querySelector<HTMLElement>("summary")?.focus();
                   onExport("geojson");
                 }}
-                className="text-left px-2 py-1.5 rounded text-[11px] text-gray-200 hover:bg-cyan-500/20 hover:text-cyan-200 transition-colors"
+                className="text-left px-2 py-1.5 rounded text-[11px] text-gray-200 hover:bg-cyan-500/20 hover:text-cyan-200 transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-200 disabled:cursor-not-allowed"
               >
                 <div className="font-medium">GeoJSON</div>
                 <div className="text-[9px] text-gray-500">QGIS · Leaflet · geojson.io</div>
               </button>
               <button
                 type="button"
+                disabled={!result}
                 onClick={(e) => {
-                  (e.currentTarget.closest("details") as HTMLDetailsElement | null)?.removeAttribute("open");
+                  const d = e.currentTarget.closest("details") as HTMLDetailsElement | null;
+                  d?.removeAttribute("open");
+                  d?.querySelector<HTMLElement>("summary")?.focus();
                   onExport("kml");
                 }}
-                className="text-left px-2 py-1.5 rounded text-[11px] text-gray-200 hover:bg-cyan-500/20 hover:text-cyan-200 transition-colors"
+                className="text-left px-2 py-1.5 rounded text-[11px] text-gray-200 hover:bg-cyan-500/20 hover:text-cyan-200 transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-200 disabled:cursor-not-allowed"
               >
                 <div className="font-medium">KML</div>
                 <div className="text-[9px] text-gray-500">Google Earth · SPLAT!</div>
@@ -725,7 +819,7 @@ export function MapCoveragePanel({
         </div>
       </div>
 
-      <div className={`p-3 pb-5 space-y-2 overflow-y-auto overscroll-contain min-h-0 flex-1 sm:pb-3 ${minimized ? "hidden" : ""}`}>
+      <div className="px-3 pt-2 pb-1 shrink-0">
         {(() => {
           const reachablePx = result.clearCount + result.fresnelCount;
           const totalPx = reachablePx + result.blockedCount;
@@ -744,10 +838,10 @@ export function MapCoveragePanel({
               <div className="flex items-center gap-2 text-[10px]">
                 <span className="text-gray-500 uppercase tracking-wider">Reachable</span>
                 <span className={`text-emerald-300 font-medium tabular-nums transition-opacity ${isComputing ? "opacity-50" : ""}`}>
-                  ~{fmt(reachableKm2)} km²
+                  {reachablePx > 0 && reachableKm2 < 0.1 ? "<0.1" : `~${fmt(reachableKm2)}`} km²
                 </span>
                 <span className={`text-gray-500 tabular-nums transition-opacity ${isComputing ? "opacity-50" : ""}`}>
-                  ({Math.round(pct)}% of {fmt(scannedKm2)} km²)
+                  ({pct > 0 && pct < 1 ? pct.toFixed(1) : Math.round(pct)}% of {fmt(scannedKm2)} km²)
                 </span>
                 {isComputing && (
                   <span className="inline-flex items-center gap-1 text-cyan-300 font-medium">
@@ -770,14 +864,28 @@ export function MapCoveragePanel({
                     </button>
                   )}
                   <details className="text-[10px] text-gray-500 relative">
-                    <summary className="cursor-pointer hover:text-gray-300 select-none list-none inline-flex items-center" title="What does this mean?">
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <summary className="cursor-pointer hover:text-gray-300 select-none list-none inline-flex items-center" title="What does this mean?" aria-label="What does this mean?">
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
                     </summary>
                     <div className="fixed z-50 overflow-y-auto p-2.5 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-gray-400 leading-relaxed space-y-1 text-[10px]
                       inset-x-3 top-4 bottom-4 w-auto max-w-none
                       sm:absolute sm:inset-auto sm:right-0 sm:top-full sm:mt-1 sm:bottom-auto sm:w-85 sm:max-w-[calc(100vw-1rem)] sm:max-h-[60dvh]">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          const d = e.currentTarget.closest("details") as HTMLDetailsElement | null;
+                          d?.removeAttribute("open");
+                          d?.querySelector<HTMLElement>("summary")?.focus();
+                        }}
+                        className="sm:hidden absolute top-1.5 right-1.5 p-1 rounded text-gray-500 hover:text-gray-300 hover:bg-white/10"
+                        aria-label="Close"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
                       <div>Pixel color shows predicted <strong>link margin</strong> (RSSI minus sensitivity and fade margin). Cyan = very reliable, orange = marginal, magenta = at threshold. Unpainted terrain is below sensitivity.</div>
                       <div className="pt-1 border-t border-white/5">
                         <div className="text-gray-300 font-medium">Reliability</div>
@@ -911,7 +1019,9 @@ export function MapCoveragePanel({
             </div>
           );
         })()}
+      </div>
 
+      <div className={`px-3 pb-5 space-y-2 overflow-y-auto overscroll-contain min-h-0 flex-1 sm:pb-3 ${minimized ? "hidden" : ""}`}>
         <Row
           icon={
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -944,15 +1054,14 @@ export function MapCoveragePanel({
                   ))}
                 </select>
                 {isCustomHardware && (
-                  <input
-                    type="number"
+                  <NumericDraftInput
                     value={customTxDbm}
-                    onChange={(e) => onCustomTxDbmChange(Number(e.target.value))}
+                    onCommit={onCustomTxDbmChange}
                     min={10}
                     max={35}
-                    step={1}
-                    aria-label="Custom TX power (dBm)"
-                    title="TX power in dBm"
+                    inputMode="numeric"
+                    ariaLabel="Custom TX power (dBm)"
+                    title="TX power in dBm (10–35)"
                     className="w-12 rounded-lg border border-white/10 bg-white/5 px-1 py-1 text-xs text-gray-200 text-center
                       focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50"
                   />
@@ -979,14 +1088,12 @@ export function MapCoveragePanel({
                   ))}
                 </select>
                 {isCustomPreset && (
-                  <input
-                    type="number"
+                  <NumericDraftInput
                     value={customSensitivityDbm}
-                    onChange={(e) => onCustomSensitivityChange(Number(e.target.value))}
+                    onCommit={onCustomSensitivityChange}
                     min={-150}
                     max={-100}
-                    step={1}
-                    aria-label="Custom RX sensitivity (dBm)"
+                    ariaLabel="Custom RX sensitivity (dBm)"
                     title="RX sensitivity in dBm (e.g. −133)"
                     className="w-14 rounded-lg border border-white/10 bg-white/5 px-1 py-1 text-xs text-gray-200 text-center
                       focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50"
@@ -1023,7 +1130,7 @@ export function MapCoveragePanel({
                   altitude. Defaults to 2 m (handheld).
                 </InfoTip>
               </label>
-              <div className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 w-20">
+              <div className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 w-24">
                 <input
                   id="coverage-antenna-height"
                   type="text"
@@ -1082,7 +1189,7 @@ export function MapCoveragePanel({
                     <button
                       type="button"
                       onClick={() => onRemoveMergeOrigin(o.id)}
-                      className="text-gray-500 hover:text-red-300 shrink-0"
+                      className="shrink-0 inline-flex items-center justify-center w-5 h-5 rounded leading-none text-gray-500 hover:text-red-300 hover:bg-white/10 transition-colors"
                       aria-label={`Remove ${o.label} from merged origins`}
                     >
                       ×
@@ -1096,7 +1203,18 @@ export function MapCoveragePanel({
                 type="text"
                 value={mergeOriginSearch}
                 onChange={(e) => setMergeOriginSearch(e.target.value)}
+                onKeyDown={onMergeSearchKey}
                 placeholder="Search nodes to add…"
+                aria-label="Search nodes to add as a merged origin"
+                role="combobox"
+                aria-expanded={mergeOriginSearch.trim() !== "" && mergeOriginCandidates.length > 0}
+                aria-controls="merge-origin-listbox"
+                aria-autocomplete="list"
+                aria-activedescendant={
+                  mergeOriginSearch.trim() !== "" && mergeOriginCandidates[mergeHighlight]
+                    ? `merge-origin-opt-${mergeOriginCandidates[mergeHighlight].id}`
+                    : undefined
+                }
                 className="flex-1 min-w-0 px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[10px] text-gray-200 placeholder:text-gray-500 focus:outline-none focus:border-cyan-500/50"
               />
               <button
@@ -1113,21 +1231,29 @@ export function MapCoveragePanel({
               </button>
             </div>
             {mergeOriginSearch.trim() !== "" && (
-              <div className="max-h-32 overflow-y-auto rounded-md bg-black/20 border border-white/5 divide-y divide-white/5">
+              <div
+                id="merge-origin-listbox"
+                role="listbox"
+                aria-label="Nodes to add as merged origins"
+                className="max-h-32 overflow-y-auto rounded-md bg-black/20 border border-white/5 divide-y divide-white/5"
+              >
                 {mergeOriginCandidates.length === 0 ? (
-                  <div className="text-[10px] text-gray-500 px-2 py-1.5">No matches.</div>
+                  <div className="text-[10px] text-gray-500 px-2 py-1.5" role="status">No matches.</div>
                 ) : (
-                  mergeOriginCandidates.map((n) => (
+                  mergeOriginCandidates.map((n, i) => (
                     <button
                       key={n.id}
+                      id={`merge-origin-opt-${n.id}`}
                       type="button"
-                      onClick={() => {
-                        onAddMergeOriginById(n.id);
-                        setMergeOriginSearch("");
-                      }}
-                      className="w-full text-left px-2 py-1 text-[10px] text-gray-300 hover:bg-white/5 truncate"
+                      role="option"
+                      aria-selected={i === mergeHighlight}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => selectMergeOrigin(n.id)}
+                      className={`w-full text-left px-2 py-1 text-[10px] truncate ${
+                        i === mergeHighlight ? "bg-white/10 text-gray-100" : "text-gray-300 hover:bg-white/5"
+                      }`}
                     >
-                      <span className="text-cyan-300/80 mr-1">+</span>
+                      <span className="text-cyan-300/80 mr-1" aria-hidden="true">+</span>
                       {n.shortname ?? n.longname ?? n.id}
                       {n.shortname && n.longname && (
                         <span className="text-gray-500 ml-1.5">{n.longname}</span>
@@ -1257,7 +1383,7 @@ export function MapCoveragePanel({
                     station, 30 m+ for tower-mounted receivers.
                   </InfoTip>
                 </label>
-                <div className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 w-24">
+                <div className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 w-28">
                   <input
                     id="coverage-rx-height"
                     type="text"
@@ -1395,29 +1521,17 @@ export function MapCoveragePanel({
                 for mission-critical links.
               </InfoTip>
             </label>
-            <div className="flex gap-1 rounded-lg border border-white/10 bg-white/5 p-0.5 text-[10px] font-medium">
-              {RELIABILITY_PRESETS.map((p) => {
-                const active = reliability === p.id;
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => onReliabilityChange(p.id)}
-                    title={p.desc}
-                    className={`flex-1 rounded-md px-1.5 py-1 transition-colors ${
-                      active
-                        ? "bg-cyan-500/20 text-cyan-200"
-                        : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
-                    }`}
-                  >
-                    <div>{p.label}</div>
-                    <div className="text-[9px] text-gray-500 font-normal">
-                      {p.time}/{p.location}/{p.situation}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+            <Segmented
+              ariaLabel="Reliability"
+              value={reliability}
+              onChange={onReliabilityChange}
+              options={RELIABILITY_PRESETS.map((p) => ({
+                value: p.id,
+                label: p.label,
+                sub: `${p.time}/${p.location}/${p.situation}`,
+                title: p.desc,
+              }))}
+            />
           </div>
           <div>
             <label className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 flex items-center gap-1">
@@ -1430,31 +1544,17 @@ export function MapCoveragePanel({
                 sharpest possible output, 4× the compute of Ultra.
               </InfoTip>
             </label>
-            <div className="flex gap-1 rounded-lg border border-white/10 bg-white/5 p-0.5 text-[10px] font-medium">
-              {([
-                { key: "standard", label: "Std",    sub: "512 px" },
-                { key: "high",     label: "High",   sub: "768 px" },
-                { key: "ultra",    label: "Ultra",  sub: "1024 px" },
-                { key: "survey",   label: "Survey", sub: "2048 px" },
-              ] as const).map((opt) => {
-                const active = detail === opt.key;
-                return (
-                  <button
-                    key={opt.key}
-                    type="button"
-                    onClick={() => onDetailChange(opt.key)}
-                    className={`flex-1 rounded-md px-1.5 py-1 transition-colors ${
-                      active
-                        ? "bg-cyan-500/20 text-cyan-200"
-                        : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
-                    }`}
-                  >
-                    <div>{opt.label}</div>
-                    <div className="text-[9px] text-gray-500 font-normal">{opt.sub}</div>
-                  </button>
-                );
-              })}
-            </div>
+            <Segmented
+              ariaLabel="Detail"
+              value={detail}
+              onChange={onDetailChange}
+              options={[
+                { value: "standard", label: "Std",    sub: "512 px" },
+                { value: "high",     label: "High",   sub: "768 px" },
+                { value: "ultra",    label: "Ultra",  sub: "1024 px" },
+                { value: "survey",   label: "Survey", sub: "2048 px" },
+              ]}
+            />
           </div>
         </Row>
 

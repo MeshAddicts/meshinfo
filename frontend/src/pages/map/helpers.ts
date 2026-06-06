@@ -2,9 +2,12 @@ import type { Map as MlMap } from "maplibre-gl";
 
 import type { ITraceroutesResponse } from "../../types";
 import { AGGRESSION_STOPS, DEFAULT_AGGRESSION_IDX } from "./coverageAnalysis";
+import { normalizeLng } from "./geo";
 import { normNodeId } from "./linkFeatures";
 import type { IMapNode } from "./types";
-import { calculateGeodesicDistance, DEFAULT_NODE_COLOR, OFFLINE_NODE_COLOR, ROLE_COLORS } from "./utils";
+import { calculateGeodesicDistance } from "./utils";
+// Role-color expression now lives in the shared palette; re-export for existing importers.
+export { mbRoleColorExpr } from "../../palette";
 
 // 1×1 transparent PNG placeholder for the coverage-raster source
 export const TRANSPARENT_1PX_PNG =
@@ -41,6 +44,15 @@ export function clampAggressionIdx(idx: number): number {
   return idx;
 }
 
+/** Parse a draft, clamp to [min,max]; blank/non-finite → fallback. */
+export function commitNumericDraft(draft: string, min: number, max: number, fallback: number): number {
+  const trimmed = draft.trim();
+  if (trimmed === "") return fallback;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
 /** SVG signal bars (1-4) colored by best SNR. */
 export function signalBarsHtml(snr: number | null): string {
   let bars: number;
@@ -65,7 +77,7 @@ export function bestSnr(nodeId: string, nodes: Record<string, IMapNode>): number
   if (!node?.neighbors?.length) return null;
   let max = -Infinity;
   for (const n of node.neighbors) {
-    if (n.snr > max) max = n.snr;
+    if (typeof n.snr === "number" && Number.isFinite(n.snr) && n.snr > max) max = n.snr;
   }
   return max === -Infinity ? null : max;
 }
@@ -92,7 +104,7 @@ export function geodesicCircleCoords(
         Math.sin(brng) * Math.sin(d) * Math.cos(lat1),
         Math.cos(d) - Math.sin(lat1) * Math.sin(lat2),
       );
-    coords.push([(lon2 * 180) / Math.PI, (lat2 * 180) / Math.PI]);
+    coords.push([normalizeLng((lon2 * 180) / Math.PI), (lat2 * 180) / Math.PI]);
   }
   return coords;
 }
@@ -140,13 +152,3 @@ export function computeMaxRange(
   return maxDist > 0.05 ? maxDist : null; // skip <50 m
 }
 
-// Role-based node color (offline = gray)
-export const mbRoleColorExpr = [
-  "case",
-  ["!", ["boolean", ["get", "online"], false]],
-  OFFLINE_NODE_COLOR,
-  ["match", ["get", "role"],
-    ...Object.entries(ROLE_COLORS).flatMap(([k, v]) => [Number(k), v]),
-    DEFAULT_NODE_COLOR,
-  ],
-] as any;

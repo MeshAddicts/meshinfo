@@ -16,6 +16,14 @@
   --z-index-1200: 1200;
 }
 
+/* MapLibre adds `.maplibregl-map { position: relative }`, which (equal specificity,
+   later source order) would beat Tailwind's `.absolute` and collapse #map to 0
+   height. The ID selector wins, keeping the map filling its parent. */
+#map {
+  position: absolute;
+  inset: 0;
+}
+
 @layer base {
   *,
   ::after,

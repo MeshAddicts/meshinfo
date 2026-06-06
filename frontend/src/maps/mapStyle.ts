@@ -39,6 +39,17 @@ const SKY_SPEC: SkySpecification = {
   "atmosphere-blend": 1.0,
 };
 
+/** Sky/fog for dark basemaps; the daytime SKY_SPEC clashes over a dark map. */
+const DARK_SKY_SPEC: SkySpecification = {
+  "sky-color": "#0b1220",
+  "sky-horizon-blend": 0.5,
+  "horizon-color": "#1e2a3a",
+  "horizon-fog-blend": 0.5,
+  "fog-color": "#0f172a",
+  "fog-ground-blend": 0.5,
+  "atmosphere-blend": 0.6,
+};
+
 function normalizeMapboxStylePath(style: string): string {
   return style.startsWith("mapbox://styles/")
     ? style.slice("mapbox://styles/".length)
@@ -148,12 +159,17 @@ export function demSourceSpec(): RasterDEMSourceSpecification {
 }
 
 /** Idempotent — safe to re-call after style reloads. */
-export function ensureTerrain(map: MlMap, exaggeration: number): void {
+export function ensureTerrain(map: MlMap, exaggeration: number, isDark = false): void {
   if (!map.getSource(TERRAIN_SOURCE_ID)) {
     map.addSource(TERRAIN_SOURCE_ID, demSourceSpec());
   }
   map.setTerrain({ source: TERRAIN_SOURCE_ID, exaggeration });
-  map.setSky(SKY_SPEC);
+  map.setSky(isDark ? DARK_SKY_SPEC : SKY_SPEC);
+}
+
+/** A basemap whose tiles are dark (so the daytime sky/fog would clash). */
+export function isDarkBasemap(provider: MapProvider, osmBasemap: OsmBasemap, mapboxStyle: string): boolean {
+  return provider === "mapbox" ? mapboxStyle.includes("dark") : osmBasemap === "carto_dark";
 }
 
 /** `setTerrain(null)` alone leaves MapLibre 5's depth pass referencing destroyed
@@ -172,7 +188,7 @@ export function removeTerrain(map: MlMap): void {
  *  of the RF building-height raster. minzoom=14 because OpenFreeMap doesn't
  *  ship buildings below z13 and z13 is too distant to be visually useful.
  *  Idempotent — safe to re-call after style reloads. */
-export function ensureBuildings3D(map: MlMap): void {
+export function ensureBuildings3D(map: MlMap, isDark = false): void {
   if (!map.getSource(BUILDINGS_3D_SOURCE_ID)) {
     map.addSource(BUILDINGS_3D_SOURCE_ID, {
       type: "vector",
@@ -190,16 +206,14 @@ export function ensureBuildings3D(map: MlMap): void {
       // OpenMapTiles schema opt-out flag.
       filter: ["!=", ["get", "hide_3d"], true],
       paint: {
-        // Low opacity so basemap labels under tall buildings stay readable.
-        "fill-extrusion-color": [
-          "interpolate", ["linear"], ["get", "render_height"],
-          0, "#a8b5c4",
-          50, "#8a98aa",
-          200, "#6e7d92",
-        ],
+        // Low opacity so basemap labels under tall buildings stay readable;
+        // darker + dimmer on dark basemaps so extrusions don't glow as bright blocks.
+        "fill-extrusion-color": isDark
+          ? ["interpolate", ["linear"], ["get", "render_height"], 0, "#3a4452", 50, "#2c3340", 200, "#222833"]
+          : ["interpolate", ["linear"], ["get", "render_height"], 0, "#a8b5c4", 50, "#8a98aa", 200, "#6e7d92"],
         "fill-extrusion-height": ["coalesce", ["get", "render_height"], 0],
         "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
-        "fill-extrusion-opacity": 0.65,
+        "fill-extrusion-opacity": isDark ? 0.5 : 0.65,
       },
     });
   }
