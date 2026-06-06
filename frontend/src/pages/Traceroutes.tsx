@@ -724,7 +724,7 @@ export const Traceroutes = () => {
     return (
       <div className="w-full h-dvh overflow-hidden flex flex-col">
         <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
-          <div className="mx-auto max-w-[1600px] px-3 sm:px-5 py-2 sm:py-3">
+          <div className="mx-auto max-w-400 px-3 sm:px-5 py-2 sm:py-3">
             <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
               Traceroutes
             </h1>
@@ -742,7 +742,7 @@ export const Traceroutes = () => {
     <div className="w-full h-dvh overflow-hidden flex flex-col">
       {/* Sticky header (Chat-style) */}
       <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
-        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 py-2 sm:py-3">
+        <div className="mx-auto max-w-400 px-3 sm:px-5 py-2 sm:py-3">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
               <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
@@ -871,7 +871,7 @@ export const Traceroutes = () => {
 
           {/* Toolbar row */}
           <div className="mt-3 flex flex-col lg:flex-row gap-2 lg:items-center lg:justify-between">
-            <div className="flex-1 min-w-0 lg:min-w-[260px]">
+            <div className="flex-1 min-w-0 lg:min-w-65">
               <input
                 ref={searchInputRef}
                 value={qInput}
@@ -934,7 +934,7 @@ export const Traceroutes = () => {
           </div>
 
           {/* Status chips (desktop only) */}
-          <div className="mt-2 hidden lg:flex items-center gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch] min-h-[30px]">
+          <div className="mt-2 hidden lg:flex items-center gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch] min-h-7.5">
             <StatusChip
               label={`Range: ${range}`}
               active={range !== DEFAULT_RANGE}
@@ -968,7 +968,7 @@ export const Traceroutes = () => {
 
       {/* Main body */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
+        <div className="mx-auto max-w-400 px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
           {/* Telemetry-style layout: list 1 col, details 2 col */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
             {/* List */}

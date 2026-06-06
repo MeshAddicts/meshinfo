@@ -1,4 +1,4 @@
-import { toast } from "../../components/toast";
+import { toast } from "../../components/toastStore";
 
 export const LS_KEYS = {
   provider: "meshinfo.map.provider",

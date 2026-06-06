@@ -327,7 +327,7 @@ export const Stats = () => {
     <div className="w-full h-dvh overflow-hidden flex flex-col">
       {/* ── Sticky header (matches Nodes) ── */}
       <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
-        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 py-2 sm:py-3">
+        <div className="mx-auto max-w-400 px-3 sm:px-5 py-2 sm:py-3">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
               <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
@@ -493,7 +493,7 @@ export const Stats = () => {
 
       {/* ── Scrollable body ── */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="mx-auto max-w-[1600px] px-4 py-5 lg:px-8 lg:py-6">
+        <div className="mx-auto max-w-400 px-4 py-5 lg:px-8 lg:py-6">
           {/* Hero */}
           <div>
             <Panel className="relative overflow-hidden">

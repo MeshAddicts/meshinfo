@@ -90,7 +90,7 @@ function MobileSheet({
         onClick={onClose}
       />
       <div className="absolute inset-x-0 bottom-0">
-        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
+        <div className="mx-auto max-w-400 px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
           <div className="rounded-t-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-2xl overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
               <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
@@ -918,7 +918,7 @@ export const Neighbors = () => {
     <div className="w-full h-dvh overflow-hidden flex flex-col">
       {/* Sticky header */}
       <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
-        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 py-2 sm:py-3">
+        <div className="mx-auto max-w-400 px-3 sm:px-5 py-2 sm:py-3">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
               <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
@@ -1023,7 +1023,7 @@ export const Neighbors = () => {
 
           {/* Toolbar */}
           <div className="mt-3 flex flex-col lg:flex-row gap-2 lg:items-center lg:justify-between">
-            <div className="flex-1 min-w-0 lg:min-w-[260px]">
+            <div className="flex-1 min-w-0 lg:min-w-65">
               <input
                 id="neighbors-search"
                 value={qInput}
@@ -1080,7 +1080,7 @@ export const Neighbors = () => {
           </div>
 
           {/* Status chips: desktop */}
-          <div className="mt-2 hidden lg:flex items-center gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch] min-h-[30px]">
+          <div className="mt-2 hidden lg:flex items-center gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch] min-h-7.5">
             <StatusChip
               label={`Sort: ${sortBy}/${sortDir}`}
               active={sortBy !== "seen" || sortDir !== "desc"}
@@ -1116,7 +1116,7 @@ export const Neighbors = () => {
 
       {/* Main body */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
+        <div className="mx-auto max-w-400 px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
             {/* Left: list */}
             <div className="lg:col-span-2 min-h-0 flex flex-col h-full">
@@ -1176,7 +1176,7 @@ export const Neighbors = () => {
 
       {/* Mobile bottom nav */}
       <div className="fixed inset-x-0 bottom-0 z-30 lg:hidden">
-        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
+        <div className="mx-auto max-w-400 px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
           <div className="mb-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm shadow-xs overflow-hidden">
             <div className="grid grid-cols-2 divide-x divide-gray-200 dark:divide-gray-800">
               <button

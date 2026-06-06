@@ -160,7 +160,7 @@ export const Graph = () => {
                 <div className="text-xs font-semibold text-gray-300">Top hubs</div>
                 <div className="text-[11px] text-gray-500">click to select</div>
               </div>
-              <div className="space-y-0.5 max-h-[200px] overflow-auto">
+              <div className="space-y-0.5 max-h-50 overflow-auto">
                 {nodes.slice(0, 10).map((n) => (
                   <button key={n.id} type="button" onClick={() => setSelectedId(n.id)}
                     className={`w-full flex items-center justify-between px-2 py-1 rounded text-left transition ${
@@ -213,7 +213,7 @@ export const Graph = () => {
                   {selectedEdges.length > 0 && (
                     <div>
                       <div className="text-[11px] text-gray-500 mb-1">Connected to ({selectedEdges.length}):</div>
-                      <div className="space-y-0.5 max-h-[180px] overflow-auto">
+                      <div className="space-y-0.5 max-h-45 overflow-auto">
                         {selectedEdges.map((e, i) => {
                           const peerId = e.a === selected.id ? e.b : e.a;
                           const peer = nodeById.get(peerId);
