@@ -4,7 +4,7 @@ import maplibregl, {
 } from "maplibre-gl";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
-import { toast } from "../../components/toast";
+import { toast } from "../../components/toastStore";
 import { env } from "../../env";
 import { buildBuildingRaster, type BuildingRaster, downsampleBuildingRaster } from "./buildingTiles";
 import { buildCanopyRaster, type CanopyRaster, downsampleCanopyRaster } from "./canopyTiles";

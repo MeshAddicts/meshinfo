@@ -10,10 +10,10 @@ import type {
   LineString as GeoLineString,
   Point as GeoPoint,
 } from "geojson";
+import type { GeoJSONSource as MlGeoJSONSource, Map as MlMap } from "maplibre-gl";
 
 import { mbRoleColorExpr } from "../../palette";
 import { prefersReducedMotion } from "../../reducedMotion";
-import type { GeoJSONSource as MlGeoJSONSource, Map as MlMap } from "maplibre-gl";
 
 export const SPIDERFY_SOURCE_NODES = "spiderfy-nodes";
 export const SPIDERFY_SOURCE_LEGS = "spiderfy-legs";
