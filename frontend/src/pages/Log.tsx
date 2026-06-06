@@ -11,8 +11,9 @@ import React, {
   useState,
 } from "react";
 import { useSearchParams } from "react-router";
-import { Virtuoso } from "react-virtuoso";
+import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
+import { useLiveEvent } from "../hooks/useLiveEvent";
 import {
   IPacketMessage,
   IPacketsArg,
@@ -27,6 +28,10 @@ import { formatTimestamp } from "../utils/formatTimestamp";
 type RangeKey = "1h" | "24h" | "7d" | "all";
 const DEFAULT_RANGE: RangeKey = "all";
 const PAGE_SIZE = 200;
+// Live packet feed (SSE) tuning.
+const LIVE_CAP = 2000; // max buffered live packets before the oldest fall off
+const LIVE_FLUSH_MS = 350; // coalesce a burst of packets into one state update
+const FIRST_INDEX_START = 1_000_000; // Virtuoso prepend anchor (see firstItemIndex)
 
 hljs.registerLanguage("json", json);
 
@@ -365,6 +370,124 @@ export const Log = () => {
     [pageData],
   );
 
+  // ---- live packet feed (SSE) ---------------------------------------------
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const [liveEnabled, setLiveEnabled] = useState(true);
+  const [live, setLive] = useState<IPacketMessage[]>([]);
+  const [firstItemIndex, setFirstItemIndex] = useState(FIRST_INDEX_START);
+  const [atTop, setAtTop] = useState(true);
+  const [unseen, setUnseen] = useState(0);
+
+  // Show a live packet only if it matches the filters (absolute end = historical).
+  const matchesFilters = useCallback(
+    (p: IPacketMessage) => {
+      if (urlEnd != null) return false;
+      const tm = selectedView.topicMatch;
+      if (tm && !String(p.topic ?? "").includes(tm)) return false;
+      const q = urlQ.trim().toLowerCase();
+      if (q) {
+        const hay = `${String(p.topic ?? "")} ${JSON.stringify(p)}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    },
+    [urlEnd, selectedView.topicMatch, urlQ],
+  );
+
+  // Refs so the SSE handler (fired outside React render) reads current values.
+  const liveEnabledRef = useRef(liveEnabled);
+  liveEnabledRef.current = liveEnabled;
+  const atTopRef = useRef(atTop);
+  atTopRef.current = atTop;
+  const matchesFiltersRef = useRef(matchesFilters);
+  matchesFiltersRef.current = matchesFilters;
+  // Row ids already on screen (live buffer + fetched archive) for O(1) dedup.
+  const liveIdsRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    liveIdsRef.current = new Set(live.map((p) => Number(p.mqtt_row_id)));
+  }, [live]);
+  const rowIdsRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    rowIdsRef.current = new Set(rows.map((p) => Number(p.mqtt_row_id)));
+  }, [rows]);
+
+  // Coalesce a burst of packets into one state update.
+  const incomingRef = useRef<IPacketMessage[]>([]);
+  const flushTimerRef = useRef<number | null>(null);
+  const flushIncoming = useCallback(() => {
+    flushTimerRef.current = null;
+    const batch = incomingRef.current;
+    incomingRef.current = [];
+    if (batch.length === 0) return;
+    const seen = new Set<number>([...liveIdsRef.current, ...rowIdsRef.current]);
+    const fresh: IPacketMessage[] = [];
+    for (const p of batch) {
+      const id = Number(p.mqtt_row_id);
+      if (!Number.isFinite(id) || seen.has(id)) continue;
+      seen.add(id);
+      fresh.push(p);
+    }
+    if (fresh.length === 0) return;
+    fresh.reverse(); // arrival order -> newest first
+    const added = fresh.length;
+    setLive((prev) => [...fresh, ...prev].slice(0, LIVE_CAP));
+    // Decrement the anchor so scrolled-in rows don't jump (Virtuoso firstItemIndex).
+    setFirstItemIndex((i) => i - added);
+    if (atTopRef.current && liveEnabledRef.current) {
+      // firstItemIndex would hold the prior item; force top to follow live.
+      requestAnimationFrame(() => virtuosoRef.current?.scrollTo({ top: 0 }));
+    } else {
+      setUnseen((u) => u + added);
+    }
+  }, []);
+
+  useLiveEvent<IPacketMessage>("packet", (p) => {
+    if (!liveEnabledRef.current) return;
+    if (p?.mqtt_row_id == null) return;
+    if (!matchesFiltersRef.current(p)) return;
+    incomingRef.current.push(p);
+    if (flushTimerRef.current == null) {
+      flushTimerRef.current = window.setTimeout(flushIncoming, LIVE_FLUSH_MS);
+    }
+  });
+
+  const resetLive = useCallback(() => {
+    setLive([]);
+    setUnseen(0);
+    setFirstItemIndex(FIRST_INDEX_START);
+    incomingRef.current = [];
+    if (flushTimerRef.current != null) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+  }, []);
+
+  // Drop buffered packets when the filters change or on a manual refresh.
+  useEffect(() => {
+    resetLive();
+  }, [packetsArg, resetLive]);
+  const doRefresh = useCallback(() => {
+    resetLive();
+    refetch();
+  }, [resetLive, refetch]);
+
+  const onAtTopChange = useCallback((top: boolean) => {
+    setAtTop(top);
+    if (top) setUnseen(0);
+  }, []);
+  const jumpToLive = useCallback(() => {
+    setUnseen(0);
+    virtuosoRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
+  // Live packets merged ahead of the archive, de-duplicated by row id.
+  const displayRows = useMemo(() => {
+    if (live.length === 0) return rows;
+    const ids = new Set(rows.map((r) => Number(r.mqtt_row_id)));
+    const liveOnly = live.filter((p) => !ids.has(Number(p.mqtt_row_id)));
+    return [...liveOnly, ...rows];
+  }, [live, rows]);
+
   // ---- deeplinked packet ---------------------------------------------------
   const packetId = Number(urlPacket);
   const hasPacketLink = !!urlPacket && Number.isFinite(packetId);
@@ -570,9 +693,32 @@ export const Log = () => {
                 <button
                   type="button"
                   className="underline hover:no-underline"
-                  onClick={() => refetch()}
+                  onClick={doRefresh}
                 >
                   refresh
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLiveEnabled((v) => !v)}
+                  title={
+                    liveEnabled
+                      ? "Live: new packets stream in at the top"
+                      : "Paused: click to resume the live packet feed"
+                  }
+                  className={[
+                    "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 border text-[11px] font-medium transition",
+                    liveEnabled
+                      ? "border-emerald-500/60 text-emerald-700 dark:text-emerald-300 bg-emerald-500/10"
+                      : "border-gray-300/60 dark:border-gray-700 text-gray-500 dark:text-gray-400",
+                  ].join(" ")}
+                >
+                  <span
+                    className={[
+                      "h-1.5 w-1.5 rounded-full",
+                      liveEnabled ? "bg-emerald-500 animate-pulse" : "bg-gray-400",
+                    ].join(" ")}
+                  />
+                  {liveEnabled ? "Live" : "Paused"}
                 </button>
                 <span className="opacity-60">•</span>
                 <span>raw MQTT packet archive — full history, paged on scroll</span>
@@ -758,18 +904,32 @@ export const Log = () => {
                 <span className="text-gray-500 dark:text-gray-400">
                   • {rows.length} loaded
                   {hasNextPage ? "+" : ""}
+                  {live.length > 0 ? ` · ${live.length} live` : ""}
                 </span>
               </div>
             </div>
 
-            <div className="flex-1 min-h-0">
+            <div className="relative flex-1 min-h-0">
+              {/* Live arrivals while scrolled away from the top */}
+              {unseen > 0 ? (
+                <div className="pointer-events-none absolute z-10 left-1/2 -translate-x-1/2 top-3">
+                  <button
+                    type="button"
+                    onClick={jumpToLive}
+                    className="pointer-events-auto rounded-full px-4 py-2 text-sm font-medium shadow-xs border transition bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-500"
+                  >
+                    ↑ {unseen} new packet{unseen === 1 ? "" : "s"}
+                  </button>
+                </div>
+              ) : null}
+
               {isError ? (
                 <div className="p-6 text-sm text-red-600 dark:text-red-400">
                   Failed to load packets.{" "}
                   <button
                     type="button"
                     className="underline hover:no-underline"
-                    onClick={() => refetch()}
+                    onClick={doRefresh}
                   >
                     Retry
                   </button>
@@ -778,13 +938,16 @@ export const Log = () => {
                 <div className="p-6 text-sm text-gray-600 dark:text-gray-400">
                   Loading packets…
                 </div>
-              ) : rows.length === 0 ? (
+              ) : displayRows.length === 0 ? (
                 <div className="p-6 text-sm text-gray-600 dark:text-gray-400">
                   No packets match your current filters.
                 </div>
               ) : (
                 <Virtuoso
-                  data={rows}
+                  ref={virtuosoRef}
+                  data={displayRows}
+                  firstItemIndex={firstItemIndex}
+                  atTopStateChange={onAtTopChange}
                   style={{ height: "100%" }}
                   endReached={onEndReached}
                   computeItemKey={(index, item) =>

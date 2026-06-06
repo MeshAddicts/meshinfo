@@ -24,7 +24,14 @@ class FakePgStorage:
         self.chat_writes: list = []
         self.telemetry_writes: list = []
         self.traceroute_writes: list = []
+        self.mqtt_writes: list = []
+        self._mqtt_row_seq = 0
         self.pool = None  # disables _write_node_telemetry_current side-branch
+
+    async def write_mqtt_message(self, mqtt_msg) -> int:
+        self.mqtt_writes.append(dict(mqtt_msg))
+        self._mqtt_row_seq += 1
+        return self._mqtt_row_seq
 
     async def get_node_cached(self, node_id: str):
         return self._nodes.get(node_id)
@@ -242,6 +249,56 @@ class TestHandleText:
         run(mqtt.handle_text(m))
         assert len(data.pg_storage.chat_writes) == 1
         assert data.pg_storage.chat_writes[0][1]["to"] is None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# handle_log — raw packet archive write + live packet SSE event
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestHandleLog:
+    def _msg(self, **overrides):
+        base = {
+            "topic": "msh/US/2/e/LongFast/!67ea9400",
+            "from": 0x67EA9400,
+            "type": "position",
+            "id": 99,
+            "timestamp": 1700000000,
+            "payload": {"latitude_i": 1},
+            "decoded": {"raw": "x"},
+            "encrypted": "deadbeef",
+        }
+        base.update(overrides)
+        return base
+
+    def test_writes_archive_without_decoded_encrypted(self):
+        mqtt, data = make_mqtt()
+        run(mqtt.handle_log(self._msg()))
+        assert len(data.pg_storage.mqtt_writes) == 1
+        stored = data.pg_storage.mqtt_writes[0]
+        assert "decoded" not in stored and "encrypted" not in stored
+        assert stored["topic"].endswith("!67ea9400")
+
+    def test_publishes_packet_event_with_row_id(self):
+        mqtt, data = make_mqtt()
+        q = data.broadcaster.subscribe()
+        run(mqtt.handle_log(self._msg()))
+        event_type, payload = q.get_nowait()
+        assert event_type == "packet"
+        assert payload["mqtt_row_id"] == 1  # FakePgStorage returns a 1-based seq
+        assert payload["type"] == "position"
+        # The live payload mirrors the stored shape (no decoded/encrypted).
+        assert "decoded" not in payload and "encrypted" not in payload
+
+    def test_no_packet_event_when_write_fails(self):
+        mqtt, data = make_mqtt()
+        q = data.broadcaster.subscribe()
+        # Simulate storage unavailable: write returns None -> no row id -> no emit.
+        async def _no_id(_msg):
+            return None
+        data.pg_storage.write_mqtt_message = _no_id
+        run(mqtt.handle_log(self._msg()))
+        assert q.empty()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -411,12 +411,22 @@ class MQTT:
         clean_msg.pop("decoded", None)
         clean_msg.pop("encrypted", None)
 
+        row_id = None
         try:
-            await self.data.pg_storage.write_mqtt_message(clean_msg)
+            row_id = await self.data.pg_storage.write_mqtt_message(clean_msg)
         except Exception as e:
             logger.error("Failed to write mqtt_message to postgres: %s", e)
             if self.config.get('debug'):
                 logger.debug("Postgres write traceback", exc_info=True)
+
+        # Live push: raw packet feed (mqtt_row_id lets the client dedup/deeplink).
+        if row_id is not None and self.data.broadcaster.subscriber_count:
+            try:
+                self.data.broadcaster.publish(
+                    "packet", jsonable_encoder({**clean_msg, "mqtt_row_id": row_id})
+                )
+            except Exception as e:
+                logger.debug("packet broadcast failed: %s", e)
 
 
     async def handle_neighborinfo(self, msg):
