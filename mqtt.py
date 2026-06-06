@@ -15,6 +15,7 @@ from google.protobuf.json_format import MessageToJson
 from google.protobuf.message import DecodeError
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
+from fastapi.encoders import jsonable_encoder
 
 from encoders import _JSONDecoder
 from models.node import Node
@@ -595,6 +596,13 @@ class MQTT:
             chat['sender'] = msg['sender']
 
         await self.data.pg_storage.write_chat_message(from_id, chat)
+
+        # Live push: a new chat message. Published before the node update below
+        # so a chat still streams even if the node touch no-ops.
+        try:
+            self.data.broadcaster.publish("chat", jsonable_encoder(chat))
+        except Exception as e:
+            logger.debug("chat broadcast failed: %s", e)
 
         node = await self.data.pg_storage.get_node_cached(from_id)
         # TODO: Replace with something more configurable

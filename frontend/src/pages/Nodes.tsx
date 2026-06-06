@@ -162,7 +162,9 @@ export const Nodes = () => {
   } = useGetNodesQuery(
     undefined,
     {
-      pollingInterval: liveEnabled ? 5000 : 0,
+      // SSE (useLiveEvents) is the live path; this is a slow safety-net poll
+      // for the case the stream drops and fails to reconnect.
+      pollingInterval: liveEnabled ? 60000 : 0,
       skipPollingIfUnfocused: true,
       refetchOnReconnect: liveEnabled,
       refetchOnFocus: liveEnabled,

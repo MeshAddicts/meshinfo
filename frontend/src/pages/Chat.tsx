@@ -11,6 +11,7 @@ import { Link, useSearchParams } from "react-router";
 import { VirtuosoHandle } from "react-virtuoso";
 
 import { HeardBy } from "../components/HeardBy";
+import { useAppSelector } from "../hooks";
 import { useChatSearchParams } from "../hooks/useChatSearchParams";
 import {
   useGetChatsQuery,
@@ -255,11 +256,29 @@ export const Chat = () => {
     isFetching,
     refetch,
   } = useGetChatsQuery(chatQueryParams, {
-    pollingInterval: liveEnabled ? 5000 : 0,
+    // SSE (useLiveEvents) pushes new chats via the chatPing below; this is just
+    // the slow safety-net poll for a dropped, non-reconnecting stream.
+    pollingInterval: liveEnabled ? 60000 : 0,
     skipPollingIfUnfocused: true,
     refetchOnReconnect: liveEnabled,
     refetchOnFocus: liveEnabled,
   });
+
+  // Live chat push: useLiveEvents bumps app.chatPing on each `chat` SSE event.
+  // Refetch on a bump only while live (a ref keeps the effect from firing when
+  // the toggle flips), so a pushed chat respects the explicit "Live off" pause
+  // and reuses getChats' dedup/sort transform.
+  const chatPing = useAppSelector((s) => s.app.chatPing);
+  const liveRef = useRef(liveEnabled);
+  liveRef.current = liveEnabled;
+  const sawFirstPing = useRef(false);
+  useEffect(() => {
+    if (!sawFirstPing.current) {
+      sawFirstPing.current = true;
+      return;
+    }
+    if (liveRef.current) refetch();
+  }, [chatPing, refetch]);
 
   // ── 6. Stable chat ref (prevents skeleton flash on filter change) ──
   const prevChatRef = useRef(chat);

@@ -3,7 +3,13 @@
 }
 
 http://localhost {
-	encode gzip
+	# Compress everything except the SSE stream — gzip buffers and would stall
+	# an open text/event-stream connection.
+	@compressible not path /api/v1/events /v1/events
+	encode @compressible gzip
+
+	# SSE live events (/v1/events, reached as /api/v1/events behind this proxy).
+	@sse path /api/v1/events /v1/events
 
 	# ---- Maintenance mode ----
 	# Toggle with `scripts/maintenance.sh on|off`, or create/delete the flag
@@ -34,6 +40,13 @@ http://localhost {
 			reverse_proxy meshinfo:9000
 		}
 
+		# SSE live events (unbuffered; must precede /api/*).
+		handle @sse {
+			uri strip_prefix /api
+			reverse_proxy meshinfo:9000 {
+				flush_interval -1
+			}
+		}
 		handle_path /api/* {
 			reverse_proxy meshinfo:9000
 		}

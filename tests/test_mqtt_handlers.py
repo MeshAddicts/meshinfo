@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from broadcaster import Broadcaster
 from mqtt import MQTT, normalize_node_id  # noqa: F401  (re-exported via from utils)
 
 
@@ -57,6 +58,9 @@ class FakeDataStore:
         self.config = config
         self.pg_storage = FakePgStorage(nodes=nodes)
         self.discord_event_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
+        # Real hub — it's dependency-free, so handlers exercise the actual
+        # publish path and tests can drain a subscriber queue.
+        self.broadcaster = Broadcaster()
 
     async def update_node(self, node_id: str, node) -> None:
         await self.pg_storage.write_node(node_id, node)
@@ -181,6 +185,23 @@ class TestHandleText:
         assert from_id == "67ea9400"
         assert chat["text"] == "hello mesh"
         assert chat["to"] == "ffffffff"
+
+    def test_publishes_chat_sse_event(self):
+        mqtt, data = make_mqtt()
+        q = data.broadcaster.subscribe()
+        run(mqtt.handle_text(self._ok_msg()))
+        event_type, payload = q.get_nowait()
+        assert event_type == "chat"
+        assert payload["text"] == "hello mesh"
+        assert payload["id"] == 1234
+        assert payload["from"] == "67ea9400"
+        assert payload["channel"] == "0"  # defaulted when absent
+
+    def test_no_sse_event_when_text_invalid(self):
+        mqtt, data = make_mqtt()
+        q = data.broadcaster.subscribe()
+        run(mqtt.handle_text(self._ok_msg(payload={})))
+        assert q.empty()
 
     def test_skips_when_from_missing(self):
         mqtt, data = make_mqtt()

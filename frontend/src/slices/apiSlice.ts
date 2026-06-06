@@ -11,6 +11,7 @@ import {
   ITraceroutesResponse,
 } from "../types";
 import { IConfigResponse } from "../types/config";
+import { transformNode } from "./nodeTransform";
 
 /** A parsed packet from the mqtt_messages archive. Loosely typed — the payload
  *  shape varies by packet type. `mqtt_row_id` is the stable DB id (deeplinks). */
@@ -111,16 +112,7 @@ export const apiSlice = createApi({
         Object.fromEntries(
           Object.entries(response.nodes).map(([id, node]) => [
             id,
-            {
-              ...node,
-              position: node.position
-                ? {
-                    ...node.position,
-                    latitude: node.position.latitude_i / 1e7,
-                    longitude: node.position.longitude_i / 1e7,
-                  }
-                : undefined,
-            },
+            transformNode(node),
           ])
         ),
       providesTags: [{ type: "Node", id: "LIST" }],
