@@ -112,7 +112,7 @@ export function FilterDropup<T extends string | number | null>({
             maxHeight,
             zIndex: 2000,
           }}
-          className="min-w-[160px] max-w-[280px] rounded-xl overflow-y-auto
+          className="min-w-40 max-w-70 rounded-xl overflow-y-auto
             bg-gray-900/95 backdrop-blur-xl border border-white/10 shadow-2xl py-1"
         >
           {options.map((opt) => {

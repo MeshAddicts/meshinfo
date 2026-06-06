@@ -95,7 +95,7 @@ export function MapHealthWidget({ nodes }: { nodes: Record<string, IMapNode> }) 
       </button>
 
       {expanded && health && (
-        <div id="mesh-health-panel" className="mt-2 min-w-[220px] rounded-xl p-3
+        <div id="mesh-health-panel" className="mt-2 min-w-55 rounded-xl p-3
           bg-gray-900/90 backdrop-blur-xl border border-white/10 shadow-2xl
           space-y-2 text-xs">
           <div className="flex items-center justify-between">

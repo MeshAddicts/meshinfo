@@ -54,7 +54,7 @@ export function MiniLineChart({
 
   if (!hasData) {
     return (
-      <div className="h-[96px] flex items-center justify-center text-xs text-gray-500">
+      <div className="h-24 flex items-center justify-center text-xs text-gray-500">
         No data
       </div>
     );
@@ -64,7 +64,7 @@ export function MiniLineChart({
     <svg
       viewBox={`0 0 300 ${height}`}
       preserveAspectRatio="none"
-      className="w-full h-[96px]"
+      className="w-full h-24"
     >
       <path
         d={path}
@@ -94,7 +94,7 @@ export function MiniBarChart({
     <svg
       viewBox={`0 0 ${w} ${h}`}
       preserveAspectRatio="none"
-      className="w-full h-[96px]"
+      className="w-full h-24"
     >
       {values.map((b, i) => {
         const barH = clamp((b.v / maxV) * h, 0, h);
