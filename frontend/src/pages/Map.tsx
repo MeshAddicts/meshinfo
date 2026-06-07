@@ -14,6 +14,7 @@ import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../
 import { NodeRole, roleTitles } from "../types";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { ClusterDonutLayer } from "./map/clusterDonutLayer";
+import { type ClusterHover,ClusterHoverCard } from "./map/ClusterHoverCard";
 import { FiltersResetPill } from "./map/FiltersResetPill";
 import { circularMeanLng } from "./map/geo";
 import { bestSnr, computeMaxRange, geodesicCircleCoords, mbRoleColorExpr, queryTerrainElevationMSL, relativeTime, signalBarsHtml, TRANSPARENT_1PX_PNG } from "./map/helpers";
@@ -292,6 +293,7 @@ export function Map() {
   }, [rawNodes]);
 
   const [detailsData, setDetailsData] = useState<NodeDetailsData | null>(null);
+  const [clusterHover, setClusterHover] = useState<ClusterHover | null>(null);
 
   // Coverage merge origins (session-scoped; depends on nodes + toolFromId for primary-id exclusion)
   const mergeOrigins = useCoverageMergeOrigins(nodes, toolFromId);
@@ -1735,6 +1737,64 @@ export function Map() {
       // Cluster hover cursor (donut icons are GL-native, no HTML to highlight)
       bindHover("clusters");
 
+      // Live cluster hover card (display-only; closes on map move to avoid drift)
+      let clusterHoverTimer: number | null = null;
+      let hoveredClusterId: number | null = null;
+      const readCluster = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        const f = e.features?.[0];
+        const cid = f?.properties?.cluster_id;
+        if (f == null || cid == null) return null;
+        const [lng, lat] = (f.geometry as any).coordinates as [number, number];
+        return {
+          cid: cid as number,
+          lng,
+          lat,
+          count: (f.properties?.point_count as number) ?? 0,
+          online: (f.properties?.onlineCount as number) ?? 0,
+        };
+      };
+      const fillClusterHover = (cid: number, lng: number, lat: number, count: number, online: number) => {
+        const p = map.project([lng, lat]);
+        setClusterHover({ ids: [], count, online, x: p.x, y: p.y });
+        const source = map.getSource("nodes_clustered") as MlGeoJSONSource | undefined;
+        source
+          ?.getClusterLeaves(cid, Infinity, 0)
+          .then((feats) => {
+            if (hoveredClusterId !== cid) return;
+            const ids = (feats ?? [])
+              .map((f) => String((f.properties as any)?.id ?? ""))
+              .filter(Boolean);
+            setClusterHover((prev) => (prev ? { ...prev, ids } : null));
+          })
+          .catch(() => {});
+      };
+      const onClusterIntent = (c: { cid: number; lng: number; lat: number; count: number; online: number }) => {
+        hoveredClusterId = c.cid;
+        if (clusterHoverTimer != null) clearTimeout(clusterHoverTimer);
+        clusterHoverTimer = window.setTimeout(
+          () => fillClusterHover(c.cid, c.lng, c.lat, c.count, c.online),
+          120,
+        );
+      };
+      const closeClusterHover = () => {
+        hoveredClusterId = null;
+        if (clusterHoverTimer != null) {
+          clearTimeout(clusterHoverTimer);
+          clusterHoverTimer = null;
+        }
+        setClusterHover(null);
+      };
+      map.on("mouseenter", "clusters", (e) => {
+        const c = readCluster(e);
+        if (c) onClusterIntent(c);
+      });
+      map.on("mousemove", "clusters", (e) => {
+        const c = readCluster(e);
+        if (c && c.cid !== hoveredClusterId) onClusterIntent(c);
+      });
+      map.on("mouseleave", "clusters", closeClusterHover);
+      map.on("movestart", closeClusterHover);
+
       // Distinct plain nodes whose circles overlap near `point` (clustering off).
       // Circle radius is 8px, so a one-radius box catches genuinely-stacked nodes.
       const OVERLAP_PX = 8;
@@ -2427,6 +2487,8 @@ export function Map() {
         onNodeSelect={(id) => handleNodeSelectRef.current(id)}
         onHoverLink={(id) => handleLinkHoverRef.current(id)}
       />
+
+      <ClusterHoverCard hover={clusterHover} nodes={nodes} />
 
       {/* Live terrain elevation under the cursor — helps sanity-check coverage
           paints. Only renders when 3D terrain is on and we got a valid sample. */}

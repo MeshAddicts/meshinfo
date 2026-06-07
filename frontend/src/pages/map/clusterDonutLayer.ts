@@ -6,6 +6,7 @@
 import maplibregl, { type CustomRenderMethodInput } from "maplibre-gl";
 
 import { MAP_STYLE_IDS } from "../../maps/mapStyle";
+import { prefersReducedMotion } from "../../utils/reducedMotion";
 
 const VS = `
 attribute vec3 a_pos;          // Mercator xyz (z = altitude → terrain-aware)
@@ -142,7 +143,11 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
   private dirty = true;
   /** Cache of the last queryRenderedFeatures pass — render() rebuilds the GPU
    *  buffer from this each frame with fresh terrain z when terrain is on. */
-  private lastClusters: { lng: number; lat: number; r: number; ratio: number }[] = [];
+  private lastClusters: { lng: number; lat: number; r: number; ratio: number; key: string }[] = [];
+
+  /** Per-cluster ratio tween (keyed by rounded position, like the dedupe). */
+  private anim = new Map<string, { from: number; to: number; start: number }>();
+  private static readonly RATIO_TWEEN_MS = 500;
 
   private onMoveend: (() => void) | null = null;
   private onIdle: (() => void) | null = null;
@@ -225,6 +230,7 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
     this.onMoveend = null;
     this.onIdle = null;
     this.onSourceData = null;
+    this.anim.clear();
   }
 
   /** Layer-wide opacity multiplier (0..1). Used to dim donuts when an RF tool is active. */
@@ -248,7 +254,7 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
 
     // Dedupe by position — cluster_ids can flip across setData calls
     const seen = new Set<string>();
-    const next: { lng: number; lat: number; r: number; ratio: number }[] = [];
+    const next: { lng: number; lat: number; r: number; ratio: number; key: string }[] = [];
 
     for (const f of features) {
       const coords = (f.geometry as any)?.coordinates;
@@ -265,11 +271,42 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
       const online = (f.properties?.onlineCount as number) ?? 0;
       const ratio = count > 0 ? online / count : 0;
 
-      next.push({ lng, lat, r: pixelRadiusForCount(count), ratio });
+      next.push({ lng, lat, r: pixelRadiusForCount(count), ratio, key });
     }
 
+    this.reconcileTweens(next);
     this.lastClusters = next;
     this.uploadVerts();
+  }
+
+  /** Start a tween for each cluster whose ratio target changed; prune the rest. */
+  private reconcileTweens(next: { ratio: number; key: string }[]): void {
+    const now = performance.now();
+    const reduce = prefersReducedMotion();
+    const live = new Set<string>();
+    for (const c of next) {
+      live.add(c.key);
+      const prev = this.anim.get(c.key);
+      if (reduce || !prev) {
+        this.anim.set(c.key, { from: c.ratio, to: c.ratio, start: now }); // snap (reduced-motion / first sighting)
+      } else if (Math.abs(prev.to - c.ratio) > 0.0005) {
+        this.anim.set(c.key, { from: this.evalTween(prev, now), to: c.ratio, start: now });
+      }
+    }
+    for (const k of this.anim.keys()) if (!live.has(k)) this.anim.delete(k);
+  }
+
+  private evalTween(a: { from: number; to: number; start: number }, now: number): number {
+    if (a.from === a.to) return a.to;
+    const t = Math.min(1, Math.max(0, (now - a.start) / ClusterDonutLayer.RATIO_TWEEN_MS));
+    return a.from + (a.to - a.from) * (1 - Math.pow(1 - t, 3)); // easeOutCubic
+  }
+
+  private hasActiveTween(now: number): boolean {
+    for (const a of this.anim.values()) {
+      if (a.from !== a.to && now - a.start < ClusterDonutLayer.RATIO_TWEEN_MS) return true;
+    }
+    return false;
   }
 
   /** Build verts from `lastClusters` with current terrain elevations and upload. */
@@ -298,8 +335,11 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
       [-1,  1], [ 1, -1], [ 1,  1],  // UL, LR, UR
     ];
 
+    const now = performance.now();
     let i = 0;
     for (const c of this.lastClusters) {
+      const a = this.anim.get(c.key);
+      const ratio = a ? this.evalTween(a, now) : c.ratio;
       const mc = maplibregl.MercatorCoordinate.fromLngLat({ lng: c.lng, lat: c.lat }, elevationAt(c.lng, c.lat));
       for (const [ux, uy] of corners) {
         verts[i++] = mc.x;
@@ -308,7 +348,7 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
         verts[i++] = ux;
         verts[i++] = uy;
         verts[i++] = c.r;
-        verts[i++] = c.ratio;
+        verts[i++] = ratio;
       }
     }
 
@@ -320,13 +360,14 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
   render(gl: WebGLRenderingContext | WebGL2RenderingContext, options: CustomRenderMethodInput): void {
     if (!this.program || !this.buffer) return;
 
+    const now = performance.now();
+
     // Rebuild inside render() so queryRenderedFeatures sees current tile state
     if (this.dirty) {
       this.rebuild();
       this.dirty = false;
-    } else if (this.map?.getTerrain?.() && this.lastClusters.length > 0) {
-      // Symbol layer (cluster number labels) reprojects to terrain per-frame;
-      // donuts must too, or they drift relative to numbers in 3D-pitched view.
+    } else if (this.hasActiveTween(now) || (this.map?.getTerrain?.() && this.lastClusters.length > 0)) {
+      // Re-evaluate per frame while a ratio tween runs, or to re-drape on terrain.
       this.uploadVerts();
     }
 
@@ -364,5 +405,7 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
     gl.disableVertexAttribArray(this.aUv);
     gl.disableVertexAttribArray(this.aPixelRadius);
     gl.disableVertexAttribArray(this.aRatio);
+
+    if (this.hasActiveTween(now)) this.map?.triggerRepaint();
   }
 }
