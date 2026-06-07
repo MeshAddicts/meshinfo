@@ -753,12 +753,14 @@ export const Log = () => {
                   refresh
                 </button>
                 <LivePill
-                  live={liveEnabled}
+                  mode={!liveEnabled ? "off" : shouldFreeze ? "paused" : "live"}
                   onToggle={() => setLiveEnabled((v) => !v)}
                   title={
-                    liveEnabled
-                      ? "Live: new packets stream in at the top"
-                      : "Paused: click to resume the live packet feed"
+                    !liveEnabled
+                      ? "Live off. Click to resume the packet feed."
+                      : shouldFreeze
+                        ? "Paused — scrolled away or a packet is selected. Resume from the list."
+                        : "Live: new packets stream in at the top. Click to turn off."
                   }
                 />
                 <span className="opacity-60">•</span>

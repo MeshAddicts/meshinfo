@@ -9,6 +9,7 @@ import {
 } from "react";
 
 import { HeardBy } from "../components/HeardBy";
+import { LivePill } from "../components/LivePill";
 import { useNodesSearchParams } from "../hooks/useNodesSearchParams";
 import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";
 import { csvEscape, downloadBlob } from "./chat/chatUtils";
@@ -156,7 +157,6 @@ export const Nodes = () => {
 
   const {
     data: nodesRaw,
-    fulfilledTimeStamp: dataUpdatedAt,
     isFetching,
     refetch,
   } = useGetNodesQuery(
@@ -519,12 +519,6 @@ export const Nodes = () => {
     return "live" as const;
   }, [liveEnabled, selectedId, listAtTop]);
 
-  const livePillText = useMemo(() => {
-    if (liveUiMode === "live") return "Live";
-    if (liveUiMode === "paused") return "Paused";
-    return "Live off";
-  }, [liveUiMode]);
-
   const livePillTitle = useMemo(() => {
     if (!liveEnabled)
       return "Live mode is off. Auto-refresh is disabled (no polling / focus / reconnect). Click to enable.";
@@ -710,101 +704,50 @@ export const Nodes = () => {
                 Nodes
               </h1>
 
-              {/* Desktop meta row (Chat-style) */}
+              {/* Desktop meta row */}
               <div className="mt-1 hidden sm:flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                <span>
-                  Updated:{" "}
-                  <span className="font-medium tabular-nums">
-                    {dataUpdatedAt && dataUpdatedAt > 0
-                      ? new Date(dataUpdatedAt).toLocaleString()
-                      : new Date().toLocaleString()}
-                  </span>
+                <span className={isFetching || manualRefreshing ? "animate-pulse" : ""}>
+                  {isFetching || manualRefreshing ? "Refreshing…" : "Ready"}
                 </span>
-
-                <span className="opacity-60">•</span>
 
                 <button
                   type="button"
                   className="underline hover:no-underline"
                   onClick={doManualRefresh}
-                  aria-busy={manualRefreshing || isFetching}
-                  title={
-                    manualRefreshing
-                      ? "Refreshing…"
-                      : isFetching
-                        ? "Refreshing…"
-                        : "Refresh now"
-                  }
                 >
                   refresh
                 </button>
 
-                <span className="opacity-60">•</span>
-
-                <button
-                  type="button"
-                  className={[
-                    "rounded-full px-2 py-0.5 text-[11px] font-medium border transition",
-                    liveUiMode === "live"
-                      ? "bg-emerald-600 text-white border-emerald-600"
-                      : liveUiMode === "paused"
-                        ? "bg-amber-500 text-white border-amber-500"
-                        : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
-                  ].join(" ")}
-                  onClick={() => setLiveEnabled((v) => !v)}
+                <LivePill
+                  mode={liveUiMode}
+                  onToggle={() => setLiveEnabled((v) => !v)}
                   title={livePillTitle}
-                >
-                  {livePillText}
-                </button>
+                />
 
                 <span className="opacity-60">•</span>
 
                 <HeardBy />
               </div>
 
-              {/* Mobile meta row (compact, Chat-style) */}
+              {/* Mobile meta row (compact) */}
               <div className="mt-1 flex sm:hidden flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                <span className="font-medium tabular-nums">
-                  {dataUpdatedAt && dataUpdatedAt > 0
-                    ? new Date(dataUpdatedAt).toLocaleString()
-                    : new Date().toLocaleString()}
+                <span className={isFetching || manualRefreshing ? "animate-pulse" : ""}>
+                  {isFetching || manualRefreshing ? "Refreshing…" : "Ready"}
                 </span>
-
-                <span className="opacity-60">•</span>
 
                 <button
                   type="button"
                   className="underline hover:no-underline"
                   onClick={doManualRefresh}
-                  aria-busy={manualRefreshing || isFetching}
-                  title={
-                    manualRefreshing
-                      ? "Refreshing…"
-                      : isFetching
-                        ? "Refreshing…"
-                        : "Refresh now"
-                  }
                 >
                   refresh
                 </button>
 
-                <span className="opacity-60">•</span>
-
-                <button
-                  type="button"
-                  className={[
-                    "rounded-full px-2 py-0.5 text-[11px] font-medium border transition",
-                    liveUiMode === "live"
-                      ? "bg-emerald-600 text-white border-emerald-600"
-                      : liveUiMode === "paused"
-                        ? "bg-amber-500 text-white border-amber-500"
-                        : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
-                  ].join(" ")}
-                  onClick={() => setLiveEnabled((v) => !v)}
+                <LivePill
+                  mode={liveUiMode}
+                  onToggle={() => setLiveEnabled((v) => !v)}
                   title={livePillTitle}
-                >
-                  {livePillText}
-                </button>
+                />
               </div>
             </div>
 
@@ -1260,15 +1203,6 @@ export const Nodes = () => {
                 Clear filters
               </button>
             ) : null}
-          </div>
-
-          <div className="text-xs text-gray-600 dark:text-gray-400">
-            Updated:{" "}
-            <span className="font-medium tabular-nums">
-              {dataUpdatedAt && dataUpdatedAt > 0
-                ? new Date(dataUpdatedAt).toLocaleString()
-                : new Date().toLocaleString()}
-            </span>
           </div>
         </div>
       </MobileSheet>

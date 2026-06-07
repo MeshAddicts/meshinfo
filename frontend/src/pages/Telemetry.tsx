@@ -596,9 +596,12 @@ export const Telemetry = () => {
   }`;
 
   const busy = isFetching || manualRefreshing;
-  const livePillTitle = liveEnabled
-    ? "Live: telemetry streams in as it arrives."
-    : "Live off. Enable to stream telemetry.";
+  const liveMode = !liveEnabled ? "off" : shouldFreeze ? "paused" : "live";
+  const livePillTitle = !liveEnabled
+    ? "Live off. Click to stream telemetry."
+    : shouldFreeze
+      ? "Paused — scrolled away or a node is selected. Resume from the list."
+      : "Live: telemetry streams in. Click to turn off.";
 
   // Actions
   const onSelect = useCallback(
@@ -773,7 +776,7 @@ export const Telemetry = () => {
                 </button>
 
                 <LivePill
-                  live={liveEnabled}
+                  mode={liveMode}
                   onToggle={() => setLiveEnabled((v) => !v)}
                   title={livePillTitle}
                 />
@@ -802,7 +805,7 @@ export const Telemetry = () => {
                 </button>
 
                 <LivePill
-                  live={liveEnabled}
+                  mode={liveMode}
                   onToggle={() => setLiveEnabled((v) => !v)}
                   title={livePillTitle}
                 />
