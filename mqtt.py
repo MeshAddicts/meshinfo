@@ -570,6 +570,13 @@ class MQTT:
                 except Exception as e:
                     logger.error("Failed to update node_telemetry_current for node %s: %s", id, e)
 
+            # Live push: telemetry sample (feeds the Telemetry page charts/feed).
+            if self.data.broadcaster.subscriber_count:
+                try:
+                    self.data.broadcaster.publish("telemetry", jsonable_encoder(msg))
+                except Exception as e:
+                    logger.debug("telemetry broadcast failed: %s", e)
+
 
     async def handle_text(self, msg):
         from_id = self._normalize_msg_addrs(msg)

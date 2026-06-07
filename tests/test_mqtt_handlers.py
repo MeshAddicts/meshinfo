@@ -302,6 +302,52 @@ class TestHandleLog:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# handle_telemetry — merges payload into the node + emits a live telemetry event
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestHandleTelemetry:
+    def _msg(self, **overrides):
+        base = {
+            "from": 0x67EA9400,
+            "id": 555,
+            "channel": 0,
+            "timestamp": 1700000000,
+            "telemetry_type": "device_metrics",
+            "payload": {"battery_level": 90, "voltage": 4.1},
+            "rssi": -100,
+            "snr": 5.0,
+        }
+        base.update(overrides)
+        return base
+
+    def test_merges_payload_into_node_telemetry(self):
+        mqtt, data = make_mqtt()
+        run(mqtt.handle_telemetry(self._msg()))
+        node = data.pg_storage._nodes["67ea9400"]
+        assert node["telemetry"]["battery_level"] == 90
+        assert len(data.pg_storage.telemetry_writes) == 1
+
+    def test_publishes_telemetry_event(self):
+        mqtt, data = make_mqtt()
+        q = data.broadcaster.subscribe()
+        run(mqtt.handle_telemetry(self._msg()))
+        event_type, payload = q.get_nowait()
+        assert event_type == "telemetry"
+        assert payload["from"] == "67ea9400"
+        assert payload["telemetry_type"] == "device_metrics"
+        assert payload["payload"]["battery_level"] == 90
+
+    def test_no_telemetry_event_without_payload(self):
+        mqtt, data = make_mqtt()
+        q = data.broadcaster.subscribe()
+        m = self._msg()
+        del m["payload"]
+        run(mqtt.handle_telemetry(m))
+        assert q.empty()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # handle_traceroute — route normalization handles both int + str entries
 # ─────────────────────────────────────────────────────────────────────────────
 

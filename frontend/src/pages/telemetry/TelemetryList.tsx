@@ -1,5 +1,6 @@
+import React from "react";
 import { Link } from "react-router";
-import { Virtuoso } from "react-virtuoso";
+import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
 import { formatTimestamp } from "../../utils/formatTimestamp";
 import {
@@ -38,14 +39,21 @@ export function TelemetryList({
   nodes,
   selectedKey,
   onSelect,
+  listRef,
+  onAtTopChange,
 }: {
   items: TelemetryListItem[];
   nodes: NodesById;
   selectedKey: string;
   onSelect: (key: string) => void;
+  listRef?: React.RefObject<VirtuosoHandle | null>;
+  onAtTopChange?: (atTop: boolean) => void;
 }) {
   return (
     <Virtuoso
+      ref={listRef}
+      atTopThreshold={48}
+      atTopStateChange={onAtTopChange}
       style={{ flex: 1, minHeight: 0, height: "100%" }}
       data={items}
       itemContent={(_, it) => {

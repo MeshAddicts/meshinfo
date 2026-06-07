@@ -13,6 +13,7 @@ import React, {
 import { useSearchParams } from "react-router";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
+import { LivePill } from "../components/LivePill";
 import { useLiveEvent } from "../hooks/useLiveEvent";
 import {
   IPacketMessage,
@@ -751,31 +752,17 @@ export const Log = () => {
                 >
                   refresh
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setLiveEnabled((v) => !v)}
+                <LivePill
+                  live={liveEnabled}
+                  onToggle={() => setLiveEnabled((v) => !v)}
                   title={
                     liveEnabled
                       ? "Live: new packets stream in at the top"
                       : "Paused: click to resume the live packet feed"
                   }
-                  className={[
-                    "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 border text-[11px] font-medium transition",
-                    liveEnabled
-                      ? "border-emerald-500/60 text-emerald-700 dark:text-emerald-300 bg-emerald-500/10"
-                      : "border-gray-300/60 dark:border-gray-700 text-gray-500 dark:text-gray-400",
-                  ].join(" ")}
-                >
-                  <span
-                    className={[
-                      "h-1.5 w-1.5 rounded-full",
-                      liveEnabled ? "bg-emerald-500 animate-pulse" : "bg-gray-400",
-                    ].join(" ")}
-                  />
-                  {liveEnabled ? "Live" : "Paused"}
-                </button>
+                />
                 <span className="opacity-60">•</span>
-                <span>raw MQTT packet archive — full history, paged on scroll</span>
+                <span>raw MQTT packet archive</span>
               </div>
             </div>
 
