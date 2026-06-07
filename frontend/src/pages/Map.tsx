@@ -59,6 +59,7 @@ import {
   DEFAULT_NODE_COLOR,
   emptyLineFeatureCollection,
   escapeHtml,
+  nodesDataSignature,
   ROLE_COLORS,
 } from "./map/utils";
 
@@ -82,6 +83,8 @@ export function Map() {
   // Sticky after first style.load — `isStyleLoaded()` momentarily lies post-removeSource.
   const styleEverLoadedRef = useRef(false);
   const mbSelectedIdRef = useRef<string | null>(null);
+  // Last node-source signature; skips redundant setData. -1 = never set.
+  const lastNodesSigRef = useRef<number>(-1);
   const mbHandlersBoundRef = useRef(false);
   const mbCurrentStyleUrlRef = useRef<string | null>(null);
   const mbKeydownHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
@@ -1328,6 +1331,9 @@ export function Map() {
           paint: {
             "circle-radius": ["case", ["boolean", ["feature-state", "selected"], false], 12, 8],
             "circle-color": mbRoleColorExpr,
+            // Recency brightness via `dim`; selected stays full-bright.
+            "circle-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 1, ["coalesce", ["get", "dim"], 1]],
+            "circle-stroke-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 1, ["coalesce", ["get", "dim"], 1]],
             "circle-stroke-width": 2.5,
             "circle-stroke-color": [
               "case",
@@ -1386,6 +1392,9 @@ export function Map() {
           paint: {
             "circle-radius": ["case", ["boolean", ["feature-state", "selected"], false], 12, 8],
             "circle-color": mbRoleColorExpr,
+            // Recency brightness via `dim`; selected stays full-bright.
+            "circle-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 1, ["coalesce", ["get", "dim"], 1]],
+            "circle-stroke-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 1, ["coalesce", ["get", "dim"], 1]],
             "circle-stroke-width": 2.5,
             "circle-stroke-color": [
               "case",
@@ -2231,11 +2240,17 @@ export function Map() {
 
     const data = buildNodesGeoJSON(nodes, recentDays, { role: roleFilter, channel: channelFilter });
 
-    const clustered = map.getSource("nodes_clustered") as MlGeoJSONSource | undefined;
-    clustered?.setData(data);
+    // Skip re-upload when visible state is unchanged; each nodes_clustered
+    // setData forces a full cluster-donut rebuild.
+    const sig = nodesDataSignature(data);
+    if (sig !== lastNodesSigRef.current) {
+      lastNodesSigRef.current = sig;
+      const clustered = map.getSource("nodes_clustered") as MlGeoJSONSource | undefined;
+      clustered?.setData(data);
 
-    const plain = map.getSource("nodes_plain") as MlGeoJSONSource | undefined;
-    plain?.setData(data);
+      const plain = map.getSource("nodes_plain") as MlGeoJSONSource | undefined;
+      plain?.setData(data);
+    }
 
     // If selected node disappears, clear selection + links/panel
     const selectedId = mbSelectedIdRef.current;
