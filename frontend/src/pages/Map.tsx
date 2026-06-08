@@ -8,11 +8,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { toast } from "../components/toastStore";
 import { env } from "../env";
+import { useLiveEvent } from "../hooks/useLiveEvent";
 import { reverseGeocode } from "../maps/geocoder";
 import { buildMapStyle, ensureBuildings3D, ensureTerrain, isDarkBasemap, type OsmBasemap, removeBuildings3D, removeTerrain } from "../maps/mapStyle";
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { NodeRole, roleTitles } from "../types";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
+import { normalizeNodeId8 } from "../utils/normalizeNodeId8";
+import { prefersReducedMotion } from "../utils/reducedMotion";
+import { ActivityLayer } from "./map/activityLayer";
 import { ClusterDonutLayer } from "./map/clusterDonutLayer";
 import { type ClusterHover,ClusterHoverCard } from "./map/ClusterHoverCard";
 import { FiltersResetPill } from "./map/FiltersResetPill";
@@ -29,6 +33,8 @@ import { MapSearchBar } from "./map/MapSearchBar";
 import { MapSettingsPanel } from "./map/MapSettingsPanel";
 import { MapToolPrompt, MapToolsDrawer } from "./map/MapToolsDrawer";
 import { MapTraceroutePanel } from "./map/MapTraceroutePanel";
+import { type PacketArc, PacketCoalescer, type RawPacket } from "./map/packetCoalescer";
+import { packetColor } from "./map/packetColors";
 import { findPathsBetween } from "./map/pathAnalysis";
 import {
   autoSpiderfyOverlappingPlainNodes,
@@ -64,6 +70,23 @@ import {
   ROLE_COLORS,
 } from "./map/utils";
 
+// Cap arcs spawned per flush so a burst can't stall a frame (drop oldest excess).
+const MAX_ARCS_PER_FLUSH = 40;
+
+const samePoint = (a: [number, number], b: [number, number]) => a[0] === b[0] && a[1] === b[1];
+
+type TraceEv = { from?: number | string; to?: number | string; route_ids?: (number | string)[]; id?: number | string };
+// Wait this long for other gateways' copies of one traceroute before drawing the best.
+const TRACEROUTE_DEBOUNCE_MS = 1200;
+
+/** Map a reported signal to a 0..1 arc intensity — prefer SNR, fall back to RSSI. */
+function packetWeight(rssi?: number, snr?: number): number {
+  const clamp = (v: number) => Math.max(0.15, Math.min(1, v));
+  if (typeof snr === "number") return clamp((snr + 20) / 30);
+  if (typeof rssi === "number") return clamp((rssi + 120) / 90);
+  return 0.5;
+}
+
 export function Map() {
   const mapRef = useRef<HTMLDivElement>(null);
 
@@ -86,6 +109,13 @@ export function Map() {
   const mbSelectedIdRef = useRef<string | null>(null);
   // Last node-source signature; skips redundant setData. -1 = never set.
   const lastNodesSigRef = useRef<number>(-1);
+  // Live packet-arc animation plumbing.
+  const activityLayerRef = useRef<ActivityLayer | null>(null);
+  const coalescerRef = useRef<PacketCoalescer | null>(null);
+  const pendingArcsRef = useRef<PacketArc[]>([]);
+  const flushRafRef = useRef<number | null>(null);
+  // Per-mesh-id debounce of multi-gateway traceroute copies → one comet, longest route.
+  const tracerouteBufRef = useRef<Map<string, { ev: TraceEv; timer: ReturnType<typeof setTimeout> }> | null>(null);
   const mbHandlersBoundRef = useRef(false);
   const mbCurrentStyleUrlRef = useRef<string | null>(null);
   const mbKeydownHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
@@ -137,6 +167,7 @@ export function Map() {
     return stored ?? 30;
   });
 
+  const [livePackets, setLivePackets] = useState<boolean>(() => readJson<boolean>(LS_KEYS.livePackets, true));
   const [clusterEnabled, setClusterEnabled] = useState<boolean>(() => {
     const stored = readJson<boolean | null>(LS_KEYS.clusterEnabled, null);
     return stored ?? true;
@@ -195,6 +226,7 @@ export function Map() {
   useEffect(() => writeJson(LS_KEYS.osmBasemap, osmBasemap), [osmBasemap]);
   useEffect(() => writeJson(LS_KEYS.recentDays, recentDays), [recentDays]);
   useEffect(() => writeJson(LS_KEYS.clusterEnabled, clusterEnabled), [clusterEnabled]);
+  useEffect(() => writeJson(LS_KEYS.livePackets, livePackets), [livePackets]);
   useEffect(() => writeJson(LS_KEYS.linkMode, linkMode), [linkMode]);
   useEffect(() => writeJson(LS_KEYS.myNodeId, myNodeId), [myNodeId]);
   useEffect(() => writeJson(LS_KEYS.settingsPanelOpen, settingsPanelOpen), [settingsPanelOpen]);
@@ -307,6 +339,7 @@ export function Map() {
   const configRef = useRef(config);
   const recentDaysRef = useRef(recentDays);
   const clusterEnabledRef = useRef(clusterEnabled);
+  const livePacketsRef = useRef(livePackets);
   const linkModeRef = useRef(linkMode);
   const myNodeIdRef = useRef(myNodeId);
   const roleFilterRef = useRef(roleFilter);
@@ -329,6 +362,10 @@ export function Map() {
   useEffect(() => { setDetailsDataRef.current = setDetailsData; }, [setDetailsData]);
   useEffect(() => { recentDaysRef.current = recentDays; }, [recentDays]);
   useEffect(() => { clusterEnabledRef.current = clusterEnabled; }, [clusterEnabled]);
+  useEffect(() => {
+    livePacketsRef.current = livePackets;
+    clusterDonutLayerRef.current?.setAnimationsEnabled(livePackets);
+  }, [livePackets]);
   useEffect(() => { linkModeRef.current = linkMode; }, [linkMode]);
   useEffect(() => { roleFilterRef.current = roleFilter; }, [roleFilter]);
   useEffect(() => { activeToolRef.current = activeTool; }, [activeTool]);
@@ -1283,6 +1320,7 @@ export function Map() {
         const donutLayer = new ClusterDonutLayer();
         map.addLayer(donutLayer);
         clusterDonutLayerRef.current = donutLayer;
+        donutLayer.setAnimationsEnabled(livePacketsRef.current);
         if (activeToolRef.current != null && toolStepRef.current === "result") donutLayer.setAlpha(0.25);
       }
 
@@ -1427,6 +1465,13 @@ export function Map() {
             "text-color": "#ffffff",
           },
         });
+      }
+
+      // Live packet activity (custom WebGL layer; drawn above nodes)
+      if (!map.getLayer("activity")) {
+        const al = new ActivityLayer();
+        map.addLayer(al);
+        activityLayerRef.current = al;
       }
 
       // Apply current cluster visibility (use ref to avoid stale closure)
@@ -2334,6 +2379,139 @@ export function Map() {
     }
   }, [nodes, recentDays, roleFilter, channelFilter]);
 
+  // Live packet arcs: resolve from→sender positions and spawn into the layer.
+  const flushPacketArcs = useCallback(() => {
+    flushRafRef.current = null;
+    const layer = activityLayerRef.current;
+    const all = pendingArcsRef.current;
+    pendingArcsRef.current = [];
+    if (!layer || all.length === 0) return;
+    // Drop oldest excess on a burst; keep the most recent so the feed stays live.
+    const arcs = all.length > MAX_ARCS_PER_FLUSH ? all.slice(-MAX_ARCS_PER_FLUSH) : all;
+    const liveNodes = nodesRef.current;
+    const now = performance.now();
+
+    // With clustering on, snap endpoints to the donut that visually covers them so
+    // arcs line up with the clusters on screen. Project cluster centroids once.
+    const map = mbMapRef.current;
+    const projected =
+      clusterEnabledRef.current && map && clusterDonutLayerRef.current
+        ? clusterDonutLayerRef.current.visibleClusters().map((c) => {
+            const p = map.project([c.lng, c.lat]);
+            return { x: p.x, y: p.y, r: c.r, lngLat: [c.lng, c.lat] as [number, number] };
+          })
+        : null;
+    const anchor = (pos: [number, number]): [number, number] => {
+      if (!projected || !map) return pos;
+      const p = map.project(pos);
+      let best: [number, number] | null = null;
+      let bestD = Infinity;
+      for (const c of projected) {
+        const d = Math.hypot(c.x - p.x, c.y - p.y);
+        if (d <= c.r && d < bestD) {
+          bestD = d;
+          best = c.lngLat;
+        }
+      }
+      return best ?? pos;
+    };
+
+    layer.beginBatch(); // coalesce this flush into one GPU upload
+    for (const a of arcs) {
+      const fromRaw = liveNodes[a.fromId]?.map_position;
+      const senderRaw = liveNodes[a.senderId]?.map_position;
+      const fromPos = fromRaw ? anchor(fromRaw) : undefined;
+      const senderPos = senderRaw ? anchor(senderRaw) : undefined;
+      const color = packetColor(a.type);
+      if (a.isNewTransmission && fromPos) layer.spawnPulse(fromPos, color, now);
+      if (fromPos && senderPos && !samePoint(fromPos, senderPos)) {
+        layer.spawnArc(fromPos, senderPos, color, packetWeight(a.rssi, a.snr), now);
+      } else if (!fromPos && senderPos) {
+        layer.spawnRipple(senderPos, color, now); // heard, origin position unknown
+      }
+    }
+    layer.endBatch();
+  }, []);
+
+  useLiveEvent<RawPacket>("packet", (p) => {
+    if (!livePacketsRef.current || prefersReducedMotion()) return;
+    if (p.type === "traceroute") return; // handled by the dedicated multi-hop tracer
+    const coalescer = (coalescerRef.current ??= new PacketCoalescer());
+    const arc = coalescer.ingest(p, Date.now());
+    if (!arc) return;
+    pendingArcsRef.current.push(arc);
+    if (flushRafRef.current == null) flushRafRef.current = requestAnimationFrame(flushPacketArcs);
+  });
+
+  // Resolve a traceroute's hops to positions and draw one sequential comet along
+  // [from, ...route, to], snapping each hop to its cluster and skipping hops with
+  // no known position.
+  const animateTraceroute = useCallback((t: TraceEv) => {
+    const layer = activityLayerRef.current;
+    if (!layer) return;
+    const liveNodes = nodesRef.current;
+    const map = mbMapRef.current;
+    const donut = clusterDonutLayerRef.current;
+    const clusters = clusterEnabledRef.current && map && donut ? donut.visibleClusters() : null;
+    const snap = (pos: [number, number]): [number, number] => {
+      if (!clusters || !map) return pos;
+      const p = map.project(pos);
+      let best: [number, number] | null = null;
+      let bestD = Infinity;
+      for (const c of clusters) {
+        const cp = map.project([c.lng, c.lat]);
+        const d = Math.hypot(cp.x - p.x, cp.y - p.y);
+        if (d <= c.r && d < bestD) {
+          bestD = d;
+          best = [c.lng, c.lat];
+        }
+      }
+      return best ?? pos;
+    };
+    const pts: [number, number][] = [];
+    for (const raw of [t.from, ...(t.route_ids ?? []), t.to]) {
+      const id = normalizeNodeId8(raw);
+      const pos = id ? liveNodes[id]?.map_position : undefined;
+      if (!pos) continue; // hop with unknown position — skip (honest gap)
+      const a = snap(pos);
+      const last = pts[pts.length - 1];
+      if (!last || !samePoint(last, a)) pts.push(a); // collapse same-cluster hops
+    }
+    if (pts.length === 0) return;
+    layer.spawnPath(pts, packetColor("traceroute"), 0.9, performance.now());
+  }, []);
+
+  // The same traceroute is uploaded by many gateways with divergent recorded
+  // routes; debounce by mesh id and draw only the single most complete path.
+  useLiveEvent<TraceEv>("traceroute", (t) => {
+    if (!livePacketsRef.current || prefersReducedMotion()) return;
+    const buf = (tracerouteBufRef.current ??= new globalThis.Map());
+    const key = t.id != null ? `id:${t.id}` : `ft:${t.from}:${t.to}`;
+    const existing = buf.get(key);
+    if (existing) {
+      if ((t.route_ids?.length ?? 0) > (existing.ev.route_ids?.length ?? 0)) existing.ev = t;
+      return;
+    }
+    const timer = setTimeout(() => {
+      const entry = buf.get(key);
+      buf.delete(key);
+      if (entry) animateTraceroute(entry.ev);
+    }, TRACEROUTE_DEBOUNCE_MS);
+    buf.set(key, { ev: t, timer });
+  });
+
+  useEffect(
+    () => () => {
+      if (flushRafRef.current != null) cancelAnimationFrame(flushRafRef.current);
+      const buf = tracerouteBufRef.current;
+      if (buf) {
+        for (const { timer } of buf.values()) clearTimeout(timer);
+        buf.clear();
+      }
+    },
+    [],
+  );
+
   // React to linkMode / myNodeId / nodes changes for persistent links
   useEffect(() => {
     const map = mbMapRef.current;
@@ -2427,6 +2605,8 @@ export function Map() {
         setTerrain3D={setTerrain3D}
         buildings3D={buildings3D}
         setBuildings3D={setBuildings3D}
+        livePackets={livePackets}
+        setLivePackets={setLivePackets}
         onExport={handleExport}
         hidden={!!detailsData || activeTool != null}
         recentDays={recentDays}
@@ -2489,6 +2669,16 @@ export function Map() {
       />
 
       <ClusterHoverCard hover={clusterHover} nodes={nodes} />
+
+      <button
+        type="button"
+        onClick={() => setLivePackets((v) => !v)}
+        className="absolute bottom-3 left-3 z-30 flex items-center gap-2 rounded-xl border border-white/10 bg-gray-900/80 px-3 py-1.5 text-xs font-medium shadow-2xl backdrop-blur-xl transition hover:bg-gray-900/90"
+        title={livePackets ? "Live map animations on — click to turn off" : "Live map animations off — click to turn on"}
+      >
+        <span className={`h-2 w-2 rounded-full ${livePackets ? "bg-emerald-400 animate-pulse" : "bg-gray-500"}`} />
+        <span className="text-gray-200">Animations</span>
+      </button>
 
       {/* Live terrain elevation under the cursor — helps sanity-check coverage
           paints. Only renders when 3D terrain is on and we got a valid sample. */}

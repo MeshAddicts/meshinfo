@@ -217,6 +217,8 @@ export function MapSettingsPanel({
   setTerrain3D,
   buildings3D,
   setBuildings3D,
+  livePackets,
+  setLivePackets,
   onExport,
   hidden = false,
 
@@ -260,6 +262,8 @@ export function MapSettingsPanel({
   setTerrain3D: Dispatch<SetStateAction<boolean>>;
   buildings3D: boolean;
   setBuildings3D: Dispatch<SetStateAction<boolean>>;
+  livePackets: boolean;
+  setLivePackets: Dispatch<SetStateAction<boolean>>;
   onExport?: () => void;
   hidden?: boolean;
 
@@ -545,6 +549,32 @@ export function MapSettingsPanel({
                     {" "}and drag to rotate/pitch. Ctrl + scroll changes pitch.
                   </div>
                 )}
+              </Section>
+
+            <Section
+              open={openSections.has("animations")}
+              onToggle={() => toggleSection("animations")}
+              title="Animations"
+              subtitle={livePackets ? "On" : "Off"}
+            >
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5">
+                  <div className="flex flex-col">
+                    <label htmlFor="animations-checkbox" className="text-sm font-medium text-gray-300">
+                      Live map animations
+                    </label>
+                    <p className="text-[11px] text-gray-500 mt-0.5">
+                      Packet arcs, traceroute paths, and cluster transitions
+                    </p>
+                  </div>
+                  <input
+                    id="animations-checkbox"
+                    type="checkbox"
+                    checked={livePackets}
+                    onChange={(e) => setLivePackets(e.target.checked)}
+                    className="h-4 w-4 rounded-sm border-gray-600 bg-gray-700 text-cyan-500 focus:ring-cyan-500"
+                    aria-label="Toggle live map animations"
+                  />
+                </div>
               </Section>
 
             <Section open={openSections.has("mynode")} onToggle={() => toggleSection("mynode")} title="My Node" subtitle={myNodeLabel || "Not set"}>

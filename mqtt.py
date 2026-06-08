@@ -669,3 +669,20 @@ class MQTT:
                 msg['route_ids'].append(r)
 
         await self.data.pg_storage.write_traceroute(id, msg)
+
+        # Live push: resolved multi-hop path for the map's traceroute tracer.
+        if self.data.broadcaster.subscriber_count:
+            try:
+                self.data.broadcaster.publish(
+                    "traceroute",
+                    jsonable_encoder(
+                        {
+                            "from": id,
+                            "to": msg.get("to"),
+                            "route_ids": msg["route_ids"],
+                            "id": msg.get("id"),
+                        }
+                    ),
+                )
+            except Exception as e:
+                logger.debug("traceroute broadcast failed: %s", e)

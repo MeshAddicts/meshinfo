@@ -6,6 +6,8 @@ export const LS_KEYS = {
   osmBasemap: "meshinfo.map.osmBasemap",
   recentDays: "meshinfo.map.recentDays",
   clusterEnabled: "meshinfo.map.clusterEnabled",
+  /** Live packet-arc animation on/off (on by default, opt-out). */
+  livePackets: "meshinfo.map.livePackets",
   settingsPanelOpen: "meshinfo.map.settingsPanelOpen",
   linkMode: "meshinfo.map.linkMode",
   myNodeId: "meshinfo.map.myNodeId",
