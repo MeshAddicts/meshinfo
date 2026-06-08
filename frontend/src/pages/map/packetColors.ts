@@ -1,4 +1,4 @@
-/** Packet `type` → RGB 0..1, shared by the arc shader and (later) the legend. */
+/** Packet `type` → RGB 0..1, shared by the arc shader and the legend. */
 export const PACKET_TYPE_COLORS: Record<string, [number, number, number]> = {
   text: [0.196, 0.941, 0.196], // green
   text_binary: [0.4, 0.78, 0.4],
@@ -17,3 +17,21 @@ export const PACKET_TYPE_FALLBACK: [number, number, number] = [0.6, 0.62, 0.7];
 export function packetColor(type: string | undefined): [number, number, number] {
   return (type != null && PACKET_TYPE_COLORS[type]) || PACKET_TYPE_FALLBACK;
 }
+
+/** Same color as the arc shader, as a CSS string for the legend swatches. */
+export function packetColorCss(type: string | undefined): string {
+  const [r, g, b] = packetColor(type);
+  return `rgb(${Math.round(r * 255)} ${Math.round(g * 255)} ${Math.round(b * 255)})`;
+}
+
+/** Packet types shown in the legend key (order = legend order). */
+export const PACKET_TYPE_LABELS: { type: string; label: string }[] = [
+  { type: "text", label: "Text" },
+  { type: "position", label: "Position" },
+  { type: "telemetry", label: "Telemetry" },
+  { type: "nodeinfo", label: "Node info" },
+  { type: "neighborinfo", label: "Neighbor" },
+  { type: "traceroute", label: "Traceroute" },
+  { type: "routing", label: "Routing" },
+  { type: "mapreport", label: "Map report" },
+];
