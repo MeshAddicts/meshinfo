@@ -9,8 +9,9 @@ const FLOATS = 11; // pos.xyz | s | t0 | dur | color.rgb | kind | weight
 const STRIDE = FLOATS * 4;
 const MAX_POINTS = 16_384;
 const ARC_SAMPLES = 36;
-const ARC_MS = 2200; // comet travel time
-const SEG_MS = 700; // per-hop comet duration for multi-hop (traceroute) paths
+const SPEED_PX_PER_MS = 0.5; // constant comet speed (~500 css-px/s) at any zoom
+const MIN_ARC_MS = 450; // floor so short hops aren't a blink
+const MAX_ARC_MS = 3000; // ceiling so cross-screen arcs aren't tedious
 const PULSE_MS = 750;
 const RIPPLE_MS = 750;
 const FRAME_MS = 1000 / 30; // keep-alive repaint cap (~30fps, vsync-aligned via rAF)
@@ -320,11 +321,22 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
     this.maxExpiry = Math.max(this.maxExpiry, t0 + dur);
   }
 
+  /** Comet duration from on-screen distance → constant travel speed at any zoom. */
+  private arcDur(from: LngLat, to: LngLat): number {
+    const map = this.map;
+    if (!map) return MIN_ARC_MS;
+    const p0 = map.project(from);
+    const p1 = map.project(to);
+    const px = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+    return Math.min(MAX_ARC_MS, Math.max(MIN_ARC_MS, px / SPEED_PX_PER_MS));
+  }
+
   /** from→sender comet + a gateway ripple on arrival. */
   spawnArc(from: LngLat, to: LngLat, color: RGB, weight: number, now: number): void {
     if (!this.gl || !this.buffer) return;
-    this.writeArc(from, to, color, weight, now, ARC_MS);
-    this.spawnRing(to, color, now + ARC_MS * 0.82, RIPPLE_MS, weight);
+    const dur = this.arcDur(from, to);
+    this.writeArc(from, to, color, weight, now, dur);
+    this.spawnRing(to, color, now + dur * 0.82, RIPPLE_MS, weight);
     this.scheduleNextFrame();
   }
 
@@ -336,10 +348,12 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
       return;
     }
     this.spawnRing(points[0], color, now, PULSE_MS, 1); // origin pulse
+    let t0 = now;
     for (let i = 0; i < points.length - 1; i++) {
-      const t0 = now + i * SEG_MS;
-      this.writeArc(points[i], points[i + 1], color, weight, t0, SEG_MS);
-      this.spawnRing(points[i + 1], color, t0 + SEG_MS * 0.9, RIPPLE_MS, 0.8); // ping as it lands
+      const dur = this.arcDur(points[i], points[i + 1]);
+      this.writeArc(points[i], points[i + 1], color, weight, t0, dur);
+      this.spawnRing(points[i + 1], color, t0 + dur * 0.9, RIPPLE_MS, 0.8); // ping as it lands
+      t0 += dur;
     }
     this.scheduleNextFrame();
   }
