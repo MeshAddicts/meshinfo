@@ -362,7 +362,10 @@ export function Map() {
   useEffect(() => { setDetailsDataRef.current = setDetailsData; }, [setDetailsData]);
   useEffect(() => { recentDaysRef.current = recentDays; }, [recentDays]);
   useEffect(() => { clusterEnabledRef.current = clusterEnabled; }, [clusterEnabled]);
-  useEffect(() => { livePacketsRef.current = livePackets; }, [livePackets]);
+  useEffect(() => {
+    livePacketsRef.current = livePackets;
+    clusterDonutLayerRef.current?.setAnimationsEnabled(livePackets);
+  }, [livePackets]);
   useEffect(() => { linkModeRef.current = linkMode; }, [linkMode]);
   useEffect(() => { roleFilterRef.current = roleFilter; }, [roleFilter]);
   useEffect(() => { activeToolRef.current = activeTool; }, [activeTool]);
@@ -1317,6 +1320,7 @@ export function Map() {
         const donutLayer = new ClusterDonutLayer();
         map.addLayer(donutLayer);
         clusterDonutLayerRef.current = donutLayer;
+        donutLayer.setAnimationsEnabled(livePacketsRef.current);
         if (activeToolRef.current != null && toolStepRef.current === "result") donutLayer.setAlpha(0.25);
       }
 
@@ -2599,6 +2603,8 @@ export function Map() {
         setTerrain3D={setTerrain3D}
         buildings3D={buildings3D}
         setBuildings3D={setBuildings3D}
+        livePackets={livePackets}
+        setLivePackets={setLivePackets}
         onExport={handleExport}
         hidden={!!detailsData || activeTool != null}
         recentDays={recentDays}
@@ -2666,10 +2672,10 @@ export function Map() {
         type="button"
         onClick={() => setLivePackets((v) => !v)}
         className="absolute bottom-3 left-3 z-30 flex items-center gap-2 rounded-xl border border-white/10 bg-gray-900/80 px-3 py-1.5 text-xs font-medium shadow-2xl backdrop-blur-xl transition hover:bg-gray-900/90"
-        title={livePackets ? "Live packet arcs on — click to turn off" : "Live packet arcs off — click to turn on"}
+        title={livePackets ? "Live map animations on — click to turn off" : "Live map animations off — click to turn on"}
       >
         <span className={`h-2 w-2 rounded-full ${livePackets ? "bg-emerald-400 animate-pulse" : "bg-gray-500"}`} />
-        <span className="text-gray-200">Live packets</span>
+        <span className="text-gray-200">Animations</span>
       </button>
 
       {/* Live terrain elevation under the cursor — helps sanity-check coverage

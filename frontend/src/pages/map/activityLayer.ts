@@ -8,8 +8,8 @@ type LngLat = [number, number];
 const FLOATS = 11; // pos.xyz | s | t0 | dur | color.rgb | kind | weight
 const STRIDE = FLOATS * 4;
 const MAX_POINTS = 16_384;
-const ARC_SAMPLES = 28;
-const ARC_MS = 1800;
+const ARC_SAMPLES = 36;
+const ARC_MS = 2200; // comet travel time
 const SEG_MS = 700; // per-hop comet duration for multi-hop (traceroute) paths
 const PULSE_MS = 750;
 const RIPPLE_MS = 750;
@@ -47,12 +47,12 @@ void main() {
   float size;
   float alpha;
   if (a_kind < 0.5) {
-    // bright head at phase, fading trail behind
-    float trail = 0.32;
-    float d = phase - a_s;
-    float vis = (d >= 0.0 && d <= trail) ? (1.0 - d / trail) : 0.0;
+    // comet: bright head at phase, medium fading trail behind
+    float w = mix(0.6, 1.0, a_weight);
     float globalFade = 1.0 - smoothstep(0.85, 1.0, phase);
-    size = (3.0 + 7.0 * vis) * mix(0.6, 1.0, a_weight) * u_dpr;
+    float d = phase - a_s;
+    float vis = (d >= 0.0 && d <= 0.30) ? (1.0 - d / 0.30) : 0.0;
+    size = (2.5 + 5.0 * vis) * w * u_dpr;
     alpha = vis * globalFade * mix(0.5, 1.0, a_weight);
   } else {
     float e = 1.0 - pow(1.0 - phase, 2.0);
@@ -230,7 +230,7 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
     this.writeHead = start + count;
   }
 
-  /** Write one comet segment (28 samples) into the ring at [t0, t0+dur). */
+  /** Write one comet segment into the ring at [t0, t0+dur). */
   private writeArc(from: LngLat, to: LngLat, color: RGB, weight: number, t0: number, dur: number): void {
     const [lng0, lat0] = from;
     const [lng1, lat1] = to;
@@ -351,7 +351,7 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
     set(this.aWeight, 1, 40);
 
     gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE); // additive glow
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.drawArrays(gl.POINTS, 0, MAX_POINTS);
 
     for (const loc of [this.aPos, this.aS, this.aT0, this.aDur, this.aColor, this.aKind, this.aWeight]) {

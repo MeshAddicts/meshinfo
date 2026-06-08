@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 
+import { useLiveEvent } from "../../hooks/useLiveEvent";
+import { useGetNodePacketsQuery } from "../../slices/apiSlice";
 import { HardwareModel, type NodeRole,roleTitles } from "../../types";
 import { getElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLinks";
+import { normalizeNodeId8 } from "../../utils/normalizeNodeId8";
 import { normNodeId } from "./linkFeatures";
+import { Sparkline } from "./Sparkline";
 import { TelemetrySection } from "./TelemetrySection";
 import type { IMapNode, NodeDetailsData } from "./types";
 import { useBottomSheetGesture } from "./useBottomSheet";
@@ -182,6 +186,77 @@ function CollapsibleSection({
         </svg>
       </button>
       {open && <div id={contentId} className="pb-2.5">{children}</div>}
+    </div>
+  );
+}
+
+const ACTIVITY_WINDOW_MS = 15 * 60 * 1000;
+const ACTIVITY_BINS = 30;
+
+/** Epoch ms from a packet timestamp (number in s or ms, or an ISO string). */
+function packetTimeMs(ts: unknown): number | null {
+  if (typeof ts === "number" && Number.isFinite(ts)) return ts > 1e12 ? ts : ts * 1000;
+  if (typeof ts === "string") {
+    const ms = Date.parse(ts);
+    return Number.isFinite(ms) ? ms : null;
+  }
+  return null;
+}
+
+/** Sparkline of packets involving this node over the last 15 min — seeded from
+ *  recent history, then kept current from the SSE packet stream. */
+function RecentActivitySparkline({ nodeId }: { nodeId: string }) {
+  const { data } = useGetNodePacketsQuery({ nodeId, limit: 200 });
+  const liveRef = useRef<number[]>([]);
+  const [bins, setBins] = useState<number[]>(() => new Array(ACTIVITY_BINS).fill(0));
+
+  useEffect(() => {
+    liveRef.current = [];
+  }, [nodeId]);
+
+  useLiveEvent<{ from?: number | string; to?: number | string; timestamp?: number | string }>(
+    "packet",
+    (p) => {
+      if (normalizeNodeId8(p.from) === nodeId || normalizeNodeId8(p.to) === nodeId) {
+        liveRef.current.push(packetTimeMs(p.timestamp) ?? Date.now());
+      }
+    },
+  );
+
+  useEffect(() => {
+    const recompute = () => {
+      const cutoff = Date.now() - ACTIVITY_WINDOW_MS;
+      liveRef.current = liveRef.current.filter((t) => t >= cutoff);
+      const stamps = [...liveRef.current];
+      for (const pkt of data?.packets ?? []) {
+        if (normalizeNodeId8(pkt.from) !== nodeId && normalizeNodeId8(pkt.to) !== nodeId) continue;
+        const t = packetTimeMs(pkt.timestamp);
+        if (t != null && t >= cutoff) stamps.push(t);
+      }
+      const b = new Array(ACTIVITY_BINS).fill(0);
+      for (const t of stamps) {
+        b[Math.min(ACTIVITY_BINS - 1, Math.floor(((t - cutoff) / ACTIVITY_WINDOW_MS) * ACTIVITY_BINS))] += 1;
+      }
+      setBins(b);
+    };
+    recompute();
+    const id = setInterval(recompute, 1500);
+    return () => clearInterval(id);
+  }, [data, nodeId]);
+
+  const total = bins.reduce((a, b) => a + b, 0);
+
+  return (
+    <div className="px-4 pb-3">
+      <div className="text-gray-500 text-[10px] uppercase tracking-wider">Recent activity (15 min)</div>
+      {total === 0 ? (
+        <div className="text-gray-500 text-[11px]">No packets in the last 15 min</div>
+      ) : (
+        <div className="flex items-center gap-2">
+          <Sparkline values={bins} width={150} height={26} color="#34d399" />
+          <span className="text-gray-400 text-[11px] tabular-nums">{total} pkt</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -412,6 +487,8 @@ export function MapDetailsPanel({
           </div>
         )}
       </div>
+
+      <RecentActivitySparkline nodeId={node.id} />
 
       <div className="flex-1 overflow-y-auto min-h-0 px-4">
         <CollapsibleSection

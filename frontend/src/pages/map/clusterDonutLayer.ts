@@ -152,6 +152,8 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
   private lastCamSig = "";
   /** Reused vertex buffer; reallocated only when the cluster count grows. */
   private vertScratch: Float32Array | null = null;
+  /** When false, ratio changes snap instead of tweening (animations toggle off). */
+  private animationsEnabled = true;
 
   private onMoveend: (() => void) | null = null;
   private onIdle: (() => void) | null = null;
@@ -252,6 +254,11 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
     return this.lastClusters.map((c) => ({ lng: c.lng, lat: c.lat, r: c.r }));
   }
 
+  /** Gate the ratio tween with the global animations toggle (snap when off). */
+  setAnimationsEnabled(enabled: boolean): void {
+    this.animationsEnabled = enabled;
+  }
+
   private rebuild(): void {
     const map = this.map;
     if (!map) return;
@@ -293,7 +300,7 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
   /** Start a tween for each cluster whose ratio target changed; prune the rest. */
   private reconcileTweens(next: { ratio: number; key: string }[]): void {
     const now = performance.now();
-    const reduce = prefersReducedMotion();
+    const reduce = prefersReducedMotion() || !this.animationsEnabled;
     const live = new Set<string>();
     for (const c of next) {
       live.add(c.key);
