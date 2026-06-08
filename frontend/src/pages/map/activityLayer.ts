@@ -10,6 +10,7 @@ const STRIDE = FLOATS * 4;
 const MAX_POINTS = 16_384;
 const ARC_SAMPLES = 28;
 const ARC_MS = 1800;
+const SEG_MS = 700; // per-hop comet duration for multi-hop (traceroute) paths
 const PULSE_MS = 750;
 const RIPPLE_MS = 750;
 const FRAME_MS = 1000 / 30; // keep-alive repaint cap (~30fps)
@@ -229,9 +230,8 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
     this.writeHead = start + count;
   }
 
-  /** from→sender comet + a gateway ripple on arrival. */
-  spawnArc(from: LngLat, to: LngLat, color: RGB, weight: number, now: number): void {
-    if (!this.gl || !this.buffer) return;
+  /** Write one comet segment (28 samples) into the ring at [t0, t0+dur). */
+  private writeArc(from: LngLat, to: LngLat, color: RGB, weight: number, t0: number, dur: number): void {
     const [lng0, lat0] = from;
     const [lng1, lat1] = to;
     const e0 = this.elevAt(lng0, lat0);
@@ -258,8 +258,8 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
       d[o++] = mercY(lat);
       d[o++] = mercZ(alt, lat);
       d[o++] = s;
-      d[o++] = now;
-      d[o++] = ARC_MS;
+      d[o++] = t0;
+      d[o++] = dur;
       d[o++] = color[0];
       d[o++] = color[1];
       d[o++] = color[2];
@@ -267,8 +267,30 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
       d[o++] = weight;
     }
     this.writePoints(d, ARC_SAMPLES);
-    this.maxExpiry = Math.max(this.maxExpiry, now + ARC_MS);
+    this.maxExpiry = Math.max(this.maxExpiry, t0 + dur);
+  }
+
+  /** from→sender comet + a gateway ripple on arrival. */
+  spawnArc(from: LngLat, to: LngLat, color: RGB, weight: number, now: number): void {
+    if (!this.gl || !this.buffer) return;
+    this.writeArc(from, to, color, weight, now, ARC_MS);
     this.spawnRing(to, color, now + ARC_MS * 0.82, RIPPLE_MS, weight);
+    this.scheduleNextFrame();
+  }
+
+  /** Sequential comet through a resolved multi-hop path (traceroute), hop by hop. */
+  spawnPath(points: LngLat[], color: RGB, weight: number, now: number): void {
+    if (!this.gl || !this.buffer || points.length === 0) return;
+    if (points.length === 1) {
+      this.spawnRing(points[0], color, now, PULSE_MS, 1);
+      return;
+    }
+    this.spawnRing(points[0], color, now, PULSE_MS, 1); // origin pulse
+    for (let i = 0; i < points.length - 1; i++) {
+      const t0 = now + i * SEG_MS;
+      this.writeArc(points[i], points[i + 1], color, weight, t0, SEG_MS);
+      this.spawnRing(points[i + 1], color, t0 + SEG_MS * 0.9, RIPPLE_MS, 0.8); // ping as it lands
+    }
     this.scheduleNextFrame();
   }
 

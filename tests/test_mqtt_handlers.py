@@ -367,6 +367,23 @@ class TestHandleTraceroute:
         _, written = data.pg_storage.traceroute_writes[0]
         assert written["route_ids"] == ["67ea9400", "abcd1234"]
 
+    def test_publishes_traceroute_event(self):
+        mqtt, data = make_mqtt(nodes={
+            "67ea9400": {"id": "67ea9400", "longname": "A"},
+            "abcd1234": {"id": "abcd1234", "longname": "B"},
+        })
+        q = data.broadcaster.subscribe()
+        run(mqtt.handle_traceroute({
+            "from": 0x67EA9400,
+            "to": 0xABCD1234,
+            "payload": {"route": [0x67EA9400]},
+        }))
+        event_type, payload = q.get_nowait()
+        assert event_type == "traceroute"
+        assert payload["from"] == "67ea9400"
+        assert payload["to"] == "abcd1234"
+        assert payload["route_ids"] == ["67ea9400"]
+
     def test_json_longname_route_resolved(self):
         mqtt, data = make_mqtt(nodes={
             "67ea9400": {"id": "67ea9400", "longname": "Alpha"},

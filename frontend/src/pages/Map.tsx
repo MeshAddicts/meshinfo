@@ -14,6 +14,7 @@ import { buildMapStyle, ensureBuildings3D, ensureTerrain, isDarkBasemap, type Os
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { NodeRole, roleTitles } from "../types";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
+import { normalizeNodeId8 } from "../utils/normalizeNodeId8";
 import { prefersReducedMotion } from "../utils/reducedMotion";
 import { ActivityLayer } from "./map/activityLayer";
 import { ClusterDonutLayer } from "./map/clusterDonutLayer";
@@ -2422,12 +2423,55 @@ export function Map() {
 
   useLiveEvent<RawPacket>("packet", (p) => {
     if (!livePacketsRef.current || prefersReducedMotion()) return;
+    if (p.type === "traceroute") return; // handled by the dedicated multi-hop tracer
     const coalescer = (coalescerRef.current ??= new PacketCoalescer());
     const arc = coalescer.ingest(p, Date.now());
     if (!arc) return;
     pendingArcsRef.current.push(arc);
     if (flushRafRef.current == null) flushRafRef.current = requestAnimationFrame(flushPacketArcs);
   });
+
+  // Traceroute: animate the real ordered hop path [from, ...route, to], snapping
+  // each hop to its cluster (when clustering is on) and skipping hops with no
+  // known position. Drawn as one sequential comet.
+  useLiveEvent<{ from?: number | string; to?: number | string; route_ids?: (number | string)[] }>(
+    "traceroute",
+    (t) => {
+      if (!livePacketsRef.current || prefersReducedMotion()) return;
+      const layer = activityLayerRef.current;
+      if (!layer) return;
+      const liveNodes = nodesRef.current;
+      const map = mbMapRef.current;
+      const donut = clusterDonutLayerRef.current;
+      const clusters = clusterEnabledRef.current && map && donut ? donut.visibleClusters() : null;
+      const snap = (pos: [number, number]): [number, number] => {
+        if (!clusters || !map) return pos;
+        const p = map.project(pos);
+        let best: [number, number] | null = null;
+        let bestD = Infinity;
+        for (const c of clusters) {
+          const cp = map.project([c.lng, c.lat]);
+          const d = Math.hypot(cp.x - p.x, cp.y - p.y);
+          if (d <= c.r && d < bestD) {
+            bestD = d;
+            best = [c.lng, c.lat];
+          }
+        }
+        return best ?? pos;
+      };
+      const pts: [number, number][] = [];
+      for (const raw of [t.from, ...(t.route_ids ?? []), t.to]) {
+        const id = normalizeNodeId8(raw);
+        const pos = id ? liveNodes[id]?.map_position : undefined;
+        if (!pos) continue; // hop with unknown position — skip (honest gap)
+        const a = snap(pos);
+        const last = pts[pts.length - 1];
+        if (!last || !samePoint(last, a)) pts.push(a); // collapse same-cluster hops
+      }
+      if (pts.length === 0) return;
+      layer.spawnPath(pts, packetColor("traceroute"), 0.9, performance.now());
+    },
+  );
 
   useEffect(
     () => () => {
