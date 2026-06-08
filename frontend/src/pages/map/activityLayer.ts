@@ -13,7 +13,8 @@ const ARC_MS = 2200; // comet travel time
 const SEG_MS = 700; // per-hop comet duration for multi-hop (traceroute) paths
 const PULSE_MS = 750;
 const RIPPLE_MS = 750;
-const FRAME_MS = 1000 / 30; // keep-alive repaint cap (~30fps)
+const FRAME_MS = 1000 / 30; // keep-alive repaint cap (~30fps, vsync-aligned via rAF)
+const MAX_BATCH_POINTS = 2048; // staging capacity for one coalesced flush
 
 const VS = `
 attribute vec3 a_pos;
@@ -140,6 +141,9 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
 
   private scratchArc = new Float32Array(ARC_SAMPLES * FLOATS);
   private scratchRing = new Float32Array(FLOATS);
+  private stage = new Float32Array(MAX_BATCH_POINTS * FLOATS); // accumulates one flush
+  private stageCount = 0;
+  private batching = false;
 
   private aPos = -1;
   private aS = -1;
@@ -241,6 +245,41 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
     if (this.liveHigh < this.writeHead) this.liveHigh = this.writeHead;
   }
 
+  /** Stage points during a batch (one upload at endBatch); write through otherwise. */
+  private emit(data: Float32Array, count: number): void {
+    if (!this.batching) {
+      this.writePoints(data, count);
+      return;
+    }
+    if ((this.stageCount + count) * FLOATS > this.stage.length) {
+      if (this.stageCount > 0) {
+        this.writePoints(this.stage, this.stageCount); // stage full → flush, keep batching
+        this.stageCount = 0;
+      }
+      if (count * FLOATS > this.stage.length) {
+        this.writePoints(data, count); // single item bigger than stage (shouldn't happen)
+        return;
+      }
+    }
+    this.stage.set(data.subarray(0, count * FLOATS), this.stageCount * FLOATS);
+    this.stageCount += count;
+  }
+
+  /** Coalesce a burst of spawns into one GPU upload (beginBatch … endBatch). */
+  beginBatch(): void {
+    this.batching = true;
+    this.stageCount = 0;
+  }
+
+  endBatch(): void {
+    if (this.stageCount > 0) {
+      this.writePoints(this.stage, this.stageCount);
+      this.stageCount = 0;
+    }
+    this.batching = false;
+    this.scheduleNextFrame();
+  }
+
   /** Write one comet segment into the ring at [t0, t0+dur). */
   private writeArc(from: LngLat, to: LngLat, color: RGB, weight: number, t0: number, dur: number): void {
     const [lng0, lat0] = from;
@@ -277,7 +316,7 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
       d[o++] = 0;
       d[o++] = weight;
     }
-    this.writePoints(d, ARC_SAMPLES);
+    this.emit(d, ARC_SAMPLES);
     this.maxExpiry = Math.max(this.maxExpiry, t0 + dur);
   }
 
@@ -328,7 +367,7 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
     d[8] = color[2];
     d[9] = 1;
     d[10] = weight;
-    this.writePoints(d, 1);
+    this.emit(d, 1);
     this.maxExpiry = Math.max(this.maxExpiry, t0 + dur);
     this.scheduleNextFrame();
   }

@@ -2416,6 +2416,7 @@ export function Map() {
       return best ?? pos;
     };
 
+    layer.beginBatch(); // coalesce this flush into one GPU upload
     for (const a of arcs) {
       const fromRaw = liveNodes[a.fromId]?.map_position;
       const senderRaw = liveNodes[a.senderId]?.map_position;
@@ -2429,6 +2430,7 @@ export function Map() {
         layer.spawnRipple(senderPos, color, now); // heard, origin position unknown
       }
     }
+    layer.endBatch();
   }, []);
 
   useLiveEvent<RawPacket>("packet", (p) => {
