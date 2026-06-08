@@ -148,6 +148,10 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
   /** Per-cluster ratio tween (keyed by rounded position, like the dedupe). */
   private anim = new Map<string, { from: number; to: number; start: number }>();
   private static readonly RATIO_TWEEN_MS = 500;
+  /** Camera fingerprint of the last terrain re-drape; skips redundant per-frame re-drape. */
+  private lastCamSig = "";
+  /** Reused vertex buffer; reallocated only when the cluster count grows. */
+  private vertScratch: Float32Array | null = null;
 
   private onMoveend: (() => void) | null = null;
   private onIdle: (() => void) | null = null;
@@ -204,6 +208,7 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
       // Kick a repaint when DEM tiles arrive on an idle map; render's per-frame
       // z-refresh picks up the new elevation. No dirty — cluster set is unchanged.
       if (e.sourceId === MAP_STYLE_IDS.terrainSource) {
+        this.lastCamSig = ""; // force one re-drape with the new elevation
         map.triggerRepaint();
       }
     };
@@ -231,6 +236,7 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
     this.onIdle = null;
     this.onSourceData = null;
     this.anim.clear();
+    this.vertScratch = null;
   }
 
   /** Layer-wide opacity multiplier (0..1). Used to dim donuts when an RF tool is active. */
@@ -239,6 +245,11 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
     if (a === this.alpha) return;
     this.alpha = a;
     this.map?.triggerRepaint();
+  }
+
+  /** Current viewport cluster centroids + pixel radius (lets arcs snap to clusters). */
+  visibleClusters(): { lng: number; lat: number; r: number }[] {
+    return this.lastClusters.map((c) => ({ lng: c.lng, lat: c.lat, r: c.r }));
   }
 
   private rebuild(): void {
@@ -328,7 +339,9 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
     // 6 verts/cluster × 7 floats: x, y, z, ux, uy, r, ratio
     const floatsPerVertex = 7;
     const vertsPerCluster = 6;
-    const verts = new Float32Array(this.lastClusters.length * vertsPerCluster * floatsPerVertex);
+    const needed = this.lastClusters.length * vertsPerCluster * floatsPerVertex;
+    if (!this.vertScratch || this.vertScratch.length < needed) this.vertScratch = new Float32Array(needed);
+    const verts = this.vertScratch;
 
     const corners: [number, number][] = [
       [-1,  1], [-1, -1], [ 1, -1],  // UL, LL, LR
@@ -353,7 +366,7 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
     }
 
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, verts, gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, verts.subarray(0, needed), gl.DYNAMIC_DRAW);
     this.vertexCount = this.lastClusters.length * vertsPerCluster;
   }
 
@@ -361,14 +374,25 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
     if (!this.program || !this.buffer) return;
 
     const now = performance.now();
+    const map = this.map;
+    const terrainOn = !!map?.getTerrain?.();
+    // Terrain draping depends on center/zoom/pitch/bearing; only re-drape when one changes.
+    let camSig = "";
+    if (terrainOn && map) {
+      const c = map.getCenter();
+      camSig = `${c.lng.toFixed(5)},${c.lat.toFixed(5)},${map.getZoom().toFixed(3)},${map.getPitch().toFixed(2)},${map.getBearing().toFixed(2)}`;
+    }
 
     // Rebuild inside render() so queryRenderedFeatures sees current tile state
     if (this.dirty) {
       this.rebuild();
       this.dirty = false;
-    } else if (this.hasActiveTween(now) || (this.map?.getTerrain?.() && this.lastClusters.length > 0)) {
-      // Re-evaluate per frame while a ratio tween runs, or to re-drape on terrain.
-      this.uploadVerts();
+      this.lastCamSig = camSig;
+    } else if (this.hasActiveTween(now)) {
+      this.uploadVerts(); // ratio tween: re-evaluate every frame
+    } else if (terrainOn && this.lastClusters.length > 0 && camSig !== this.lastCamSig) {
+      this.uploadVerts(); // camera moved (or DEM arrived): re-drape once
+      this.lastCamSig = camSig;
     }
 
     if (this.vertexCount === 0) return;
