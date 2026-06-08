@@ -7,8 +7,11 @@ import {
   useState,
 } from "react";
 import { useSearchParams } from "react-router";
+import { VirtuosoHandle } from "react-virtuoso";
 
 import { HeardBy } from "../components/HeardBy";
+import { LivePill } from "../components/LivePill";
+import { useLiveEvent } from "../hooks/useLiveEvent";
 import { useGetNodesQuery, useGetTelemetryQuery } from "../slices/apiSlice";
 import { ExportMenu } from "./chat/ExportMenu";
 import { TelemetryDetailsPanel } from "./telemetry/TelemetryDetailsPanel";
@@ -42,6 +45,9 @@ type SortKey =
 const DEFAULT_RANGE: RangeKey = "all";
 const DEFAULT_SEL = "all";
 const DEFAULT_SORT: SortKey = "last_desc";
+// Live telemetry feed (SSE).
+const LIVE_TELEMETRY_CAP = 3000; // cap on the live buffer kept ahead of the poll
+const LIVE_TELEMETRY_FLUSH_MS = 400; // coalesce a burst into one state update
 
 function clampRange(v: any): RangeKey {
   // legacy share links: telemetry used to allow 30d
@@ -192,20 +198,59 @@ export const Telemetry = () => {
 
   const {
     data: telemetryRaw,
-    fulfilledTimeStamp: dataUpdatedAt,
     isFetching,
     refetch,
   } = useGetTelemetryQuery(undefined as any, {
-    pollingInterval: liveEnabled ? 5000 : 0,
+    // SSE (useLiveEvent below) is the live path; slow poll is just a safety net.
+    pollingInterval: liveEnabled ? 60000 : 0,
     refetchOnFocus: true,
     refetchOnReconnect: true,
   } as any);
 
   const { data: nodesRaw } = useGetNodesQuery(undefined as any, {
-    pollingInterval: liveEnabled ? 15000 : 0,
+    pollingInterval: liveEnabled ? 60000 : 0,
     refetchOnFocus: true,
     refetchOnReconnect: true,
   } as any);
+
+  // ---- live telemetry feed (SSE) ----
+  // Buffer pushed samples ahead of the polled cache; reset when the poll brings
+  // authoritative data (which then includes them). Respects the live toggle.
+  const liveEnabledRef = useRef(liveEnabled);
+  liveEnabledRef.current = liveEnabled;
+  const [liveTelemetry, setLiveTelemetry] = useState<any[]>([]);
+  const incomingRef = useRef<any[]>([]);
+  const liveFlushTimerRef = useRef<number | null>(null);
+  const flushLiveTelemetry = useCallback(() => {
+    liveFlushTimerRef.current = null;
+    const batch = incomingRef.current;
+    incomingRef.current = [];
+    if (batch.length === 0) return;
+    batch.reverse(); // arrival order -> newest first
+    setLiveTelemetry((prev) => [...batch, ...prev].slice(0, LIVE_TELEMETRY_CAP));
+  }, []);
+  useLiveEvent<any>("telemetry", (t) => {
+    if (!liveEnabledRef.current) return;
+    incomingRef.current.push(t);
+    if (liveFlushTimerRef.current == null) {
+      liveFlushTimerRef.current = window.setTimeout(
+        flushLiveTelemetry,
+        LIVE_TELEMETRY_FLUSH_MS,
+      );
+    }
+  });
+  useEffect(() => {
+    // The refetched cache now carries the buffered samples — clear the buffer.
+    setLiveTelemetry([]);
+    incomingRef.current = [];
+  }, [telemetryRaw]);
+
+  // List freeze (scroll-away / node selected) + refs for click-away deselect.
+  const listRef = useRef<VirtuosoHandle>(null);
+  const [atTop, setAtTop] = useState(true);
+  const listColRef = useRef<HTMLDivElement>(null);
+  const detailColRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
 
   const nodes = nodesRaw as unknown as NodesById | undefined;
 
@@ -301,13 +346,25 @@ export const Telemetry = () => {
     });
   }, [refetch, manualRefreshing]);
 
-  // Normalize telemetry list
+  // Normalize telemetry list (live samples ahead of the polled cache).
   const eventsAll: TelemetryEvent[] = useMemo(() => {
     const arr = Array.isArray(telemetryRaw)
       ? telemetryRaw
       : (telemetryRaw as any)?.telemetry ?? [];
-    return (arr as any[]).map((t, idx) => coerceTelemetryEvent(t, idx));
-  }, [telemetryRaw]);
+    const merged = [...liveTelemetry, ...(arr as any[])].map((t, idx) =>
+      coerceTelemetryEvent(t, idx),
+    );
+    // Dedup by from+id — a live sample also arrives in the next poll.
+    const seen = new Set<string>();
+    const out: TelemetryEvent[] = [];
+    for (const e of merged) {
+      const key = e.id != null ? `${e.from}::${e.id}` : `__${e.__idx}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(e);
+    }
+    return out;
+  }, [telemetryRaw, liveTelemetry]);
 
   // Range filter
   const nowMs = Date.now();
@@ -383,7 +440,7 @@ export const Telemetry = () => {
     return map;
   }, [filteredEventsAll]);
 
-  const listItems: TelemetryListItem[] = useMemo(() => {
+  const listItemsLive: TelemetryListItem[] = useMemo(() => {
     if (!nodes) return [];
 
     const summaries = Object.values(nodeSummaries);
@@ -488,6 +545,26 @@ export const Telemetry = () => {
     return items;
   }, [nodes, nodeSummaries, filteredEventsAll.length, sort]);
 
+  // Freeze the list while scrolled away from the top OR while a node is
+  // selected, so live samples can't reorder/jump it. Live samples keep flowing
+  // underneath (and the selected node's charts stay live); "Resume live"
+  // releases the freeze. Mirrors the Nodes/Logs pattern.
+  const selectionPinned = sel !== DEFAULT_SEL && sel.startsWith("node:");
+  const shouldFreeze = (!atTop || selectionPinned) && listItemsLive.length > 0;
+  const frozenListRef = useRef<TelemetryListItem[] | null>(null);
+  useEffect(() => {
+    if (shouldFreeze) {
+      if (!frozenListRef.current) frozenListRef.current = listItemsLive;
+    } else {
+      frozenListRef.current = null;
+    }
+  }, [shouldFreeze, listItemsLive]);
+  const listItems: TelemetryListItem[] = useMemo(
+    () => frozenListRef.current ?? listItemsLive,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [shouldFreeze, listItemsLive],
+  );
+
   // Selection handling
   const selectedKey = sel || DEFAULT_SEL;
   const selectedItem = useMemo(() => {
@@ -518,11 +595,13 @@ export const Telemetry = () => {
     totalSamples === 1 ? "" : "s"
   }`;
 
-  const liveUiMode = liveEnabled ? ("live" as const) : ("off" as const);
-  const livePillText = liveUiMode === "live" ? "Live" : "Live off";
-  const livePillTitle = liveEnabled
-    ? "Live polling is on."
-    : "Live polling is off. Enable to auto-refresh.";
+  const busy = isFetching || manualRefreshing;
+  const liveMode = !liveEnabled ? "off" : shouldFreeze ? "paused" : "live";
+  const livePillTitle = !liveEnabled
+    ? "Live off. Click to stream telemetry."
+    : shouldFreeze
+      ? "Paused — scrolled away or a node is selected. Resume from the list."
+      : "Live: telemetry streams in. Click to turn off.";
 
   // Actions
   const onSelect = useCallback(
@@ -535,6 +614,28 @@ export const Telemetry = () => {
   const clearSelection = useCallback(() => {
     setParam("sel", DEFAULT_SEL, "push"); // deletes
   }, [setParam]);
+
+  // Release the freeze: deselect, scroll the list to top, resume live ordering.
+  const resumeLive = useCallback(() => {
+    setParam("sel", DEFAULT_SEL, "push");
+    frozenListRef.current = null;
+    listRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }, [setParam]);
+
+  // Clicking outside the list (and the detail/header) clears a node selection.
+  useEffect(() => {
+    if (!selectionPinned) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node | null;
+      if (!t) return;
+      if (listColRef.current?.contains(t)) return;
+      if (detailColRef.current?.contains(t)) return;
+      if (headerRef.current?.contains(t)) return;
+      clearSelection();
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [selectionPinned, clearSelection]);
 
   const updateRange = useCallback(
     (next: RangeKey) => setParam("range", next, "push"), // next==="all" => deletes
@@ -649,7 +750,10 @@ export const Telemetry = () => {
   return (
     <div className="w-full h-dvh overflow-hidden flex flex-col">
       {/* Sticky header (Chat-style) */}
-      <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
+      <div
+        ref={headerRef}
+        className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800"
+      >
         <div className="mx-auto max-w-400 px-3 sm:px-5 py-2 sm:py-3">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
@@ -659,48 +763,23 @@ export const Telemetry = () => {
 
               {/* Desktop meta row */}
               <div className="mt-1 hidden sm:flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                <span>
-                  Updated:{" "}
-                  <span className="font-medium">
-                    {dataUpdatedAt && dataUpdatedAt > 0
-                      ? new Date(dataUpdatedAt).toLocaleString()
-                      : new Date().toLocaleString()}
-                  </span>
+                <span className={busy ? "animate-pulse" : ""}>
+                  {busy ? "Refreshing…" : "Ready"}
                 </span>
-
-                <span className="opacity-60">•</span>
 
                 <button
                   type="button"
                   className="underline hover:no-underline"
                   onClick={doManualRefresh}
-                  aria-busy={manualRefreshing || isFetching}
-                  title={
-                    manualRefreshing
-                      ? "Refreshing…"
-                      : isFetching
-                        ? "Refreshing…"
-                        : "Refresh now"
-                  }
                 >
                   refresh
                 </button>
 
-                <span className="opacity-60">•</span>
-
-                <button
-                  type="button"
-                  className={[
-                    "rounded-full px-2 py-0.5 text-[11px] font-medium border transition",
-                    liveUiMode === "live"
-                      ? "bg-emerald-600 text-white border-emerald-600"
-                      : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
-                  ].join(" ")}
-                  onClick={() => setLiveEnabled((v) => !v)}
+                <LivePill
+                  mode={liveMode}
+                  onToggle={() => setLiveEnabled((v) => !v)}
                   title={livePillTitle}
-                >
-                  {livePillText}
-                </button>
+                />
 
                 <span className="opacity-60">•</span>
 
@@ -713,45 +792,23 @@ export const Telemetry = () => {
 
               {/* Mobile meta row (compact) */}
               <div className="mt-1 flex sm:hidden items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                <span className="font-medium tabular-nums">
-                  {dataUpdatedAt && dataUpdatedAt > 0
-                    ? new Date(dataUpdatedAt).toLocaleString()
-                    : new Date().toLocaleString()}
+                <span className={busy ? "animate-pulse" : ""}>
+                  {busy ? "Refreshing…" : "Ready"}
                 </span>
-
-                <span className="opacity-60">•</span>
 
                 <button
                   type="button"
                   className="underline hover:no-underline"
                   onClick={doManualRefresh}
-                  aria-busy={manualRefreshing || isFetching}
-                  title={
-                    manualRefreshing
-                      ? "Refreshing…"
-                      : isFetching
-                        ? "Refreshing…"
-                        : "Refresh now"
-                  }
                 >
                   refresh
                 </button>
 
-                <span className="opacity-60">•</span>
-
-                <button
-                  type="button"
-                  className={[
-                    "rounded-full px-2 py-0.5 text-[11px] font-medium border transition",
-                    liveUiMode === "live"
-                      ? "bg-emerald-600 text-white border-emerald-600"
-                      : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
-                  ].join(" ")}
-                  onClick={() => setLiveEnabled((v) => !v)}
+                <LivePill
+                  mode={liveMode}
+                  onToggle={() => setLiveEnabled((v) => !v)}
                   title={livePillTitle}
-                >
-                  {livePillText}
-                </button>
+                />
               </div>
             </div>
 
@@ -885,21 +942,35 @@ export const Telemetry = () => {
         <div className="mx-auto max-w-400 px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
             {/* List */}
-            <div className="min-h-0 flex flex-col h-full">
-              <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-xs flex flex-col min-h-0 flex-1">
+            <div ref={listColRef} className="min-h-0 flex flex-col h-full">
+              <div className="relative rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-xs flex flex-col min-h-0 flex-1">
+                {shouldFreeze ? (
+                  <div className="pointer-events-none absolute z-10 left-1/2 -translate-x-1/2 top-2">
+                    <button
+                      type="button"
+                      onClick={resumeLive}
+                      className="pointer-events-auto rounded-full px-3 py-1.5 text-xs font-medium shadow-xs border transition bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-500"
+                      title="Live updates are paused. Resume and jump to the top."
+                    >
+                      {selectionPinned ? "Resume live" : "↑ Back to top"}
+                    </button>
+                  </div>
+                ) : null}
                 <div className="flex-1 min-h-0 overflow-hidden">
                   <TelemetryList
                     items={listItems}
                     nodes={nodes}
                     selectedKey={selectedKey}
                     onSelect={onSelect}
+                    listRef={listRef}
+                    onAtTopChange={setAtTop}
                   />
                 </div>
               </div>
             </div>
 
             {/* Details */}
-            <div className="lg:col-span-2 min-h-0 flex flex-col">
+            <div ref={detailColRef} className="lg:col-span-2 min-h-0 flex flex-col">
               <div className="rounded-xl border border-gray-200 dark:border-gray-800 overflow-hidden shadow-xs flex flex-col min-h-0">
                 <TelemetryDetailsPanel
                   nodes={nodes}

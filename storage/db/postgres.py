@@ -1108,15 +1108,18 @@ class PostgresStorage:
 
         return str(value)
 
-    async def write_mqtt_message(self, mqtt_msg: Any) -> None:
+    async def write_mqtt_message(self, mqtt_msg: Any) -> Optional[int]:
         """
         Write a raw MQTT message (or decoded/log dict) into mqtt_messages.
 
         Expected table columns:
           topic (text), payload (text), qos (int), retain (bool), timestamp (bigint), created_at (timestamptz default now())
+
+        Returns the inserted row's id (the `mqtt_row_id` the read path exposes),
+        or None if storage is unavailable or the write failed.
         """
         if not self._ready("write_mqtt_message"):
-            return
+            return None
 
         if isinstance(mqtt_msg, dict):
             topic = mqtt_msg.get("topic")
@@ -1163,10 +1166,11 @@ class PostgresStorage:
 
         try:
             async with self.pool.acquire() as conn:
-                await conn.execute(
+                row_id = await conn.fetchval(
                     """
                     INSERT INTO mqtt_messages (topic, payload, qos, retain, timestamp, from_node_id, to_node_id)
                     VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    RETURNING id
                     """,
                     topic,
                     payload_text,
@@ -1176,10 +1180,12 @@ class PostgresStorage:
                     from_node_id,
                     to_node_id,
                 )
+            return int(row_id) if row_id is not None else None
         except Exception as e:
             logger.error(f"Failed to write mqtt message to PostgreSQL: {e}")
             if self.raise_on_write_error:
                 raise
+            return None
 
     async def query_mqtt_messages(
         self,

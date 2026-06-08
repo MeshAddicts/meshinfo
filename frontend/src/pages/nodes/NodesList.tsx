@@ -80,10 +80,13 @@ export function NodesList({
     [],
   );
 
-  // Freeze the item list when scrolled away from top OR a node is selected,
-  // to prevent re-sorting from jumping the user's scroll position.
+  // Freeze the item list when paused, scrolled away from top, OR a node is
+  // selected, to keep live cache updates (now pushed via SSE) from re-sorting
+  // and jumping the user's scroll position. When paused, freezing the view is
+  // what makes "live off" actually hold the list still even though the shared
+  // node cache keeps updating underneath.
   // Don't freeze until we have data (avoids freezing an empty list on deep links).
-  const shouldFreeze = liveEnabled && items.length > 0 && (!atTop || !!selectedId);
+  const shouldFreeze = items.length > 0 && (!liveEnabled || !atTop || !!selectedId);
   const frozenRef = useRef<NodeListItem[] | null>(null);
 
   // Capture/release frozen snapshot after commit (not during render)

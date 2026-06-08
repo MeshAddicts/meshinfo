@@ -13,6 +13,7 @@ import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 import { Avatar } from "../components/Avatar";
 import { DateToSince } from "../components/DateSince";
 import { HeardBy } from "../components/HeardBy";
+import { LivePill } from "../components/LivePill";
 import { useGetNodesQuery } from "../slices/apiSlice";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { calculateDistanceBetweenNodes } from "../utils/getDistanceBetweenTwoNodes";
@@ -593,7 +594,6 @@ export const Neighbors = () => {
 
   const {
     data: nodesRaw,
-    fulfilledTimeStamp: dataUpdatedAt,
     isFetching,
     refetch,
   } = useGetNodesQuery(
@@ -807,7 +807,6 @@ export const Neighbors = () => {
   }, [refetch, manualRefreshing]);
 
   // Live pill
-  const livePillText = liveEnabled ? "Live" : "Live off";
   const livePillTitle = liveEnabled
     ? "Live mode is on. Auto-refresh polls every 5 seconds (paused when tab is unfocused). Click to disable."
     : "Live mode is off. Auto-refresh is disabled. Click to enable.";
@@ -927,76 +926,42 @@ export const Neighbors = () => {
 
               {/* Desktop meta row */}
               <div className="mt-1 hidden sm:flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                <span>
-                  Updated:{" "}
-                  <span className="font-medium tabular-nums">
-                    {dataUpdatedAt && dataUpdatedAt > 0
-                      ? new Date(dataUpdatedAt).toLocaleString()
-                      : new Date().toLocaleString()}
-                  </span>
+                <span className={isFetching || manualRefreshing ? "animate-pulse" : ""}>
+                  {isFetching || manualRefreshing ? "Refreshing…" : "Ready"}
                 </span>
-                <span className="opacity-60">&bull;</span>
                 <button
                   type="button"
                   className="underline hover:no-underline"
                   onClick={doManualRefresh}
-                  aria-busy={manualRefreshing || isFetching}
-                  title={
-                    manualRefreshing || isFetching
-                      ? "Refreshing…"
-                      : "Refresh now"
-                  }
                 >
                   refresh
                 </button>
-                <span className="opacity-60">&bull;</span>
-                <button
-                  type="button"
-                  className={[
-                    "rounded-full px-2 py-0.5 text-[11px] font-medium border transition",
-                    liveEnabled
-                      ? "bg-emerald-600 text-white border-emerald-600"
-                      : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
-                  ].join(" ")}
-                  onClick={() => setLiveEnabled((v) => !v)}
+                <LivePill
+                  mode={liveEnabled ? "live" : "off"}
+                  onToggle={() => setLiveEnabled((v) => !v)}
                   title={livePillTitle}
-                >
-                  {livePillText}
-                </button>
+                />
                 <span className="opacity-60">&bull;</span>
                 <HeardBy />
               </div>
 
               {/* Mobile meta row */}
               <div className="mt-1 flex sm:hidden flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                <span className="font-medium tabular-nums">
-                  {dataUpdatedAt && dataUpdatedAt > 0
-                    ? new Date(dataUpdatedAt).toLocaleString()
-                    : new Date().toLocaleString()}
+                <span className={isFetching || manualRefreshing ? "animate-pulse" : ""}>
+                  {isFetching || manualRefreshing ? "Refreshing…" : "Ready"}
                 </span>
-                <span className="opacity-60">&bull;</span>
                 <button
                   type="button"
                   className="underline hover:no-underline"
                   onClick={doManualRefresh}
-                  aria-busy={manualRefreshing || isFetching}
                 >
                   refresh
                 </button>
-                <span className="opacity-60">&bull;</span>
-                <button
-                  type="button"
-                  className={[
-                    "rounded-full px-2 py-0.5 text-[11px] font-medium border transition",
-                    liveEnabled
-                      ? "bg-emerald-600 text-white border-emerald-600"
-                      : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
-                  ].join(" ")}
-                  onClick={() => setLiveEnabled((v) => !v)}
+                <LivePill
+                  mode={liveEnabled ? "live" : "off"}
+                  onToggle={() => setLiveEnabled((v) => !v)}
                   title={livePillTitle}
-                >
-                  {livePillText}
-                </button>
+                />
               </div>
             </div>
 
@@ -1322,15 +1287,6 @@ export const Neighbors = () => {
                 Clear filters
               </button>
             )}
-          </div>
-
-          <div className="text-xs text-gray-600 dark:text-gray-400">
-            Updated:{" "}
-            <span className="font-medium tabular-nums">
-              {dataUpdatedAt && dataUpdatedAt > 0
-                ? new Date(dataUpdatedAt).toLocaleString()
-                : new Date().toLocaleString()}
-            </span>
           </div>
         </div>
       </MobileSheet>

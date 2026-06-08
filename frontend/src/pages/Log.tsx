@@ -11,8 +11,10 @@ import React, {
   useState,
 } from "react";
 import { useSearchParams } from "react-router";
-import { Virtuoso } from "react-virtuoso";
+import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
+import { LivePill } from "../components/LivePill";
+import { useLiveEvent } from "../hooks/useLiveEvent";
 import {
   IPacketMessage,
   IPacketsArg,
@@ -27,6 +29,10 @@ import { formatTimestamp } from "../utils/formatTimestamp";
 type RangeKey = "1h" | "24h" | "7d" | "all";
 const DEFAULT_RANGE: RangeKey = "all";
 const PAGE_SIZE = 200;
+// Live packet feed (SSE) tuning.
+const LIVE_CAP = 2000; // max buffered live packets before the oldest fall off
+const LIVE_FLUSH_MS = 350; // coalesce a burst of packets into one state update
+const AT_TOP_THRESHOLD_PX = 60; // freeze as soon as the user scrolls down this far
 
 hljs.registerLanguage("json", json);
 
@@ -178,8 +184,10 @@ function MobileSheet({
 type PacketRowProps = {
   m: IPacketMessage;
   highlighted?: boolean;
+  selected?: boolean;
   copiedJson: boolean;
   copiedLink: boolean;
+  onSelect: (id: number) => void;
   onCopyJson: (id: number, pretty: string) => void;
   onCopyLink: (id: number) => void;
 };
@@ -187,8 +195,10 @@ type PacketRowProps = {
 const PacketRow = React.memo(function PacketRow({
   m,
   highlighted,
+  selected,
   copiedJson,
   copiedLink,
+  onSelect,
   onCopyJson,
   onCopyLink,
 }: PacketRowProps) {
@@ -202,11 +212,15 @@ const PacketRow = React.memo(function PacketRow({
 
   return (
     <div
+      onClick={() => Number.isFinite(id) && onSelect(id)}
+      title={selected ? "Selected — stream paused. Click to deselect." : "Click to select (pauses the live stream)"}
       className={[
-        "px-3 sm:px-4 py-3 border-b border-gray-200/70 dark:border-gray-800",
-        highlighted
-          ? "bg-indigo-50/70 dark:bg-indigo-950/30 ring-1 ring-inset ring-indigo-400/50"
-          : "",
+        "px-3 sm:px-4 py-3 border-b border-gray-200/70 dark:border-gray-800 cursor-pointer transition",
+        selected
+          ? "bg-indigo-100/70 dark:bg-indigo-950/50 ring-2 ring-inset ring-indigo-500/60"
+          : highlighted
+            ? "bg-indigo-50/70 dark:bg-indigo-950/30 ring-1 ring-inset ring-indigo-400/50"
+            : "hover:bg-gray-50/70 dark:hover:bg-gray-900/30",
       ].join(" ")}
     >
       <div className="flex items-start justify-between gap-3">
@@ -223,6 +237,11 @@ const PacketRow = React.memo(function PacketRow({
                 #{id}
               </span>
             ) : null}
+            {selected ? (
+              <span className="ml-2 rounded-full px-2 py-0.5 text-[11px] bg-indigo-600 text-white">
+                selected · paused
+              </span>
+            ) : null}
           </div>
           {topic ? (
             <div className="mt-1 text-xs font-mono text-gray-700 dark:text-gray-200 break-all">
@@ -235,7 +254,10 @@ const PacketRow = React.memo(function PacketRow({
           <button
             type="button"
             className="rounded-md px-2.5 py-1.5 text-xs border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-            onClick={() => onCopyJson(id, pretty)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onCopyJson(id, pretty);
+            }}
             title="Copy this packet's JSON"
           >
             {copiedJson ? "Copied!" : "Copy JSON"}
@@ -244,7 +266,10 @@ const PacketRow = React.memo(function PacketRow({
             type="button"
             disabled={!Number.isFinite(id)}
             className="rounded-md px-2.5 py-1.5 text-xs border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition disabled:opacity-40"
-            onClick={() => onCopyLink(id)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onCopyLink(id);
+            }}
             title="Copy a permalink to this packet"
           >
             {copiedLink ? "Link copied!" : "Link"}
@@ -364,6 +389,158 @@ export const Log = () => {
     () => (pageData?.pages ?? []).flatMap((p) => p.messages),
     [pageData],
   );
+
+  // ---- live packet feed (SSE) ---------------------------------------------
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const [liveEnabled, setLiveEnabled] = useState(true);
+  const [live, setLive] = useState<IPacketMessage[]>([]);
+  const [atTop, setAtTop] = useState(true);
+  const [unseen, setUnseen] = useState(0);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const frozenRef = useRef<IPacketMessage[] | null>(null);
+
+  // A selected packet pins the stream (pauses follow) so it can be inspected.
+  const selectionPinned = selectedId != null;
+  const onSelectPacket = useCallback(
+    (id: number) => setSelectedId((prev) => (prev === id ? null : id)),
+    [],
+  );
+
+  // Show a live packet only if it matches the filters (absolute end = historical).
+  const matchesFilters = useCallback(
+    (p: IPacketMessage) => {
+      if (urlEnd != null) return false;
+      const tm = selectedView.topicMatch;
+      if (tm && !String(p.topic ?? "").includes(tm)) return false;
+      const q = urlQ.trim().toLowerCase();
+      if (q) {
+        const hay = `${String(p.topic ?? "")} ${JSON.stringify(p)}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    },
+    [urlEnd, selectedView.topicMatch, urlQ],
+  );
+
+  // Refs so the SSE handler (fired outside React render) reads current values.
+  const liveEnabledRef = useRef(liveEnabled);
+  liveEnabledRef.current = liveEnabled;
+  const matchesFiltersRef = useRef(matchesFilters);
+  matchesFiltersRef.current = matchesFilters;
+  // Row ids already on screen (live buffer + fetched archive) for O(1) dedup.
+  const liveIdsRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    liveIdsRef.current = new Set(live.map((p) => Number(p.mqtt_row_id)));
+  }, [live]);
+  const rowIdsRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    rowIdsRef.current = new Set(rows.map((p) => Number(p.mqtt_row_id)));
+  }, [rows]);
+
+  // Coalesce a burst of packets into one state update on `live`.
+  const incomingRef = useRef<IPacketMessage[]>([]);
+  const flushTimerRef = useRef<number | null>(null);
+  const flushIncoming = useCallback(() => {
+    flushTimerRef.current = null;
+    const batch = incomingRef.current;
+    incomingRef.current = [];
+    if (batch.length === 0) return;
+    const seen = new Set<number>([...liveIdsRef.current, ...rowIdsRef.current]);
+    const fresh: IPacketMessage[] = [];
+    for (const p of batch) {
+      const id = Number(p.mqtt_row_id);
+      if (!Number.isFinite(id) || seen.has(id)) continue;
+      seen.add(id);
+      fresh.push(p);
+    }
+    if (fresh.length === 0) return;
+    fresh.reverse(); // arrival order -> newest first
+    setLive((prev) => [...fresh, ...prev].slice(0, LIVE_CAP));
+  }, []);
+
+  useLiveEvent<IPacketMessage>("packet", (p) => {
+    if (!liveEnabledRef.current) return;
+    if (p?.mqtt_row_id == null) return;
+    if (!matchesFiltersRef.current(p)) return;
+    incomingRef.current.push(p);
+    if (flushTimerRef.current == null) {
+      flushTimerRef.current = window.setTimeout(flushIncoming, LIVE_FLUSH_MS);
+    }
+  });
+
+  const resetLive = useCallback(() => {
+    setLive([]);
+    setUnseen(0);
+    frozenRef.current = null;
+    incomingRef.current = [];
+    if (flushTimerRef.current != null) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+  }, []);
+
+  // Drop buffered packets when the filters change or on a manual refresh.
+  useEffect(() => {
+    resetLive();
+  }, [packetsArg, resetLive]);
+  const doRefresh = useCallback(() => {
+    resetLive();
+    refetch();
+  }, [resetLive, refetch]);
+
+  // Live packets merged ahead of the archive, de-duplicated by row id.
+  const liveRows = useMemo(() => {
+    if (live.length === 0) return rows;
+    const ids = new Set(rows.map((r) => Number(r.mqtt_row_id)));
+    const liveOnly = live.filter((p) => !ids.has(Number(p.mqtt_row_id)));
+    return [...liveOnly, ...rows];
+  }, [live, rows]);
+
+  // Freeze the rendered list while scrolled away or while a packet is selected,
+  // so the position never jumps; the live list keeps rolling underneath and
+  // `unseen` counts what arrived.
+  const shouldFreeze = (!atTop || selectionPinned) && liveRows.length > 0;
+  useEffect(() => {
+    if (shouldFreeze) {
+      if (!frozenRef.current) frozenRef.current = liveRows;
+    } else {
+      frozenRef.current = null;
+    }
+  }, [shouldFreeze, liveRows]);
+  useEffect(() => {
+    if (!shouldFreeze || !frozenRef.current) {
+      setUnseen(0);
+      return;
+    }
+    const frozenIds = new Set(frozenRef.current.map((x) => Number(x.mqtt_row_id)));
+    setUnseen(
+      liveRows.filter((x) => !frozenIds.has(Number(x.mqtt_row_id))).length,
+    );
+  }, [liveRows, shouldFreeze]);
+
+  const displayRows = useMemo(
+    () => frozenRef.current ?? liveRows,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [shouldFreeze, liveRows],
+  );
+
+  // Follow the top edge: while at top + live and nothing pinned, pin to the
+  // newest as it arrives.
+  const edgeId = liveRows.length ? Number(liveRows[0].mqtt_row_id) : null;
+  const lastFollowIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!liveEnabled || !atTop || selectionPinned || edgeId == null) return;
+    if (lastFollowIdRef.current === edgeId) return;
+    lastFollowIdRef.current = edgeId;
+    virtuosoRef.current?.scrollToIndex({ index: 0, align: "start" });
+  }, [liveEnabled, atTop, selectionPinned, edgeId]);
+
+  const jumpToLive = useCallback(() => {
+    setSelectedId(null);
+    frozenRef.current = null;
+    setUnseen(0);
+    virtuosoRef.current?.scrollToIndex({ index: 0, align: "start", behavior: "smooth" });
+  }, []);
 
   // ---- deeplinked packet ---------------------------------------------------
   const packetId = Number(urlPacket);
@@ -499,11 +676,12 @@ export const Log = () => {
       } else if (e.key === "Escape") {
         if (controlsOpen) setControlsOpen(false);
         else if (exportOpen) setExportOpen(false);
+        else if (selectedId != null) setSelectedId(null);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [controlsOpen, exportOpen]);
+  }, [controlsOpen, exportOpen, selectedId]);
 
   // ---- filter helpers ------------------------------------------------------
   const activeFilterCount = useMemo(() => {
@@ -570,12 +748,23 @@ export const Log = () => {
                 <button
                   type="button"
                   className="underline hover:no-underline"
-                  onClick={() => refetch()}
+                  onClick={doRefresh}
                 >
                   refresh
                 </button>
+                <LivePill
+                  mode={!liveEnabled ? "off" : shouldFreeze ? "paused" : "live"}
+                  onToggle={() => setLiveEnabled((v) => !v)}
+                  title={
+                    !liveEnabled
+                      ? "Live off. Click to resume the packet feed."
+                      : shouldFreeze
+                        ? "Paused — scrolled away or a packet is selected. Resume from the list."
+                        : "Live: new packets stream in at the top. Click to turn off."
+                  }
+                />
                 <span className="opacity-60">•</span>
-                <span>raw MQTT packet archive — full history, paged on scroll</span>
+                <span>raw MQTT packet archive</span>
               </div>
             </div>
 
@@ -758,18 +947,34 @@ export const Log = () => {
                 <span className="text-gray-500 dark:text-gray-400">
                   • {rows.length} loaded
                   {hasNextPage ? "+" : ""}
+                  {live.length > 0 ? ` · ${live.length} live` : ""}
                 </span>
               </div>
             </div>
 
-            <div className="flex-1 min-h-0">
+            <div className="relative flex-1 min-h-0">
+              {/* Paused (scrolled away or a packet selected) — resume + jump to top */}
+              {unseen > 0 || selectionPinned ? (
+                <div className="pointer-events-none absolute z-10 left-1/2 -translate-x-1/2 top-3">
+                  <button
+                    type="button"
+                    onClick={jumpToLive}
+                    className="pointer-events-auto rounded-full px-4 py-2 text-sm font-medium shadow-xs border transition bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-500"
+                  >
+                    {unseen > 0
+                      ? `↑ ${unseen} new packet${unseen === 1 ? "" : "s"}`
+                      : "Resume live"}
+                  </button>
+                </div>
+              ) : null}
+
               {isError ? (
                 <div className="p-6 text-sm text-red-600 dark:text-red-400">
                   Failed to load packets.{" "}
                   <button
                     type="button"
                     className="underline hover:no-underline"
-                    onClick={() => refetch()}
+                    onClick={doRefresh}
                   >
                     Retry
                   </button>
@@ -778,13 +983,16 @@ export const Log = () => {
                 <div className="p-6 text-sm text-gray-600 dark:text-gray-400">
                   Loading packets…
                 </div>
-              ) : rows.length === 0 ? (
+              ) : displayRows.length === 0 ? (
                 <div className="p-6 text-sm text-gray-600 dark:text-gray-400">
                   No packets match your current filters.
                 </div>
               ) : (
                 <Virtuoso
-                  data={rows}
+                  ref={virtuosoRef}
+                  data={displayRows}
+                  atTopThreshold={AT_TOP_THRESHOLD_PX}
+                  atTopStateChange={setAtTop}
                   style={{ height: "100%" }}
                   endReached={onEndReached}
                   computeItemKey={(index, item) =>
@@ -796,12 +1004,14 @@ export const Log = () => {
                       <PacketRow
                         m={m}
                         highlighted={hasPacketLink && id === packetId}
+                        selected={id === selectedId}
                         copiedJson={
                           copiedRow?.id === id && copiedRow.kind === "json"
                         }
                         copiedLink={
                           copiedRow?.id === id && copiedRow.kind === "link"
                         }
+                        onSelect={onSelectPacket}
                         onCopyJson={onCopyJson}
                         onCopyLink={onCopyLink}
                       />

@@ -11,6 +11,8 @@ import { Link, useSearchParams } from "react-router";
 import { VirtuosoHandle } from "react-virtuoso";
 
 import { HeardBy } from "../components/HeardBy";
+import { LivePill } from "../components/LivePill";
+import { useAppSelector } from "../hooks";
 import { useChatSearchParams } from "../hooks/useChatSearchParams";
 import {
   useGetChatsQuery,
@@ -251,15 +253,32 @@ export const Chat = () => {
 
   const {
     data: chat,
-    fulfilledTimeStamp: dataUpdatedAt,
     isFetching,
     refetch,
   } = useGetChatsQuery(chatQueryParams, {
-    pollingInterval: liveEnabled ? 5000 : 0,
+    // SSE (useLiveEvents) pushes new chats via the chatPing below; this is just
+    // the slow safety-net poll for a dropped, non-reconnecting stream.
+    pollingInterval: liveEnabled ? 60000 : 0,
     skipPollingIfUnfocused: true,
     refetchOnReconnect: liveEnabled,
     refetchOnFocus: liveEnabled,
   });
+
+  // Live chat push: useLiveEvents bumps app.chatPing on each `chat` SSE event.
+  // Refetch on a bump only while live (a ref keeps the effect from firing when
+  // the toggle flips), so a pushed chat respects the explicit "Live off" pause
+  // and reuses getChats' dedup/sort transform.
+  const chatPing = useAppSelector((s) => s.app.chatPing);
+  const liveRef = useRef(liveEnabled);
+  liveRef.current = liveEnabled;
+  const sawFirstPing = useRef(false);
+  useEffect(() => {
+    if (!sawFirstPing.current) {
+      sawFirstPing.current = true;
+      return;
+    }
+    if (liveRef.current) refetch();
+  }, [chatPing, refetch]);
 
   // ── 6. Stable chat ref (prevents skeleton flash on filter change) ──
   const prevChatRef = useRef(chat);
@@ -1186,17 +1205,6 @@ export const Chat = () => {
     return "live" as const;
   }, [liveEnabled, followState.atEdge, followState.selectionPinned]);
 
-  const livePillText = useMemo(() => {
-    if (liveUiMode === "live") return "Live";
-    if (liveUiMode === "pinned") return "Pinned";
-    if (liveUiMode === "paused") {
-      return followState.newCount > 0
-        ? `Paused (${followState.newCount})`
-        : "Paused";
-    }
-    return "Live off";
-  }, [liveUiMode, followState.newCount]);
-
   const livePillTitle = useMemo(() => {
     const edge =
       followEdge === "bottom"
@@ -1339,48 +1347,30 @@ export const Chat = () => {
 
               {/* Desktop meta row */}
               <div className="mt-1 hidden sm:flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                <span>
-                  Updated:{" "}
-                  <span className="font-medium tabular-nums">
-                    {dataUpdatedAt && dataUpdatedAt > 0
-                      ? new Date(dataUpdatedAt).toLocaleString()
-                      : new Date().toLocaleString()}
-                  </span>
+                <span className={isFetching ? "animate-pulse" : ""}>
+                  {isFetching ? "Refreshing…" : "Ready"}
                 </span>
-
-                <span className="opacity-60">•</span>
 
                 <button
                   type="button"
                   className="underline hover:no-underline disabled:opacity-60 disabled:cursor-wait"
                   onClick={() => refetch()}
                   disabled={isFetching}
-                  aria-busy={isFetching}
-                  title={isFetching ? "Refreshing…" : "Refresh now"}
                 >
                   refresh
                 </button>
 
-                <span className="opacity-60">•</span>
-
-                {/* live pill */}
-                <button
-                  type="button"
-                  className={[
-                    "rounded-full px-2 py-0.5 text-[11px] font-medium border transition",
+                <LivePill
+                  mode={
                     liveUiMode === "live"
-                      ? "bg-emerald-600 text-white border-emerald-600"
-                      : liveUiMode === "paused"
-                        ? "bg-amber-600 text-white border-amber-600"
-                        : liveUiMode === "pinned"
-                          ? "bg-indigo-600 text-white border-indigo-600"
-                          : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
-                  ].join(" ")}
-                  onClick={() => setLiveEnabled((v) => !v)}
+                      ? "live"
+                      : liveUiMode === "off"
+                        ? "off"
+                        : "paused"
+                  }
+                  onToggle={() => setLiveEnabled((v) => !v)}
                   title={livePillTitle}
-                >
-                  {livePillText}
-                </button>
+                />
 
                 <span className="opacity-60">•</span>
 
@@ -1389,45 +1379,30 @@ export const Chat = () => {
 
               {/* Mobile meta row (compact) */}
               <div className="mt-1 flex sm:hidden flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                <span className="tabular-nums">
-                  {dataUpdatedAt && dataUpdatedAt > 0
-                    ? new Date(dataUpdatedAt).toLocaleString()
-                    : new Date().toLocaleString()}
+                <span className={isFetching ? "animate-pulse" : ""}>
+                  {isFetching ? "Refreshing…" : "Ready"}
                 </span>
-
-                <span className="opacity-60">•</span>
 
                 <button
                   type="button"
                   className="underline hover:no-underline disabled:opacity-60 disabled:cursor-wait"
                   onClick={() => refetch()}
                   disabled={isFetching}
-                  aria-busy={isFetching}
-                  title={isFetching ? "Refreshing…" : "Refresh now"}
                 >
                   refresh
                 </button>
 
-                <span className="opacity-60">•</span>
-
-                {/* live pill */}
-                <button
-                  type="button"
-                  className={[
-                    "rounded-full px-2 py-0.5 text-[11px] font-medium border transition",
+                <LivePill
+                  mode={
                     liveUiMode === "live"
-                      ? "bg-emerald-600 text-white border-emerald-600"
-                      : liveUiMode === "paused"
-                        ? "bg-amber-600 text-white border-amber-600"
-                        : liveUiMode === "pinned"
-                          ? "bg-indigo-600 text-white border-indigo-600"
-                          : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
-                  ].join(" ")}
-                  onClick={() => setLiveEnabled((v) => !v)}
+                      ? "live"
+                      : liveUiMode === "off"
+                        ? "off"
+                        : "paused"
+                  }
+                  onToggle={() => setLiveEnabled((v) => !v)}
                   title={livePillTitle}
-                >
-                  {livePillText}
-                </button>
+                />
               </div>
             </div>
 
@@ -2032,16 +2007,7 @@ export const Chat = () => {
 
           {/* Actions (mobile replacement for header Export/Copy + avoids popover off-screen) */}
           <div className="pt-4 border-t border-gray-200 dark:border-gray-800">
-            <div className="text-xs text-gray-600 dark:text-gray-400">
-              Updated:{" "}
-              <span className="font-medium">
-                {dataUpdatedAt && dataUpdatedAt > 0
-                  ? new Date(dataUpdatedAt).toLocaleString()
-                  : new Date().toLocaleString()}
-              </span>
-            </div>
-
-            <div className="mt-3 grid grid-cols-1 gap-2">
+            <div className="grid grid-cols-1 gap-2">
               <button
                 type="button"
                 className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
