@@ -134,7 +134,9 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
   private writeHead = 0;
   private maxExpiry = 0; // performance.now() ms of the last live primitive
   private alpha = 1;
-  private repaintTimer: ReturnType<typeof setTimeout> | null = null;
+  private repaintHandle: number | null = null;
+  private lastRenderTs = 0; // performance.now() of the last actual render (fps cap)
+  private liveHigh = 0; // highest written slot + 1; bounds the draw range
 
   private scratchArc = new Float32Array(ARC_SAMPLES * FLOATS);
   private scratchRing = new Float32Array(FLOATS);
@@ -187,8 +189,8 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
   }
 
   onRemove(_map: maplibregl.Map, gl: WebGLRenderingContext): void {
-    if (this.repaintTimer != null) clearTimeout(this.repaintTimer);
-    this.repaintTimer = null;
+    if (this.repaintHandle != null) cancelAnimationFrame(this.repaintHandle);
+    this.repaintHandle = null;
     if (this.buffer) gl.deleteBuffer(this.buffer);
     if (this.program) gl.deleteProgram(this.program);
     this.buffer = null;
@@ -203,13 +205,18 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
     this.map?.triggerRepaint();
   }
 
-  /** Request the next animation frame at ~30fps, single timer in flight. */
+  /** Keep-alive repaint, vsync-aligned via rAF, capped to ~30fps by frame-skip.
+   *  Uniform spacing avoids the jitter a setTimeout clock produced. */
   private scheduleNextFrame(): void {
-    if (this.repaintTimer != null || !this.map) return;
-    this.repaintTimer = setTimeout(() => {
-      this.repaintTimer = null;
+    if (this.repaintHandle != null || !this.map) return;
+    this.repaintHandle = requestAnimationFrame((ts) => {
+      this.repaintHandle = null;
+      if (ts - this.lastRenderTs < FRAME_MS - 1) {
+        this.scheduleNextFrame(); // too soon — wait for the next vsync, don't render yet
+        return;
+      }
       this.map?.triggerRepaint();
-    }, FRAME_MS);
+    });
   }
 
   private elevAt(lng: number, lat: number): number {
@@ -223,11 +230,15 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
     const gl = this.gl;
     if (!gl || !this.buffer) return;
     let start = this.writeHead;
-    if (start + count > MAX_POINTS) start = 0; // wrap, overwriting oldest
+    if (start + count > MAX_POINTS) {
+      start = 0; // wrap, overwriting oldest
+      this.liveHigh = MAX_POINTS; // wrapped: live primitives may occupy any slot
+    }
     this.cpu.set(data.subarray(0, count * FLOATS), start * FLOATS);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
     gl.bufferSubData(gl.ARRAY_BUFFER, start * STRIDE, data.subarray(0, count * FLOATS));
     this.writeHead = start + count;
+    if (this.liveHigh < this.writeHead) this.liveHigh = this.writeHead;
   }
 
   /** Write one comet segment into the ring at [t0, t0+dur). */
@@ -326,6 +337,7 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
     if (!this.program || !this.buffer) return;
     const now = performance.now();
     if (now > this.maxExpiry) return; // nothing alive → idle (no repaint)
+    this.lastRenderTs = now;
 
     const tr = (this.map as unknown as { transform?: { mercatorMatrix?: Float32List | number[] } })?.transform;
     const matrix = (tr?.mercatorMatrix ?? options.modelViewProjectionMatrix) as Float32List;
@@ -352,7 +364,7 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
 
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    gl.drawArrays(gl.POINTS, 0, MAX_POINTS);
+    gl.drawArrays(gl.POINTS, 0, this.liveHigh);
 
     for (const loc of [this.aPos, this.aS, this.aT0, this.aDur, this.aColor, this.aKind, this.aWeight]) {
       if (loc >= 0) gl.disableVertexAttribArray(loc);
