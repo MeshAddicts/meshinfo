@@ -75,6 +75,10 @@ const MAX_ARCS_PER_FLUSH = 40;
 
 const samePoint = (a: [number, number], b: [number, number]) => a[0] === b[0] && a[1] === b[1];
 
+type TraceEv = { from?: number | string; to?: number | string; route_ids?: (number | string)[]; id?: number | string };
+// Wait this long for other gateways' copies of one traceroute before drawing the best.
+const TRACEROUTE_DEBOUNCE_MS = 1200;
+
 /** Map a reported signal to a 0..1 arc intensity — prefer SNR, fall back to RSSI. */
 function packetWeight(rssi?: number, snr?: number): number {
   const clamp = (v: number) => Math.max(0.15, Math.min(1, v));
@@ -110,6 +114,8 @@ export function Map() {
   const coalescerRef = useRef<PacketCoalescer | null>(null);
   const pendingArcsRef = useRef<PacketArc[]>([]);
   const flushRafRef = useRef<number | null>(null);
+  // Per-mesh-id debounce of multi-gateway traceroute copies → one comet, longest route.
+  const tracerouteBufRef = useRef<Map<string, { ev: TraceEv; timer: ReturnType<typeof setTimeout> }> | null>(null);
   const mbHandlersBoundRef = useRef(false);
   const mbCurrentStyleUrlRef = useRef<string | null>(null);
   const mbKeydownHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
@@ -2431,51 +2437,71 @@ export function Map() {
     if (flushRafRef.current == null) flushRafRef.current = requestAnimationFrame(flushPacketArcs);
   });
 
-  // Traceroute: animate the real ordered hop path [from, ...route, to], snapping
-  // each hop to its cluster (when clustering is on) and skipping hops with no
-  // known position. Drawn as one sequential comet.
-  useLiveEvent<{ from?: number | string; to?: number | string; route_ids?: (number | string)[] }>(
-    "traceroute",
-    (t) => {
-      if (!livePacketsRef.current || prefersReducedMotion()) return;
-      const layer = activityLayerRef.current;
-      if (!layer) return;
-      const liveNodes = nodesRef.current;
-      const map = mbMapRef.current;
-      const donut = clusterDonutLayerRef.current;
-      const clusters = clusterEnabledRef.current && map && donut ? donut.visibleClusters() : null;
-      const snap = (pos: [number, number]): [number, number] => {
-        if (!clusters || !map) return pos;
-        const p = map.project(pos);
-        let best: [number, number] | null = null;
-        let bestD = Infinity;
-        for (const c of clusters) {
-          const cp = map.project([c.lng, c.lat]);
-          const d = Math.hypot(cp.x - p.x, cp.y - p.y);
-          if (d <= c.r && d < bestD) {
-            bestD = d;
-            best = [c.lng, c.lat];
-          }
+  // Resolve a traceroute's hops to positions and draw one sequential comet along
+  // [from, ...route, to], snapping each hop to its cluster and skipping hops with
+  // no known position.
+  const animateTraceroute = useCallback((t: TraceEv) => {
+    const layer = activityLayerRef.current;
+    if (!layer) return;
+    const liveNodes = nodesRef.current;
+    const map = mbMapRef.current;
+    const donut = clusterDonutLayerRef.current;
+    const clusters = clusterEnabledRef.current && map && donut ? donut.visibleClusters() : null;
+    const snap = (pos: [number, number]): [number, number] => {
+      if (!clusters || !map) return pos;
+      const p = map.project(pos);
+      let best: [number, number] | null = null;
+      let bestD = Infinity;
+      for (const c of clusters) {
+        const cp = map.project([c.lng, c.lat]);
+        const d = Math.hypot(cp.x - p.x, cp.y - p.y);
+        if (d <= c.r && d < bestD) {
+          bestD = d;
+          best = [c.lng, c.lat];
         }
-        return best ?? pos;
-      };
-      const pts: [number, number][] = [];
-      for (const raw of [t.from, ...(t.route_ids ?? []), t.to]) {
-        const id = normalizeNodeId8(raw);
-        const pos = id ? liveNodes[id]?.map_position : undefined;
-        if (!pos) continue; // hop with unknown position — skip (honest gap)
-        const a = snap(pos);
-        const last = pts[pts.length - 1];
-        if (!last || !samePoint(last, a)) pts.push(a); // collapse same-cluster hops
       }
-      if (pts.length === 0) return;
-      layer.spawnPath(pts, packetColor("traceroute"), 0.9, performance.now());
-    },
-  );
+      return best ?? pos;
+    };
+    const pts: [number, number][] = [];
+    for (const raw of [t.from, ...(t.route_ids ?? []), t.to]) {
+      const id = normalizeNodeId8(raw);
+      const pos = id ? liveNodes[id]?.map_position : undefined;
+      if (!pos) continue; // hop with unknown position — skip (honest gap)
+      const a = snap(pos);
+      const last = pts[pts.length - 1];
+      if (!last || !samePoint(last, a)) pts.push(a); // collapse same-cluster hops
+    }
+    if (pts.length === 0) return;
+    layer.spawnPath(pts, packetColor("traceroute"), 0.9, performance.now());
+  }, []);
+
+  // The same traceroute is uploaded by many gateways with divergent recorded
+  // routes; debounce by mesh id and draw only the single most complete path.
+  useLiveEvent<TraceEv>("traceroute", (t) => {
+    if (!livePacketsRef.current || prefersReducedMotion()) return;
+    const buf = (tracerouteBufRef.current ??= new globalThis.Map());
+    const key = t.id != null ? `id:${t.id}` : `ft:${t.from}:${t.to}`;
+    const existing = buf.get(key);
+    if (existing) {
+      if ((t.route_ids?.length ?? 0) > (existing.ev.route_ids?.length ?? 0)) existing.ev = t;
+      return;
+    }
+    const timer = setTimeout(() => {
+      const entry = buf.get(key);
+      buf.delete(key);
+      if (entry) animateTraceroute(entry.ev);
+    }, TRACEROUTE_DEBOUNCE_MS);
+    buf.set(key, { ev: t, timer });
+  });
 
   useEffect(
     () => () => {
       if (flushRafRef.current != null) cancelAnimationFrame(flushRafRef.current);
+      const buf = tracerouteBufRef.current;
+      if (buf) {
+        for (const { timer } of buf.values()) clearTimeout(timer);
+        buf.clear();
+      }
     },
     [],
   );
