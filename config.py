@@ -153,6 +153,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "tile_dir": "output/buildings",
         "source": "JRC GHS-BUILT-H R2023A",
     },
+    # Live network-coverage tiles, baked by the coverage-worker into tile_dir and
+    # served at /tiles/coverage. Off by default (needs the coverage-worker container).
+    "coverage": {
+        "enabled": False,
+        "tile_dir": "output/coverage",
+    },
     "debug": False,
 }
 

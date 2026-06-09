@@ -374,6 +374,33 @@ class API:
         async def server_config(request: Request) -> JSONResponse:
             return jsonable_encoder({'config': Config.cleanse(self.config)})
 
+        @app.get("/v1/coverage/metadata")
+        async def coverage_metadata(request: Request) -> JSONResponse:
+            """Coverage tile pyramid metadata (bounds, zoom range, version). 404 until first bake."""
+            cov_cfg = self.config.get("coverage", {}) or {}
+            if not cov_cfg.get("enabled", False):
+                return JSONResponse({"error": "coverage disabled"}, status_code=404)
+            meta_path = Path(cov_cfg.get("tile_dir", "output/coverage")) / "metadata.json"
+            if not meta_path.is_file():
+                return JSONResponse({"error": "coverage not baked yet"}, status_code=404)
+            try:
+                data = await asyncio.to_thread(meta_path.read_text)
+                return JSONResponse(json.loads(data), headers={"Cache-Control": "no-cache"})
+            except Exception:
+                logger.exception("Failed to read coverage metadata")
+                return JSONResponse({"error": "metadata unreadable"}, status_code=500)
+
+        @app.post("/v1/coverage/notify")
+        async def coverage_notify(request: Request) -> JSONResponse:
+            """Coverage-worker → SSE `coverage` event so live maps refetch tiles. Internal use."""
+            try:
+                payload = await request.json()
+            except Exception:
+                payload = {}
+            self.data.broadcaster.publish("coverage", jsonable_encoder(payload))
+            logger.info("Coverage tiles ready: %s", payload.get("version") if isinstance(payload, dict) else payload)
+            return JSONResponse({"status": "ok"})
+
         # Land-cover tiles for the coverage/scan clutter model. Pre-baked by
         # scripts/landcover_tiles.py; missing tiles 404 and the frontend falls
         # back to a default class. See RF-MODEL.md.
@@ -431,6 +458,23 @@ class API:
                 logger.info(
                     "Building-height tiles enabled but %s does not exist — frontend will use class-nominal heights. "
                     "Run scripts/building_tiles.py to populate.",
+                    tile_dir,
+                )
+
+        # Live network-coverage tile pyramid, baked by the coverage-worker.
+        coverage_cfg = self.config.get("coverage", {}) or {}
+        if coverage_cfg.get("enabled", False):
+            tile_dir = Path(coverage_cfg.get("tile_dir", "output/coverage"))
+            if tile_dir.is_dir():
+                app.mount(
+                    "/tiles/coverage",
+                    TileFiles(directory=str(tile_dir)),
+                    name="coverage_tiles",
+                )
+                logger.info("Mounted coverage tiles at /tiles/coverage from %s", tile_dir.resolve())
+            else:
+                logger.info(
+                    "Coverage tiles enabled but %s does not exist yet — the coverage-worker will populate it.",
                     tile_dir,
                 )
 

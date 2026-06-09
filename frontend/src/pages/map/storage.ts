@@ -26,6 +26,10 @@ export const LS_KEYS = {
   /** Building-height tier on/off. Off → bare-earth DEM + class-nominal endpoint h_a. */
   coverageBuildingsEnabled: "meshinfo.map.coverageBuildingsEnabled",
   scanBuildingsEnabled: "meshinfo.map.scanBuildingsEnabled",
+  /** Live network-coverage layer shown/hidden (off by default). */
+  liveCoverage: "meshinfo.map.liveCoverage",
+  /** Live network-coverage raster opacity (0..1). */
+  liveCoverageOpacity: "meshinfo.map.liveCoverageOpacity",
 } as const;
 
 export function readJson<T>(key: string, fallback: T): T {

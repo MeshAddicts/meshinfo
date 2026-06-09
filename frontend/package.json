@@ -42,6 +42,8 @@
     "globals": "^17.4.0",
     "jsdom": "^29.0.1",
     "prettier": "^3.8.1",
+    "sharp": "^0.34.5",
+    "tsx": "^4.22.4",
     "typescript": "^6.0.2",
     "typescript-eslint": "^8.57.2",
     "vite": "^8.0.3",

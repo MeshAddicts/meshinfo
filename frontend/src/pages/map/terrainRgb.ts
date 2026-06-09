@@ -1,12 +1,14 @@
 /**
- * Direct terrain DEM tile fetch + decode. Worker-safe (fetch + createImageBitmap
- * + OffscreenCanvas), LRU-cached, picks the highest zoom under a tile-count cap.
+ * Direct terrain DEM tile fetch + decode. Pixel decode is delegated to
+ * `decodeTilePixels` (browser: createImageBitmap + OffscreenCanvas; Node worker:
+ * an injected sharp decoder). LRU-cached, picks the highest zoom under a tile cap.
  *
  * Mapbox terrain-rgb decode:  elev_m = -10000 + ((R*256² + G*256 + B) * 0.1)
  * Tilezen terrarium decode:   elev_m = (R*256 + G + B/256) - 32768
  */
 import { fetchWithTimeout } from "./fetchWithTimeout";
 import type { DEM, DEMBounds } from "./terrainDEM";
+import { decodeTilePixels } from "./tileDecode";
 
 /** Nominal output tile size; real size taken from each decoded tile (256 or 512). */
 const DEFAULT_TILE_SIZE = 512;
@@ -134,32 +136,20 @@ async function fetchTile(
     throw new Error(`terrain-rgb tile fetch failed ${z}/${x}/${y}: HTTP ${res.status}${auth}`);
   }
   const blob = await res.blob();
-  const bitmap = await createImageBitmap(blob);
-  try {
-    const w = bitmap.width;
-    const h = bitmap.height;
-    if (w !== h) {
-      throw new Error(`terrain tile ${key} has non-square dimensions ${w}x${h}`);
-    }
-    const canvas = new OffscreenCanvas(w, h);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("OffscreenCanvas 2d context unavailable");
-    ctx.drawImage(bitmap, 0, 0);
-    const img = ctx.getImageData(0, 0, w, h);
-    const px = img.data;
-    const elev = new Float32Array(w * h);
-    for (let i = 0; i < elev.length; i++) {
-      const r = px[i * 4];
-      const g = px[i * 4 + 1];
-      const b = px[i * 4 + 2];
-      elev[i] = -10000 + (r * 65536 + g * 256 + b) * 0.1;
-    }
-    const tile: CachedTile = { data: elev, size: w };
-    tileCache.set(key, tile);
-    return tile;
-  } finally {
-    bitmap.close();
+  const { width: w, height: h, data: px } = await decodeTilePixels(blob);
+  if (w !== h) {
+    throw new Error(`terrain tile ${key} has non-square dimensions ${w}x${h}`);
   }
+  const elev = new Float32Array(w * h);
+  for (let i = 0; i < elev.length; i++) {
+    const r = px[i * 4];
+    const g = px[i * 4 + 1];
+    const b = px[i * 4 + 2];
+    elev[i] = -10000 + (r * 65536 + g * 256 + b) * 0.1;
+  }
+  const tile: CachedTile = { data: elev, size: w };
+  tileCache.set(key, tile);
+  return tile;
 }
 
 /** Fetch + decode a Tilezen terrarium tile (no token; cached separately from Mapbox). */
@@ -178,33 +168,21 @@ async function fetchTilezenTile(
     throw new Error(`tilezen tile fetch failed ${z}/${x}/${y}: HTTP ${res.status}`);
   }
   const blob = await res.blob();
-  const bitmap = await createImageBitmap(blob);
-  try {
-    const w = bitmap.width;
-    const h = bitmap.height;
-    if (w !== h) {
-      throw new Error(`tilezen tile ${key} has non-square dimensions ${w}x${h}`);
-    }
-    const canvas = new OffscreenCanvas(w, h);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("OffscreenCanvas 2d context unavailable");
-    ctx.drawImage(bitmap, 0, 0);
-    const img = ctx.getImageData(0, 0, w, h);
-    const px = img.data;
-    const elev = new Float32Array(w * h);
-    // Terrarium: (R*256 + G + B/256) - 32768. Precision ~3.9 mm vs Mapbox's 0.1 m.
-    for (let i = 0; i < elev.length; i++) {
-      const r = px[i * 4];
-      const g = px[i * 4 + 1];
-      const b = px[i * 4 + 2];
-      elev[i] = (r * 256 + g + b / 256) - 32768;
-    }
-    const tile: CachedTile = { data: elev, size: w };
-    tilezenCache.set(key, tile);
-    return tile;
-  } finally {
-    bitmap.close();
+  const { width: w, height: h, data: px } = await decodeTilePixels(blob);
+  if (w !== h) {
+    throw new Error(`tilezen tile ${key} has non-square dimensions ${w}x${h}`);
   }
+  const elev = new Float32Array(w * h);
+  // Terrarium: (R*256 + G + B/256) - 32768. Precision ~3.9 mm vs Mapbox's 0.1 m.
+  for (let i = 0; i < elev.length; i++) {
+    const r = px[i * 4];
+    const g = px[i * 4 + 1];
+    const b = px[i * 4 + 2];
+    elev[i] = (r * 256 + g + b / 256) - 32768;
+  }
+  const tile: CachedTile = { data: elev, size: w };
+  tilezenCache.set(key, tile);
+  return tile;
 }
 
 /** Bilinear sample at lng/lat. Returns null for NaN corners or elev outside [-500, 9000] m. */

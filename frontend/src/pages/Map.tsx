@@ -23,6 +23,8 @@ import { FiltersResetPill } from "./map/FiltersResetPill";
 import { circularMeanLng } from "./map/geo";
 import { bestSnr, computeMaxRange, geodesicCircleCoords, mbRoleColorExpr, queryTerrainElevationMSL, relativeTime, signalBarsHtml, TRANSPARENT_1PX_PNG } from "./map/helpers";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
+import { LiveCoveragePill } from "./map/live/LiveCoveragePill";
+import { useServerCoverageTiles } from "./map/live/useServerCoverageTiles";
 import { LosTubeLayer } from "./map/losTubeLayer";
 import { MapCoveragePanel } from "./map/MapCoveragePanel";
 import { MapDetailsPanel } from "./map/MapDetailsPanel";
@@ -197,6 +199,13 @@ export function Map() {
   // Cosmetic 3D buildings (OpenFreeMap). Off by default to keep slow devices light.
   const [buildings3D, setBuildings3D] = useState<boolean>(() => readJson<boolean>(LS_KEYS.buildings3D, false));
 
+  // Live network-coverage layer: a server-baked raster tile pyramid (compute is
+  // server-side; this only show/hides + sets opacity). Off (hidden) by default.
+  const [liveCoverage, setLiveCoverage] = useState<boolean>(() => readJson<boolean>(LS_KEYS.liveCoverage, false));
+  const [liveCoverageOpacity, setLiveCoverageOpacity] = useState<number>(
+    () => readJson<number>(LS_KEYS.liveCoverageOpacity, 0.6),
+  );
+
   // RF tool state hooks (own settings + result state)
   const losState = useLosState();
   const coverage = useCoverageState();
@@ -232,6 +241,8 @@ export function Map() {
   useEffect(() => writeJson(LS_KEYS.settingsPanelOpen, settingsPanelOpen), [settingsPanelOpen]);
   useEffect(() => writeJson(LS_KEYS.terrain3D, terrain3D), [terrain3D]);
   useEffect(() => writeJson(LS_KEYS.buildings3D, buildings3D), [buildings3D]);
+  useEffect(() => writeJson(LS_KEYS.liveCoverage, liveCoverage), [liveCoverage]);
+  useEffect(() => writeJson(LS_KEYS.liveCoverageOpacity, liveCoverageOpacity), [liveCoverageOpacity]);
 
   // Obsolete key from the prior exaggeration slider; removeItem is idempotent.
   useEffect(() => {
@@ -439,6 +450,15 @@ export function Map() {
     pickingMergeOrigin: mergeOrigins.pickingMergeOrigin,
     setPickingMergeOrigin: mergeOrigins.setPickingMergeOrigin,
     moveCoverageMergeOrigin: mergeOrigins.moveCoverageMergeOrigin,
+  });
+
+  // Live network-coverage layer — server-baked raster tiles (meshinfo /tiles/coverage),
+  // refreshed on the `coverage` SSE event. No client-side RF compute.
+  const liveCoverageState = useServerCoverageTiles({
+    mbMapRef,
+    enabled: liveCoverage,
+    mapReady: mapLoaded,
+    opacity: liveCoverageOpacity,
   });
 
   // Reset the whole tool state. Also imperatively clears map visual geometry
@@ -1072,6 +1092,9 @@ export function Map() {
           },
         });
       }
+
+      // The live network-coverage layer (server-baked raster tiles) is added
+      // dynamically by useServerCoverageTiles once /v1/coverage/metadata is known.
 
       // Iso-margin contour lines
       if (!map.getSource("coverage-contours")) {
@@ -2578,6 +2601,15 @@ export function Map() {
       <MapSearchBar
         nodes={nodes}
         onSelect={(id) => handleNodeSelectRef.current(id)}
+      />
+
+      <LiveCoveragePill
+        enabled={liveCoverage}
+        onToggle={() => setLiveCoverage((v) => !v)}
+        status={liveCoverageState.status}
+        meta={liveCoverageState.meta}
+        opacity={liveCoverageOpacity}
+        onOpacityChange={setLiveCoverageOpacity}
       />
 
       <MapHealthWidget nodes={nodes} />
