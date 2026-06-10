@@ -32,8 +32,8 @@ const MEDIUM_FAST = MESHTASTIC_PRESETS[0]; // MediumFast (-124 dBm typical)
 const LIVE_RELIABILITY = reliabilityPreset("typical"); // 90/50/70
 
 /** RasterParams for one TX class. All classes share env / RX / sensitivity /
- *  reliability; only `txDbm` differs. Clutter is off (cheap recompute). */
-export function buildLiveCoverageParams(txDbm: number): RasterParams {
+ *  reliability; only `txDbm` differs. `clutterAggression` 0 = clutter model off. */
+export function buildLiveCoverageParams(txDbm: number, clutterAggression = 0): RasterParams {
   return {
     freqMhz: FREQ_MHZ,
     txDbm,
@@ -43,7 +43,7 @@ export function buildLiveCoverageParams(txDbm: number): RasterParams {
     rxSensitivityDbm: effectiveSensitivityDbm(MEDIUM_FAST.sensitivityDbm, "SX1262"),
     fadeMarginDb: FADE_MARGIN_DB,
     cableLossDb: CABLE_LOSS_DB,
-    clutterAggression: 0, // clutter model off for the live layer
+    clutterAggression,
     ...DEFAULT_ITM_ENV,
     timePct: LIVE_RELIABILITY.time,
     locationPct: LIVE_RELIABILITY.location,

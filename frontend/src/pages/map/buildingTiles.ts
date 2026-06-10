@@ -14,6 +14,7 @@
 import { env } from "../../env";
 import { fetchWithTimeout } from "./fetchWithTimeout";
 import type { DEMBounds } from "./terrainDEM";
+import { decodeTilePixels } from "./tileDecode";
 
 const TILE_SIZE = 256;
 const MIN_ZOOM = 0;
@@ -146,25 +147,14 @@ export async function fetchBuildingTile(
   }
 
   const blob = await res.blob();
-  const bitmap = await createImageBitmap(blob);
-  try {
-    const w = bitmap.width;
-    const h = bitmap.height;
-    if (w !== h || w !== TILE_SIZE) {
-      throw new Error(`building tile ${key} unexpected size ${w}x${h} (want ${TILE_SIZE})`);
-    }
-    const canvas = new OffscreenCanvas(w, h);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("OffscreenCanvas 2d context unavailable");
-    ctx.drawImage(bitmap, 0, 0);
-    const img = ctx.getImageData(0, 0, w, h);
-    const { height, mask } = decodeBuildingPixels(img.data, w * h);
-    const tile: CachedBuildingTile = { height, mask, size: w };
-    tileCache.set(key, tile);
-    return tile;
-  } finally {
-    bitmap.close();
+  const { width: w, height: h, data: px } = await decodeTilePixels(blob);
+  if (w !== h || w !== TILE_SIZE) {
+    throw new Error(`building tile ${key} unexpected size ${w}x${h} (want ${TILE_SIZE})`);
   }
+  const { height, mask } = decodeBuildingPixels(px, w * h);
+  const tile: CachedBuildingTile = { height, mask, size: w };
+  tileCache.set(key, tile);
+  return tile;
 }
 
 export interface BuildBuildingRasterOptions {

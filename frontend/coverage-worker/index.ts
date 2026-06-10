@@ -9,8 +9,9 @@ import {
   MIN_RECOMPUTE_MS,
   POLL_INTERVAL_MS,
 } from "./config";
+import { installEnvShim } from "./envShim";
 import { type CoverageOrigin, fetchCoverageOrigins } from "./nodes";
-import { type BakeMetadata, bakeCoverage } from "./render";
+import { bakeCoverage, type BakeMetadata } from "./render";
 import { installSharpDecoder } from "./sharpImage";
 
 /** Stable dirty-key: rebake only when the contributing set / positions / TX change. */
@@ -96,6 +97,7 @@ async function runLoop(): Promise<void> {
 
 async function main(): Promise<void> {
   installSharpDecoder();
+  installEnvShim();
   if (process.argv.includes("--once")) {
     await runOnce();
   } else {

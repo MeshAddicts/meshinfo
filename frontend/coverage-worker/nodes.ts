@@ -1,7 +1,7 @@
 /** Fetch the node set from meshinfo and reduce to coverage origins. */
+import { txDbmForRole } from "../src/pages/map/live/liveCoverageParams";
 import type { NodeRole } from "../src/types";
 import { BBOX, MESHINFO_URL, reachKmForRole, RECENCY_HOURS } from "./config";
-import { txDbmForRole } from "../src/pages/map/live/liveCoverageParams";
 
 export interface CoverageOrigin {
   id: string;

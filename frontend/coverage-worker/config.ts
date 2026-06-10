@@ -1,5 +1,15 @@
 /** Coverage-worker configuration (env-overridable). */
+import { cpus } from "node:os";
+
 import { NodeRole } from "../src/types";
+
+/** Parallel render workers. Default = min(cores − 1, 8) — each holds a private
+ *  accumulator, so the cap bounds memory. Set 1 to force single-thread. */
+export const WORKERS = (() => {
+  const env = process.env.COVERAGE_WORKERS;
+  if (env != null) return Math.max(1, Number(env) || 1);
+  return Math.max(1, Math.min(8, (cpus()?.length ?? 4) - 1));
+})();
 
 export const MESHINFO_URL = process.env.MESHINFO_URL ?? "http://localhost:9000";
 export const OUTPUT_DIR = process.env.COVERAGE_OUTPUT_DIR ?? "output/coverage";
@@ -21,6 +31,15 @@ export const CLIENT_REACH_KM = Number(process.env.COVERAGE_CLIENT_REACH_KM ?? 80
 
 /** A node contributes if heard within this many hours. */
 export const RECENCY_HOURS = Number(process.env.COVERAGE_RECENCY_HOURS ?? 4);
+
+/** Accuracy layers (NLCD clutter / ETH canopy / JRC buildings), fetched from
+ *  meshinfo's baked tiles. Default on; gracefully no-op where a layer isn't baked. */
+const flag = (v: string | undefined) => v !== "false" && v !== "0";
+export const USE_CLUTTER = flag(process.env.COVERAGE_CLUTTER);
+export const USE_CANOPY = flag(process.env.COVERAGE_CANOPY);
+export const USE_BUILDINGS = flag(process.env.COVERAGE_BUILDINGS);
+/** ITU clutter-model scaler; 1.0 = calibrated baseline (matches the interactive tool). */
+export const CLUTTER_AGGRESSION = Number(process.env.COVERAGE_CLUTTER_AGGRESSION ?? 1.0);
 
 /** Optional "west,south,east,north" clip, for aggregator DBs that span many regions. */
 export const BBOX: [number, number, number, number] | null = (() => {

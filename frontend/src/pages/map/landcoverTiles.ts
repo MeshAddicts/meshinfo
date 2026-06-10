@@ -8,6 +8,7 @@ import { env } from "../../env";
 import { NLCD_DEFAULT_CLASS_ID } from "./clutterClasses";
 import { fetchWithTimeout } from "./fetchWithTimeout";
 import type { DEMBounds } from "./terrainDEM";
+import { decodeTilePixels } from "./tileDecode";
 
 const TILE_SIZE = 256;
 const MIN_ZOOM = 0;
@@ -123,33 +124,21 @@ export async function fetchLandcoverTile(
   }
 
   const blob = await res.blob();
-  const bitmap = await createImageBitmap(blob);
-  try {
-    const w = bitmap.width;
-    const h = bitmap.height;
-    if (w !== h) {
-      throw new Error(`landcover tile ${key} has non-square dimensions ${w}x${h}`);
-    }
-    if (w !== TILE_SIZE) {
-      throw new Error(`landcover tile ${key} unexpected size ${w} (want ${TILE_SIZE})`);
-    }
-    const canvas = new OffscreenCanvas(w, h);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("OffscreenCanvas 2d context unavailable");
-    ctx.drawImage(bitmap, 0, 0);
-    const img = ctx.getImageData(0, 0, w, h);
-    const px = img.data;
-    const data = new Uint8Array(w * h);
-    for (let i = 0, n = data.length; i < n; i++) {
-      const o = i * 4;
-      data[i] = px[o + 3] === 0 ? 0 : px[o];
-    }
-    const tile: CachedLandcoverTile = { data, size: w };
-    tileCache.set(key, tile);
-    return tile;
-  } finally {
-    bitmap.close();
+  const { width: w, height: h, data: px } = await decodeTilePixels(blob);
+  if (w !== h) {
+    throw new Error(`landcover tile ${key} has non-square dimensions ${w}x${h}`);
   }
+  if (w !== TILE_SIZE) {
+    throw new Error(`landcover tile ${key} unexpected size ${w} (want ${TILE_SIZE})`);
+  }
+  const data = new Uint8Array(w * h);
+  for (let i = 0, n = data.length; i < n; i++) {
+    const o = i * 4;
+    data[i] = px[o + 3] === 0 ? 0 : px[o];
+  }
+  const tile: CachedLandcoverTile = { data, size: w };
+  tileCache.set(key, tile);
+  return tile;
 }
 
 export interface BuildClutterRasterOptions {

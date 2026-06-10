@@ -60,34 +60,35 @@ export function useServerCoverageTiles(
     (m: CoverageMeta) => {
       const map = mbMapRef.current;
       if (!map) return;
+      const prev = metaRef.current;
       metaRef.current = m;
       const tiles = tileUrls(m.version);
       const existing = map.getSource(LIVE_COVERAGE_SOURCE_ID) as RasterTileSource | undefined;
-      if (existing && existing.type === "raster") {
-        existing.setTiles(tiles); // new version → MapLibre refetches
+      // setTiles only swaps URLs; a zoom-range change needs a fresh source.
+      const rangeChanged = !prev || prev.minZoom !== m.minZoom || prev.maxZoom !== m.maxZoom;
+      if (existing && existing.type === "raster" && !rangeChanged) {
+        existing.setTiles(tiles);
       } else {
-        if (!map.getSource(LIVE_COVERAGE_SOURCE_ID)) {
-          map.addSource(LIVE_COVERAGE_SOURCE_ID, {
+        if (map.getLayer(LIVE_COVERAGE_LAYER_ID)) map.removeLayer(LIVE_COVERAGE_LAYER_ID);
+        if (map.getSource(LIVE_COVERAGE_SOURCE_ID)) map.removeSource(LIVE_COVERAGE_SOURCE_ID);
+        map.addSource(LIVE_COVERAGE_SOURCE_ID, {
+          type: "raster",
+          tiles,
+          tileSize: 256,
+          minzoom: m.minZoom,
+          maxzoom: m.maxZoom,
+          bounds: m.bounds,
+        });
+        map.addLayer(
+          {
+            id: LIVE_COVERAGE_LAYER_ID,
             type: "raster",
-            tiles,
-            tileSize: 256,
-            minzoom: m.minZoom,
-            maxzoom: m.maxZoom,
-            bounds: m.bounds,
-          });
-        }
-        if (!map.getLayer(LIVE_COVERAGE_LAYER_ID)) {
-          map.addLayer(
-            {
-              id: LIVE_COVERAGE_LAYER_ID,
-              type: "raster",
-              source: LIVE_COVERAGE_SOURCE_ID,
-              layout: { visibility: enabledRef.current ? "visible" : "none" },
-              paint: { "raster-opacity": opacityRef.current, "raster-fade-duration": 300 },
-            },
-            map.getLayer(BEFORE_ID) ? BEFORE_ID : undefined,
-          );
-        }
+            source: LIVE_COVERAGE_SOURCE_ID,
+            layout: { visibility: enabledRef.current ? "visible" : "none" },
+            paint: { "raster-opacity": opacityRef.current, "raster-fade-duration": 300 },
+          },
+          map.getLayer(BEFORE_ID) ? BEFORE_ID : undefined,
+        );
       }
       setMeta(m);
       setStatus("ready");
