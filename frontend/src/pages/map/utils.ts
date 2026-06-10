@@ -141,22 +141,22 @@ export function emptyLineFeatureCollection(): FeatureCollection<GeoLineString, G
   return { type: "FeatureCollection", features: [] };
 }
 
-export function applyClusterVisibility(map: MlMap, enabled: boolean): void {
+export function applyClusterVisibility(map: MlMap, enabled: boolean, hideAll = false): void {
   const set = (layerId: string, visible: boolean) => {
     if (!map.getLayer(layerId)) return;
     map.setLayoutProperty(layerId, "visibility", visible ? "visible" : "none");
   };
 
-  set("clusters", enabled);
-  set("clusters-donuts", enabled);
-  set("clusters-count", enabled);
-  set("unclustered-pulse", enabled);
-  set("unclustered-nodes", enabled);
-  set("unclustered-labels", enabled);
+  set("clusters", enabled && !hideAll);
+  set("clusters-donuts", enabled && !hideAll);
+  set("clusters-count", enabled && !hideAll);
+  set("unclustered-pulse", enabled && !hideAll);
+  set("unclustered-nodes", enabled && !hideAll);
+  set("unclustered-labels", enabled && !hideAll);
 
-  set("plain-pulse", !enabled);
-  set("plain-nodes", !enabled);
-  set("plain-labels", !enabled);
+  set("plain-pulse", !enabled && !hideAll);
+  set("plain-nodes", !enabled && !hideAll);
+  set("plain-labels", !enabled && !hideAll);
 
   // Either toggle direction invalidates the current fans (they belong to the
   // mode we're leaving); the matching auto-spiderfy pass re-creates them.

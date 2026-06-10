@@ -10,6 +10,8 @@ export interface LiveCoveragePillProps {
   meta: CoverageMeta | null;
   opacity: number;
   onOpacityChange: (opacity: number) => void;
+  hideNodes: boolean;
+  onHideNodesChange: (hide: boolean) => void;
 }
 
 function agoLabel(iso: string): string {
@@ -30,6 +32,8 @@ export function LiveCoveragePill({
   meta,
   opacity,
   onOpacityChange,
+  hideNodes,
+  onHideNodesChange,
 }: LiveCoveragePillProps) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -144,9 +148,19 @@ export function LiveCoveragePill({
             />
           </div>
 
+          <label className="flex items-center justify-between gap-2 cursor-pointer text-gray-400">
+            <span>Hide node markers</span>
+            <input
+              type="checkbox"
+              checked={hideNodes}
+              onChange={(e) => onHideNodesChange(e.target.checked)}
+              className="w-3 h-3 accent-cyan-500 cursor-pointer"
+            />
+          </label>
+
           <p className="text-[10px] text-gray-600 leading-snug">
             Predicted reach of every positioned node heard recently (ITM model). Router-class TX
-            33 dBm, others 22 dBm; assumed 6 m antenna. Estimate only.
+            33 dBm, others 22 dBm; antenna height from reported altitude (min 6 m). Estimate only.
           </p>
         </div>
       )}

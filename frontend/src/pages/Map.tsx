@@ -205,6 +205,10 @@ export function Map() {
   const [liveCoverageOpacity, setLiveCoverageOpacity] = useState<number>(
     () => readJson<number>(LS_KEYS.liveCoverageOpacity, 0.6),
   );
+  const [liveCoverageHideNodes, setLiveCoverageHideNodes] = useState<boolean>(
+    () => readJson<boolean>(LS_KEYS.liveCoverageHideNodes, true),
+  );
+  const nodesHidden = liveCoverage && liveCoverageHideNodes;
 
   // RF tool state hooks (own settings + result state)
   const losState = useLosState();
@@ -243,6 +247,7 @@ export function Map() {
   useEffect(() => writeJson(LS_KEYS.buildings3D, buildings3D), [buildings3D]);
   useEffect(() => writeJson(LS_KEYS.liveCoverage, liveCoverage), [liveCoverage]);
   useEffect(() => writeJson(LS_KEYS.liveCoverageOpacity, liveCoverageOpacity), [liveCoverageOpacity]);
+  useEffect(() => writeJson(LS_KEYS.liveCoverageHideNodes, liveCoverageHideNodes), [liveCoverageHideNodes]);
 
   // Obsolete key from the prior exaggeration slider; removeItem is idempotent.
   useEffect(() => {
@@ -350,6 +355,7 @@ export function Map() {
   const configRef = useRef(config);
   const recentDaysRef = useRef(recentDays);
   const clusterEnabledRef = useRef(clusterEnabled);
+  const nodesHiddenRef = useRef(nodesHidden);
   const livePacketsRef = useRef(livePackets);
   const linkModeRef = useRef(linkMode);
   const myNodeIdRef = useRef(myNodeId);
@@ -373,6 +379,7 @@ export function Map() {
   useEffect(() => { setDetailsDataRef.current = setDetailsData; }, [setDetailsData]);
   useEffect(() => { recentDaysRef.current = recentDays; }, [recentDays]);
   useEffect(() => { clusterEnabledRef.current = clusterEnabled; }, [clusterEnabled]);
+  useEffect(() => { nodesHiddenRef.current = nodesHidden; }, [nodesHidden]);
   useEffect(() => {
     livePacketsRef.current = livePackets;
     clusterDonutLayerRef.current?.setAnimationsEnabled(livePackets);
@@ -1497,8 +1504,8 @@ export function Map() {
         activityLayerRef.current = al;
       }
 
-      // Apply current cluster visibility (use ref to avoid stale closure)
-      applyClusterVisibility(map, clusterEnabledRef.current);
+      // Apply current cluster visibility (use refs to avoid stale closure)
+      applyClusterVisibility(map, clusterEnabledRef.current, nodesHiddenRef.current);
 
       // Re-apply terrain if it was enabled (style.load wipes this)
       if (terrain3DRef.current) {
@@ -2005,6 +2012,7 @@ export function Map() {
         if (spiderfyDebounce != null) window.clearTimeout(spiderfyDebounce);
         spiderfyDebounce = window.setTimeout(() => {
           spiderfyDebounce = null;
+          if (nodesHiddenRef.current) return;
           if (clusterEnabledRef.current) {
             const pool = buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()).features
               .filter((f) => f.geometry?.type === "Point") as any;
@@ -2327,12 +2335,12 @@ export function Map() {
     } catch {}
   }, [mapboxStyle, osmBasemap, provider, mapboxToken]);
 
-  // Cluster toggle
+  // Cluster toggle + coverage-layer node hiding
   useEffect(() => {
     const map = mbMapRef.current;
     if (!map) return;
-    applyClusterVisibility(map, clusterEnabled);
-  }, [clusterEnabled]);
+    applyClusterVisibility(map, clusterEnabled, nodesHidden);
+  }, [clusterEnabled, nodesHidden]);
 
   // Initial mount is handled by ensureSourcesAndLayers on style.load; this only runs live toggles.
   useEffect(() => {
@@ -2610,6 +2618,8 @@ export function Map() {
         meta={liveCoverageState.meta}
         opacity={liveCoverageOpacity}
         onOpacityChange={setLiveCoverageOpacity}
+        hideNodes={liveCoverageHideNodes}
+        onHideNodesChange={setLiveCoverageHideNodes}
       />
 
       <MapHealthWidget nodes={nodes} />

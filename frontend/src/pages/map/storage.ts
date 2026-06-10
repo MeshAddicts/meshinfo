@@ -30,6 +30,8 @@ export const LS_KEYS = {
   liveCoverage: "meshinfo.map.liveCoverage",
   /** Live network-coverage raster opacity (0..1). */
   liveCoverageOpacity: "meshinfo.map.liveCoverageOpacity",
+  /** Hide node markers/clusters while the live coverage layer is shown (on by default). */
+  liveCoverageHideNodes: "meshinfo.map.liveCoverageHideNodes",
 } as const;
 
 export function readJson<T>(key: string, fallback: T): T {

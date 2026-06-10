@@ -83,20 +83,21 @@ function sliceDEM(shared: DEM, bounds: DEMBounds, width: number, height: number)
   return { data, width, height, bounds };
 }
 
-/** TX height off the DEM: GPS MSL altitude when sane, else DEM ground; + assumed AGL. */
+/** AGL = reported alt − DEM ground, floored at the 6 m default so bad altitude
+ *  data can only raise the antenna, never bury it. Implausible alt → default. */
 function resolveOrigin(o: CoverageOrigin, shared: DEM) {
   const demGround = sampleDEMAt(shared, o.lng, o.lat);
   const demOk = !Number.isNaN(demGround);
   const ground = demOk ? demGround : 0;
   const alt = o.altitudeM;
   const altValid =
+    demOk &&
     alt != null &&
     Number.isFinite(alt) &&
-    (!demOk || (alt >= ground && alt <= ground + MAX_HEIGHT_ABOVE_TERRAIN_M));
-  const baseM = altValid ? (alt as number) : ground;
-  const heightM = baseM + LIVE_ANTENNA_AGL_M;
-  const antennaHeightAboveGroundM = demOk ? heightM - demGround : LIVE_ANTENNA_AGL_M;
-  return { position: [o.lng, o.lat] as [number, number], heightM, antennaHeightAboveGroundM };
+    alt >= ground &&
+    alt <= ground + MAX_HEIGHT_ABOVE_TERRAIN_M;
+  const agl = altValid ? Math.max(LIVE_ANTENNA_AGL_M, (alt as number) - ground) : LIVE_ANTENNA_AGL_M;
+  return { position: [o.lng, o.lat] as [number, number], heightM: ground + agl, antennaHeightAboveGroundM: agl };
 }
 
 /** Render one node and composite per-pixel max-margin into `acc.margin`. */
