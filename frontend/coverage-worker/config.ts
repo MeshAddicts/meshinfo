@@ -3,27 +3,35 @@ import { cpus } from "node:os";
 
 import { NodeRole } from "../src/types";
 
-/** Parallel render workers. Default = min(cores − 1, 8) — each holds a private
- *  accumulator, so the cap bounds memory. Set 1 to force single-thread. */
+/** Parallel render workers. Tile buckets keep per-worker memory sparse, so the
+ *  cap is generous. Set 1 to force single-thread. */
 export const WORKERS = (() => {
   const env = process.env.COVERAGE_WORKERS;
   if (env != null) return Math.max(1, Number(env) || 1);
-  return Math.max(1, Math.min(8, (cpus()?.length ?? 4) - 1));
+  return Math.max(1, Math.min(32, (cpus()?.length ?? 4) - 1));
 })();
 
 export const MESHINFO_URL = process.env.MESHINFO_URL ?? "http://localhost:9000";
 export const OUTPUT_DIR = process.env.COVERAGE_OUTPUT_DIR ?? "output/coverage";
+/** Per-node rendered-margin cache (survives restarts; lives in the output volume). */
+export const CACHE_DIR = process.env.COVERAGE_CACHE_DIR ?? `${OUTPUT_DIR}-cache`;
+/** Drop cached margins for nodes inactive this long. */
+export const CACHE_PRUNE_DAYS = Number(process.env.COVERAGE_CACHE_PRUNE_DAYS ?? 7);
 
-/** Output zoom range. MAX_ZOOM bounds compute (paint detail, not terrain accuracy). */
-export const MAX_ZOOM = Number(process.env.COVERAGE_MAX_ZOOM ?? 9);
+/** Output zoom range. MAX_ZOOM bounds paint detail (z11 ≈ 60 m/px at lat 38). */
+export const MAX_ZOOM = Number(process.env.COVERAGE_MAX_ZOOM ?? 11);
 export const MIN_ZOOM = Number(process.env.COVERAGE_MIN_ZOOM ?? 5);
 
 /** Shared-DEM / per-node-sub-DEM dimensions (terrain accuracy; capped for memory). */
-export const SHARED_DEM_SIZE = Number(process.env.COVERAGE_DEM_SIZE ?? 4096);
-export const NODE_DEM_SIZE = Number(process.env.COVERAGE_NODE_DEM_SIZE ?? 1024);
-/** Per-node render grid. Modest, since coverage upsamples smoothly — decouples ITM
- *  cost from MAX_ZOOM (the dominant perf lever) while the sub-DEM keeps terrain fine. */
-export const NODE_OUTPUT_MAX = Number(process.env.COVERAGE_NODE_OUTPUT ?? 384);
+export const SHARED_DEM_SIZE = Number(process.env.COVERAGE_DEM_SIZE ?? 8192);
+export const NODE_DEM_SIZE = Number(process.env.COVERAGE_NODE_DEM_SIZE ?? 2048);
+/** Clutter/canopy/building raster dimension. Separate from the DEM: canopy alone is
+ *  3 Float32 planes, so 8192² would cost ~800 MB. */
+export const CLUTTER_RASTER_SIZE = Number(process.env.COVERAGE_CLUTTER_SIZE ?? 4096);
+/** Per-node render grid: ~OUTPUT_M_PER_PX everywhere, capped at NODE_OUTPUT_MAX.
+ *  ITM cost scales with the grid square — these are the dominant perf levers. */
+export const NODE_OUTPUT_MAX = Number(process.env.COVERAGE_NODE_OUTPUT ?? 2048);
+export const OUTPUT_M_PER_PX = Number(process.env.COVERAGE_OUTPUT_M_PER_PX ?? 200);
 
 /** Per-role footprint reach (km). Routers full range; clients capped (~80 km max over terrain). */
 export const ROUTER_REACH_KM = Number(process.env.COVERAGE_ROUTER_REACH_KM ?? 200);
@@ -54,7 +62,8 @@ export function reachKmForRole(role: NodeRole | undefined): number {
   return role != null && ROUTER_CLASS.has(role) ? ROUTER_REACH_KM : CLIENT_REACH_KM;
 }
 
-/** Live-loop cadence. */
+/** Live-loop cadence. Rebakes are incremental (only changed nodes re-render),
+ *  so the interval can be short without baking back-to-back. */
 export const POLL_INTERVAL_MS = Number(process.env.COVERAGE_POLL_MS ?? 60_000);
 export const MIN_RECOMPUTE_MS = Number(process.env.COVERAGE_MIN_RECOMPUTE_MS ?? 10 * 60_000);
 export const BACKSTOP_MS = Number(process.env.COVERAGE_BACKSTOP_MS ?? 4 * 60 * 60_000);

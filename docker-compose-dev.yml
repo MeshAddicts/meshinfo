@@ -137,6 +137,10 @@ services:
       # This dev DB aggregates many regions globally — clip to California. A
       # single-region deployment should remove COVERAGE_BBOX.
       - COVERAGE_BBOX=-124.5,32.5,-114.1,42
+      - COVERAGE_WORKERS=14
+    # Hard cap so bakes don't soak the dev workstation; shares keep meshinfo ahead.
+    cpus: 16
+    cpu_shares: 512
     restart: unless-stopped
     depends_on:
       meshinfo:

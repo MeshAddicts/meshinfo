@@ -1,4 +1,4 @@
-/** Per-node coverage compositing, shared by the inline and worker_threads paths. */
+/** Per-node ITM rendering + per-tile compositing, shared by inline and worker paths. */
 import type { BuildingRaster } from "../src/pages/map/buildingTiles";
 import type { CanopyRaster } from "../src/pages/map/canopyTiles";
 import { renderCoverageRaster } from "../src/pages/map/coverageRaster";
@@ -6,6 +6,7 @@ import type { ItmContext } from "../src/pages/map/itm";
 import type { ClutterRaster } from "../src/pages/map/landcoverTiles";
 import { buildLiveCoverageParams, LIVE_ANTENNA_AGL_M } from "../src/pages/map/live/liveCoverageParams";
 import { type DEM, type DEMBounds, demBoundsAround, sampleDEMAt } from "../src/pages/map/terrainDEM";
+import { type MarginGridQ8, marginQ8At, quantizeMargin } from "./cache";
 import * as cfg from "./config";
 import { latToPx, lngToPx, pxToLat, pxToLng, TILE_SIZE } from "./mercator";
 import type { CoverageOrigin } from "./nodes";
@@ -22,40 +23,29 @@ export interface RenderSources {
   clutterAggression: number;
 }
 
-export interface Accumulator {
-  margin: Float32Array;
-  accX0: number;
-  accY0: number;
-  accW: number;
-  accH: number;
-}
-
-export interface AccDims {
+export interface TileRect {
   tx0: number;
   tx1: number;
   ty0: number;
   ty1: number;
-  accX0: number;
-  accY0: number;
-  accW: number;
-  accH: number;
 }
 
-/** Tile-aligned mercator pixel extent of the network bbox at zoom `z`. */
-export function computeAccDims(bbox: DEMBounds, z: number): AccDims {
-  const tx0 = Math.floor(lngToPx(bbox.west, z) / TILE_SIZE);
-  const tx1 = Math.ceil(lngToPx(bbox.east, z) / TILE_SIZE);
-  const ty0 = Math.floor(latToPx(bbox.north, z) / TILE_SIZE);
-  const ty1 = Math.ceil(latToPx(bbox.south, z) / TILE_SIZE);
+/** Tile range of `bounds` at zoom `z` (exclusive upper). */
+export function tileRectForBounds(bounds: DEMBounds, z: number): TileRect {
   return {
-    tx0,
-    tx1,
-    ty0,
-    ty1,
-    accX0: tx0 * TILE_SIZE,
-    accY0: ty0 * TILE_SIZE,
-    accW: (tx1 - tx0) * TILE_SIZE,
-    accH: (ty1 - ty0) * TILE_SIZE,
+    tx0: Math.floor(lngToPx(bounds.west, z) / TILE_SIZE),
+    tx1: Math.ceil(lngToPx(bounds.east, z) / TILE_SIZE),
+    ty0: Math.floor(latToPx(bounds.north, z) / TILE_SIZE),
+    ty1: Math.ceil(latToPx(bounds.south, z) / TILE_SIZE),
+  };
+}
+
+export function clampRect(r: TileRect, outer: TileRect): TileRect {
+  return {
+    tx0: Math.max(r.tx0, outer.tx0),
+    tx1: Math.min(r.tx1, outer.tx1),
+    ty0: Math.max(r.ty0, outer.ty0),
+    ty1: Math.min(r.ty1, outer.ty1),
   };
 }
 
@@ -100,17 +90,21 @@ function resolveOrigin(o: CoverageOrigin, shared: DEM) {
   return { position: [o.lng, o.lat] as [number, number], heightM: ground + agl, antennaHeightAboveGroundM: agl };
 }
 
-/** Render one node and composite per-pixel max-margin into `acc.margin`. */
-export function compositeNode(o: CoverageOrigin, src: RenderSources, itm: ItmContext, z: number, acc: Accumulator): void {
+/** Render one node's quantized margin grid over its clamped footprint. */
+export function renderNodeMargin(o: CoverageOrigin, src: RenderSources, itm: ItmContext): MarginGridQ8 | null {
   const shared = src.dem;
   const fp = clampBounds(demBoundsAround([o.lng, o.lat], o.reachKm, 1.0), shared.bounds);
-  if (fp.east <= fp.west || fp.north <= fp.south) return;
+  if (fp.east <= fp.west || fp.north <= fp.south) {
+    console.warn(`[coverage-worker] node ${o.id} footprint outside DEM bounds; skipped`);
+    return null;
+  }
 
-  // Render grid capped well below the footprint's z-pixel extent: coverage is
-  // smooth, so it upsamples into the accumulator cleanly and ITM cost stays off
-  // the MAX_ZOOM treadmill (terrain stays fine via the sub-DEM).
-  const outW = Math.max(8, Math.min(cfg.NODE_OUTPUT_MAX, Math.ceil(lngToPx(fp.east, z) - lngToPx(fp.west, z))));
-  const outH = Math.max(8, Math.min(cfg.NODE_OUTPUT_MAX, Math.ceil(latToPx(fp.south, z) - latToPx(fp.north, z))));
+  // Uniform OUTPUT_M_PER_PX render grid, capped at NODE_OUTPUT_MAX.
+  const midLat = ((fp.north + fp.south) / 2) * (Math.PI / 180);
+  const fpWidthM = (fp.east - fp.west) * 111320 * Math.cos(midLat);
+  const fpHeightM = (fp.north - fp.south) * 110540;
+  const outW = Math.max(8, Math.min(cfg.NODE_OUTPUT_MAX, Math.ceil(fpWidthM / cfg.OUTPUT_M_PER_PX)));
+  const outH = Math.max(8, Math.min(cfg.NODE_OUTPUT_MAX, Math.ceil(fpHeightM / cfg.OUTPUT_M_PER_PX)));
 
   // Sub-DEM sized to the footprint's real extent in shared-DEM pixels (don't
   // upsample a coarse DEM), capped at NODE_DEM_SIZE.
@@ -132,23 +126,41 @@ export function compositeNode(o: CoverageOrigin, src: RenderSources, itm: ItmCon
     src.canopy,
     src.buildings,
   );
-  // Node margin grid as a DEM-shaped raster so sampleDEMAt bilinear-samples it.
-  const nodeGrid: DEM = { data: res.marginDb, width: outW, height: outH, bounds: fp };
+  return { data: quantizeMargin(res.marginDb), width: outW, height: outH, bounds: fp };
+}
 
-  const { margin, accX0, accY0, accW, accH } = acc;
-  const gpx0 = Math.max(accX0, Math.floor(lngToPx(fp.west, z)));
-  const gpx1 = Math.min(accX0 + accW, Math.ceil(lngToPx(fp.east, z)));
-  const gpy0 = Math.max(accY0, Math.floor(latToPx(fp.north, z)));
-  const gpy1 = Math.min(accY0 + accH, Math.ceil(latToPx(fp.south, z)));
-  for (let gpy = gpy0; gpy < gpy1; gpy++) {
-    const lat = pxToLat(gpy + 0.5, z);
-    const accRow = (gpy - accY0) * accW;
-    for (let gpx = gpx0; gpx < gpx1; gpx++) {
-      const m = sampleDEMAt(nodeGrid, pxToLng(gpx + 0.5, z), lat);
-      if (Number.isNaN(m)) continue;
-      const idx = accRow + (gpx - accX0);
-      const prev = margin[idx];
-      if (Number.isNaN(prev) || m > prev) margin[idx] = m;
+/** Composite one 256² tile from the node grids whose footprints intersect it;
+ *  per-pixel max-margin. Returns null when the tile ends up empty. */
+export function compositeTileMargin(tx: number, ty: number, z: number, nodes: MarginGridQ8[]): Float32Array | null {
+  const px0 = tx * TILE_SIZE;
+  const py0 = ty * TILE_SIZE;
+  const tileWest = pxToLng(px0, z);
+  const tileEast = pxToLng(px0 + TILE_SIZE, z);
+  const tileNorth = pxToLat(py0, z);
+  const tileSouth = pxToLat(py0 + TILE_SIZE, z);
+
+  let margin: Float32Array | null = null;
+  for (const g of nodes) {
+    const b = g.bounds;
+    if (b.east <= tileWest || b.west >= tileEast || b.north <= tileSouth || b.south >= tileNorth) continue;
+    const gx0 = Math.max(px0, Math.floor(lngToPx(b.west, z)));
+    const gx1 = Math.min(px0 + TILE_SIZE, Math.ceil(lngToPx(b.east, z)));
+    const gy0 = Math.max(py0, Math.floor(latToPx(b.north, z)));
+    const gy1 = Math.min(py0 + TILE_SIZE, Math.ceil(latToPx(b.south, z)));
+    for (let gpy = gy0; gpy < gy1; gpy++) {
+      const lat = pxToLat(gpy + 0.5, z);
+      const row = (gpy - py0) * TILE_SIZE;
+      for (let gpx = gx0; gpx < gx1; gpx++) {
+        const m = marginQ8At(g, pxToLng(gpx + 0.5, z), lat);
+        if (Number.isNaN(m)) continue;
+        if (!margin) {
+          margin = new Float32Array(TILE_SIZE * TILE_SIZE).fill(Number.NaN);
+        }
+        const idx = row + (gpx - px0);
+        const prev = margin[idx];
+        if (Number.isNaN(prev) || m > prev) margin[idx] = m;
+      }
     }
   }
+  return margin;
 }

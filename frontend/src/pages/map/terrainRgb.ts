@@ -285,6 +285,36 @@ export async function buildDem(opts: BuildDemOptions): Promise<{ dem: DEM; sourc
   }
 }
 
+/** In-flight cap for bulk tile fetches. Browsers cap per-host themselves; Node
+ *  (undici) does not, and hundreds of parallel S3 sockets get ECONNRESET. */
+const TILE_FETCH_LANES = 24;
+
+/** Fetch tiles into `out` with bounded concurrency and one retry per tile;
+ *  returns the failure count (failed tiles stay null). */
+async function fetchTilesPooled(
+  wanted: Array<{ key: string; x: number; y: number }>,
+  fetchOne: (x: number, y: number) => Promise<CachedTile>,
+  out: Map<string, CachedTile | null>,
+  label: string,
+): Promise<number> {
+  let failureCount = 0;
+  let i = 0;
+  const lanes = Array.from({ length: Math.min(TILE_FETCH_LANES, wanted.length) }, async () => {
+    while (i < wanted.length) {
+      const t = wanted[i++];
+      try {
+        out.set(t.key, await fetchOne(t.x, t.y).catch(() => fetchOne(t.x, t.y)));
+      } catch (err) {
+        failureCount += 1;
+        console.warn(label, err);
+        out.set(t.key, null);
+      }
+    }
+  });
+  await Promise.all(lanes);
+  return failureCount;
+}
+
 /** Stitch terrain tiles for bounds, bilinear-resample to target grid. Per-tile failures → NaN pixels. */
 export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM> {
   const { bounds, targetWidth, targetHeight, token } = opts;
@@ -304,29 +334,20 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
   const scale = Math.pow(2, zoom);
 
 
-  // Parallel fetch; individual failures → null tile.
-  // Antimeridian wrap + sync pre-seed for in-flight dedupe — see landcoverTiles.ts.
+  // Pooled fetch; individual failures → null tile.
+  // Antimeridian wrap + sync pre-seed dedupe — see landcoverTiles.ts.
   const tileMap = new Map<string, CachedTile | null>();
-  let failureCount = 0;
-  const jobs: Promise<void>[] = [];
+  const wanted: Array<{ key: string; x: number; y: number }> = [];
   for (let x = xMin; x <= xMax; x++) {
     const fetchX = ((x % scale) + scale) % scale;
     for (let y = yMin; y <= yMax; y++) {
       const key = `${zoom}/${fetchX}/${y}`;
       if (tileMap.has(key)) continue;
       tileMap.set(key, null);
-      jobs.push(
-        fetchTile(zoom, fetchX, y, token)
-          .then((t) => void tileMap.set(key, t))
-          .catch((err) => {
-            failureCount += 1;
-            console.warn("[terrainRgb]", err);
-            tileMap.set(key, null);
-          }),
-      );
+      wanted.push({ key, x: fetchX, y });
     }
   }
-  await Promise.all(jobs);
+  const failureCount = await fetchTilesPooled(wanted, (x, y) => fetchTile(zoom, x, y, token), tileMap, "[terrainRgb]");
 
   // Mirror the Tilezen twin: wholesale failure surfaces as an error, not a hollow DEM.
   const totalTiles = tileMap.size;
@@ -411,28 +432,19 @@ export async function buildDemFromTilezen(opts: BuildDemOptions): Promise<DEM> {
   const scale = Math.pow(2, zoom);
 
   // buildDem's Tilezen→Mapbox fallback throws when >half the tiles fail.
-  // Antimeridian wrap + sync pre-seed for in-flight dedupe — see landcoverTiles.ts.
+  // Antimeridian wrap + sync pre-seed dedupe — see landcoverTiles.ts.
   const tileMap = new Map<string, CachedTile | null>();
-  let failureCount = 0;
-  const jobs: Promise<void>[] = [];
+  const wanted: Array<{ key: string; x: number; y: number }> = [];
   for (let x = xMin; x <= xMax; x++) {
     const fetchX = ((x % scale) + scale) % scale;
     for (let y = yMin; y <= yMax; y++) {
       const key = `${zoom}/${fetchX}/${y}`;
       if (tileMap.has(key)) continue;
       tileMap.set(key, null);
-      jobs.push(
-        fetchTilezenTile(zoom, fetchX, y)
-          .then((t) => void tileMap.set(key, t))
-          .catch((err) => {
-            failureCount += 1;
-            console.warn("[terrainRgb/tilezen]", err);
-            tileMap.set(key, null);
-          }),
-      );
+      wanted.push({ key, x: fetchX, y });
     }
   }
-  await Promise.all(jobs);
+  const failureCount = await fetchTilesPooled(wanted, (x, y) => fetchTilezenTile(zoom, x, y), tileMap, "[terrainRgb/tilezen]");
 
   // Use the dedupe-aware count so the 50% threshold survives antimeridian spans.
   const totalTiles = tileMap.size;

@@ -45,11 +45,15 @@ export async function fetchCoverageOrigins(nowMs: number): Promise<CoverageOrigi
     const seen = new Date(n.last_seen).getTime();
     if (!Number.isFinite(seen) || nowMs - seen > recencyMs) continue;
     const role = n.role as NodeRole | undefined;
+    // Quantize position (~100 m) / altitude (5 m) so GPS jitter doesn't read as movement.
     out.push({
       id,
-      lng,
-      lat,
-      altitudeM: typeof pos.altitude === "number" && Number.isFinite(pos.altitude) ? pos.altitude : null,
+      lng: Math.round(lng * 1000) / 1000,
+      lat: Math.round(lat * 1000) / 1000,
+      altitudeM:
+        typeof pos.altitude === "number" && Number.isFinite(pos.altitude)
+          ? Math.round(pos.altitude / 5) * 5
+          : null,
       role,
       txDbm: txDbmForRole(role),
       reachKm: reachKmForRole(role),

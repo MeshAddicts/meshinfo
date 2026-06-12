@@ -71,7 +71,7 @@ export function LiveCoveragePill({
       : "Live network coverage — click to show";
 
   return (
-    <div ref={wrapRef} className="fixed top-3 right-40 sm:right-64 z-30 flex flex-col items-end">
+    <div ref={wrapRef} className="fixed top-3 right-44 sm:right-72 z-30 flex flex-col items-end">
       <div className="flex items-center rounded-xl bg-gray-900/80 backdrop-blur-xl border border-white/10 shadow-2xl">
         <button
           type="button"
