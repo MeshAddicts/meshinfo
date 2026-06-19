@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { HeardBy } from "../components/HeardBy";
+import { LivePill } from "../components/LivePill";
 import { useGetStatsQuery } from "../slices/apiSlice";
 import {
   BarMeter,
@@ -95,7 +96,6 @@ export const Stats = () => {
     data: rawStats,
     isFetching,
     isError,
-    fulfilledTimeStamp,
     refetch,
   } = useGetStatsQuery(undefined, {
     pollingInterval: liveEnabled ? 5000 : 0,
@@ -143,10 +143,6 @@ export const Stats = () => {
   }, [refetch, manualRefreshing]);
 
   // Live pill helpers
-  const livePillText = useMemo(() => {
-    return liveEnabled ? "Live" : "Live off";
-  }, [liveEnabled]);
-
   const livePillTitle = useMemo(() => {
     if (!liveEnabled)
       return "Live mode is off. Auto-refresh is disabled. Click to enable.";
@@ -208,8 +204,6 @@ export const Stats = () => {
       hasPresetSplit: presetTotal > 0,
     };
   }, [stats]);
-
-  const dataUpdatedAt = fulfilledTimeStamp ?? null;
 
   const onCopyLink = useCallback(async () => {
     const ok = await copyTextToClipboard(window.location.href);
@@ -327,7 +321,7 @@ export const Stats = () => {
     <div className="w-full h-dvh overflow-hidden flex flex-col">
       {/* ── Sticky header (matches Nodes) ── */}
       <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
-        <div className="mx-auto max-w-[1600px] pl-3 pr-14 sm:px-5 py-2 sm:py-3">
+        <div className="mx-auto max-w-400 px-3 sm:px-5 py-2 sm:py-3">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
               <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
@@ -336,48 +330,23 @@ export const Stats = () => {
 
               {/* Desktop meta row */}
               <div className="mt-1 hidden sm:flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                <span>
-                  Updated:{" "}
-                  <span className="font-medium tabular-nums">
-                    {dataUpdatedAt && dataUpdatedAt > 0
-                      ? new Date(dataUpdatedAt).toLocaleString()
-                      : new Date().toLocaleString()}
-                  </span>
+                <span className={isFetching || manualRefreshing ? "animate-pulse" : ""}>
+                  {isFetching || manualRefreshing ? "Refreshing…" : "Ready"}
                 </span>
-
-                <span className="opacity-60">•</span>
 
                 <button
                   type="button"
                   className="underline hover:no-underline"
                   onClick={doManualRefresh}
-                  aria-busy={manualRefreshing || isFetching}
-                  title={
-                    manualRefreshing
-                      ? "Refreshing…"
-                      : isFetching
-                        ? "Refreshing…"
-                        : "Refresh now"
-                  }
                 >
                   refresh
                 </button>
 
-                <span className="opacity-60">•</span>
-
-                <button
-                  type="button"
-                  className={[
-                    "rounded-full px-2 py-0.5 text-[11px] font-medium border transition",
-                    liveEnabled
-                      ? "bg-emerald-600 text-white border-emerald-600"
-                      : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
-                  ].join(" ")}
-                  onClick={() => setLiveEnabled((v) => !v)}
+                <LivePill
+                  mode={liveEnabled ? "live" : "off"}
+                  onToggle={() => setLiveEnabled((v) => !v)}
                   title={livePillTitle}
-                >
-                  {livePillText}
-                </button>
+                />
 
                 <span className="opacity-60">•</span>
 
@@ -395,45 +364,23 @@ export const Stats = () => {
 
               {/* Mobile meta row */}
               <div className="mt-1 flex sm:hidden flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                <span className="font-medium tabular-nums">
-                  {dataUpdatedAt && dataUpdatedAt > 0
-                    ? new Date(dataUpdatedAt).toLocaleString()
-                    : new Date().toLocaleString()}
+                <span className={isFetching || manualRefreshing ? "animate-pulse" : ""}>
+                  {isFetching || manualRefreshing ? "Refreshing…" : "Ready"}
                 </span>
-
-                <span className="opacity-60">•</span>
 
                 <button
                   type="button"
                   className="underline hover:no-underline"
                   onClick={doManualRefresh}
-                  aria-busy={manualRefreshing || isFetching}
-                  title={
-                    manualRefreshing
-                      ? "Refreshing…"
-                      : isFetching
-                        ? "Refreshing…"
-                        : "Refresh now"
-                  }
                 >
                   refresh
                 </button>
 
-                <span className="opacity-60">•</span>
-
-                <button
-                  type="button"
-                  className={[
-                    "rounded-full px-2 py-0.5 text-[11px] font-medium border transition",
-                    liveEnabled
-                      ? "bg-emerald-600 text-white border-emerald-600"
-                      : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
-                  ].join(" ")}
-                  onClick={() => setLiveEnabled((v) => !v)}
+                <LivePill
+                  mode={liveEnabled ? "live" : "off"}
+                  onToggle={() => setLiveEnabled((v) => !v)}
                   title={livePillTitle}
-                >
-                  {livePillText}
-                </button>
+                />
 
                 {isError ? (
                   <>
@@ -493,7 +440,7 @@ export const Stats = () => {
 
       {/* ── Scrollable body ── */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="mx-auto max-w-[1600px] px-4 py-5 lg:px-8 lg:py-6">
+        <div className="mx-auto max-w-400 px-4 py-5 lg:px-8 lg:py-6">
           {/* Hero */}
           <div>
             <Panel className="relative overflow-hidden">

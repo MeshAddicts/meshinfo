@@ -100,10 +100,10 @@ export function FiltersResetPill({
   return (
     <div
       ref={ref}
-      className={`fixed bottom-4 left-4 z-1100 ${hidden ? "max-sm:hidden" : ""}`}
+      className={`fixed bottom-4 left-[calc(var(--map-pad)+1rem)] z-1100 transition-[left] duration-200 ${hidden ? "max-sm:hidden" : ""}`}
     >
       {open && hasFilters && (
-        <div className="mb-2 w-56 rounded-xl p-2 space-y-1
+        <div id="active-filters-popover" className="mb-2 w-56 rounded-xl p-2 space-y-1
           bg-gray-900/95 backdrop-blur-xl border border-white/10 shadow-2xl">
           <div className="text-[9px] uppercase tracking-wider text-gray-500 font-medium px-1 pb-0.5">
             Active filters
@@ -117,9 +117,10 @@ export function FiltersResetPill({
                 bg-cyan-500/15 border border-cyan-500/30 text-cyan-200 text-xs
                 hover:bg-cyan-500/25 hover:border-cyan-500/50 transition-colors"
               title={`Clear — ${c.label}`}
+              aria-label={`Remove filter: ${c.label}`}
             >
               <span className="truncate text-left">{c.label}</span>
-              <svg className="w-3 h-3 shrink-0 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-3 h-3 shrink-0 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
@@ -143,6 +144,8 @@ export function FiltersResetPill({
           if (hasFilters) setOpen((v) => !v);
           else onOpenFilters?.();
         }}
+        aria-expanded={hasFilters ? open : undefined}
+        aria-controls={hasFilters ? "active-filters-popover" : undefined}
         title={
           hasFilters
             ? `${chips.length} ${chips.length === 1 ? "filter" : "filters"} applied — click to manage`
@@ -156,7 +159,7 @@ export function FiltersResetPill({
               : "bg-gray-900/80 border border-white/10 text-gray-400 hover:bg-gray-900/90 hover:text-gray-200"
           }`}
       >
-        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
             d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
         </svg>
@@ -168,7 +171,7 @@ export function FiltersResetPill({
         {hasFilters && (
           <svg
             className={`w-3 h-3 text-cyan-300/70 transition-transform ${open ? "rotate-180" : ""}`}
-            fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"
           >
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
           </svg>

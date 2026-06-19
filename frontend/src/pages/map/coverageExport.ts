@@ -11,8 +11,10 @@ export function exportCoverage(
     console.warn("[Map] Coverage export: no data to export.");
     return;
   }
-  const stamp = new Date().toISOString();
-  const fileStamp = stamp.replace(/[:.]/g, "-");
+  const now = new Date();
+  const stamp = now.toISOString();
+  const p = (n: number) => String(n).padStart(2, "0");
+  const fileStamp = `${now.getUTCFullYear()}${p(now.getUTCMonth() + 1)}${p(now.getUTCDate())}-${p(now.getUTCHours())}${p(now.getUTCMinutes())}${p(now.getUTCSeconds())}`;
 
   let payload: string;
   let mime: string;

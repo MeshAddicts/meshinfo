@@ -1,15 +1,196 @@
-import { useEffect, useState } from "react";
-import { Link } from "react-router";
+import { useEffect, useRef, useState } from "react";
+import { NavLink, useLocation } from "react-router";
 
 import { useGetConfigQuery } from "../slices/apiSlice";
+import {
+  ChevronDoubleLeftIcon,
+  DEFAULT_TOOLS,
+  type ExternalLinkDef,
+  ExternalLinkIcon,
+  GitHubIcon,
+  MESH_NAV,
+  MESHTASTIC_ADDONS,
+  MoonIcon,
+  type NavItemDef,
+  SunIcon,
+} from "./navConfig";
 
-const defaultTools = [
-  { name: "Armooo's MeshView", url: "https://meshview.armooo.net" },
-  { name: "Liam's Meshtastic Map", url: "https://meshtastic.liamcottle.net" },
-  { name: "MeshMap", url: "https://meshmap.net" },
-  { name: "Bay Mesh Explorer", url: "https://app.bayme.sh" },
-  { name: "HWT Path Profiler", url: "https://heywhatsthat.com/profiler.html" },
-];
+// Shared tokens — keep the rail and the drawer reading from one place.
+const sectionHeader =
+  "text-[10px] font-bold text-cyan-600 dark:text-cyan-500 uppercase tracking-widest";
+const rowBase =
+  "relative group flex items-center rounded-lg transition-colors";
+const rowActive = "bg-cyan-500/15 text-cyan-700 dark:text-cyan-200";
+const rowIdle =
+  "text-gray-700 dark:text-gray-300 hover:bg-gray-500/10 dark:hover:bg-gray-700/50";
+const GITHUB_URL = "https://github.com/MeshAddicts/meshinfo";
+
+/** Mesh name with the first letter of each word emphasized, rest muted. */
+function MeshName({ name, className }: { name?: string; className?: string }) {
+  if (!name) return null;
+  return (
+    <div className={className}>
+      {name.split(" ").map((word, i) => (
+        <div key={i} className="leading-tight dark:text-gray-50">
+          {word[0]}
+          <span className="text-gray-500 dark:text-gray-400 font-normal">
+            {word.slice(1)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Collapsed-rail brand: the deployer's logo (mesh.icon) if set, else the
+ *  mesh name's first letter. */
+function BrandMark({ icon, name }: { icon?: string; name?: string }) {
+  if (icon)
+    return (
+      <img
+        src={icon}
+        alt={name ? `${name} logo` : "Logo"}
+        className="w-7 h-7 object-contain"
+      />
+    );
+  return <>{name?.[0] ?? "≡"}</>;
+}
+
+/** Brand header content shared by the rail and the drawer so their vertical
+ *  metrics stay identical — no nav shift when moving between map and other pages. */
+function BrandBlock({
+  name,
+  description,
+  url,
+}: {
+  name?: string;
+  description?: string;
+  url?: string;
+}) {
+  return (
+    <>
+      <MeshName name={name} className="text-xl font-bold" />
+      {description && (
+        <p className="mt-2 text-xs text-gray-500 dark:text-gray-400 leading-relaxed line-clamp-3">
+          {description}
+        </p>
+      )}
+      {url && (
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-1 inline-block text-xs text-cyan-600 dark:text-cyan-400 hover:underline"
+        >
+          Website
+        </a>
+      )}
+    </>
+  );
+}
+
+/** Internal route row — NavLink drives the cyan active state + aria-current. */
+function NavRow({
+  item,
+  collapsed,
+  onNavigate,
+}: {
+  item: NavItemDef;
+  collapsed: boolean;
+  onNavigate?: () => void;
+}) {
+  return (
+    <NavLink
+      to={item.to}
+      onClick={onNavigate}
+      title={collapsed ? item.label : undefined}
+      aria-label={collapsed ? item.label : undefined}
+      className={({ isActive }) =>
+        `${rowBase} ${collapsed ? "justify-center p-2.5" : "gap-3 px-3 py-2.5"} ${
+          isActive ? rowActive : rowIdle
+        }`
+      }
+    >
+      {({ isActive }) => (
+        <>
+          {isActive && (
+            <span className="absolute left-0 top-1.5 bottom-1.5 w-0.75 rounded-full bg-cyan-500" />
+          )}
+          <span className="relative shrink-0">
+            <item.Icon
+              className={`w-5 h-5 ${
+                isActive
+                  ? "text-cyan-600 dark:text-cyan-300"
+                  : "text-gray-500 dark:text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-200"
+              }`}
+            />
+            {collapsed && item.badge && (
+              <span className="absolute -right-1 -top-1 w-2 h-2 rounded-full bg-amber-500" />
+            )}
+          </span>
+          {!collapsed && (
+            <span className="text-sm font-medium">{item.label}</span>
+          )}
+          {!collapsed && item.badge && (
+            <span className="ml-auto text-[10px] bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded-sm">
+              {item.badge}
+            </span>
+          )}
+        </>
+      )}
+    </NavLink>
+  );
+}
+
+/** External (off-site) link row — opens in a new tab. */
+function ExternalRow({
+  link,
+  collapsed,
+  onNavigate,
+}: {
+  link: ExternalLinkDef;
+  collapsed: boolean;
+  onNavigate?: () => void;
+}) {
+  return (
+    <a
+      href={link.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={onNavigate}
+      title={collapsed ? link.name : undefined}
+      aria-label={collapsed ? link.name : undefined}
+      className={`${rowBase} ${rowIdle} ${
+        collapsed ? "justify-center p-2.5" : "gap-3 px-3 py-2.5"
+      }`}
+    >
+      <ExternalLinkIcon className="w-5 h-5 shrink-0 text-gray-500 dark:text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-200" />
+      {!collapsed && (
+        <span className="text-sm font-medium truncate">{link.name}</span>
+      )}
+    </a>
+  );
+}
+
+function ThemeToggle({
+  isDark,
+  onToggle,
+}: {
+  isDark: boolean;
+  onToggle: (dark: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(!isDark)}
+      title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+      aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+      className="flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-500/10 dark:hover:bg-gray-700/50 transition-colors"
+    >
+      {isDark ? <SunIcon className="w-5 h-5" /> : <MoonIcon className="w-5 h-5" />}
+    </button>
+  );
+}
 
 export const Menu = ({
   isDark,
@@ -21,18 +202,68 @@ export const Menu = ({
   overlayMode?: boolean;
 }) => {
   const { data: config } = useGetConfigQuery();
+  const { pathname } = useLocation();
   const [showMenu, setShowMenu] = useState(false);
+  // The desktop rail rests slim; expanding flies it out OVER the content as a
+  // transient overlay (the page never reflows). Auto-retracts on navigate,
+  // outside-click, or Escape, so it never lingers covering the page.
+  const [expanded, setExpanded] = useState(false);
+  const collapsed = !expanded;
+  const asideRef = useRef<HTMLElement>(null);
+  const expandBtnRef = useRef<HTMLButtonElement>(null);
+  // True when a keyboard action retracts the rail, so focus returns to the
+  // expand button instead of falling to <body> as the flyout unmounts.
+  const restoreFocusRef = useRef(false);
+
+  const tools = config?.mesh?.tools?.length
+    ? (config.mesh.tools as ExternalLinkDef[])
+    : DEFAULT_TOOLS;
+  const addons = MESHTASTIC_ADDONS;
+  const closeDrawer = () => setShowMenu(false);
+  const collapseRail = () => setExpanded(false);
 
   useEffect(() => {
     if (!showMenu) return;
-
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") setShowMenu(false);
     };
-
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [showMenu]);
+
+  // Retract the expanded rail when the route changes (e.g. a nav click).
+  useEffect(() => {
+    setExpanded(false);
+  }, [pathname]);
+
+  // After a keyboard retract, return focus to the expand button.
+  useEffect(() => {
+    if (!expanded && restoreFocusRef.current) {
+      restoreFocusRef.current = false;
+      expandBtnRef.current?.focus();
+    }
+  }, [expanded]);
+
+  // While expanded, retract on outside-click or Escape (flyout behavior).
+  useEffect(() => {
+    if (!expanded) return;
+    const onDown = (e: MouseEvent) => {
+      if (asideRef.current && !asideRef.current.contains(e.target as Node))
+        setExpanded(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        restoreFocusRef.current = true;
+        setExpanded(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [expanded]);
 
   const handleDarkChange = (dark: boolean) => {
     onDarkChange(dark);
@@ -41,10 +272,11 @@ export const Menu = ({
 
   return (
     <>
-      {/* Hamburger Button — always visible in overlay mode, mobile-only otherwise */}
+      {/* Hamburger — small screens only (every page incl. map); top-right on
+          every page (overlays the header). At lg the persistent rail replaces it. */}
       <button
         type="button"
-        className={`${overlayMode ? "" : "lg:hidden"} fixed z-50 top-4 ${overlayMode ? "left-4" : "right-4 left-auto"} p-2 rounded-lg shadow-lg backdrop-blur-xs border transition-all duration-200 ${
+        className={`lg:hidden fixed z-50 top-4 right-4 p-2 rounded-lg shadow-lg backdrop-blur-xs border transition-all duration-200 ${
           showMenu
             ? "bg-gray-800 dark:bg-gray-200 border-gray-600 dark:border-gray-400"
             : overlayMode
@@ -57,452 +289,264 @@ export const Menu = ({
       >
         <div className="w-5 h-5 flex flex-col justify-center items-center">
           {showMenu ? (
-            <svg 
-              className="w-4 h-4 text-white dark:text-gray-800" 
-              fill="none" 
-              stroke="currentColor" 
+            <svg
+              className="w-4 h-4 text-white dark:text-gray-800"
+              fill="none"
+              stroke="currentColor"
               viewBox="0 0 24 24"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M6 18L18 6M6 6l12 12"
+              />
             </svg>
           ) : (
-            <svg 
-              className="w-4 h-4 text-gray-700 dark:text-gray-200" 
-              fill="none" 
-              stroke="currentColor" 
+            <svg
+              className="w-4 h-4 text-gray-700 dark:text-gray-200"
+              fill="none"
+              stroke="currentColor"
               viewBox="0 0 24 24"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 6h16M4 12h16M4 18h16"
+              />
             </svg>
           )}
         </div>
       </button>
 
-      {/* Backdrop — always available in overlay mode, mobile-only otherwise */}
+      {/* Backdrop for the mobile drawer (small screens only). */}
       <div
-        className={`${overlayMode ? "" : "lg:hidden"} fixed inset-0 bg-black/20 backdrop-blur-xs z-40 transition-opacity duration-200 ${
+        className={`lg:hidden fixed inset-0 bg-black/20 backdrop-blur-xs z-40 transition-opacity duration-200 ${
           showMenu ? "opacity-100" : "opacity-0 pointer-events-none"
         }`}
         onClick={() => setShowMenu(false)}
       />
 
-      {/* Navigation Panel */}
+      {/* Mobile drawer — small screens only, every page. At lg the persistent
+          rail (below) takes over on every page, including the map. */}
       <div
-        className={`w-full ${overlayMode ? "" : "lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-60 lg:flex-col"} ${
+        className={`lg:hidden fixed inset-y-0 left-0 z-50 w-80 max-w-[80vw] flex flex-col bg-white dark:bg-gray-900 shadow-xl border-r border-gray-200 dark:border-gray-700 ${
           showMenu ? "" : "hidden"
-        } dark:text-gray-100 z-0 ${overlayMode ? "" : "lg:z-50"}`}
+        }`}
       >
-        {/* Drawer (mobile always, desktop when overlayMode) */}
-        <div className={`${overlayMode ? "" : "lg:hidden"} fixed inset-y-0 left-0 z-50 w-80 max-w-[80vw] bg-white dark:bg-gray-900 shadow-xl border-r border-gray-200 dark:border-gray-700`}>
-          <div className="flex flex-col h-full overflow-hidden">
-            {/* Mobile Header */}
-            <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-              <div className="mb-2">
-                {config?.mesh?.name?.split(" ").map((word, index) => (
-                  <div
-                    className="text-xl font-bold dark:text-gray-50"
-                    key={`mobile-meshname-${index}`}
-                  >
-                    {word[0]}
-                    <span className="text-gray-500 dark:text-gray-400 font-normal">
-                      {word.slice(1)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-              {config?.mesh?.description && (
-                <p className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
-                  {config.mesh.description}
-                </p>
-              )}
-            </div>
-
-            {/* Mobile Navigation */}
-            <div className="flex-1 overflow-y-auto px-2 py-3 space-y-4">
-              <div className="space-y-0.5">
-                <h3 className="text-[10px] font-bold text-cyan-600 dark:text-cyan-500 uppercase tracking-widest px-3 pt-2 pb-1">Mesh</h3>
-                <Link to="/chat" onClick={() => setShowMenu(false)} className="block">
-                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Chat</span>
-                  </div>
-                </Link>
-                <Link to="/map" onClick={() => setShowMenu(false)} className="block">
-                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Map</span>
-                  </div>
-                </Link>
-                <Link to="/graph" onClick={() => setShowMenu(false)} className="block">
-                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Graph</span>
-                    <span className="text-xs bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300 px-1.5 py-0.5 rounded-sm">Experimental</span>
-                  </div>
-                </Link>
-                <Link to="/nodes" onClick={() => setShowMenu(false)} className="block">
-                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Nodes</span>
-                  </div>
-                </Link>
-                <Link to="/neighbors" onClick={() => setShowMenu(false)} className="block">
-                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Node Neighbors</span>
-                  </div>
-                </Link>
-                <Link to="/stats" onClick={() => setShowMenu(false)} className="block">
-                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Stats</span>
-                  </div>
-                </Link>
-                <Link to="/telemetry" onClick={() => setShowMenu(false)} className="block">
-                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Telemetry</span>
-                  </div>
-                </Link>
-                <Link to="/traceroutes" onClick={() => setShowMenu(false)} className="block">
-                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Traceroutes</span>
-                  </div>
-                </Link>
-                <Link to="/logs" onClick={() => setShowMenu(false)} className="block">
-                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Logs</span>
-                  </div>
-                </Link>
-              </div>
-
-              <div className="space-y-0.5">
-                <h3 className="text-[10px] font-bold text-cyan-600 dark:text-cyan-500 uppercase tracking-widest px-3 pt-2 pb-1">Tools</h3>
-                {(config?.mesh?.tools ?? defaultTools).map((tool, index) => (
-                  <a
-                    key={`mobile-tools-${index}`}
-                    href={tool.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={() => setShowMenu(false)}
-                    className="block"
-                  >
-                    <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
-                      <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{tool.name}</span>
-                    </div>
-                  </a>
-                ))}
-              </div>
-
-              <div className="space-y-0.5">
-                <h3 className="text-[10px] font-bold text-cyan-600 dark:text-cyan-500 uppercase tracking-widest px-3 pt-2 pb-1">Meshtastic Addons</h3>
-                <a
-                  href="https://github.com/armooo/meshtastic_dopewars"
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={() => setShowMenu(false)}
-                  className="block"
-                >
-                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">DopeWars</span>
-                  </div>
-                </a>
-                <a
-                  href="https://github.com/TheCommsChannel/TC2-BBS-mesh"
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={() => setShowMenu(false)}
-                  className="block"
-                >
-                  <div className="flex items-center gap-3 p-3 rounded-lg transition-colors hover:bg-gray-100 dark:hover:bg-gray-700/50">
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">TheCommsChannel BBS</span>
-                  </div>
-                </a>
-              </div>
-            </div>
-
-            {/* Mobile Footer */}
-            <div className="p-4 border-t border-gray-200 dark:border-gray-700">
-              <button
-                onClick={() => handleDarkChange(!isDark)}
-                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
-              >
-                {isDark ? "🌞" : "🌙"}
-              </button>
-            </div>
-          </div>
+        <div className="px-4 pt-4 pb-3 border-b border-gray-200 dark:border-gray-700">
+          <BrandBlock
+            name={config?.mesh?.name}
+            description={config?.mesh?.description}
+            url={config?.mesh?.url}
+          />
         </div>
 
-        {/* Desktop Sidebar — hidden in overlay mode */}
-        <div className={`${overlayMode ? "hidden" : "hidden lg:flex lg:flex-col"} px-6 pb-4 overflow-y-auto bg-gray-300 dark:bg-gray-800 border-r-2 grow gap-y-5 border-r-cyan-600`}>
-          <div className="flex items-center h-24 mt-4 shrink-0">
-            <div className="text-2xl">
-              {config?.mesh?.name?.split(" ").map((word, index) => (
-                <div
-                  className="p-0 m-0 dark:text-gray-50"
-                  key={`meshname-${index}`}
-                >
-                  {word[0]}
-                  <span className="text-gray-500 dark:text-gray-400">
-                    {word.slice(1)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div>{config?.mesh?.description}</div>
-
-          <div>
-            <a
-              href={config?.mesh?.url}
-              className="text-xs text-gray-900 dark:text-gray-50"
-            >
-              Website
-            </a>
-          </div>
-
-          <nav className="flex flex-col flex-1">
-            <h3 className="font-bold">Mesh</h3>
-            <div className="mb-1">
-              <Link
-                to="/chat"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                <img
-                  src={`${import.meta.env.BASE_URL}images/icons/chat.svg`}
-                  width="20"
-                  height="20"
-                  className="inline-block mr-2 dark:invert"
-                  alt="chat icon"
-                  style={{ verticalAlign: "middle" }}
-                />
-                Chat
-              </Link>
-            </div>
-            <div className="mb-1">
-              <Link
-                to="/map"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                <img
-                  src={`${import.meta.env.BASE_URL}images/icons/map.svg`}
-                  width="20"
-                  height="20"
-                  className="inline-block mr-2 dark:invert"
-                  alt="map icon"
-                  style={{ verticalAlign: "middle" }}
-                />
-                Map
-              </Link>
-            </div>
-            <div className="mb-1">
-              <Link
-                to="/graph"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                <img
-                  src={`${import.meta.env.BASE_URL}images/icons/graph.svg`}
-                  width="20"
-                  height="20"
-                  className="inline-block mr-2 dark:invert"
-                  alt="graph icon"
-                  style={{ verticalAlign: "middle" }}
-                />
-                Graph
-                <span className="ml-1 text-xs text-amber-600 dark:text-amber-400">
-                  Experimental
-                </span>
-              </Link>
-            </div>
-            <div className="mb-1">
-              <Link
-                to="/nodes"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                <img
-                  src={`${import.meta.env.BASE_URL}images/icons/node.svg`}
-                  width="20"
-                  height="20"
-                  className="inline-block mr-2 dark:invert"
-                  alt="node icon"
-                  style={{ verticalAlign: "middle" }}
-                />
-                Nodes
-              </Link>
-            </div>
-            <div className="mb-1">
-              <Link
-                to="/neighbors"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                <img
-                  src={`${import.meta.env.BASE_URL}images/icons/neighbors.svg`}
-                  width="20"
-                  height="20"
-                  className="inline-block mr-2 dark:invert"
-                  alt="neighbors icon"
-                  style={{ verticalAlign: "middle" }}
-                />
-                Node Neighbors
-              </Link>
-            </div>
-            <div className="mb-1">
-              <Link
-                to="/stats"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                <img
-                  src={`${import.meta.env.BASE_URL}images/icons/stats.svg`}
-                  width="20"
-                  height="20"
-                  className="inline-block mr-2 dark:invert"
-                  alt="stats icon"
-                  style={{ verticalAlign: "middle" }}
-                />
-                Stats
-              </Link>
-            </div>
-            <div className="mb-1">
-              <Link
-                to="/telemetry"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                <img
-                  src={`${import.meta.env.BASE_URL}images/icons/telemetry.svg`}
-                  width="20"
-                  height="20"
-                  className="inline-block mr-2 dark:invert"
-                  alt="telemetry icon"
-                  style={{ verticalAlign: "middle" }}
-                />
-                Telemetry
-              </Link>
-            </div>
-            <div className="mb-1">
-              <Link
-                to="/traceroutes"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                <img
-                  src={`${import.meta.env.BASE_URL}images/icons/route2.svg`}
-                  width="20"
-                  height="20"
-                  className="inline-block mr-2 dark:invert"
-                  alt="traceroutes icon"
-                  style={{ verticalAlign: "middle" }}
-                />
-                Traceroutes
-              </Link>
-            </div>
-            <div className="mb-1">
-              <Link
-                to="/logs"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                <img
-                  src={`${import.meta.env.BASE_URL}images/icons/logs.svg`}
-                  width="20"
-                  height="20"
-                  className="inline-block mr-2 dark:invert"
-                  alt="logs icon"
-                  style={{ verticalAlign: "middle" }}
-                />
-                Logs
-              </Link>
-            </div>
-          </nav>
-
-          <nav className="flex flex-col flex-1">
-            <h3 className="font-bold">Tools</h3>
-            {(config?.mesh?.tools ?? defaultTools).map((tool, index) => (
-              <div key={`tools-${index}`} className="mb-1">
-                <a
-                  href={tool.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-                >
-                  {tool.name}
-                </a>
-              </div>
+        <nav
+          className="flex-1 overflow-y-auto px-2 py-3 space-y-4"
+          aria-label="Primary"
+        >
+          <div className="space-y-0.5">
+            <h3 className={`${sectionHeader} px-3 pt-1 pb-1`}>Mesh</h3>
+            {MESH_NAV.map((item) => (
+              <NavRow
+                key={item.to}
+                item={item}
+                collapsed={false}
+                onNavigate={closeDrawer}
+              />
             ))}
-          </nav>
-
-          <nav className="flex flex-col flex-1">
-            <h3 className="font-bold">Meshtastic Addons</h3>
-            <div className="mb-1">
-              <a
-                href="https://github.com/armooo/meshtastic_dopewars"
-                target="_blank"
-                rel="noreferrer"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                DopeWars
-              </a>
-            </div>
-            <div className="mb-1">
-              <a
-                href="https://github.com/TheCommsChannel/TC2-BBS-mesh"
-                target="_blank"
-                rel="noreferrer"
-                className="dark:text-indigo-400 dark:visited:text-indigo-400 dark:hover:text-indigo-500"
-              >
-                TheCommsChannel BBS
-              </a>
-            </div>
-          </nav>
-
-          <div className="grow" />
-
-          <div className="flex flex-col">
-            <h5 className="mb-2">
-              Powered by MeshInfo{" "}
-              <span className="text-xs text-gray-500">
-                {config?.server?.version_info?.refName}
-              </span>
-            </h5>
-            <div className="flex">
-              <a
-                href="https://github.com/MeshAddicts/meshinfo"
-                className="text-xs text-gray-500"
-              >
-                <img
-                  src="https://img.shields.io/github/stars/MeshAddicts/meshinfo?style=social"
-                  alt="GitHub Stars"
-                />
-              </a>
-              {isDark ? (
-                <div
-                  role="button"
-                  onClick={() => handleDarkChange(false)}
-                  onKeyDown={() => handleDarkChange(false)}
-                  tabIndex={0}
-                >
-                  <img
-                    src={`${import.meta.env.BASE_URL}images/icons/light-mode.svg`}
-                    width="20"
-                    height="20"
-                    className="inline-block ml-2 dark:invert cursor-pointer"
-                    alt="light mode icon"
-                    title="Switch to Light Mode"
-                  />
-                </div>
-              ) : (
-                <div
-                  role="button"
-                  onClick={() => handleDarkChange(true)}
-                  onKeyDown={() => handleDarkChange(true)}
-                  tabIndex={0}
-                >
-                  <img
-                    src={`${import.meta.env.BASE_URL}images/icons/dark-mode.svg`}
-                    width="20"
-                    height="20"
-                    className="inline-block ml-2 dark:invert cursor-pointer"
-                    alt="light mode icon"
-                    title="Switch to Dark Mode"
-                  />
-                </div>
-              )}
-            </div>
           </div>
+          <div className="space-y-0.5">
+            <h3 className={`${sectionHeader} px-3 pt-1 pb-1`}>Tools</h3>
+            {tools.map((t, i) => (
+              <ExternalRow
+                key={`tool-${i}`}
+                link={t}
+                collapsed={false}
+                onNavigate={closeDrawer}
+              />
+            ))}
+          </div>
+          <div className="space-y-0.5">
+            <h3 className={`${sectionHeader} px-3 pt-1 pb-1`}>
+              Meshtastic Addons
+            </h3>
+            {addons.map((t, i) => (
+              <ExternalRow
+                key={`addon-${i}`}
+                link={t}
+                collapsed={false}
+                onNavigate={closeDrawer}
+              />
+            ))}
+          </div>
+        </nav>
+
+        <div className="p-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
+          <span className="text-xs text-gray-500 dark:text-gray-400">
+            MeshInfo{" "}
+            <span className="text-gray-400 dark:text-gray-500">
+              {config?.server?.version_info?.refName}
+            </span>
+          </span>
+          <ThemeToggle isDark={isDark} onToggle={handleDarkChange} />
         </div>
       </div>
+
+      {/* Desktop rail (lg+) — rests slim in a fixed gutter on every page; when
+          expanded it grows to w-60 OVER the content (overlay, z above the map
+          panels) without moving the page. z-[1200] clears the map's z-1100 pills. */}
+      <aside
+        ref={asideRef}
+        id="nav-rail"
+        className={`hidden lg:flex lg:fixed lg:inset-y-0 lg:left-0 lg:z-1200 lg:flex-col overflow-hidden bg-gray-50 dark:bg-gray-900/80 dark:backdrop-blur-xl border-r border-gray-200 dark:border-white/10 transition-[width] duration-200 ${
+          collapsed ? "lg:w-18" : "lg:w-60 lg:shadow-2xl"
+        }`}
+      >
+          {/* Brand / collapse toggle */}
+          <div className="shrink-0 border-b border-gray-200 dark:border-white/10">
+            {collapsed ? (
+              <button
+                ref={expandBtnRef}
+                type="button"
+                onClick={() => setExpanded(true)}
+                title="Expand sidebar"
+                aria-label="Expand sidebar"
+                aria-expanded={expanded}
+                aria-controls="nav-rail"
+                className="flex items-center justify-center w-full h-16 text-lg font-bold text-gray-800 dark:text-gray-100 hover:bg-gray-500/10 dark:hover:bg-gray-700/50 transition-colors"
+              >
+                <BrandMark
+                  icon={config?.mesh?.icon}
+                  name={config?.mesh?.name}
+                />
+              </button>
+            ) : (
+              <div className="relative px-4 pt-4 pb-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    restoreFocusRef.current = true;
+                    setExpanded(false);
+                  }}
+                  title="Collapse sidebar"
+                  aria-label="Collapse sidebar"
+                  aria-expanded={expanded}
+                  aria-controls="nav-rail"
+                  className="absolute top-3 right-3 p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-100 hover:bg-gray-500/10 dark:hover:bg-gray-700/50 transition-colors"
+                >
+                  <ChevronDoubleLeftIcon className="w-4 h-4" />
+                </button>
+                <BrandBlock
+                  name={config?.mesh?.name}
+                  description={config?.mesh?.description}
+                  url={config?.mesh?.url}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Nav */}
+          <nav
+            className="flex-1 overflow-y-auto no-scrollbar px-2 py-3"
+            aria-label="Primary"
+          >
+            {collapsed ? (
+              <div className="space-y-1">
+                {MESH_NAV.map((item) => (
+                  <NavRow
+                    key={item.to}
+                    item={item}
+                    collapsed
+                    onNavigate={collapseRail}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="space-y-0.5">
+                  <h3 className={`${sectionHeader} px-3 pt-1 pb-1`}>Mesh</h3>
+                  {MESH_NAV.map((item) => (
+                    <NavRow
+                      key={item.to}
+                      item={item}
+                      collapsed={false}
+                      onNavigate={collapseRail}
+                    />
+                  ))}
+                </div>
+                <div className="space-y-0.5">
+                  <h3 className={`${sectionHeader} px-3 pt-1 pb-1`}>Tools</h3>
+                  {tools.map((t, i) => (
+                    <ExternalRow
+                      key={`tool-${i}`}
+                      link={t}
+                      collapsed={false}
+                      onNavigate={collapseRail}
+                    />
+                  ))}
+                </div>
+                <div className="space-y-0.5">
+                  <h3 className={`${sectionHeader} px-3 pt-1 pb-1`}>
+                    Meshtastic Addons
+                  </h3>
+                  {addons.map((t, i) => (
+                    <ExternalRow
+                      key={`addon-${i}`}
+                      link={t}
+                      collapsed={false}
+                      onNavigate={collapseRail}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </nav>
+
+          {/* Footer — version, GitHub stars, theme toggle */}
+          <div className="shrink-0 border-t border-gray-200 dark:border-white/10 p-3">
+            {collapsed ? (
+              <div className="flex flex-col items-center gap-1">
+                <ThemeToggle isDark={isDark} onToggle={handleDarkChange} />
+                <a
+                  href={GITHUB_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="MeshInfo on GitHub"
+                  aria-label="MeshInfo on GitHub"
+                  className="flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100 hover:bg-gray-500/10 dark:hover:bg-gray-700/50 transition-colors"
+                >
+                  <GitHubIcon className="w-5 h-5" />
+                </a>
+              </div>
+            ) : (
+              <div className="flex items-end justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    Powered by MeshInfo{" "}
+                    <span className="text-gray-400 dark:text-gray-500">
+                      {config?.server?.version_info?.refName}
+                    </span>
+                  </div>
+                  <a
+                    href={GITHUB_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1.5 inline-block"
+                  >
+                    <img
+                      src="https://img.shields.io/github/stars/MeshAddicts/meshinfo?style=social"
+                      alt="GitHub Stars"
+                    />
+                  </a>
+                </div>
+                <ThemeToggle isDark={isDark} onToggle={handleDarkChange} />
+              </div>
+            )}
+          </div>
+        </aside>
     </>
   );
 };

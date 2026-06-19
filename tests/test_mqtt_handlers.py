@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from broadcaster import Broadcaster
 from mqtt import MQTT, normalize_node_id  # noqa: F401  (re-exported via from utils)
 
 
@@ -23,7 +24,14 @@ class FakePgStorage:
         self.chat_writes: list = []
         self.telemetry_writes: list = []
         self.traceroute_writes: list = []
+        self.mqtt_writes: list = []
+        self._mqtt_row_seq = 0
         self.pool = None  # disables _write_node_telemetry_current side-branch
+
+    async def write_mqtt_message(self, mqtt_msg) -> int:
+        self.mqtt_writes.append(dict(mqtt_msg))
+        self._mqtt_row_seq += 1
+        return self._mqtt_row_seq
 
     async def get_node_cached(self, node_id: str):
         return self._nodes.get(node_id)
@@ -57,6 +65,9 @@ class FakeDataStore:
         self.config = config
         self.pg_storage = FakePgStorage(nodes=nodes)
         self.discord_event_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
+        # Real hub — it's dependency-free, so handlers exercise the actual
+        # publish path and tests can drain a subscriber queue.
+        self.broadcaster = Broadcaster()
 
     async def update_node(self, node_id: str, node) -> None:
         await self.pg_storage.write_node(node_id, node)
@@ -182,6 +193,23 @@ class TestHandleText:
         assert chat["text"] == "hello mesh"
         assert chat["to"] == "ffffffff"
 
+    def test_publishes_chat_sse_event(self):
+        mqtt, data = make_mqtt()
+        q = data.broadcaster.subscribe()
+        run(mqtt.handle_text(self._ok_msg()))
+        event_type, payload = q.get_nowait()
+        assert event_type == "chat"
+        assert payload["text"] == "hello mesh"
+        assert payload["id"] == 1234
+        assert payload["from"] == "67ea9400"
+        assert payload["channel"] == "0"  # defaulted when absent
+
+    def test_no_sse_event_when_text_invalid(self):
+        mqtt, data = make_mqtt()
+        q = data.broadcaster.subscribe()
+        run(mqtt.handle_text(self._ok_msg(payload={})))
+        assert q.empty()
+
     def test_skips_when_from_missing(self):
         mqtt, data = make_mqtt()
         m = self._ok_msg()
@@ -224,6 +252,102 @@ class TestHandleText:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# handle_log — raw packet archive write + live packet SSE event
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestHandleLog:
+    def _msg(self, **overrides):
+        base = {
+            "topic": "msh/US/2/e/LongFast/!67ea9400",
+            "from": 0x67EA9400,
+            "type": "position",
+            "id": 99,
+            "timestamp": 1700000000,
+            "payload": {"latitude_i": 1},
+            "decoded": {"raw": "x"},
+            "encrypted": "deadbeef",
+        }
+        base.update(overrides)
+        return base
+
+    def test_writes_archive_without_decoded_encrypted(self):
+        mqtt, data = make_mqtt()
+        run(mqtt.handle_log(self._msg()))
+        assert len(data.pg_storage.mqtt_writes) == 1
+        stored = data.pg_storage.mqtt_writes[0]
+        assert "decoded" not in stored and "encrypted" not in stored
+        assert stored["topic"].endswith("!67ea9400")
+
+    def test_publishes_packet_event_with_row_id(self):
+        mqtt, data = make_mqtt()
+        q = data.broadcaster.subscribe()
+        run(mqtt.handle_log(self._msg()))
+        event_type, payload = q.get_nowait()
+        assert event_type == "packet"
+        assert payload["mqtt_row_id"] == 1  # FakePgStorage returns a 1-based seq
+        assert payload["type"] == "position"
+        # The live payload mirrors the stored shape (no decoded/encrypted).
+        assert "decoded" not in payload and "encrypted" not in payload
+
+    def test_no_packet_event_when_write_fails(self):
+        mqtt, data = make_mqtt()
+        q = data.broadcaster.subscribe()
+        # Simulate storage unavailable: write returns None -> no row id -> no emit.
+        async def _no_id(_msg):
+            return None
+        data.pg_storage.write_mqtt_message = _no_id
+        run(mqtt.handle_log(self._msg()))
+        assert q.empty()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# handle_telemetry — merges payload into the node + emits a live telemetry event
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestHandleTelemetry:
+    def _msg(self, **overrides):
+        base = {
+            "from": 0x67EA9400,
+            "id": 555,
+            "channel": 0,
+            "timestamp": 1700000000,
+            "telemetry_type": "device_metrics",
+            "payload": {"battery_level": 90, "voltage": 4.1},
+            "rssi": -100,
+            "snr": 5.0,
+        }
+        base.update(overrides)
+        return base
+
+    def test_merges_payload_into_node_telemetry(self):
+        mqtt, data = make_mqtt()
+        run(mqtt.handle_telemetry(self._msg()))
+        node = data.pg_storage._nodes["67ea9400"]
+        assert node["telemetry"]["battery_level"] == 90
+        assert len(data.pg_storage.telemetry_writes) == 1
+
+    def test_publishes_telemetry_event(self):
+        mqtt, data = make_mqtt()
+        q = data.broadcaster.subscribe()
+        run(mqtt.handle_telemetry(self._msg()))
+        event_type, payload = q.get_nowait()
+        assert event_type == "telemetry"
+        assert payload["from"] == "67ea9400"
+        assert payload["telemetry_type"] == "device_metrics"
+        assert payload["payload"]["battery_level"] == 90
+
+    def test_no_telemetry_event_without_payload(self):
+        mqtt, data = make_mqtt()
+        q = data.broadcaster.subscribe()
+        m = self._msg()
+        del m["payload"]
+        run(mqtt.handle_telemetry(m))
+        assert q.empty()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # handle_traceroute — route normalization handles both int + str entries
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -242,6 +366,23 @@ class TestHandleTraceroute:
         assert len(data.pg_storage.traceroute_writes) == 1
         _, written = data.pg_storage.traceroute_writes[0]
         assert written["route_ids"] == ["67ea9400", "abcd1234"]
+
+    def test_publishes_traceroute_event(self):
+        mqtt, data = make_mqtt(nodes={
+            "67ea9400": {"id": "67ea9400", "longname": "A"},
+            "abcd1234": {"id": "abcd1234", "longname": "B"},
+        })
+        q = data.broadcaster.subscribe()
+        run(mqtt.handle_traceroute({
+            "from": 0x67EA9400,
+            "to": 0xABCD1234,
+            "payload": {"route": [0x67EA9400]},
+        }))
+        event_type, payload = q.get_nowait()
+        assert event_type == "traceroute"
+        assert payload["from"] == "67ea9400"
+        assert payload["to"] == "abcd1234"
+        assert payload["route_ids"] == ["67ea9400"]
 
     def test_json_longname_route_resolved(self):
         mqtt, data = make_mqtt(nodes={

@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 
+import { useLiveEvent } from "../../hooks/useLiveEvent";
+import { useGetNodePacketsQuery } from "../../slices/apiSlice";
 import { HardwareModel, type NodeRole,roleTitles } from "../../types";
 import { getElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLinks";
+import { normalizeNodeId8 } from "../../utils/normalizeNodeId8";
 import { normNodeId } from "./linkFeatures";
+import { Sparkline } from "./Sparkline";
 import { TelemetrySection } from "./TelemetrySection";
 import type { IMapNode, NodeDetailsData } from "./types";
 import { useBottomSheetGesture } from "./useBottomSheet";
@@ -83,7 +87,7 @@ function NeighborTable({
   onNodeSelect,
   onHoverLink,
 }: {
-  rows: { id: string; snr: number }[];
+  rows: { id: string; snr: number | null }[];
   nodePosition: [number, number];
   liveNodes: Record<string, IMapNode>;
   onNodeSelect: (nodeId: string) => void;
@@ -101,7 +105,7 @@ function NeighborTable({
           return (
             <div key={row.id} className="flex items-center justify-between text-xs px-2 py-1 rounded bg-white/5">
               <span className="text-gray-500">UNK</span>
-              <span className="text-gray-400">{row.snr} dB</span>
+              <span className="text-gray-400">{row.snr == null ? "—" : `${row.snr} dB`}</span>
             </div>
           );
         }
@@ -130,7 +134,7 @@ function NeighborTable({
               onNodeSelect={onNodeSelect}
             />
             <div className="flex items-center gap-3 text-gray-400">
-              <span>{row.snr} dB</span>
+              <span>{row.snr == null ? "—" : `${row.snr} dB`}</span>
               {distance != null && <span className="text-gray-500">{distance.toFixed(1)} km</span>}
             </div>
           </div>
@@ -152,12 +156,15 @@ function CollapsibleSection({
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const contentId = `details-section-${title.toLowerCase().replace(/\s+/g, "-")}`;
 
   return (
     <div className="border-t border-white/10">
       <button
         type="button"
         onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        aria-controls={contentId}
         className="w-full flex items-center justify-between py-2.5 px-1 text-xs font-medium text-gray-300 hover:text-gray-100 transition-colors"
       >
         <span className="flex items-center gap-2">
@@ -173,11 +180,83 @@ function CollapsibleSection({
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
+          aria-hidden="true"
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
-      {open && <div className="pb-2.5">{children}</div>}
+      {open && <div id={contentId} className="pb-2.5">{children}</div>}
+    </div>
+  );
+}
+
+const ACTIVITY_WINDOW_MS = 15 * 60 * 1000;
+const ACTIVITY_BINS = 30;
+
+/** Epoch ms from a packet timestamp (number in s or ms, or an ISO string). */
+function packetTimeMs(ts: unknown): number | null {
+  if (typeof ts === "number" && Number.isFinite(ts)) return ts > 1e12 ? ts : ts * 1000;
+  if (typeof ts === "string") {
+    const ms = Date.parse(ts);
+    return Number.isFinite(ms) ? ms : null;
+  }
+  return null;
+}
+
+/** Sparkline of packets involving this node over the last 15 min — seeded from
+ *  recent history, then kept current from the SSE packet stream. */
+function RecentActivitySparkline({ nodeId }: { nodeId: string }) {
+  const { data } = useGetNodePacketsQuery({ nodeId, limit: 200 });
+  const liveRef = useRef<number[]>([]);
+  const [bins, setBins] = useState<number[]>(() => new Array(ACTIVITY_BINS).fill(0));
+
+  useEffect(() => {
+    liveRef.current = [];
+  }, [nodeId]);
+
+  useLiveEvent<{ from?: number | string; to?: number | string; timestamp?: number | string }>(
+    "packet",
+    (p) => {
+      if (normalizeNodeId8(p.from) === nodeId || normalizeNodeId8(p.to) === nodeId) {
+        liveRef.current.push(packetTimeMs(p.timestamp) ?? Date.now());
+      }
+    },
+  );
+
+  useEffect(() => {
+    const recompute = () => {
+      const cutoff = Date.now() - ACTIVITY_WINDOW_MS;
+      liveRef.current = liveRef.current.filter((t) => t >= cutoff);
+      const stamps = [...liveRef.current];
+      for (const pkt of data?.packets ?? []) {
+        if (normalizeNodeId8(pkt.from) !== nodeId && normalizeNodeId8(pkt.to) !== nodeId) continue;
+        const t = packetTimeMs(pkt.timestamp);
+        if (t != null && t >= cutoff) stamps.push(t);
+      }
+      const b = new Array(ACTIVITY_BINS).fill(0);
+      for (const t of stamps) {
+        b[Math.min(ACTIVITY_BINS - 1, Math.floor(((t - cutoff) / ACTIVITY_WINDOW_MS) * ACTIVITY_BINS))] += 1;
+      }
+      setBins(b);
+    };
+    recompute();
+    const id = setInterval(recompute, 1500);
+    return () => clearInterval(id);
+  }, [data, nodeId]);
+
+  const total = bins.reduce((a, b) => a + b, 0);
+
+  return (
+    <div className="px-4 pb-3">
+      <div className="text-gray-500 text-[10px] uppercase tracking-wider">Recent activity (15 min)</div>
+      {total === 0 ? (
+        <div className="text-gray-500 text-[11px]">No packets in the last 15 min</div>
+      ) : (
+        <div className="flex items-center gap-2">
+          <Sparkline values={bins} width={150} height={26} color="#34d399" />
+          <span className="text-gray-400 text-[11px] tabular-nums">{total} pkt</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -194,6 +273,24 @@ export function MapDetailsPanel({
   onHoverLink?: (otherNodeId: string | null) => void;
 }) {
   const { sheetRef, clearStyles, onTouchStart, onTouchMove, onTouchEnd } = useBottomSheetGesture(onClose);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  // Move focus into the panel when it opens (or switches to a new node), but
+  // not on the 5 s poll re-render of the same node.
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const focusedNodeRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!data) { focusedNodeRef.current = null; return; }
+    if (focusedNodeRef.current !== data.node.id) {
+      focusedNodeRef.current = data.node.id;
+      requestAnimationFrame(() => headingRef.current?.focus());
+    }
+  }, [data]);
 
   // Reset gesture when the selected node changes
   const prevNodeId = useRef<string | null>(null);
@@ -240,12 +337,14 @@ export function MapDetailsPanel({
   const heardByRows = data.heardBy.map((nid) => {
     const nnode = liveNodes[nid];
     const neighbor = nnode?.neighbors?.find((n) => n.id === node.id);
-    return { id: nid, snr: neighbor?.snr ?? 0 };
+    return { id: nid, snr: neighbor?.snr ?? null };
   });
 
   return (
     <div
       ref={sheetRef}
+      role="dialog"
+      aria-label={node.longname || node.shortname || node.id}
       className="fixed z-1050 flex flex-col
         bg-gray-900/80 backdrop-blur-xl shadow-2xl
         bottom-0 left-0 right-0 max-h-[70vh] rounded-t-2xl border-t border-white/10
@@ -273,7 +372,7 @@ export function MapDetailsPanel({
       >
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
-            <h2 className="text-base font-semibold text-gray-100 truncate leading-tight">
+            <h2 ref={headingRef} tabIndex={-1} className="text-base font-semibold text-gray-100 truncate leading-tight focus:outline-none">
               {node.longname ?? ""}
             </h2>
             <div className="text-xs text-gray-500 mt-0.5 truncate">
@@ -303,12 +402,14 @@ export function MapDetailsPanel({
         </div>
 
         <div className="flex items-center gap-2 mt-2">
-          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
+          <span
+            title={node.online ? "Seen within the last 6 hours" : "Last seen over 6 hours ago"}
+            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${
             node.online
               ? "bg-emerald-500/20 text-emerald-400"
               : "bg-gray-500/20 text-gray-400"
           }`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${node.online ? "bg-emerald-400" : "bg-gray-500"}`} />
+            <span className={`w-1.5 h-1.5 rounded-full ${node.online ? "bg-emerald-400" : "bg-gray-500"}`} aria-hidden="true" />
             {node.online ? "Online" : "Offline"}
           </span>
           {node.role != null && roleTitles[node.role as NodeRole] && (
@@ -351,7 +452,9 @@ export function MapDetailsPanel({
         <div>
           <div className="text-gray-500 text-[10px] uppercase tracking-wider">Position</div>
           <div className="text-gray-400 font-mono text-[11px]">
-            {node.position[1].toFixed(5)}, {node.position[0].toFixed(5)}
+            {Math.abs(node.position[0]) < 1e-6 && Math.abs(node.position[1]) < 1e-6
+              ? "No GPS fix"
+              : `${node.position[1].toFixed(5)}, ${node.position[0].toFixed(5)}`}
           </div>
         </div>
         {hardwareLabel && (
@@ -384,6 +487,8 @@ export function MapDetailsPanel({
           </div>
         )}
       </div>
+
+      <RecentActivitySparkline nodeId={node.id} />
 
       <div className="flex-1 overflow-y-auto min-h-0 px-4">
         <CollapsibleSection
@@ -456,6 +561,9 @@ export function MapDetailsPanel({
         </CollapsibleSection>
 
         <CollapsibleSection title="Elsewhere">
+          {elsewhereLinks.length === 0 ? (
+            <span className="text-gray-500 text-xs ml-2">None</span>
+          ) : (
           <div className="space-y-1 px-2">
             {elsewhereLinks.map((link) => {
               const url = resolveElsewhereUrl(link.url ?? "", node.id, nodeIdInt);
@@ -475,6 +583,7 @@ export function MapDetailsPanel({
               );
             })}
           </div>
+          )}
         </CollapsibleSection>
       </div>
     </div>

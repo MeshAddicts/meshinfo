@@ -102,36 +102,46 @@ export function MapToolsDrawer({
   const pillIdle = "bg-gray-900/80 border-white/10 text-gray-300 hover:bg-gray-900/90 hover:border-white/20 hover:text-gray-100";
 
   return (
-    <div ref={ref} className="fixed top-3 left-44 sm:left-81 z-30">
+    <div
+      ref={ref}
+      className="fixed top-3 left-[calc(var(--map-pad)+11rem)] sm:left-[calc(var(--map-pad)+20.25rem)] z-30 transition-[left] duration-200"
+    >
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={currentTool ? `Tools: ${currentTool.label}` : "Tools"}
         className={`${pillBase} ${activeTool ? pillActive : pillIdle} flex items-center gap-1.5`}
       >
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
         </svg>
         <span className="hidden sm:inline">
           {currentTool ? currentTool.label : "Tools"}
         </span>
-        <svg className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
 
       {open && (
-        <div className="absolute top-full left-0 mt-1 min-w-60 rounded-xl overflow-hidden
+        <div
+          role="menu"
+          aria-label="Map tools"
+          className="absolute top-full left-0 mt-1 min-w-60 rounded-xl overflow-hidden
           bg-gray-900/95 backdrop-blur-xl border border-white/10 shadow-2xl">
           {activeTool && (
             <button
               type="button"
+              role="menuitem"
               onClick={() => {
                 onSelect(null);
                 setOpen(false);
               }}
               className="w-full px-3 py-2 text-left text-xs text-red-400 hover:bg-white/5 hover:text-red-300 transition-colors border-b border-white/5 flex items-center gap-2"
             >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
               Exit current tool
@@ -145,7 +155,8 @@ export function MapToolsDrawer({
               <button
                 key={tool.id}
                 type="button"
-                disabled={hardDisabled}
+                role="menuitem"
+                aria-disabled={hardDisabled}
                 onClick={() => {
                   if (hardDisabled) return;
                   if (terrainGated) {

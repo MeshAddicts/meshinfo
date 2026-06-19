@@ -108,7 +108,7 @@ export function runScan(input: ScanInput): ScanSummary {
     freqGHz = 0.915,
     txDbm = 22,
     txAntennaDbi = 3,
-    rxAntennaDbi = txAntennaDbi ?? 3,
+    rxAntennaDbi = txAntennaDbi,
     rxSensitivityDbm = -130,
     fadeMarginDb = 15,
     cableLossDb = 0.5,

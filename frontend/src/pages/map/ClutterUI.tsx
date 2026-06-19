@@ -3,9 +3,16 @@ import { useState } from "react";
 
 import { endpointClutterDb, NLCD_CLASSES } from "./clutterClasses";
 import { AGGRESSION_STOPS } from "./coverageAnalysis";
+import { Segmented } from "./Segmented";
 
 const F_915 = 915;
 const LEGEND_REF_AGL_M = 2;
+
+// CONUS-relevant rows only (AK-only classes + lichen/moss skipped); static.
+const LEGEND_ROWS = Object.values(NLCD_CLASSES)
+  .sort((a, b) => a.id - b.id)
+  .filter((c) => ![51, 72, 73, 74].includes(c.id))
+  .map((cls) => ({ cls, ahDb: endpointClutterDb(cls, LEGEND_REF_AGL_M, F_915) }));
 
 export function AggressionSlider({
   aggressionIdx,
@@ -18,32 +25,18 @@ export function AggressionSlider({
   enabled?: boolean;
 }) {
   return (
-    <div
-      className={`flex gap-1 rounded-lg border border-white/10 bg-white/5 p-0.5 text-[10px] font-medium ${
-        enabled ? "" : "opacity-40 pointer-events-none"
-      }`}
-    >
-      {AGGRESSION_STOPS.map((stop, i) => {
-        const active = aggressionIdx === i;
-        return (
-          <button
-            key={stop.id}
-            type="button"
-            disabled={!enabled}
-            onClick={() => onChange(i)}
-            title={stop.description}
-            className={`flex-1 rounded-md px-1.5 py-1 transition-colors ${
-              active
-                ? "bg-cyan-500/20 text-cyan-200"
-                : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
-            }`}
-          >
-            <div>{stop.short}</div>
-            <div className="text-[9px] text-gray-500 font-normal">×{stop.value.toFixed(1)}</div>
-          </button>
-        );
-      })}
-    </div>
+    <Segmented
+      ariaLabel="Clutter prediction aggression"
+      value={aggressionIdx}
+      onChange={onChange}
+      disabled={!enabled}
+      options={AGGRESSION_STOPS.map((stop, i) => ({
+        value: i,
+        label: stop.short,
+        sub: `×${stop.value.toFixed(1)}`,
+        title: stop.description,
+      }))}
+    />
   );
 }
 
@@ -82,6 +75,7 @@ export function BuildingStatusChip({ status, enabled = true }: BuildingStatusChi
         aria-hidden
       />
       <span>
+        <span className="sr-only">{fallback ? "fallback" : partial ? "partial coverage" : "OK"} — </span>
         {fallback ? (
           <>
             <span className="text-amber-300/90">Class-nominal buildings</span>
@@ -131,6 +125,7 @@ export function CanopyStatusChip({ status, enabled = true }: CanopyStatusChipPro
         aria-hidden
       />
       <span>
+        <span className="sr-only">{fallback ? "fallback" : partial ? "partial coverage" : "OK"} — </span>
         {fallback ? (
           <>
             <span className="text-amber-300/90">Class-nominal canopy</span>
@@ -177,6 +172,7 @@ export function ClutterStatusChip({ status, enabled = true }: ClutterStatusChipP
         aria-hidden
       />
       <span>
+        <span className="sr-only">{fallback ? "fallback" : partial ? "partial coverage" : "OK"} — </span>
         {fallback ? (
           <>
             <span className="text-amber-300/90">Mixed Forest fallback</span>
@@ -201,16 +197,13 @@ export function ClutterStatusChip({ status, enabled = true }: ClutterStatusChipP
 export function ClassLegend() {
   const [open, setOpen] = useState(false);
 
-  // CONUS-relevant rows only; AK-only classes and lichen/moss are skipped.
-  const rows = Object.values(NLCD_CLASSES)
-    .sort((a, b) => a.id - b.id)
-    .filter((c) => ![51, 72, 73, 74].includes(c.id));
-
   return (
     <div className="text-[10px]">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls="clutter-class-legend"
         className="w-full flex items-center justify-between gap-1 px-1 py-1 rounded text-gray-400 hover:text-gray-200 hover:bg-white/5 transition-colors"
       >
         <span>Show class legend</span>
@@ -219,12 +212,13 @@ export function ClassLegend() {
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
+          aria-hidden="true"
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
       </button>
       {open && (
-        <div className="mt-1 max-h-48 overflow-y-auto rounded border border-white/5 bg-white/2">
+        <div id="clutter-class-legend" className="mt-1 max-h-48 overflow-y-auto rounded border border-white/5 bg-white/2">
           <table className="w-full text-[9px]">
             <thead className="text-gray-500 border-b border-white/5">
               <tr>
@@ -235,8 +229,7 @@ export function ClassLegend() {
               </tr>
             </thead>
             <tbody className="text-gray-400">
-              {rows.map((cls) => {
-                const ahDb = endpointClutterDb(cls, LEGEND_REF_AGL_M, F_915);
+              {LEGEND_ROWS.map(({ cls, ahDb }) => {
                 return (
                   <tr key={cls.id} className="border-b border-white/5 last:border-b-0">
                     <td className="px-1.5 py-0.5 font-mono">{cls.id}</td>

@@ -6,14 +6,21 @@ import maplibregl, {
 } from "maplibre-gl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { toast } from "../components/toastStore";
 import { env } from "../env";
+import { useLiveEvent } from "../hooks/useLiveEvent";
 import { reverseGeocode } from "../maps/geocoder";
-import { buildMapStyle, ensureBuildings3D, ensureTerrain, type OsmBasemap, removeBuildings3D, removeTerrain } from "../maps/mapStyle";
+import { buildMapStyle, ensureBuildings3D, ensureTerrain, isDarkBasemap, type OsmBasemap, removeBuildings3D, removeTerrain } from "../maps/mapStyle";
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { NodeRole, roleTitles } from "../types";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
+import { normalizeNodeId8 } from "../utils/normalizeNodeId8";
+import { prefersReducedMotion } from "../utils/reducedMotion";
+import { ActivityLayer } from "./map/activityLayer";
 import { ClusterDonutLayer } from "./map/clusterDonutLayer";
+import { type ClusterHover,ClusterHoverCard } from "./map/ClusterHoverCard";
 import { FiltersResetPill } from "./map/FiltersResetPill";
+import { circularMeanLng } from "./map/geo";
 import { bestSnr, computeMaxRange, geodesicCircleCoords, mbRoleColorExpr, queryTerrainElevationMSL, relativeTime, signalBarsHtml, TRANSPARENT_1PX_PNG } from "./map/helpers";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
 import { LosTubeLayer } from "./map/losTubeLayer";
@@ -26,14 +33,20 @@ import { MapSearchBar } from "./map/MapSearchBar";
 import { MapSettingsPanel } from "./map/MapSettingsPanel";
 import { MapToolPrompt, MapToolsDrawer } from "./map/MapToolsDrawer";
 import { MapTraceroutePanel } from "./map/MapTraceroutePanel";
+import { type PacketArc, PacketCoalescer, type RawPacket } from "./map/packetCoalescer";
+import { packetColor } from "./map/packetColors";
 import { findPathsBetween } from "./map/pathAnalysis";
 import {
+  autoSpiderfyOverlappingPlainNodes,
   autoSpiderfyVisibleClusters,
+  dismissPlainSpiderfy,
+  isSpiderfied,
   removeSpiderfyLayers,
   spiderfy,
   SPIDERFY_LAYER_LABELS,
   SPIDERFY_LAYER_NODES,
   SPIDERFY_SOURCE_NODES,
+  spiderfyFeatures,
   unspiderfy,
   updateSpiderfyPositions,
 } from "./map/spiderfy";
@@ -53,8 +66,26 @@ import {
   DEFAULT_NODE_COLOR,
   emptyLineFeatureCollection,
   escapeHtml,
+  nodesDataSignature,
   ROLE_COLORS,
 } from "./map/utils";
+
+// Cap arcs spawned per flush so a burst can't stall a frame (drop oldest excess).
+const MAX_ARCS_PER_FLUSH = 40;
+
+const samePoint = (a: [number, number], b: [number, number]) => a[0] === b[0] && a[1] === b[1];
+
+type TraceEv = { from?: number | string; to?: number | string; route_ids?: (number | string)[]; id?: number | string };
+// Wait this long for other gateways' copies of one traceroute before drawing the best.
+const TRACEROUTE_DEBOUNCE_MS = 1200;
+
+/** Map a reported signal to a 0..1 arc intensity — prefer SNR, fall back to RSSI. */
+function packetWeight(rssi?: number, snr?: number): number {
+  const clamp = (v: number) => Math.max(0.15, Math.min(1, v));
+  if (typeof snr === "number") return clamp((snr + 20) / 30);
+  if (typeof rssi === "number") return clamp((rssi + 120) / 90);
+  return 0.5;
+}
 
 export function Map() {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -66,13 +97,25 @@ export function Map() {
   const persistentLinksMbJsonRef = useRef<string>("");
 
   const mbMapRef = useRef<MlMap | null>(null);
+  const authErrorToastedRef = useRef(false);
   const clusterDonutLayerRef = useRef<ClusterDonutLayer | null>(null);
+  const [mapLoaded, setMapLoaded] = useState(false);
+  const mapLoadFallbackRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   /** Currently hover-focused node id, or null. Drives focus-on-hover dimming
    *  alongside the per-tool dim — the cluster layer applies whichever is dimmer. */
   const focusedNodeIdRef = useRef<string | null>(null);
   // Sticky after first style.load — `isStyleLoaded()` momentarily lies post-removeSource.
   const styleEverLoadedRef = useRef(false);
   const mbSelectedIdRef = useRef<string | null>(null);
+  // Last node-source signature; skips redundant setData. -1 = never set.
+  const lastNodesSigRef = useRef<number>(-1);
+  // Live packet-arc animation plumbing.
+  const activityLayerRef = useRef<ActivityLayer | null>(null);
+  const coalescerRef = useRef<PacketCoalescer | null>(null);
+  const pendingArcsRef = useRef<PacketArc[]>([]);
+  const flushRafRef = useRef<number | null>(null);
+  // Per-mesh-id debounce of multi-gateway traceroute copies → one comet, longest route.
+  const tracerouteBufRef = useRef<Map<string, { ev: TraceEv; timer: ReturnType<typeof setTimeout> }> | null>(null);
   const mbHandlersBoundRef = useRef(false);
   const mbCurrentStyleUrlRef = useRef<string | null>(null);
   const mbKeydownHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
@@ -85,7 +128,7 @@ export function Map() {
 
   const { data: rawNodes = {} } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
-  const { data: rawTraceroutes = [] } = useGetTraceroutesQuery();
+  const { data: rawTraceroutes = [], isLoading: rawTraceroutesLoading } = useGetTraceroutesQuery();
 
   const resolveChannelLabel = useCallback(
     (channelId: string | null | undefined): string | null => {
@@ -124,6 +167,7 @@ export function Map() {
     return stored ?? 30;
   });
 
+  const [livePackets, setLivePackets] = useState<boolean>(() => readJson<boolean>(LS_KEYS.livePackets, true));
   const [clusterEnabled, setClusterEnabled] = useState<boolean>(() => {
     const stored = readJson<boolean | null>(LS_KEYS.clusterEnabled, null);
     return stored ?? true;
@@ -182,6 +226,7 @@ export function Map() {
   useEffect(() => writeJson(LS_KEYS.osmBasemap, osmBasemap), [osmBasemap]);
   useEffect(() => writeJson(LS_KEYS.recentDays, recentDays), [recentDays]);
   useEffect(() => writeJson(LS_KEYS.clusterEnabled, clusterEnabled), [clusterEnabled]);
+  useEffect(() => writeJson(LS_KEYS.livePackets, livePackets), [livePackets]);
   useEffect(() => writeJson(LS_KEYS.linkMode, linkMode), [linkMode]);
   useEffect(() => writeJson(LS_KEYS.myNodeId, myNodeId), [myNodeId]);
   useEffect(() => writeJson(LS_KEYS.settingsPanelOpen, settingsPanelOpen), [settingsPanelOpen]);
@@ -280,12 +325,13 @@ export function Map() {
   }, [rawNodes]);
 
   const [detailsData, setDetailsData] = useState<NodeDetailsData | null>(null);
+  const [clusterHover, setClusterHover] = useState<ClusterHover | null>(null);
 
   // Coverage merge origins (session-scoped; depends on nodes + toolFromId for primary-id exclusion)
   const mergeOrigins = useCoverageMergeOrigins(nodes, toolFromId);
 
   // URL deep-link + view sync
-  const { searchParams, flyToTargetRef } = useUrlMapSync(nodes, mbMapRef);
+  const { searchParams, flyToTargetRef, pushViewToUrlRef } = useUrlMapSync(nodes, mbMapRef);
 
   // Refs mirroring state — read from MapLibre event handlers + setStyle re-init
   const nodesRef = useRef(nodes);
@@ -293,6 +339,7 @@ export function Map() {
   const configRef = useRef(config);
   const recentDaysRef = useRef(recentDays);
   const clusterEnabledRef = useRef(clusterEnabled);
+  const livePacketsRef = useRef(livePackets);
   const linkModeRef = useRef(linkMode);
   const myNodeIdRef = useRef(myNodeId);
   const roleFilterRef = useRef(roleFilter);
@@ -305,13 +352,20 @@ export function Map() {
   const terrain3DRef = useRef(terrain3D);
   const buildings3DRef = useRef(buildings3D);
   const setDetailsDataRef = useRef(setDetailsData);
+  const serverNodeRef = useRef(serverNode);
+  const pendingServerCenterRef = useRef(false);
 
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
+  useEffect(() => { serverNodeRef.current = serverNode; }, [serverNode]);
   useEffect(() => { traceroutesRef.current = rawTraceroutes; }, [rawTraceroutes]);
   useEffect(() => { configRef.current = config; }, [config]);
   useEffect(() => { setDetailsDataRef.current = setDetailsData; }, [setDetailsData]);
   useEffect(() => { recentDaysRef.current = recentDays; }, [recentDays]);
   useEffect(() => { clusterEnabledRef.current = clusterEnabled; }, [clusterEnabled]);
+  useEffect(() => {
+    livePacketsRef.current = livePackets;
+    clusterDonutLayerRef.current?.setAnimationsEnabled(livePackets);
+  }, [livePackets]);
   useEffect(() => { linkModeRef.current = linkMode; }, [linkMode]);
   useEffect(() => { roleFilterRef.current = roleFilter; }, [roleFilter]);
   useEffect(() => { activeToolRef.current = activeTool; }, [activeTool]);
@@ -341,6 +395,8 @@ export function Map() {
     mbMapRef, losTubeLayerRef,
     setLosResult: losState.setLosResult,
     setLosDemSource: losState.setLosDemSource,
+    setLosError: losState.setLosError,
+    setIsComputingLos: losState.setIsComputingLos,
   });
 
   // Scan compute + per-class visibility + clear-on-tool-change + hover effects
@@ -363,6 +419,7 @@ export function Map() {
     mbMapRef, isDraggingMarkerRef,
     setScanSummary: scan.setScanSummary,
     setIsScanning: scan.setIsScanning,
+    setScanError: scan.setScanError,
     setScanDemSource: scan.setScanDemSource,
     setScanClutterStatus: scan.setScanClutterStatus,
     setScanCanopyStatus: scan.setScanCanopyStatus,
@@ -401,6 +458,7 @@ export function Map() {
     losCompute.losHoverMarkerRef.current?.remove();
     losCompute.losHoverMarkerRef.current = null;
     losState.setLosResult(null);
+    losState.setLosError(null);
     coverage.setCoverageResult(null);
     coverage.setKeepCoveragePaint(false);
     scan.setScanSummary(null);
@@ -618,16 +676,29 @@ export function Map() {
       document.body.removeChild(a);
     };
 
-    if (mbMapRef.current) {
+    const map = mbMapRef.current;
+    if (map) {
       try {
-        // Force repaint so custom layers are captured, then wait a frame
-        mbMapRef.current.triggerRepaint();
-        setTimeout(() => {
-          const canvas = mbMapRef.current!.getCanvas();
-          triggerDownload(canvas.toDataURL("image/png"));
-        }, 100);
+        // Capture on the next actually-drawn frame (custom layers included);
+        // fall back to a timeout if 'idle' never fires.
+        let done = false;
+        const capture = () => {
+          if (done) return;
+          done = true;
+          try {
+            triggerDownload(map.getCanvas().toDataURL("image/png"));
+            toast("Map exported as PNG", { kind: "success" });
+          } catch (err) {
+            console.error("Map export failed:", err);
+            toast("Couldn't export the map", { kind: "error" });
+          }
+        };
+        map.triggerRepaint();
+        map.once("idle", capture);
+        setTimeout(capture, 1500);
       } catch (err) {
         console.error("Map export failed:", err);
+        toast("Couldn't export the map", { kind: "error" });
       }
     }
   }
@@ -687,8 +758,8 @@ export function Map() {
     const defaultPosition = { latitude: 38.5816, longitude: -121.4944 };
 
     const fallbackNodeWithPos =
-      serverNode?.map_position
-        ? serverNode
+      serverNodeRef.current?.map_position
+        ? serverNodeRef.current
         : Object.values(nodesRef.current).find((n) => n.map_position);
 
     const centerPos = fallbackNodeWithPos?.map_position
@@ -714,6 +785,13 @@ export function Map() {
     const urlLat = parseFloat(searchParams.get("lat") ?? "");
     const urlLng = parseFloat(searchParams.get("lng") ?? "");
     const urlZ = parseFloat(searchParams.get("z") ?? "");
+
+    const hasExplicitCenter =
+      !!flyTarget ||
+      (Number.isFinite(urlLng) && Number.isFinite(urlLat)) ||
+      (savedLon !== undefined && savedLat !== undefined);
+
+    pendingServerCenterRef.current = !hasExplicitCenter && !fallbackNodeWithPos;
 
     const initialCenter: [number, number] = flyTarget
       ? [flyTarget[0], flyTarget[1]]
@@ -785,6 +863,16 @@ export function Map() {
 
     mbMapRef.current = map;
 
+    // Surface style/source/tile load failures instead of a silent blank map.
+    map.on("error", (e) => {
+      const err = e.error as { status?: number } | undefined;
+      if (import.meta.env.DEV) console.warn("[Map] GL error:", err ?? e);
+      if (!authErrorToastedRef.current && (err?.status === 401 || err?.status === 403)) {
+        authErrorToastedRef.current = true;
+        toast("Map tiles failed to load — the Mapbox token may be missing or invalid.", { kind: "error" });
+      }
+    });
+
     const NODE_SOURCES = ["nodes_clustered", "nodes_plain", SPIDERFY_SOURCE_NODES] as const;
 
     const clearSelected = () => {
@@ -845,6 +933,8 @@ export function Map() {
       localStorage.setItem("savedZoom", map.getZoom().toString());
       localStorage.setItem("savedPitch", map.getPitch().toString());
       localStorage.setItem("savedBearing", map.getBearing().toString());
+      // Mirror view into ?lat/lng/z (debounced); here so it follows recreation.
+      pushViewToUrlRef.current();
     });
 
     const ensureSourcesAndLayers = () => {
@@ -1156,7 +1246,8 @@ export function Map() {
       // Initial line-opacity bakes recencyOpacity from the feature; focus-on-hover
       // swaps these expressions in to dim non-connected links.
       const linkOpacityInitial = (base: number) =>
-        ["*", base, ["coalesce", ["get", "recencyOpacity"], 1.0]] as any;
+        // 0.6 = unknown-recency default (see recencyOpacityFromAgeMs).
+        ["*", base, ["coalesce", ["get", "recencyOpacity"], 0.6]] as any;
 
       // Neighbor + both links (solid; "both" uses curved arcs)
       if (!map.getLayer("links-solid")) {
@@ -1229,6 +1320,7 @@ export function Map() {
         const donutLayer = new ClusterDonutLayer();
         map.addLayer(donutLayer);
         clusterDonutLayerRef.current = donutLayer;
+        donutLayer.setAnimationsEnabled(livePacketsRef.current);
         if (activeToolRef.current != null && toolStepRef.current === "result") donutLayer.setAlpha(0.25);
       }
 
@@ -1279,6 +1371,9 @@ export function Map() {
           paint: {
             "circle-radius": ["case", ["boolean", ["feature-state", "selected"], false], 12, 8],
             "circle-color": mbRoleColorExpr,
+            // Recency brightness via `dim`; selected stays full-bright.
+            "circle-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 1, ["coalesce", ["get", "dim"], 1]],
+            "circle-stroke-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 1, ["coalesce", ["get", "dim"], 1]],
             "circle-stroke-width": 2.5,
             "circle-stroke-color": [
               "case",
@@ -1337,6 +1432,9 @@ export function Map() {
           paint: {
             "circle-radius": ["case", ["boolean", ["feature-state", "selected"], false], 12, 8],
             "circle-color": mbRoleColorExpr,
+            // Recency brightness via `dim`; selected stays full-bright.
+            "circle-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 1, ["coalesce", ["get", "dim"], 1]],
+            "circle-stroke-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 1, ["coalesce", ["get", "dim"], 1]],
             "circle-stroke-width": 2.5,
             "circle-stroke-color": [
               "case",
@@ -1369,20 +1467,27 @@ export function Map() {
         });
       }
 
+      // Live packet activity (custom WebGL layer; drawn above nodes)
+      if (!map.getLayer("activity")) {
+        const al = new ActivityLayer();
+        map.addLayer(al);
+        activityLayerRef.current = al;
+      }
+
       // Apply current cluster visibility (use ref to avoid stale closure)
       applyClusterVisibility(map, clusterEnabledRef.current);
 
       // Re-apply terrain if it was enabled (style.load wipes this)
       if (terrain3DRef.current) {
         try {
-          ensureTerrain(map, terrainExaggeration);
+          ensureTerrain(map, terrainExaggeration, isDarkBasemap(provider, osmBasemap, mapboxStyle));
         } catch (err) {
           console.warn("[Map] Terrain re-apply failed after style load:", err);
         }
       }
       if (buildings3DRef.current) {
         try {
-          ensureBuildings3D(map);
+          ensureBuildings3D(map, isDarkBasemap(provider, osmBasemap, mapboxStyle));
         } catch (err) {
           console.warn("[Map] 3D buildings re-apply failed after style load:", err);
         }
@@ -1395,15 +1500,13 @@ export function Map() {
       if (mbHandlersBoundRef.current) return;
       mbHandlersBoundRef.current = true;
 
-      const handleNodeClick = async (id: string) => {
+      const handleNodeClick = (id: string) => {
         const liveNodes = nodesRef.current;
         const node = liveNodes[id];
         if (!node?.map_position) return;
 
         selectedNodeIdRef.current = id;
         setSelected(id);
-
-        const displayName = await reverseGeocode(node.map_position[0], node.map_position[1]);
 
         const nodeLike: NodeLike = {
           id,
@@ -1434,13 +1537,23 @@ export function Map() {
         setDetailsDataRef.current({
           node: nodeLike,
           liveNodes,
-          displayName: displayName || "Unknown",
+          displayName: "Locating…",
           elsewhereLinks: configRef.current?.mesh?.elsewhere_links,
           traceroutes: traceroutesRef.current,
           channelLabel: resolveChannelLabel((node as any).last_channel),
           heardBy,
           maxRangeKm,
         });
+
+        // Geocode without blocking the panel; ignore the result if selection moved on.
+        void reverseGeocode(node.map_position[0], node.map_position[1])
+          .then((name) => {
+            if (selectedNodeIdRef.current !== id) return;
+            setDetailsDataRef.current((prev) =>
+              prev && prev.node.id === id ? { ...prev, displayName: name || "—" } : prev,
+            );
+          })
+          .catch(() => {});
 
         // Draw links (neighbor + traceroute)
         const neighborFC = buildMapboxLinkFeatureCollection({ node: nodeLike, liveNodes, heardBy });
@@ -1542,7 +1655,7 @@ export function Map() {
       const LINK_DIM_OPACITY = 0.1;
       // const NODE_DIM_OPACITY = 0.2;  // Re-enable with the disabled block in applyLinkFocus.
 
-      const recencyExpr = ["coalesce", ["get", "recencyOpacity"], 1.0] as any;
+      const recencyExpr = ["coalesce", ["get", "recencyOpacity"], 0.6] as any;
 
       const linkOpacityForFocus = (base: number, focusedId: string | null) => {
         if (!focusedId) return ["*", base, recencyExpr] as any;
@@ -1631,7 +1744,8 @@ export function Map() {
           removeSpiderfyLayers(map);
           map.easeTo({ center: [lng, lat], zoom: Math.min(currentZoom + 2, maxZoom) });
         };
-        const timer = setTimeout(zoomFallback, 300);
+        // getClusterExpansionZoom can be slow on first call; don't discard a slightly-late answer.
+        const timer = setTimeout(zoomFallback, 600);
 
         source.getClusterExpansionZoom(clusterId).then((zoom) => {
           if (handled) return;
@@ -1668,6 +1782,87 @@ export function Map() {
       // Cluster hover cursor (donut icons are GL-native, no HTML to highlight)
       bindHover("clusters");
 
+      // Live cluster hover card (display-only; closes on map move to avoid drift)
+      let clusterHoverTimer: number | null = null;
+      let hoveredClusterId: number | null = null;
+      const readCluster = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        const f = e.features?.[0];
+        const cid = f?.properties?.cluster_id;
+        if (f == null || cid == null) return null;
+        const [lng, lat] = (f.geometry as any).coordinates as [number, number];
+        return {
+          cid: cid as number,
+          lng,
+          lat,
+          count: (f.properties?.point_count as number) ?? 0,
+          online: (f.properties?.onlineCount as number) ?? 0,
+        };
+      };
+      const fillClusterHover = (cid: number, lng: number, lat: number, count: number, online: number) => {
+        const p = map.project([lng, lat]);
+        setClusterHover({ ids: [], count, online, x: p.x, y: p.y });
+        const source = map.getSource("nodes_clustered") as MlGeoJSONSource | undefined;
+        source
+          ?.getClusterLeaves(cid, Infinity, 0)
+          .then((feats) => {
+            if (hoveredClusterId !== cid) return;
+            const ids = (feats ?? [])
+              .map((f) => String((f.properties as any)?.id ?? ""))
+              .filter(Boolean);
+            setClusterHover((prev) => (prev ? { ...prev, ids } : null));
+          })
+          .catch(() => {});
+      };
+      const onClusterIntent = (c: { cid: number; lng: number; lat: number; count: number; online: number }) => {
+        hoveredClusterId = c.cid;
+        if (clusterHoverTimer != null) clearTimeout(clusterHoverTimer);
+        clusterHoverTimer = window.setTimeout(
+          () => fillClusterHover(c.cid, c.lng, c.lat, c.count, c.online),
+          120,
+        );
+      };
+      const closeClusterHover = () => {
+        hoveredClusterId = null;
+        if (clusterHoverTimer != null) {
+          clearTimeout(clusterHoverTimer);
+          clusterHoverTimer = null;
+        }
+        setClusterHover(null);
+      };
+      map.on("mouseenter", "clusters", (e) => {
+        const c = readCluster(e);
+        if (c) onClusterIntent(c);
+      });
+      map.on("mousemove", "clusters", (e) => {
+        const c = readCluster(e);
+        if (c && c.cid !== hoveredClusterId) onClusterIntent(c);
+      });
+      map.on("mouseleave", "clusters", closeClusterHover);
+      map.on("movestart", closeClusterHover);
+
+      // Distinct plain nodes whose circles overlap near `point` (clustering off).
+      // Circle radius is 8px, so a one-radius box catches genuinely-stacked nodes.
+      const OVERLAP_PX = 8;
+      const findOverlappingPlainNodes = (
+        point: maplibregl.Point,
+      ): GeoJSON.Feature<GeoJSON.Point>[] => {
+        if (!map.getLayer("plain-nodes")) return [];
+        const bbox: [maplibregl.PointLike, maplibregl.PointLike] = [
+          [point.x - OVERLAP_PX, point.y - OVERLAP_PX],
+          [point.x + OVERLAP_PX, point.y + OVERLAP_PX],
+        ];
+        const feats = map.queryRenderedFeatures(bbox, { layers: ["plain-nodes"] });
+        const seen = new Set<string>();
+        const out: GeoJSON.Feature<GeoJSON.Point>[] = [];
+        for (const f of feats) {
+          const id = (f.properties?.id ?? "") as string;
+          if (!id || seen.has(id) || f.geometry?.type !== "Point") continue;
+          seen.add(id);
+          out.push(f as unknown as GeoJSON.Feature<GeoJSON.Point>);
+        }
+        return out;
+      };
+
       const onNodeLayerClick = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
         const feature = e.features?.[0];
         if (!feature) return;
@@ -1694,6 +1889,21 @@ export function Map() {
           setToolStep("result");
           map.getCanvas().style.cursor = "";
           return;
+        }
+
+        // Clustering OFF: co-located nodes stack so only the top one is
+        // clickable. If several overlap at the click, fan them out instead of
+        // selecting whichever rendered on top. (#475)
+        if (!clusterEnabledRef.current && !isSpiderfied(map)) {
+          const overlap = findOverlappingPlainNodes(e.point);
+          if (overlap.length >= 2) {
+            const center: [number, number] = [
+              circularMeanLng(overlap.map((f) => f.geometry.coordinates[0])),
+              overlap.reduce((s, f) => s + f.geometry.coordinates[1], 0) / overlap.length,
+            ];
+            void spiderfyFeatures(map, center, overlap as any, map.getZoom(), true);
+            return;
+          }
         }
 
         void handleNodeClick(id);
@@ -1734,6 +1944,10 @@ export function Map() {
 
       // Clicking empty space clears selection and collapses spiderfy
       map.on("click", (e) => {
+        // While an RF tool is mid-pick, an empty click is dropping a virtual
+        // origin — don't also clear the selection/spiderfy.
+        if (activeToolRef.current && toolStepRef.current !== "result") return;
+
         // Build the list of interactive layers, including spiderfy layers if present
         const nodeLayers = ["unclustered-nodes", "plain-nodes", "unclustered-labels", "plain-labels"];
         if (map.getLayer(SPIDERFY_LAYER_NODES)) nodeLayers.push(SPIDERFY_LAYER_NODES);
@@ -1744,7 +1958,11 @@ export function Map() {
           map.queryRenderedFeatures(e.point, { layers: ["clusters"] }).length > 0;
         if (hitNode || hitCluster) return;
 
-        void unspiderfy(map);
+        // Clustering off: fans are automatic, so dismiss-and-remember (the auto
+        // pass won't immediately re-open the same set). Clustering on: a cluster
+        // donut stays put, so a plain collapse is fine.
+        if (clusterEnabledRef.current) void unspiderfy(map);
+        else dismissPlainSpiderfy(map);
         clearMapboxSelectionAndOverlays();
       });
 
@@ -1753,24 +1971,33 @@ export function Map() {
         updateSpiderfyPositions(map);
       });
 
-      // Auto-spiderfy clusters whose children can't be separated by further zoom.
+      // Auto-spiderfy stacked nodes once zoomed in. Clustering ON: fan clusters
+      // whose children can't be separated by further zoom. Clustering OFF: fan
+      // the largest group of plain nodes whose circles overlap at this zoom.
       // Driven by moveend (reliable, independent of GL render state) with `idle`
       // as a backup and a one-shot on `load` for the initial view. Debounced so
       // a single gesture doesn't run multiple passes.
       let spiderfyDebounce: number | null = null;
       const triggerAutoSpiderfy = () => {
-        if (!clusterEnabledRef.current) return;
         if (spiderfyDebounce != null) window.clearTimeout(spiderfyDebounce);
         spiderfyDebounce = window.setTimeout(() => {
           spiderfyDebounce = null;
-          const pool = buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()).features
-            .filter((f) => f.geometry?.type === "Point") as any;
-          void autoSpiderfyVisibleClusters(map, pool);
+          if (clusterEnabledRef.current) {
+            const pool = buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()).features
+              .filter((f) => f.geometry?.type === "Point") as any;
+            void autoSpiderfyVisibleClusters(map, pool);
+          } else {
+            void autoSpiderfyOverlappingPlainNodes(map);
+          }
         }, 150);
       };
       map.on("moveend", triggerAutoSpiderfy);
       map.on("idle", triggerAutoSpiderfy);
       map.once("load", triggerAutoSpiderfy);
+      // Clear the loading overlay on first render; backstop in case 'load' never
+      // fires (hard style/tile/token failure emits 'error', not 'load').
+      mapLoadFallbackRef.current = window.setTimeout(() => setMapLoaded(true), 10000);
+      map.once("load", () => { setMapLoaded(true); if (mapLoadFallbackRef.current) clearTimeout(mapLoadFallbackRef.current); });
 
       // Right-click / long-press: "Set as My Node"
       const findNodeIdAtPoint = (point: maplibregl.PointLike): string | null => {
@@ -1828,6 +2055,19 @@ export function Map() {
       const handleKeydown = (e: KeyboardEvent) => {
         const tag = (e.target as HTMLElement)?.tagName;
         if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+        // Escape works from anywhere; pan/zoom only when focus is on the map
+        // itself (or nothing), so arrowing a focused panel control isn't hijacked.
+        if (e.key !== "Escape") {
+          const ae = document.activeElement as HTMLElement | null;
+          const navOk =
+            !ae ||
+            ae === document.body ||
+            ae === map.getCanvas() ||
+            ae === mapRef.current ||
+            ae.classList?.contains("maplibregl-canvas");
+          if (!navOk) return;
+        }
 
         const PAN_PX = 100;
         switch (e.key) {
@@ -1977,20 +2217,28 @@ export function Map() {
         );
       };
 
+      // Only rebuild the popup HTML when the hovered link changes; otherwise just
+      // move it (setLngLat) as the cursor travels along the same link.
+      let lastLinkKey: string | null = null;
       const showLinkPopup = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
         const f = e.features?.[0];
         if (!f) return;
-        linkPopup
-          .setLngLat(e.lngLat)
-          .setHTML(buildLinkPopupHtml(f.properties ?? {}))
-          .addTo(map);
+        const props = f.properties ?? {};
+        lastLinkKey = `${props.aId}|${props.bId}`;
+        linkPopup.setLngLat(e.lngLat).setHTML(buildLinkPopupHtml(props)).addTo(map);
       };
       const moveLinkPopup = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
         const f = e.features?.[0];
         if (!f) return;
-        linkPopup.setLngLat(e.lngLat).setHTML(buildLinkPopupHtml(f.properties ?? {}));
+        const props = f.properties ?? {};
+        const key = `${props.aId}|${props.bId}`;
+        if (key !== lastLinkKey) {
+          lastLinkKey = key;
+          linkPopup.setHTML(buildLinkPopupHtml(props));
+        }
+        linkPopup.setLngLat(e.lngLat);
       };
-      const hideLinkPopup = () => linkPopup.remove();
+      const hideLinkPopup = () => { lastLinkKey = null; linkPopup.remove(); };
 
       for (const layerId of ["links-solid", "links-dashed", "links-dotted"]) {
         map.on("mouseenter", layerId, showLinkPopup);
@@ -2003,6 +2251,7 @@ export function Map() {
     map.on("style.load", ensureSourcesAndLayers);
 
     return () => {
+      if (mapLoadFallbackRef.current) clearTimeout(mapLoadFallbackRef.current);
       if (mbKeydownHandlerRef.current) {
         document.removeEventListener("keydown", mbKeydownHandlerRef.current);
         mbKeydownHandlerRef.current = null;
@@ -2020,6 +2269,18 @@ export function Map() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!pendingServerCenterRef.current) return;
+    const map = mbMapRef.current;
+    if (!map) return;
+    const target = serverNode?.map_position
+      ? serverNode
+      : Object.values(nodesRef.current).find((n) => n.map_position);
+    if (!target?.map_position) return;
+    pendingServerCenterRef.current = false;
+    map.jumpTo({ center: [target.map_position[0], target.map_position[1]] });
   }, [serverNode]);
 
   // Style switching (re-style, let style.load re-add layers/sources)
@@ -2057,7 +2318,7 @@ export function Map() {
 
     try {
       if (terrain3D) {
-        ensureTerrain(map, terrainExaggeration);
+        ensureTerrain(map, terrainExaggeration, isDarkBasemap(provider, osmBasemap, mapboxStyle));
       } else {
         removeTerrain(map);
       }
@@ -2070,7 +2331,7 @@ export function Map() {
     const map = mbMapRef.current;
     if (!map || !styleEverLoadedRef.current) return;
     try {
-      if (buildings3D) ensureBuildings3D(map);
+      if (buildings3D) ensureBuildings3D(map, isDarkBasemap(provider, osmBasemap, mapboxStyle));
       else removeBuildings3D(map);
     } catch (err) {
       console.warn("[Map] 3D buildings apply failed:", err);
@@ -2084,16 +2345,23 @@ export function Map() {
 
     const data = buildNodesGeoJSON(nodes, recentDays, { role: roleFilter, channel: channelFilter });
 
-    const clustered = map.getSource("nodes_clustered") as MlGeoJSONSource | undefined;
-    clustered?.setData(data);
+    // Skip re-upload when visible state is unchanged; each nodes_clustered
+    // setData forces a full cluster-donut rebuild.
+    const sig = nodesDataSignature(data);
+    if (sig !== lastNodesSigRef.current) {
+      lastNodesSigRef.current = sig;
+      const clustered = map.getSource("nodes_clustered") as MlGeoJSONSource | undefined;
+      clustered?.setData(data);
 
-    const plain = map.getSource("nodes_plain") as MlGeoJSONSource | undefined;
-    plain?.setData(data);
+      const plain = map.getSource("nodes_plain") as MlGeoJSONSource | undefined;
+      plain?.setData(data);
+    }
 
     // If selected node disappears, clear selection + links/panel
     const selectedId = mbSelectedIdRef.current;
     if (selectedId) {
-      const stillExists = data.features.some((f) => (f.properties?.id as string | undefined) === selectedId);
+      // Check the unfiltered nodes: a filtered-out node keeps its panel open.
+      const stillExists = Boolean(nodes[selectedId]);
       if (!stillExists) {
         try {
           map.setFeatureState({ source: "nodes_clustered", id: selectedId }, { selected: false });
@@ -2110,6 +2378,139 @@ export function Map() {
       }
     }
   }, [nodes, recentDays, roleFilter, channelFilter]);
+
+  // Live packet arcs: resolve from→sender positions and spawn into the layer.
+  const flushPacketArcs = useCallback(() => {
+    flushRafRef.current = null;
+    const layer = activityLayerRef.current;
+    const all = pendingArcsRef.current;
+    pendingArcsRef.current = [];
+    if (!layer || all.length === 0) return;
+    // Drop oldest excess on a burst; keep the most recent so the feed stays live.
+    const arcs = all.length > MAX_ARCS_PER_FLUSH ? all.slice(-MAX_ARCS_PER_FLUSH) : all;
+    const liveNodes = nodesRef.current;
+    const now = performance.now();
+
+    // With clustering on, snap endpoints to the donut that visually covers them so
+    // arcs line up with the clusters on screen. Project cluster centroids once.
+    const map = mbMapRef.current;
+    const projected =
+      clusterEnabledRef.current && map && clusterDonutLayerRef.current
+        ? clusterDonutLayerRef.current.visibleClusters().map((c) => {
+            const p = map.project([c.lng, c.lat]);
+            return { x: p.x, y: p.y, r: c.r, lngLat: [c.lng, c.lat] as [number, number] };
+          })
+        : null;
+    const anchor = (pos: [number, number]): [number, number] => {
+      if (!projected || !map) return pos;
+      const p = map.project(pos);
+      let best: [number, number] | null = null;
+      let bestD = Infinity;
+      for (const c of projected) {
+        const d = Math.hypot(c.x - p.x, c.y - p.y);
+        if (d <= c.r && d < bestD) {
+          bestD = d;
+          best = c.lngLat;
+        }
+      }
+      return best ?? pos;
+    };
+
+    layer.beginBatch(); // coalesce this flush into one GPU upload
+    for (const a of arcs) {
+      const fromRaw = liveNodes[a.fromId]?.map_position;
+      const senderRaw = liveNodes[a.senderId]?.map_position;
+      const fromPos = fromRaw ? anchor(fromRaw) : undefined;
+      const senderPos = senderRaw ? anchor(senderRaw) : undefined;
+      const color = packetColor(a.type);
+      if (a.isNewTransmission && fromPos) layer.spawnPulse(fromPos, color, now);
+      if (fromPos && senderPos && !samePoint(fromPos, senderPos)) {
+        layer.spawnArc(fromPos, senderPos, color, packetWeight(a.rssi, a.snr), now);
+      } else if (!fromPos && senderPos) {
+        layer.spawnRipple(senderPos, color, now); // heard, origin position unknown
+      }
+    }
+    layer.endBatch();
+  }, []);
+
+  useLiveEvent<RawPacket>("packet", (p) => {
+    if (!livePacketsRef.current || prefersReducedMotion()) return;
+    if (p.type === "traceroute") return; // handled by the dedicated multi-hop tracer
+    const coalescer = (coalescerRef.current ??= new PacketCoalescer());
+    const arc = coalescer.ingest(p, Date.now());
+    if (!arc) return;
+    pendingArcsRef.current.push(arc);
+    if (flushRafRef.current == null) flushRafRef.current = requestAnimationFrame(flushPacketArcs);
+  });
+
+  // Resolve a traceroute's hops to positions and draw one sequential comet along
+  // [from, ...route, to], snapping each hop to its cluster and skipping hops with
+  // no known position.
+  const animateTraceroute = useCallback((t: TraceEv) => {
+    const layer = activityLayerRef.current;
+    if (!layer) return;
+    const liveNodes = nodesRef.current;
+    const map = mbMapRef.current;
+    const donut = clusterDonutLayerRef.current;
+    const clusters = clusterEnabledRef.current && map && donut ? donut.visibleClusters() : null;
+    const snap = (pos: [number, number]): [number, number] => {
+      if (!clusters || !map) return pos;
+      const p = map.project(pos);
+      let best: [number, number] | null = null;
+      let bestD = Infinity;
+      for (const c of clusters) {
+        const cp = map.project([c.lng, c.lat]);
+        const d = Math.hypot(cp.x - p.x, cp.y - p.y);
+        if (d <= c.r && d < bestD) {
+          bestD = d;
+          best = [c.lng, c.lat];
+        }
+      }
+      return best ?? pos;
+    };
+    const pts: [number, number][] = [];
+    for (const raw of [t.from, ...(t.route_ids ?? []), t.to]) {
+      const id = normalizeNodeId8(raw);
+      const pos = id ? liveNodes[id]?.map_position : undefined;
+      if (!pos) continue; // hop with unknown position — skip (honest gap)
+      const a = snap(pos);
+      const last = pts[pts.length - 1];
+      if (!last || !samePoint(last, a)) pts.push(a); // collapse same-cluster hops
+    }
+    if (pts.length === 0) return;
+    layer.spawnPath(pts, packetColor("traceroute"), 0.9, performance.now());
+  }, []);
+
+  // The same traceroute is uploaded by many gateways with divergent recorded
+  // routes; debounce by mesh id and draw only the single most complete path.
+  useLiveEvent<TraceEv>("traceroute", (t) => {
+    if (!livePacketsRef.current || prefersReducedMotion()) return;
+    const buf = (tracerouteBufRef.current ??= new globalThis.Map());
+    const key = t.id != null ? `id:${t.id}` : `ft:${t.from}:${t.to}`;
+    const existing = buf.get(key);
+    if (existing) {
+      if ((t.route_ids?.length ?? 0) > (existing.ev.route_ids?.length ?? 0)) existing.ev = t;
+      return;
+    }
+    const timer = setTimeout(() => {
+      const entry = buf.get(key);
+      buf.delete(key);
+      if (entry) animateTraceroute(entry.ev);
+    }, TRACEROUTE_DEBOUNCE_MS);
+    buf.set(key, { ev: t, timer });
+  });
+
+  useEffect(
+    () => () => {
+      if (flushRafRef.current != null) cancelAnimationFrame(flushRafRef.current);
+      const buf = tracerouteBufRef.current;
+      if (buf) {
+        for (const { timer } of buf.values()) clearTimeout(timer);
+        buf.clear();
+      }
+    },
+    [],
+  );
 
   // React to linkMode / myNodeId / nodes changes for persistent links
   useEffect(() => {
@@ -2150,7 +2551,29 @@ export function Map() {
 
   return (
     <div className="relative w-full h-full min-h-0 overflow-hidden overscroll-none">
-      <div id="map" ref={mapRef} className="absolute inset-0" />
+      <div
+        id="map"
+        ref={mapRef}
+        role="application"
+        aria-label="Mesh node map"
+        aria-describedby="map-a11y-hint"
+        className="absolute inset-0"
+      />
+      <p id="map-a11y-hint" className="sr-only">
+        Interactive map of mesh nodes. Use the search box to find and select a node by name.
+        Arrow keys pan and plus or minus zoom while the map is focused.
+      </p>
+      <div className="sr-only" aria-live="polite">
+        {detailsData
+          ? `Selected ${detailsData.node.longname || detailsData.node.shortname || detailsData.node.id}`
+          : ""}
+      </div>
+
+      {!mapLoaded && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+          <div className="w-8 h-8 rounded-full border-2 border-white/20 border-t-cyan-400 animate-spin" />
+        </div>
+      )}
 
       <MapSearchBar
         nodes={nodes}
@@ -2182,8 +2605,10 @@ export function Map() {
         setTerrain3D={setTerrain3D}
         buildings3D={buildings3D}
         setBuildings3D={setBuildings3D}
+        livePackets={livePackets}
+        setLivePackets={setLivePackets}
         onExport={handleExport}
-        hidden={!!detailsData}
+        hidden={!!detailsData || activeTool != null}
         recentDays={recentDays}
         setRecentDays={setRecentDays}
         clusterEnabled={clusterEnabled}
@@ -2213,7 +2638,7 @@ export function Map() {
           });
           setSettingsPanelOpen(true);
         }}
-        hidden={!!detailsData}
+        hidden={!!detailsData || activeTool != null}
       />
 
       {myNodeLabel && (
@@ -2243,10 +2668,22 @@ export function Map() {
         onHoverLink={(id) => handleLinkHoverRef.current(id)}
       />
 
+      <ClusterHoverCard hover={clusterHover} nodes={nodes} />
+
+      <button
+        type="button"
+        onClick={() => setLivePackets((v) => !v)}
+        className="absolute bottom-3 left-3 z-30 flex items-center gap-2 rounded-xl border border-white/10 bg-gray-900/80 px-3 py-1.5 text-xs font-medium shadow-2xl backdrop-blur-xl transition hover:bg-gray-900/90"
+        title={livePackets ? "Live map animations on — click to turn off" : "Live map animations off — click to turn on"}
+      >
+        <span className={`h-2 w-2 rounded-full ${livePackets ? "bg-emerald-400 animate-pulse" : "bg-gray-500"}`} />
+        <span className="text-gray-200">Animations</span>
+      </button>
+
       {/* Live terrain elevation under the cursor — helps sanity-check coverage
           paints. Only renders when 3D terrain is on and we got a valid sample. */}
       {terrain3D && hoverElevationM != null && (
-        <div className="fixed top-3 left-120 sm:left-135 z-30 px-2.5 py-1 rounded-full text-[11px] font-medium border border-white/10 bg-gray-900/80 backdrop-blur-xl text-gray-300 shadow-2xl pointer-events-none select-none flex items-center gap-1.5">
+        <div className="fixed top-3 left-[calc(var(--map-pad)+30rem)] sm:left-[calc(var(--map-pad)+33.75rem)] z-30 px-2.5 py-1 rounded-full text-[11px] font-medium border border-white/10 bg-gray-900/80 backdrop-blur-xl text-gray-300 shadow-2xl pointer-events-none select-none flex items-center gap-1.5">
           <svg className="w-3 h-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21l6-6 4 4 8-8" />
           </svg>
@@ -2327,7 +2764,9 @@ export function Map() {
           terrainNeeded={!terrain3D}
           onEnableTerrain={() => setTerrain3D(true)}
           onClose={resetTool}
-          isComputing={terrain3D && !losState.losResult}
+          isComputing={terrain3D && !losState.losResult && !losState.losError}
+          isRecomputing={losState.isComputingLos && !!losState.losResult}
+          error={losState.losError}
           fromHwIdx={losState.losFromHwIdx} onFromHwIdxChange={losState.setLosFromHwIdx}
           fromAntIdx={losState.losFromAntIdx} onFromAntIdxChange={losState.setLosFromAntIdx}
           fromHeightM={losState.losFromHeightM} onFromHeightChange={losState.setLosFromHeightM}
@@ -2465,6 +2904,7 @@ export function Map() {
           fromColor="#06b6d4"
           toColor="#d946ef"
           traceroutes={rawTraceroutes}
+          loading={rawTraceroutesLoading}
           liveNodes={nodes}
           onNodeSelect={(id) => handleNodeSelectRef.current(id)}
           onHoverLink={(id) => handleLinkHoverRef.current(id)}
@@ -2482,6 +2922,7 @@ export function Map() {
               : "Virtual location"
           }
           isScanning={scan.isScanning}
+          scanError={scan.scanError}
           demSource={scan.scanDemSource}
           terrainNeeded={!terrain3D}
           onEnableTerrain={() => setTerrain3D(true)}
@@ -2562,12 +3003,6 @@ export function Map() {
           onReliabilityChange={scan.setScanReliability}
         />
       )}
-
-      <style>
-        {`
-          #map { position: absolute; inset: 0; }
-        `}
-      </style>
     </div>
   );
 }

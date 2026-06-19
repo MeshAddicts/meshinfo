@@ -53,7 +53,10 @@ export function TelemetrySection({ nodeId }: { nodeId: string }) {
   if (isLoading) {
     return <div className="text-gray-500 text-xs ml-2 py-1">Loading…</div>;
   }
-  if (error || availableMetrics.length === 0) {
+  if (error) {
+    return <div className="text-gray-500 text-xs ml-2 py-1">Couldn't load telemetry</div>;
+  }
+  if (availableMetrics.length === 0) {
     return <div className="text-gray-500 text-xs ml-2 py-1">No telemetry data</div>;
   }
 

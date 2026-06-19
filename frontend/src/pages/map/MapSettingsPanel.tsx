@@ -146,6 +146,47 @@ function FiltersSection({
   );
 }
 
+/** Collapsible section — module-scope so re-renders don't remount it (which
+ *  would drop the search input's focus). */
+function Section({
+  open,
+  onToggle,
+  title,
+  subtitle,
+  children,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  const contentId = `settings-section-${title.toLowerCase().replace(/\s+/g, "-")}`;
+  return (
+    <div className="border-t border-white/5 first:border-t-0">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-controls={contentId}
+        className="w-full flex items-center justify-between py-2.5 text-left hover:text-gray-100 transition-colors"
+      >
+        <div>
+          <div className="text-xs font-semibold text-gray-200">{title}</div>
+          {subtitle && <div className="text-[10px] text-gray-500 mt-0.5">{subtitle}</div>}
+        </div>
+        <svg
+          className={`w-3.5 h-3.5 text-gray-500 transition-transform ${open ? "rotate-180" : ""}`}
+          fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && <div id={contentId} className="pb-3 space-y-3">{children}</div>}
+    </div>
+  );
+}
+
 export function MapSettingsPanel({
   settingsPanelRef,
   settingsToggleRef,
@@ -176,6 +217,8 @@ export function MapSettingsPanel({
   setTerrain3D,
   buildings3D,
   setBuildings3D,
+  livePackets,
+  setLivePackets,
   onExport,
   hidden = false,
 
@@ -219,6 +262,8 @@ export function MapSettingsPanel({
   setTerrain3D: Dispatch<SetStateAction<boolean>>;
   buildings3D: boolean;
   setBuildings3D: Dispatch<SetStateAction<boolean>>;
+  livePackets: boolean;
+  setLivePackets: Dispatch<SetStateAction<boolean>>;
   onExport?: () => void;
   hidden?: boolean;
 
@@ -234,8 +279,21 @@ export function MapSettingsPanel({
   resolveChannelLabel?: (id: string | null | undefined) => string | null;
 }) {
   const [nodeSearch, setNodeSearch] = useState("");
+  const [myNodeHighlight, setMyNodeHighlight] = useState(0);
   const [legendOpen, setLegendOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  // Move focus into the panel on open; return it to the toggle on close.
+  const prevOpenRef = useRef(settingsPanelOpen);
+  useEffect(() => {
+    if (settingsPanelOpen && !prevOpenRef.current) {
+      requestAnimationFrame(() => headingRef.current?.focus());
+    } else if (!settingsPanelOpen && prevOpenRef.current) {
+      settingsToggleRef.current?.focus();
+    }
+    prevOpenRef.current = settingsPanelOpen;
+  }, [settingsPanelOpen, settingsToggleRef]);
 
   const filteredNodes = useMemo(() => {
     if (!nodeSearch) return nodeList.slice(0, 50);
@@ -256,14 +314,41 @@ export function MapSettingsPanel({
     return node?.shortname || node?.longname || myNodeId;
   }, [myNodeId, nodeList]);
 
+  useEffect(() => setMyNodeHighlight(0), [nodeSearch]);
+
+  const selectMyNode = (id: string) => {
+    setMyNodeId(id);
+    setNodeSearch("");
+  };
+
+  const onMyNodeSearchKey = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setMyNodeHighlight((i) => Math.min(i + 1, filteredNodes.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setMyNodeHighlight((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter" && filteredNodes[myNodeHighlight]) {
+      e.preventDefault();
+      selectMyNode(filteredNodes[myNodeHighlight].id);
+    } else if (e.key === "Escape") {
+      setNodeSearch("");
+    }
+  };
+
   useEffect(() => {
     if (!legendOpen) return;
-    const handleClick = (e: MouseEvent) => {
+    const onPointerDown = (e: PointerEvent) => {
       if (containerRef.current?.contains(e.target as Node)) return;
       setLegendOpen(false);
     };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setLegendOpen(false); };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [legendOpen]);
 
   const sheet = useBottomSheetGesture(() => setSettingsPanelOpen(false));
@@ -283,41 +368,6 @@ export function MapSettingsPanel({
     });
   };
 
-  const Section = ({
-    id,
-    title,
-    subtitle,
-    children,
-  }: {
-    id: string;
-    title: string;
-    subtitle?: string;
-    children: React.ReactNode;
-  }) => {
-    const open = openSections.has(id);
-    return (
-      <div className="border-t border-white/5 first:border-t-0">
-        <button
-          type="button"
-          onClick={() => toggleSection(id)}
-          className="w-full flex items-center justify-between py-2.5 text-left hover:text-gray-100 transition-colors"
-        >
-          <div>
-            <div className="text-xs font-semibold text-gray-200">{title}</div>
-            {subtitle && <div className="text-[10px] text-gray-500 mt-0.5">{subtitle}</div>}
-          </div>
-          <svg
-            className={`w-3.5 h-3.5 text-gray-500 transition-transform ${open ? "rotate-180" : ""}`}
-            fill="none" stroke="currentColor" viewBox="0 0 24 24"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </button>
-        {open && <div className="pb-3 space-y-3">{children}</div>}
-      </div>
-    );
-  };
-
   return (
     <div ref={containerRef} className={`fixed bottom-4 right-4 z-1100 flex flex-col items-end ${hidden ? "max-sm:hidden" : ""}`}>
       {legendOpen && !settingsPanelOpen && (
@@ -332,6 +382,8 @@ export function MapSettingsPanel({
             (settingsPanelRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
             (sheet.sheetRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
           }}
+          role="dialog"
+          aria-labelledby="map-settings-heading"
           className="shadow-2xl border border-white/10 bg-gray-900/80 backdrop-blur-xl
                      fixed inset-x-0 bottom-0 max-h-[85dvh] rounded-t-2xl flex flex-col
                      animate-[slideInUp_200ms_ease-out]
@@ -341,6 +393,13 @@ export function MapSettingsPanel({
         >
           <div
             className="sm:hidden flex justify-center pt-2 pb-1 shrink-0 touch-none cursor-grab active:cursor-grabbing"
+            role="button"
+            tabIndex={0}
+            aria-label="Expand panel"
+            onClick={() => sheet.expand()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") { e.preventDefault(); sheet.expand(); }
+            }}
             onTouchStart={sheet.onTouchStart}
             onTouchMove={sheet.onTouchMove}
             onTouchEnd={sheet.onTouchEnd}
@@ -355,7 +414,7 @@ export function MapSettingsPanel({
               onTouchMove={sheet.onTouchMove}
               onTouchEnd={sheet.onTouchEnd}
             >
-              <h3 className="text-sm font-semibold text-gray-200">Map Settings</h3>
+              <h3 id="map-settings-heading" ref={headingRef} tabIndex={-1} className="text-sm font-semibold text-gray-200 focus:outline-none">Map Settings</h3>
               <button
                 type="button"
                 onClick={() => setSettingsPanelOpen(false)}
@@ -369,7 +428,8 @@ export function MapSettingsPanel({
             </div>
 
             <Section
-              id="filters"
+              open={openSections.has("filters")}
+              onToggle={() => toggleSection("filters")}
               title="Filters"
               subtitle={filtersSubtitle(recentDays, linkMode, clusterEnabled, roleFilter, channelFilter)}
             >
@@ -389,7 +449,7 @@ export function MapSettingsPanel({
               />
             </Section>
 
-            <Section id="appearance" title="Appearance" subtitle="Basemap">
+            <Section open={openSections.has("appearance")} onToggle={() => toggleSection("appearance")} title="Appearance" subtitle="Basemap">
               <div>
                 <label
                   htmlFor="basemap-select"
@@ -439,7 +499,8 @@ export function MapSettingsPanel({
             </Section>
 
             <Section
-              id="terrain"
+              open={openSections.has("terrain")}
+              onToggle={() => toggleSection("terrain")}
               title="3D Layers"
               subtitle={[terrain3D && "Terrain", buildings3D && "Buildings"].filter(Boolean).join(" + ") || "Off"}
             >
@@ -490,7 +551,33 @@ export function MapSettingsPanel({
                 )}
               </Section>
 
-            <Section id="mynode" title="My Node" subtitle={myNodeLabel || "Not set"}>
+            <Section
+              open={openSections.has("animations")}
+              onToggle={() => toggleSection("animations")}
+              title="Animations"
+              subtitle={livePackets ? "On" : "Off"}
+            >
+                <div className="flex items-center justify-between p-2.5 rounded-lg bg-white/5">
+                  <div className="flex flex-col">
+                    <label htmlFor="animations-checkbox" className="text-sm font-medium text-gray-300">
+                      Live map animations
+                    </label>
+                    <p className="text-[11px] text-gray-500 mt-0.5">
+                      Packet arcs, traceroute paths, and cluster transitions
+                    </p>
+                  </div>
+                  <input
+                    id="animations-checkbox"
+                    type="checkbox"
+                    checked={livePackets}
+                    onChange={(e) => setLivePackets(e.target.checked)}
+                    className="h-4 w-4 rounded-sm border-gray-600 bg-gray-700 text-cyan-500 focus:ring-cyan-500"
+                    aria-label="Toggle live map animations"
+                  />
+                </div>
+              </Section>
+
+            <Section open={openSections.has("mynode")} onToggle={() => toggleSection("mynode")} title="My Node" subtitle={myNodeLabel || "Not set"}>
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label
@@ -520,27 +607,52 @@ export function MapSettingsPanel({
                   className={selectClasses}
                   value={nodeSearch}
                   onChange={(e) => setNodeSearch(e.target.value)}
+                  onKeyDown={onMyNodeSearchKey}
+                  role="combobox"
+                  aria-expanded={nodeSearch !== "" && filteredNodes.length > 0}
+                  aria-controls="my-node-listbox"
+                  aria-autocomplete="list"
+                  aria-activedescendant={
+                    nodeSearch && filteredNodes[myNodeHighlight]
+                      ? `my-node-opt-${filteredNodes[myNodeHighlight].id}`
+                      : undefined
+                  }
                 />
                 {nodeSearch && (
-                  <div className="mt-1 max-h-40 overflow-y-auto rounded-lg border border-white/10 bg-gray-800/90">
-                    {filteredNodes.length === 0 && (
-                      <div className="px-3 py-2 text-xs text-gray-500">No nodes found</div>
-                    )}
-                    {filteredNodes.map((node) => (
-                      <button
-                        key={node.id}
-                        type="button"
-                        className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/10 text-gray-300 truncate transition-colors"
-                        onClick={() => {
-                          setMyNodeId(node.id);
-                          setNodeSearch("");
-                        }}
-                      >
-                        <span className="font-medium">{node.shortname || node.id}</span>
-                        {node.longname && <span className="ml-1 text-gray-500">{node.longname}</span>}
-                      </button>
-                    ))}
-                  </div>
+                  <>
+                    <div className="sr-only" role="status" aria-live="polite">
+                      {filteredNodes.length === 0
+                        ? "No nodes found"
+                        : `${filteredNodes.length} result${filteredNodes.length === 1 ? "" : "s"}`}
+                    </div>
+                    <div
+                      id="my-node-listbox"
+                      role="listbox"
+                      aria-label="My Node search results"
+                      className="mt-1 max-h-40 overflow-y-auto rounded-lg border border-white/10 bg-gray-800/90"
+                    >
+                      {filteredNodes.length === 0 && (
+                        <div className="px-3 py-2 text-xs text-gray-500">No nodes found</div>
+                      )}
+                      {filteredNodes.map((node, i) => (
+                        <button
+                          key={node.id}
+                          id={`my-node-opt-${node.id}`}
+                          type="button"
+                          role="option"
+                          aria-selected={i === myNodeHighlight}
+                          className={`w-full text-left px-3 py-1.5 text-xs truncate transition-colors ${
+                            i === myNodeHighlight ? "bg-white/10 text-gray-100" : "hover:bg-white/10 text-gray-300"
+                          }`}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => selectMyNode(node.id)}
+                        >
+                          <span className="font-medium">{node.shortname || node.id}</span>
+                          {node.longname && <span className="ml-1 text-gray-500">{node.longname}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  </>
                 )}
                 <p className="text-[10px] text-gray-600 mt-1.5">
                   Tip: right-click (or long-press) a node on the map to set it as My Node.
@@ -549,7 +661,7 @@ export function MapSettingsPanel({
             </Section>
 
             {onExport && (
-              <Section id="export" title="Export" subtitle="Save current view as image">
+              <Section open={openSections.has("export")} onToggle={() => toggleSection("export")} title="Export" subtitle="Save current view as image">
                 <button
                   type="button"
                   onClick={onExport}

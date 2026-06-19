@@ -5,13 +5,15 @@ import maplibregl, {
 import { useEffect, useRef } from "react";
 
 import { env } from "../../env";
-import { buildBuildingRaster } from "./buildingTiles";
-import { buildCanopyRaster } from "./canopyTiles";
+import { ORIGIN_COLOR } from "../../palette";
+import { buildBuildingRaster, type BuildingRaster } from "./buildingTiles";
+import { buildCanopyRaster, type CanopyRaster } from "./canopyTiles";
 import { AGGRESSION_STOPS, type CoverageReliability, reliabilityPreset } from "./coverageAnalysis";
 import { type ItmContext, loadItmContext } from "./itm";
-import { buildClutterRaster } from "./landcoverTiles";
+import { DEFAULT_ITM_ENV } from "./itmEnv";
+import { buildClutterRaster, type ClutterRaster } from "./landcoverTiles";
 import { runScan, type ScanClass, type ScanSummary, type ScanTarget, scanToGeoJSON } from "./scanAnalysis";
-import { demBoundsAround, sampleDEMAt } from "./terrainDEM";
+import { type DEM, demBoundsAround, sampleDEMAt } from "./terrainDEM";
 import { buildDem, type DemSource } from "./terrainRgb";
 import type { IMapNode } from "./types";
 
@@ -40,6 +42,7 @@ type ScanComputeParams = {
   isDraggingMarkerRef: React.RefObject<boolean>;
   setScanSummary: (s: ScanSummary | null) => void;
   setIsScanning: (b: boolean) => void;
+  setScanError: (e: string | null) => void;
   setScanDemSource: (s: DemSource | null) => void;
   setScanClutterStatus: (s: { tilesPresent: number; tilesTotal: number } | null) => void;
   setScanCanopyStatus: (s: { tilesPresent: number; tilesTotal: number } | null) => void;
@@ -57,7 +60,7 @@ export function useScanCompute(params: ScanComputeParams) {
     scanAntennaHeightM, scanReliability,
     hiddenScanClasses, scanSummary, scanHoverId,
     mbMapRef, isDraggingMarkerRef,
-    setScanSummary, setIsScanning, setScanDemSource,
+    setScanSummary, setIsScanning, setScanDemSource, setScanError,
     setScanClutterStatus, setScanCanopyStatus, setScanBuildingsStatus,
     setToolFromId, setToolVirtualPos,
   } = params;
@@ -69,12 +72,19 @@ export function useScanCompute(params: ScanComputeParams) {
   const scanOriginKeyRef = useRef<string | null>(null);
   // Lazily loaded, reused across scans; same WASM module as the coverage workers (main thread)
   const scanItmContextRef = useRef<ItmContext | null>(null);
+  // Cache the bbox-derived rasters so link-budget tweaks reuse them (no refetch).
+  const scanRasterCacheRef = useRef<{
+    key: string;
+    dem: DEM; source: DemSource;
+    clutter: ClutterRaster | null; canopy: CanopyRaster | null; buildings: BuildingRaster | null;
+  } | null>(null);
 
   // Scan tool: batch LoS to every node in radius from a chosen origin
   useEffect(() => {
     if (activeTool !== "scan" || toolStep !== "result") {
       setScanSummary(null);
       setIsScanning(false);
+      setScanError(null);
       return;
     }
     if (!terrain3D) {
@@ -122,7 +132,7 @@ export function useScanCompute(params: ScanComputeParams) {
     if (scanOriginMarkerRef.current) {
       scanOriginMarkerRef.current.setLngLat(origin);
     } else {
-      const marker = new maplibregl.Marker({ color: "#22d3ee", draggable: true })
+      const marker = new maplibregl.Marker({ color: ORIGIN_COLOR, draggable: true })
         .setLngLat(origin)
         .addTo(mb);
       marker.on("dragstart", () => { isDraggingMarkerRef.current = true; });
@@ -138,6 +148,7 @@ export function useScanCompute(params: ScanComputeParams) {
     }
 
     setIsScanning(true);
+    setScanError(null);
     let cancelled = false;
 
     const SCAN_RADIUS_KM = 200;
@@ -180,42 +191,43 @@ export function useScanCompute(params: ScanComputeParams) {
         const mapboxToken = env.MAPBOX_TOKEN;
         if (!mapboxToken) {
           console.warn("[Map] Scan aborted — Mapbox token missing.");
+          setScanError("Mapbox token not configured — scanning needs terrain elevation data.");
           setIsScanning(false);
           return;
         }
         const scanBounds = demBoundsAround(origin!, SCAN_RADIUS_KM, 1.05);
-        // 2048² rasters match coverage's resolution so per-target ITM sees
-        // the same terrain detail the painted prediction does.
-        const [{ dem, source: demSourceUsedForScan }, scanClutter, scanCanopy, scanBuildings] = await Promise.all([
-          buildDem({
-            bounds: scanBounds,
-            targetWidth: 2048,
-            targetHeight: 2048,
-            token: mapboxToken,
-          }),
-          // Skip individual fetches when their respective models are toggled off.
-          scanClutterEnabled
-            ? buildClutterRaster({
-                bounds: scanBounds,
-                targetWidth: 2048,
-                targetHeight: 2048,
-              })
-            : Promise.resolve(null),
-          scanCanopyEnabled
-            ? buildCanopyRaster({
-                bounds: scanBounds,
-                targetWidth: 2048,
-                targetHeight: 2048,
-              })
-            : Promise.resolve(null),
-          scanBuildingsEnabled
-            ? buildBuildingRaster({
-                bounds: scanBounds,
-                targetWidth: 2048,
-                targetHeight: 2048,
-              })
-            : Promise.resolve(null),
-        ]);
+        // 2048² rasters match coverage's resolution so per-target ITM sees the same
+        // terrain detail. Cached by bbox + enabled flags so link-budget tweaks reuse
+        // them instead of refetching ~800 tiles per config change.
+        const rasterKey = `${scanBounds.west.toFixed(4)},${scanBounds.south.toFixed(4)},${scanBounds.east.toFixed(4)},${scanBounds.north.toFixed(4)}|${scanClutterEnabled}|${scanCanopyEnabled}|${scanBuildingsEnabled}`;
+        let dem: DEM;
+        let demSourceUsedForScan: DemSource;
+        let scanClutter: ClutterRaster | null;
+        let scanCanopy: CanopyRaster | null;
+        let scanBuildings: BuildingRaster | null;
+        const rasterCache = scanRasterCacheRef.current;
+        if (rasterCache && rasterCache.key === rasterKey) {
+          dem = rasterCache.dem;
+          demSourceUsedForScan = rasterCache.source;
+          scanClutter = rasterCache.clutter;
+          scanCanopy = rasterCache.canopy;
+          scanBuildings = rasterCache.buildings;
+        } else {
+          const [demRes, clutterRes, canopyRes, buildingsRes] = await Promise.all([
+            buildDem({ bounds: scanBounds, targetWidth: 2048, targetHeight: 2048, token: mapboxToken }),
+            // Skip individual fetches when their respective models are toggled off.
+            scanClutterEnabled ? buildClutterRaster({ bounds: scanBounds, targetWidth: 2048, targetHeight: 2048 }) : Promise.resolve(null),
+            scanCanopyEnabled ? buildCanopyRaster({ bounds: scanBounds, targetWidth: 2048, targetHeight: 2048 }) : Promise.resolve(null),
+            scanBuildingsEnabled ? buildBuildingRaster({ bounds: scanBounds, targetWidth: 2048, targetHeight: 2048 }) : Promise.resolve(null),
+          ]);
+          if (cancelled) return;
+          dem = demRes.dem;
+          demSourceUsedForScan = demRes.source;
+          scanClutter = clutterRes;
+          scanCanopy = canopyRes;
+          scanBuildings = buildingsRes;
+          scanRasterCacheRef.current = { key: rasterKey, dem, source: demSourceUsedForScan, clutter: scanClutter, canopy: scanCanopy, buildings: scanBuildings };
+        }
         if (cancelled) return;
         setScanDemSource(demSourceUsedForScan);
         setScanClutterStatus(
@@ -271,11 +283,7 @@ export function useScanCompute(params: ScanComputeParams) {
           itm: scanItmContextRef.current
             ? {
                 context: scanItmContextRef.current,
-                climate: 5 /* ContinentalTemperate */,
-                surfaceRefractivityN: 301,
-                polarization: 1 /* Vertical */,
-                groundDielectric: 15,
-                groundConductivity: 0.005,
+                ...DEFAULT_ITM_ENV,
                 // Without these, scanAnalysis falls back to 50/50/50 — much
                 // more optimistic than coverage's 90/50/70 default.
                 timePct: reliabilityPreset(scanReliability).time,
@@ -291,6 +299,7 @@ export function useScanCompute(params: ScanComputeParams) {
         src?.setData(scanToGeoJSON(summary));
       } catch (err) {
         console.warn("[Map] Scan failed:", err);
+        setScanError("Scan failed. Adjust settings and try again.");
         setScanSummary(null);
       } finally {
         if (!cancelled) setIsScanning(false);
@@ -304,7 +313,7 @@ export function useScanCompute(params: ScanComputeParams) {
       scanAggressionIdx, scanClutterEnabled, scanCanopyEnabled, scanBuildingsEnabled,
       scanAntennaHeightM, scanReliability,
       mbMapRef, isDraggingMarkerRef,
-      setScanSummary, setIsScanning, setScanDemSource,
+      setScanSummary, setIsScanning, setScanDemSource, setScanError,
       setScanClutterStatus, setScanCanopyStatus, setScanBuildingsStatus,
       setToolFromId, setToolVirtualPos]);
 
@@ -338,6 +347,7 @@ export function useScanCompute(params: ScanComputeParams) {
       }
       scanInitialViewRef.current = null;
       scanOriginKeyRef.current = null;
+      scanRasterCacheRef.current = null;
     }
   }, [activeTool, mbMapRef]);
 

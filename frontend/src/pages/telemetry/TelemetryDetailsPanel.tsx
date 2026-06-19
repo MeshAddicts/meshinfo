@@ -378,7 +378,7 @@ function LineChart({
       <div className="mt-2 rounded-lg border border-gray-200 dark:border-gray-800 bg-white/60 dark:bg-gray-950/20 overflow-hidden">
         <svg
           viewBox={`0 0 ${w} ${h}`}
-          className="w-full h-[220px] sm:h-[260px]"
+          className="w-full h-55 sm:h-65"
           onMouseLeave={() => setHover(null)}
           onMouseMove={(e) => {
             if (!points.length) return;

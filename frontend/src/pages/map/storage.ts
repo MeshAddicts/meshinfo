@@ -1,9 +1,13 @@
+import { toast } from "../../components/toastStore";
+
 export const LS_KEYS = {
   provider: "meshinfo.map.provider",
   mapboxStyle: "meshinfo.map.mapboxStyle",
   osmBasemap: "meshinfo.map.osmBasemap",
   recentDays: "meshinfo.map.recentDays",
   clusterEnabled: "meshinfo.map.clusterEnabled",
+  /** Live packet-arc animation on/off (on by default, opt-out). */
+  livePackets: "meshinfo.map.livePackets",
   settingsPanelOpen: "meshinfo.map.settingsPanelOpen",
   linkMode: "meshinfo.map.linkMode",
   myNodeId: "meshinfo.map.myNodeId",
@@ -34,11 +38,16 @@ export function readJson<T>(key: string, fallback: T): T {
   }
 }
 
+let writeFailureToasted = false;
 export function writeJson<T>(key: string, value: T) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch (err) {
     console.warn("Failed to persist map setting to localStorage", { key, error: err });
+    if (!writeFailureToasted) {
+      writeFailureToasted = true;
+      toast("Couldn't save your map settings — browser storage may be full or blocked.", { kind: "error" });
+    }
   }
 }
 

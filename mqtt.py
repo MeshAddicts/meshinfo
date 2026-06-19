@@ -15,6 +15,7 @@ from google.protobuf.json_format import MessageToJson
 from google.protobuf.message import DecodeError
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
+from fastapi.encoders import jsonable_encoder
 
 from encoders import _JSONDecoder
 from models.node import Node
@@ -410,12 +411,22 @@ class MQTT:
         clean_msg.pop("decoded", None)
         clean_msg.pop("encrypted", None)
 
+        row_id = None
         try:
-            await self.data.pg_storage.write_mqtt_message(clean_msg)
+            row_id = await self.data.pg_storage.write_mqtt_message(clean_msg)
         except Exception as e:
             logger.error("Failed to write mqtt_message to postgres: %s", e)
             if self.config.get('debug'):
                 logger.debug("Postgres write traceback", exc_info=True)
+
+        # Live push: raw packet feed (mqtt_row_id lets the client dedup/deeplink).
+        if row_id is not None and self.data.broadcaster.subscriber_count:
+            try:
+                self.data.broadcaster.publish(
+                    "packet", jsonable_encoder({**clean_msg, "mqtt_row_id": row_id})
+                )
+            except Exception as e:
+                logger.debug("packet broadcast failed: %s", e)
 
 
     async def handle_neighborinfo(self, msg):
@@ -559,6 +570,13 @@ class MQTT:
                 except Exception as e:
                     logger.error("Failed to update node_telemetry_current for node %s: %s", id, e)
 
+            # Live push: telemetry sample (feeds the Telemetry page charts/feed).
+            if self.data.broadcaster.subscriber_count:
+                try:
+                    self.data.broadcaster.publish("telemetry", jsonable_encoder(msg))
+                except Exception as e:
+                    logger.debug("telemetry broadcast failed: %s", e)
+
 
     async def handle_text(self, msg):
         from_id = self._normalize_msg_addrs(msg)
@@ -595,6 +613,13 @@ class MQTT:
             chat['sender'] = msg['sender']
 
         await self.data.pg_storage.write_chat_message(from_id, chat)
+
+        # Live push: a new chat message. Published before the node update below
+        # so a chat still streams even if the node touch no-ops.
+        try:
+            self.data.broadcaster.publish("chat", jsonable_encoder(chat))
+        except Exception as e:
+            logger.debug("chat broadcast failed: %s", e)
 
         node = await self.data.pg_storage.get_node_cached(from_id)
         # TODO: Replace with something more configurable
@@ -644,3 +669,20 @@ class MQTT:
                 msg['route_ids'].append(r)
 
         await self.data.pg_storage.write_traceroute(id, msg)
+
+        # Live push: resolved multi-hop path for the map's traceroute tracer.
+        if self.data.broadcaster.subscriber_count:
+            try:
+                self.data.broadcaster.publish(
+                    "traceroute",
+                    jsonable_encoder(
+                        {
+                            "from": id,
+                            "to": msg.get("to"),
+                            "route_ids": msg["route_ids"],
+                            "id": msg.get("id"),
+                        }
+                    ),
+                )
+            except Exception as e:
+                logger.debug("traceroute broadcast failed: %s", e)

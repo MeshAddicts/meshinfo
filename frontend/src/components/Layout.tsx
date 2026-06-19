@@ -5,9 +5,9 @@ import { Menu } from "./Menu";
 
 export const Layout = ({ children }: { children: React.ReactNode }) => {
   const { pathname } = useLocation();
+  const isMap = pathname === "/map";
   const [isDark, setIsDark] = useState(false);
 
-  const isMap = pathname === "/map";
   const isChat = pathname === "/chat";
   const isLog = pathname === "/log" || pathname === "/logs";
   const isTraceroutes = pathname === "/traceroutes";
@@ -15,8 +15,9 @@ export const Layout = ({ children }: { children: React.ReactNode }) => {
   const isNodes = pathname === "/nodes";
   const isNeighbors = pathname === "/neighbors";
   const isStats = pathname === "/stats";
+  const isGraph = pathname === "/graph";
 
-const isFullBleed = isMap || isChat || isLog || isTraceroutes || isTelemetry || isNodes || isNeighbors || isStats;
+const isFullBleed = isMap || isChat || isLog || isTraceroutes || isTelemetry || isNodes || isNeighbors || isStats || isGraph;
 
   // make sure the root element is updated with the dark class
   //  move this out eventually
@@ -68,10 +69,14 @@ const isFullBleed = isMap || isChat || isLog || isTraceroutes || isTelemetry || 
 
   return (
     <div className={isFullBleed ? "h-dvh overflow-hidden" : ""}>
-      <Menu isDark={isDark} onDarkChange={(dark) => setIsDark(dark)} overlayMode={isMap} />
+      <Menu
+        isDark={isDark}
+        onDarkChange={(dark) => setIsDark(dark)}
+        overlayMode={isMap}
+      />
 
       <div
-        className={`${isMap ? "" : "lg:pl-60"} dark:bg-gray-950 dark:text-gray-100 lg:pt-0
+        className={`${isMap ? "nav-offset-map" : "nav-offset"} dark:bg-gray-950 dark:text-gray-100 lg:pt-0
           ${isFullBleed ? "pt-0 h-full overflow-hidden" : "pt-14"}`}
       >
         <main className={isFullBleed ? "h-full" : "py-1"}>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   COMMON_ANTENNAS,
@@ -44,6 +44,7 @@ function EndpointConfig({
   hwIdx, onHwIdxChange,
   antIdx, onAntIdxChange,
   heightM, onHeightChange,
+  usingGpsAltitude = false,
 }: {
   label: string;
   color: string;
@@ -53,6 +54,8 @@ function EndpointConfig({
   onAntIdxChange: (idx: number) => void;
   heightM: number;
   onHeightChange: (m: number) => void;
+  /** Node reported a GPS altitude, so the Height field doesn't affect the result. */
+  usingGpsAltitude?: boolean;
 }) {
   const [heightInput, setHeightInput] = useState(String(heightM));
   useEffect(() => { setHeightInput(String(heightM)); }, [heightM]);
@@ -80,7 +83,7 @@ function EndpointConfig({
             focus:border-cyan-500/50 focus:outline-hidden [&>option]:bg-gray-800 [&>option]:text-gray-200"
         >
           {COMMON_HARDWARE.map((h, i) => (
-            <option key={i} value={i}>{h.label} ({h.txDbm})</option>
+            <option key={i} value={i}>{h.label} ({h.txDbm} dBm)</option>
           ))}
         </select>
       </div>
@@ -99,11 +102,12 @@ function EndpointConfig({
       </div>
       <div>
         <div className="text-gray-500 uppercase tracking-wider mb-0.5">Height</div>
-        <div className="flex items-center gap-1 rounded border border-white/10 bg-white/5 px-1 py-0.5">
+        <div className={`flex items-center gap-1 rounded border border-white/10 bg-white/5 px-1 py-0.5 ${usingGpsAltitude ? "opacity-50" : ""}`}>
           <input
             type="text"
             inputMode="decimal"
             value={heightInput}
+            disabled={usingGpsAltitude}
             onChange={(e) => setHeightInput(e.target.value)}
             onBlur={commitHeight}
             onKeyDown={(e) => {
@@ -113,11 +117,19 @@ function EndpointConfig({
                 (e.currentTarget as HTMLInputElement).blur();
               }
             }}
-            className="min-w-0 flex-1 bg-transparent text-[10px] text-gray-200 text-center focus:outline-hidden"
-            title="Antenna height above ground (m). Blank = 2 m."
+            className="min-w-0 flex-1 bg-transparent text-[10px] text-gray-200 text-center focus:outline-hidden disabled:cursor-not-allowed"
+            aria-label={`${label} antenna height in meters`}
+            title={usingGpsAltitude
+              ? "Ignored — this node reports a GPS altitude, which is used instead."
+              : "Antenna height above ground (m). Blank = 2 m."}
           />
           <span className="text-gray-500 shrink-0">m</span>
         </div>
+        {usingGpsAltitude && (
+          <div className="text-[9px] text-gray-500 mt-0.5 leading-snug">
+            Using GPS altitude — height ignored.
+          </div>
+        )}
       </div>
     </div>
   );
@@ -133,6 +145,8 @@ export function MapLosPanel({
   onEnableTerrain,
   onClose,
   isComputing,
+  isRecomputing = false,
+  error,
   fromHwIdx, onFromHwIdxChange,
   fromAntIdx, onFromAntIdxChange,
   fromHeightM, onFromHeightChange,
@@ -151,6 +165,10 @@ export function MapLosPanel({
   onEnableTerrain?: () => void;
   onClose: () => void;
   isComputing: boolean;
+  /** A recompute is in flight while a result is already shown (height/config tweak). */
+  isRecomputing?: boolean;
+  /** Compute error; shows an error state instead of the spinner. */
+  error?: string | null;
   fromHwIdx: number; onFromHwIdxChange: (idx: number) => void;
   fromAntIdx: number; onFromAntIdxChange: (idx: number) => void;
   fromHeightM: number; onFromHeightChange: (m: number) => void;
@@ -162,10 +180,33 @@ export function MapLosPanel({
   /** Fires with 0-1 distance fraction on chart hover. */
   onProfileHover?: (fraction: number | null) => void;
 }) {
-  const sheet = useBottomSheetGesture(onClose);
+  // Mobile peek after a result: summary + graph stay; configs reveal on drag-up.
+  const [minimized, setMinimized] = useState(false);
+  const sheet = useBottomSheetGesture({
+    onClose,
+    minimized,
+    onMinimize: () => setMinimized(true),
+    onExpand: () => setMinimized(false),
+  });
+
+  const losKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!result) { losKeyRef.current = null; return; }
+    const key = `${fromLabel}->${toLabel}`;
+    if (losKeyRef.current !== key) {
+      losKeyRef.current = key;
+      setMinimized(true);
+    }
+  }, [result, fromLabel, toLabel]);
+
+  // Modal terrain prompt: focus its primary action on mount.
+  const terrainBtnRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (terrainNeeded) requestAnimationFrame(() => terrainBtnRef.current?.focus());
+  }, [terrainNeeded]);
 
   useEffect(() => {
-    const onDocMouseDown = (e: MouseEvent) => {
+    const onDocPointerDown = (e: PointerEvent) => {
       const root = sheet.sheetRef.current;
       if (!root) return;
       if (root.contains(e.target as Node)) return;
@@ -173,13 +214,34 @@ export function MapLosPanel({
         d.removeAttribute("open");
       });
     };
-    document.addEventListener("mousedown", onDocMouseDown);
-    return () => document.removeEventListener("mousedown", onDocMouseDown);
+    // Capture phase so an open popover swallows Escape before the global
+    // handler closes the whole tool; refocus the summary on close.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const root = sheet.sheetRef.current;
+      const open = root?.querySelectorAll<HTMLDetailsElement>("details[open]");
+      if (!open || open.length === 0) return;
+      e.stopPropagation();
+      open.forEach((d) => {
+        d.removeAttribute("open");
+        d.querySelector<HTMLElement>("summary")?.focus();
+      });
+    };
+    document.addEventListener("pointerdown", onDocPointerDown);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onDocPointerDown);
+      document.removeEventListener("keydown", onKey, true);
+    };
   }, [sheet.sheetRef]);
 
   if (terrainNeeded) {
     return (
-      <div className="fixed z-1050 shadow-2xl border border-amber-500/30 bg-gray-900/90 backdrop-blur-xl
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="3D terrain required for line-of-sight analysis"
+        className="fixed z-1050 shadow-2xl border border-amber-500/30 bg-gray-900/90 backdrop-blur-xl
         inset-x-0 bottom-0 rounded-t-2xl p-4 pb-6 max-h-[75dvh] overflow-y-auto
         sm:inset-x-auto sm:bottom-3 sm:left-1/2 sm:-translate-x-1/2 sm:w-[min(900px,calc(100vw-2rem))]
         sm:rounded-xl sm:pb-4 sm:max-h-none sm:overflow-visible">
@@ -194,6 +256,7 @@ export function MapLosPanel({
             </p>
             {onEnableTerrain && (
               <button
+                ref={terrainBtnRef}
                 type="button"
                 onClick={onEnableTerrain}
                 className="mt-2.5 text-xs px-3 py-1.5 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-200 hover:bg-amber-500/30 transition-colors font-medium"
@@ -207,6 +270,37 @@ export function MapLosPanel({
             onClick={onClose}
             className="p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors shrink-0"
             aria-label="Close LoS analysis"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (error && !result) {
+    return (
+      <div
+        role="dialog"
+        aria-label="Line-of-sight analysis error"
+        className="fixed z-1050 shadow-2xl border border-red-500/30 bg-gray-900/90 backdrop-blur-xl
+        inset-x-0 bottom-0 rounded-t-2xl p-3 pb-5
+        sm:inset-x-auto sm:bottom-3 sm:left-1/2 sm:-translate-x-1/2 sm:w-[min(900px,calc(100vw-2rem))]
+        sm:rounded-xl sm:pb-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-xs text-red-300" role="alert">
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            </svg>
+            {error}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors shrink-0"
+            aria-label="Close"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -292,6 +386,8 @@ export function MapLosPanel({
   return (
     <div
       ref={sheet.sheetRef}
+      role="dialog"
+      aria-label={`Line-of-sight analysis: ${fromLabel} to ${toLabel}`}
       className="fixed z-1050 shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
         inset-x-0 bottom-0 rounded-t-2xl max-h-[82dvh] flex flex-col
         animate-[slideInUp_200ms_ease-out]
@@ -384,9 +480,26 @@ export function MapLosPanel({
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          {isRecomputing && (
+            <span className="inline-flex items-center gap-1 text-[10px] text-gray-400" role="status">
+              <span className="w-2.5 h-2.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+              <span className="hidden sm:inline">Updating…</span>
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => setMinimized((m) => !m)}
+            className="sm:hidden p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors"
+            aria-label={minimized ? "Show details" : "Collapse to summary"}
+            aria-expanded={!minimized}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={minimized ? "M5 15l7-7 7 7" : "M5 9l7 7 7-7"} />
+            </svg>
+          </button>
           <details className="text-[10px] text-gray-500 relative">
-            <summary className="cursor-pointer hover:text-gray-400 select-none list-none">
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <summary className="cursor-pointer hover:text-gray-400 select-none list-none" aria-label="About this analysis">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </summary>
@@ -439,14 +552,15 @@ export function MapLosPanel({
 
       {/* Body: 3-column row on desktop (From | Profile | To); mobile stacks vertically
           with the profile on top, then the two endpoint configs. */}
-      <div className="flex flex-col sm:flex-row overflow-y-auto overscroll-contain min-h-0 flex-1 sm:overflow-visible sm:flex-initial">
-        <div className="order-2 sm:order-1 w-full sm:w-36 sm:shrink-0 border-t sm:border-t-0 border-white/5">
+      <div className={`flex flex-col sm:flex-row overscroll-contain min-h-0 sm:overflow-visible sm:flex-initial ${minimized ? "" : "flex-1 overflow-y-auto"}`}>
+        <div className={`order-2 sm:order-1 w-full sm:w-36 sm:shrink-0 border-t sm:border-t-0 border-white/5 ${minimized ? "max-sm:hidden" : ""}`}>
           <EndpointConfig
             label={fromLabel}
             color={fromColor}
             hwIdx={fromHwIdx} onHwIdxChange={onFromHwIdxChange}
             antIdx={fromAntIdx} onAntIdxChange={onFromAntIdxChange}
             heightM={fromHeightM} onHeightChange={onFromHeightChange}
+            usingGpsAltitude={!los.fromIsFallback}
           />
         </div>
         <div className="order-1 sm:order-2 flex-1 min-w-0 px-2 py-1.5 sm:border-x border-white/5">
@@ -459,13 +573,14 @@ export function MapLosPanel({
             onHoverFraction={onProfileHover}
           />
         </div>
-        <div className="order-3 w-full sm:w-36 sm:shrink-0 border-t sm:border-t-0 border-white/5">
+        <div className={`order-3 w-full sm:w-36 sm:shrink-0 border-t sm:border-t-0 border-white/5 ${minimized ? "max-sm:hidden" : ""}`}>
           <EndpointConfig
             label={toLabel}
             color={toColor}
             hwIdx={toHwIdx} onHwIdxChange={onToHwIdxChange}
             antIdx={toAntIdx} onAntIdxChange={onToAntIdxChange}
             heightM={toHeightM} onHeightChange={onToHeightChange}
+            usingGpsAltitude={!los.toIsFallback}
           />
         </div>
       </div>

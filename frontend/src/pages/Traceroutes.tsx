@@ -9,6 +9,7 @@ import {
 import { useSearchParams } from "react-router";
 
 import { HeardBy } from "../components/HeardBy";
+import { LivePill } from "../components/LivePill";
 import { useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { ExportMenu } from "./chat/ExportMenu";
 import { TracerouteDetailsPanel } from "./traceroutes/TracerouteDetailsPanel";
@@ -264,7 +265,6 @@ export const Traceroutes = () => {
 
   const {
     data: traceroutesRaw,
-    fulfilledTimeStamp: dataUpdatedAt,
     isFetching,
     refetch,
   } = useGetTraceroutesQuery(undefined as any, {
@@ -612,7 +612,6 @@ export const Traceroutes = () => {
   }`;
 
   const liveUiMode = liveEnabled ? ("live" as const) : ("off" as const);
-  const livePillText = liveUiMode === "live" ? "Live" : "Live off";
   const livePillTitle = liveEnabled
     ? "Live mode is on. Auto-refresh polls every 5 seconds (paused when tab is unfocused). Click to disable."
     : "Live mode is off. Auto-refresh is disabled. Click to enable.";
@@ -724,7 +723,7 @@ export const Traceroutes = () => {
     return (
       <div className="w-full h-dvh overflow-hidden flex flex-col">
         <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
-          <div className="mx-auto max-w-[1600px] pl-3 pr-14 sm:px-5 py-2 sm:py-3">
+          <div className="mx-auto max-w-400 px-3 sm:px-5 py-2 sm:py-3">
             <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
               Traceroutes
             </h1>
@@ -742,7 +741,7 @@ export const Traceroutes = () => {
     <div className="w-full h-dvh overflow-hidden flex flex-col">
       {/* Sticky header (Chat-style) */}
       <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
-        <div className="mx-auto max-w-[1600px] pl-3 pr-14 sm:px-5 py-2 sm:py-3">
+        <div className="mx-auto max-w-400 px-3 sm:px-5 py-2 sm:py-3">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
               <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
@@ -751,48 +750,23 @@ export const Traceroutes = () => {
 
               {/* Desktop meta row */}
               <div className="mt-1 hidden sm:flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                <span>
-                  Updated:{" "}
-                  <span className="font-medium tabular-nums">
-                    {dataUpdatedAt && dataUpdatedAt > 0
-                      ? new Date(dataUpdatedAt).toLocaleString()
-                      : new Date().toLocaleString()}
-                  </span>
+                <span className={isFetching || manualRefreshing ? "animate-pulse" : ""}>
+                  {isFetching || manualRefreshing ? "Refreshing…" : "Ready"}
                 </span>
-
-                <span className="opacity-60">•</span>
 
                 <button
                   type="button"
                   className="underline hover:no-underline"
                   onClick={doManualRefresh}
-                  aria-busy={manualRefreshing || isFetching}
-                  title={
-                    manualRefreshing
-                      ? "Refreshing…"
-                      : isFetching
-                        ? "Refreshing…"
-                        : "Refresh now"
-                  }
                 >
                   refresh
                 </button>
 
-                <span className="opacity-60">•</span>
-
-                <button
-                  type="button"
-                  className={[
-                    "rounded-full px-2 py-0.5 text-[11px] font-medium border transition",
-                    liveUiMode === "live"
-                      ? "bg-emerald-600 text-white border-emerald-600"
-                      : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
-                  ].join(" ")}
-                  onClick={() => setLiveEnabled((v) => !v)}
+                <LivePill
+                  mode={liveUiMode}
+                  onToggle={() => setLiveEnabled((v) => !v)}
                   title={livePillTitle}
-                >
-                  {livePillText}
-                </button>
+                />
 
                 <span className="opacity-60">•</span>
 
@@ -805,45 +779,23 @@ export const Traceroutes = () => {
 
               {/* Mobile meta row */}
               <div className="mt-1 flex sm:hidden flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                <span className="font-medium tabular-nums">
-                  {dataUpdatedAt && dataUpdatedAt > 0
-                    ? new Date(dataUpdatedAt).toLocaleString()
-                    : new Date().toLocaleString()}
+                <span className={isFetching || manualRefreshing ? "animate-pulse" : ""}>
+                  {isFetching || manualRefreshing ? "Refreshing…" : "Ready"}
                 </span>
-
-                <span className="opacity-60">•</span>
 
                 <button
                   type="button"
                   className="underline hover:no-underline"
                   onClick={doManualRefresh}
-                  aria-busy={manualRefreshing || isFetching}
-                  title={
-                    manualRefreshing
-                      ? "Refreshing…"
-                      : isFetching
-                        ? "Refreshing…"
-                        : "Refresh now"
-                  }
                 >
                   refresh
                 </button>
 
-                <span className="opacity-60">•</span>
-
-                <button
-                  type="button"
-                  className={[
-                    "rounded-full px-2 py-0.5 text-[11px] font-medium border transition",
-                    liveUiMode === "live"
-                      ? "bg-emerald-600 text-white border-emerald-600"
-                      : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
-                  ].join(" ")}
-                  onClick={() => setLiveEnabled((v) => !v)}
+                <LivePill
+                  mode={liveUiMode}
+                  onToggle={() => setLiveEnabled((v) => !v)}
                   title={livePillTitle}
-                >
-                  {livePillText}
-                </button>
+                />
               </div>
             </div>
 
@@ -871,7 +823,7 @@ export const Traceroutes = () => {
 
           {/* Toolbar row */}
           <div className="mt-3 flex flex-col lg:flex-row gap-2 lg:items-center lg:justify-between">
-            <div className="flex-1 min-w-0 lg:min-w-[260px]">
+            <div className="flex-1 min-w-0 lg:min-w-65">
               <input
                 ref={searchInputRef}
                 value={qInput}
@@ -934,7 +886,7 @@ export const Traceroutes = () => {
           </div>
 
           {/* Status chips (desktop only) */}
-          <div className="mt-2 hidden lg:flex items-center gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch] min-h-[30px]">
+          <div className="mt-2 hidden lg:flex items-center gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch] min-h-7.5">
             <StatusChip
               label={`Range: ${range}`}
               active={range !== DEFAULT_RANGE}
@@ -968,7 +920,7 @@ export const Traceroutes = () => {
 
       {/* Main body */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
+        <div className="mx-auto max-w-400 px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
           {/* Telemetry-style layout: list 1 col, details 2 col */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
             {/* List */}

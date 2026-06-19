@@ -1,6 +1,12 @@
 YOUR_FQDN_OR_HOSTNAME {
-	encode gzip
+	# Compress everything except the SSE stream — gzip buffers and would stall
+	# an open text/event-stream connection.
+	@compressible not path /api/v1/events /v1/events
+	encode @compressible gzip
 	tls YOUR_EMAIL_ADDRESS
+
+	# SSE live events — matches the SPA's /api/v1/events and direct /v1/events.
+	@sse path /api/v1/events /v1/events
 
 	log {
 		output file /var/log/caddy.log
@@ -37,6 +43,14 @@ YOUR_FQDN_OR_HOSTNAME {
 		}
 		handle /tiles/* {
 			reverse_proxy meshinfo:9000
+		}
+
+		# --- SSE live events (unbuffered; must precede /api/* and /v1/*) ---
+		handle @sse {
+			uri strip_prefix /api
+			reverse_proxy meshinfo:9000 {
+				flush_interval -1
+			}
 		}
 
 		# --- API ---

@@ -307,10 +307,10 @@ export const NodeMap = ({ node }: { node: INode }) => {
 
   return (
     <div
-      id="map"
-      className="map"
+      className="node-map-preview"
       ref={mapRef}
       style={{
+        position: "relative",
         height: "300px",
         width: "100%",
         borderRadius: "12px",

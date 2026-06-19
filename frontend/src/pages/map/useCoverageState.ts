@@ -40,9 +40,9 @@ export function useCoverageState() {
   const coverageRxAntennaDbi = COMMON_ANTENNAS[coverageRxAntennaIdx]?.dbi ?? 3;
   const [coverageRxHeightM, setCoverageRxHeightM] = useState(2);
   const [coverageCustomTxDbm, setCoverageCustomTxDbm] = useState(22);
-  const coverageTxDbm = COMMON_HARDWARE[coverageHardwareIdx].isCustom
+  const coverageTxDbm = COMMON_HARDWARE[coverageHardwareIdx]?.isCustom
     ? coverageCustomTxDbm
-    : COMMON_HARDWARE[coverageHardwareIdx].txDbm;
+    : (COMMON_HARDWARE[coverageHardwareIdx]?.txDbm ?? 22);
   // Clamp on read so corrupted / out-of-range LS values can't leave the slider
   // with no active stop (which silently fell back to 1.0× via the AGGRESSION_STOPS
   // index lookup).
@@ -77,9 +77,9 @@ export function useCoverageState() {
   }, []);
   const [coveragePresetIdx, setCoveragePresetIdx] = useState(0); // MediumFast
   const [coverageCustomSensDbm, setCoverageCustomSensDbm] = useState(-133);
-  const coverageSensitivityDbm = MESHTASTIC_PRESETS[coveragePresetIdx].isCustom
+  const coverageSensitivityDbm = MESHTASTIC_PRESETS[coveragePresetIdx]?.isCustom
     ? coverageCustomSensDbm
-    : MESHTASTIC_PRESETS[coveragePresetIdx].sensitivityDbm;
+    : (MESHTASTIC_PRESETS[coveragePresetIdx]?.sensitivityDbm ?? -130);
   // Session-scoped (not persisted)
   const [coverageDetail, setCoverageDetail] = useState<CoverageDetail>("standard");
   // Antenna AGL (m); overrides GPS altitude on node-anchored origins
@@ -92,7 +92,7 @@ export function useCoverageState() {
   }, [coverageAntennaHeightM]);
   // Chipset-corrected RX sensitivity, keyed on RX hardware (sensitivity lives on the receiver)
   const coverageEffectiveSensitivityDbm = useMemo(() => {
-    const hw = COMMON_HARDWARE[coverageRxHardwareIdx];
+    const hw = COMMON_HARDWARE[coverageRxHardwareIdx] ?? COMMON_HARDWARE[0];
     return effectiveSensitivityDbm(coverageSensitivityDbm, hw.chipset, hw.sensitivityOffsetDb ?? 0);
   }, [coverageSensitivityDbm, coverageRxHardwareIdx]);
 

@@ -12,6 +12,7 @@
  * and the consumer should fall back to class-nominal heights.
  */
 import { env } from "../../env";
+import { fetchWithTimeout } from "./fetchWithTimeout";
 import type { DEMBounds } from "./terrainDEM";
 
 const TILE_SIZE = 256;
@@ -135,7 +136,7 @@ export async function fetchBuildingTile(
   if (hit) return hit;
 
   const url = `${tileBaseUrl()}/${z}/${x}/${y}.png`;
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url);
   if (res.status === 404) {
     tileCache.set(key, TILE_MISSING);
     return TILE_MISSING;
@@ -207,7 +208,6 @@ export async function buildBuildingRaster(
   const yMin = Math.floor(lat2tileY(bounds.north, zoom));
   const yMax = Math.floor(lat2tileY(bounds.south, zoom));
   const scale = Math.pow(2, zoom);
-  const tilesTotal = (xMax - xMin + 1) * (yMax - yMin + 1);
 
   const tileMap = new Map<string, CachedBuildingTile>();
   const jobs: Promise<void>[] = [];
@@ -230,6 +230,8 @@ export async function buildBuildingRaster(
   }
   await Promise.all(jobs);
 
+  // Deduped tile count (seam-straddling bbox wraps to shared fetch indices).
+  const tilesTotal = tileMap.size;
   let tilesPresent = 0;
   for (const t of tileMap.values()) {
     if (t !== TILE_MISSING && t.height.length > 0) tilesPresent++;
@@ -321,7 +323,7 @@ export function sampleBuildingAt(
   const { width, height, bounds, heightM, mask } = raster;
   const fx = ((lng - bounds.west) / (bounds.east - bounds.west)) * (width - 1);
   const fy = ((bounds.north - lat) / (bounds.north - bounds.south)) * (height - 1);
-  if (fx < 0 || fx > width - 1 || fy < 0 || fy > height - 1) return null;
+  if (!Number.isFinite(fx) || !Number.isFinite(fy) || fx < 0 || fx > width - 1 || fy < 0 || fy > height - 1) return null;
 
   const x0 = Math.floor(fx);
   const y0 = Math.floor(fy);

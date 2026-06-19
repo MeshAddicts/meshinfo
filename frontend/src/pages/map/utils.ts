@@ -7,33 +7,16 @@ import type {
 } from "geojson";
 import type { Map as MlMap } from "maplibre-gl";
 
-import { NodeRole } from "../../types";
 import { removeSpiderfyLayers } from "./spiderfy";
 import type { IMapNode } from "./types";
 
-export const ROLE_COLORS: Record<number, string> = {
-  [NodeRole.CLIENT]: "#32f032",       // green (default)
-  [NodeRole.CLIENT_MUTE]: "#6b7280",  // gray
-  [NodeRole.ROUTER]: "#3b82f6",       // blue
-  [NodeRole.ROUTER_CLIENT]: "#60a5fa",// light blue
-  [NodeRole.REPEATER]: "#f59e0b",     // amber
-  [NodeRole.TRACKER]: "#a855f7",      // purple
-  [NodeRole.SENSOR]: "#14b8a6",       // teal
-  [NodeRole.TAK]: "#ef4444",          // red
-  [NodeRole.CLIENT_HIDDEN]: "#4b5563",// dark gray
-  [NodeRole.LOST_AND_FOUND]: "#d946ef",// fuchsia
-  [NodeRole.TAK_TRACKER]: "#f87171",  // light red
-  [NodeRole.ROUTER_LATE]: "#93c5fd",  // pale blue
-  [NodeRole.CLIENT_BASE]: "#22c55e",  // emerald
-};
+// Canonical palette lives in src/palette.ts; re-exported so the map's many
+// `from "./utils"` call sites keep working unchanged.
+export { DEFAULT_NODE_COLOR, OFFLINE_NODE_COLOR, ROLE_COLORS } from "../../palette";
 
-export const DEFAULT_NODE_COLOR = "#32f032";
-export const OFFLINE_NODE_COLOR = "rgba(0,0,0,0.50)";
-
+const HTML_ESCAPES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;" };
 export function escapeHtml(text: string): string {
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
+  return String(text).replace(/[&<>]/g, (c) => HTML_ESCAPES[c]);
 }
 
 export function calculateGeodesicDistance(
@@ -58,7 +41,8 @@ export function calculateGeodesicDistance(
 }
 
 export function computeRecentNodes(nodes: Record<string, IMapNode>, recentDays: number) {
-  const recentCutoff = Date.now() - recentDays * 24 * 60 * 60 * 1000;
+  const days = Number.isFinite(recentDays) && recentDays > 0 ? recentDays : 1;
+  const recentCutoff = Date.now() - days * 24 * 60 * 60 * 1000;
 
   return Object.entries(nodes).filter(([_, node]) => {
     if (node.online) return true;
@@ -71,12 +55,28 @@ export function computeRecentNodes(nodes: Record<string, IMapNode>, recentDays: 
   });
 }
 
+/** Node brightness (→ circle-opacity) by last_seen age, quantized so a re-heard
+ *  node only changes the source on a bucket crossing. */
+export function dimForLastSeen(lastSeen: unknown, nowMs: number): number {
+  if (!lastSeen) return 0.4;
+  const t = new Date(lastSeen as string).getTime();
+  if (!Number.isFinite(t)) return 0.4;
+  const ageMin = (nowMs - t) / 60000;
+  if (ageMin < 15) return 1; // incl. negative (clock skew)
+  if (ageMin < 60) return 0.85;
+  if (ageMin < 180) return 0.7;
+  if (ageMin < 360) return 0.55; // 6h online cutoff
+  if (ageMin < 1440) return 0.45;
+  return 0.35;
+}
+
 export function buildNodesGeoJSON(
   nodes: Record<string, IMapNode>,
   recentDays: number,
   filters?: { role?: number | null; channel?: string | null },
 ): FeatureCollection<GeoPoint, GeoJsonProperties> {
   let recentNodeEntries = computeRecentNodes(nodes, recentDays);
+  const nowMs = Date.now();
 
   if (filters?.role != null) {
     recentNodeEntries = recentNodeEntries.filter(([, n]) => n.role === filters.role);
@@ -89,6 +89,8 @@ export function buildNodesGeoJSON(
 
   for (const [id, node] of recentNodeEntries) {
     if (!node.map_position) continue;
+    const [lon, lat] = node.map_position;
+    if (!Number.isFinite(lon) || !Number.isFinite(lat) || Math.abs(lat) > 90 || Math.abs(lon) > 180) continue;
 
     features.push({
       type: "Feature",
@@ -100,6 +102,7 @@ export function buildNodesGeoJSON(
         last_seen: node.last_seen ?? "",
         online: Boolean(node.online),
         role: node.role ?? null,
+        dim: dimForLastSeen(node.last_seen, nowMs),
       },
       geometry: {
         type: "Point",
@@ -109,6 +112,29 @@ export function buildNodesGeoJSON(
   }
 
   return { type: "FeatureCollection", features };
+}
+
+/** FNV-1a over each node feature's identity + live state, so the setData effect
+ *  can skip no-op re-uploads (and the donut rebuild each setData triggers). */
+export function nodesDataSignature(
+  fc: FeatureCollection<GeoPoint, GeoJsonProperties>,
+): number {
+  let h = 0x811c9dc5;
+  const mix = (s: string) => {
+    for (let i = 0; i < s.length; i++) {
+      h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+    }
+    h = Math.imul(h ^ 0x2c, 0x01000193); // separator
+  };
+  for (const f of fc.features) {
+    const p = f.properties ?? {};
+    const c = (f.geometry as GeoPoint).coordinates;
+    mix(
+      `${f.id}|${p.last_seen ?? ""}|${p.online ? 1 : 0}|${p.role ?? ""}|${p.dim ?? ""}|` +
+        `${Math.round((c[0] ?? 0) * 1e5)}|${Math.round((c[1] ?? 0) * 1e5)}`,
+    );
+  }
+  return h >>> 0;
 }
 
 export function emptyLineFeatureCollection(): FeatureCollection<GeoLineString, GeoJsonProperties> {
@@ -132,7 +158,7 @@ export function applyClusterVisibility(map: MlMap, enabled: boolean): void {
   set("plain-nodes", !enabled);
   set("plain-labels", !enabled);
 
-  if (!enabled) {
-    removeSpiderfyLayers(map);
-  }
+  // Either toggle direction invalidates the current fans (they belong to the
+  // mode we're leaving); the matching auto-spiderfy pass re-creates them.
+  removeSpiderfyLayers(map);
 }

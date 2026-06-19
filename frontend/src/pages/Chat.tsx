@@ -11,6 +11,8 @@ import { Link, useSearchParams } from "react-router";
 import { VirtuosoHandle } from "react-virtuoso";
 
 import { HeardBy } from "../components/HeardBy";
+import { LivePill } from "../components/LivePill";
+import { useAppSelector } from "../hooks";
 import { useChatSearchParams } from "../hooks/useChatSearchParams";
 import {
   useGetChatsQuery,
@@ -83,7 +85,7 @@ function MobileSheet({
         onClick={onClose}
       />
       <div className="absolute inset-x-0 bottom-0">
-        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
+        <div className="mx-auto max-w-400 px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
           <div className="rounded-t-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-2xl overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
               <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
@@ -251,15 +253,32 @@ export const Chat = () => {
 
   const {
     data: chat,
-    fulfilledTimeStamp: dataUpdatedAt,
     isFetching,
     refetch,
   } = useGetChatsQuery(chatQueryParams, {
-    pollingInterval: liveEnabled ? 5000 : 0,
+    // SSE (useLiveEvents) pushes new chats via the chatPing below; this is just
+    // the slow safety-net poll for a dropped, non-reconnecting stream.
+    pollingInterval: liveEnabled ? 60000 : 0,
     skipPollingIfUnfocused: true,
     refetchOnReconnect: liveEnabled,
     refetchOnFocus: liveEnabled,
   });
+
+  // Live chat push: useLiveEvents bumps app.chatPing on each `chat` SSE event.
+  // Refetch on a bump only while live (a ref keeps the effect from firing when
+  // the toggle flips), so a pushed chat respects the explicit "Live off" pause
+  // and reuses getChats' dedup/sort transform.
+  const chatPing = useAppSelector((s) => s.app.chatPing);
+  const liveRef = useRef(liveEnabled);
+  liveRef.current = liveEnabled;
+  const sawFirstPing = useRef(false);
+  useEffect(() => {
+    if (!sawFirstPing.current) {
+      sawFirstPing.current = true;
+      return;
+    }
+    if (liveRef.current) refetch();
+  }, [chatPing, refetch]);
 
   // ── 6. Stable chat ref (prevents skeleton flash on filter change) ──
   const prevChatRef = useRef(chat);
@@ -1186,17 +1205,6 @@ export const Chat = () => {
     return "live" as const;
   }, [liveEnabled, followState.atEdge, followState.selectionPinned]);
 
-  const livePillText = useMemo(() => {
-    if (liveUiMode === "live") return "Live";
-    if (liveUiMode === "pinned") return "Pinned";
-    if (liveUiMode === "paused") {
-      return followState.newCount > 0
-        ? `Paused (${followState.newCount})`
-        : "Paused";
-    }
-    return "Live off";
-  }, [liveUiMode, followState.newCount]);
-
   const livePillTitle = useMemo(() => {
     const edge =
       followEdge === "bottom"
@@ -1237,7 +1245,7 @@ export const Chat = () => {
     return (
       <div className="w-full h-dvh overflow-hidden flex flex-col">
         <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
-          <div className="mx-auto max-w-[1600px] pl-3 pr-14 sm:px-5 py-2 sm:py-3">
+          <div className="mx-auto max-w-400 px-3 sm:px-5 py-2 sm:py-3">
             <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
               <div>
                 <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
@@ -1262,13 +1270,13 @@ export const Chat = () => {
 
             {/* Skeleton search bar */}
             <div className="mt-3">
-              <div className="animate-pulse rounded-md border border-gray-300/40 dark:border-gray-700/40 bg-gray-200/30 dark:bg-gray-800/30 h-[38px] w-full" />
+              <div className="animate-pulse rounded-md border border-gray-300/40 dark:border-gray-700/40 bg-gray-200/30 dark:bg-gray-800/30 h-9.5 w-full" />
             </div>
           </div>
         </div>
 
         <div className="flex-1 overflow-hidden flex flex-col">
-          <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
+          <div className="mx-auto max-w-400 px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-full min-h-0">
               {/* Skeleton message list */}
               <div className="lg:col-span-2 min-h-0 flex flex-col">
@@ -1330,7 +1338,7 @@ export const Chat = () => {
       />
 
       <div className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
-        <div className="mx-auto max-w-[1600px] pl-3 pr-14 sm:px-5 py-2 sm:py-3">
+        <div className="mx-auto max-w-400 px-3 sm:px-5 py-2 sm:py-3">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
               <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
@@ -1339,48 +1347,30 @@ export const Chat = () => {
 
               {/* Desktop meta row */}
               <div className="mt-1 hidden sm:flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                <span>
-                  Updated:{" "}
-                  <span className="font-medium tabular-nums">
-                    {dataUpdatedAt && dataUpdatedAt > 0
-                      ? new Date(dataUpdatedAt).toLocaleString()
-                      : new Date().toLocaleString()}
-                  </span>
+                <span className={isFetching ? "animate-pulse" : ""}>
+                  {isFetching ? "Refreshing…" : "Ready"}
                 </span>
-
-                <span className="opacity-60">•</span>
 
                 <button
                   type="button"
                   className="underline hover:no-underline disabled:opacity-60 disabled:cursor-wait"
                   onClick={() => refetch()}
                   disabled={isFetching}
-                  aria-busy={isFetching}
-                  title={isFetching ? "Refreshing…" : "Refresh now"}
                 >
                   refresh
                 </button>
 
-                <span className="opacity-60">•</span>
-
-                {/* live pill */}
-                <button
-                  type="button"
-                  className={[
-                    "rounded-full px-2 py-0.5 text-[11px] font-medium border transition",
+                <LivePill
+                  mode={
                     liveUiMode === "live"
-                      ? "bg-emerald-600 text-white border-emerald-600"
-                      : liveUiMode === "paused"
-                        ? "bg-amber-600 text-white border-amber-600"
-                        : liveUiMode === "pinned"
-                          ? "bg-indigo-600 text-white border-indigo-600"
-                          : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
-                  ].join(" ")}
-                  onClick={() => setLiveEnabled((v) => !v)}
+                      ? "live"
+                      : liveUiMode === "off"
+                        ? "off"
+                        : "paused"
+                  }
+                  onToggle={() => setLiveEnabled((v) => !v)}
                   title={livePillTitle}
-                >
-                  {livePillText}
-                </button>
+                />
 
                 <span className="opacity-60">•</span>
 
@@ -1389,45 +1379,30 @@ export const Chat = () => {
 
               {/* Mobile meta row (compact) */}
               <div className="mt-1 flex sm:hidden flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                <span className="tabular-nums">
-                  {dataUpdatedAt && dataUpdatedAt > 0
-                    ? new Date(dataUpdatedAt).toLocaleString()
-                    : new Date().toLocaleString()}
+                <span className={isFetching ? "animate-pulse" : ""}>
+                  {isFetching ? "Refreshing…" : "Ready"}
                 </span>
-
-                <span className="opacity-60">•</span>
 
                 <button
                   type="button"
                   className="underline hover:no-underline disabled:opacity-60 disabled:cursor-wait"
                   onClick={() => refetch()}
                   disabled={isFetching}
-                  aria-busy={isFetching}
-                  title={isFetching ? "Refreshing…" : "Refresh now"}
                 >
                   refresh
                 </button>
 
-                <span className="opacity-60">•</span>
-
-                {/* live pill */}
-                <button
-                  type="button"
-                  className={[
-                    "rounded-full px-2 py-0.5 text-[11px] font-medium border transition",
+                <LivePill
+                  mode={
                     liveUiMode === "live"
-                      ? "bg-emerald-600 text-white border-emerald-600"
-                      : liveUiMode === "paused"
-                        ? "bg-amber-600 text-white border-amber-600"
-                        : liveUiMode === "pinned"
-                          ? "bg-indigo-600 text-white border-indigo-600"
-                          : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
-                  ].join(" ")}
-                  onClick={() => setLiveEnabled((v) => !v)}
+                      ? "live"
+                      : liveUiMode === "off"
+                        ? "off"
+                        : "paused"
+                  }
+                  onToggle={() => setLiveEnabled((v) => !v)}
                   title={livePillTitle}
-                >
-                  {livePillText}
-                </button>
+                />
               </div>
             </div>
 
@@ -1498,7 +1473,7 @@ export const Chat = () => {
 
           {/* Toolbar row: mobile keeps ONLY search; desktop keeps full controls */}
           <div className="mt-3 flex flex-col lg:flex-row gap-2 lg:items-center lg:justify-between">
-            <div className="flex-1 min-w-0 lg:min-w-[260px]">
+            <div className="flex-1 min-w-0 lg:min-w-65">
               <input
                 ref={searchInputRef}
                 value={qInput}
@@ -1609,7 +1584,7 @@ export const Chat = () => {
               </button>
 
               <div className="flex items-center gap-2">
-                <span className="min-w-[88px] text-xs text-gray-500 dark:text-gray-400 tabular-nums">
+                <span className="min-w-22 text-xs text-gray-500 dark:text-gray-400 tabular-nums">
                   {hasFilters
                     ? `${activeFilterCount} filter${
                         activeFilterCount > 1 ? "s" : ""
@@ -1635,7 +1610,7 @@ export const Chat = () => {
           </div>
 
           {/* Status chips: desktop only, always rendered (mobile uses Controls Badge) */}
-          <div className="mt-2 hidden lg:flex items-center gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch] min-h-[30px]">
+          <div className="mt-2 hidden lg:flex items-center gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch] min-h-7.5">
             <StatusChip
               label={`Range: ${urlRange}`}
               active={urlRange !== "24h"}
@@ -1734,7 +1709,7 @@ export const Chat = () => {
       </div>
 
       <div className="flex-1 overflow-hidden flex flex-col">
-        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
+        <div className="mx-auto max-w-400 px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-full min-h-0">
             <div className="lg:col-span-2 min-h-0 flex flex-col">
               <MessageList
@@ -1791,7 +1766,7 @@ export const Chat = () => {
 
       {/* Mobile bottom nav */}
       <div className="fixed inset-x-0 bottom-0 z-30 lg:hidden">
-        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
+        <div className="mx-auto max-w-400 px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
           <div className="mb-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm shadow-xs overflow-hidden">
             <div className="grid grid-cols-3 divide-x divide-gray-200 dark:divide-gray-800">
               <button
@@ -2032,16 +2007,7 @@ export const Chat = () => {
 
           {/* Actions (mobile replacement for header Export/Copy + avoids popover off-screen) */}
           <div className="pt-4 border-t border-gray-200 dark:border-gray-800">
-            <div className="text-xs text-gray-600 dark:text-gray-400">
-              Updated:{" "}
-              <span className="font-medium">
-                {dataUpdatedAt && dataUpdatedAt > 0
-                  ? new Date(dataUpdatedAt).toLocaleString()
-                  : new Date().toLocaleString()}
-              </span>
-            </div>
-
-            <div className="mt-3 grid grid-cols-1 gap-2">
+            <div className="grid grid-cols-1 gap-2">
               <button
                 type="button"
                 className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"

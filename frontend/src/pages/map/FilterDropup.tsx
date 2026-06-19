@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 export interface DropupOption<T> {
@@ -29,14 +29,21 @@ export function FilterDropup<T extends string | number | null>({
   const pillRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  useLayoutEffect(() => {
-    if (!open || !pillRef.current) return;
-    const rect = pillRef.current.getBoundingClientRect();
+  // Clamp the portal menu's left so a right-edge pill doesn't push it off-screen.
+  const positionMenu = useCallback(() => {
+    const pill = pillRef.current;
+    if (!pill) return;
+    const rect = pill.getBoundingClientRect();
+    const MENU_W = 280; // matches max-w
     setMenuPos({
-      left: rect.left,
+      left: Math.min(rect.left, window.innerWidth - MENU_W - 8),
       bottom: window.innerHeight - rect.top + 8, // gap
     });
-  }, [open]);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (open) positionMenu();
+  }, [open, positionMenu]);
 
   useEffect(() => {
     if (!open) return;
@@ -48,7 +55,7 @@ export function FilterDropup<T extends string | number | null>({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
-    const onResize = () => setOpen(false);
+    const onResize = () => positionMenu();
     document.addEventListener("mousedown", onDocClick);
     document.addEventListener("keydown", onKey);
     window.addEventListener("resize", onResize);
@@ -57,7 +64,7 @@ export function FilterDropup<T extends string | number | null>({
       document.removeEventListener("keydown", onKey);
       window.removeEventListener("resize", onResize);
     };
-  }, [open]);
+  }, [open, positionMenu]);
 
   const pillBase =
     "shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer select-none shadow-2xl backdrop-blur-xl";
@@ -72,6 +79,8 @@ export function FilterDropup<T extends string | number | null>({
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
+          aria-haspopup="listbox"
+          aria-expanded={open}
           className={`${pillBase} ${isActive ? pillActive : pillIdle} flex items-center gap-1.5`}
         >
           {currentOpt?.color && (
@@ -81,7 +90,7 @@ export function FilterDropup<T extends string | number | null>({
             />
           )}
           <span>{label}</span>
-          <svg className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
           </svg>
         </button>
@@ -94,6 +103,8 @@ export function FilterDropup<T extends string | number | null>({
           // its parent panel's DOM tree, so callers must opt-out of dismissing
           // their panel when the click lands here.
           data-filter-menu="true"
+          role="listbox"
+          aria-label={label}
           style={{
             position: "fixed",
             left: menuPos.left,
@@ -101,7 +112,7 @@ export function FilterDropup<T extends string | number | null>({
             maxHeight,
             zIndex: 2000,
           }}
-          className="min-w-[160px] max-w-[280px] rounded-xl overflow-y-auto
+          className="min-w-40 max-w-70 rounded-xl overflow-y-auto
             bg-gray-900/95 backdrop-blur-xl border border-white/10 shadow-2xl py-1"
         >
           {options.map((opt) => {
@@ -110,6 +121,8 @@ export function FilterDropup<T extends string | number | null>({
               <button
                 key={String(opt.value ?? "__null")}
                 type="button"
+                role="option"
+                aria-selected={selected}
                 onClick={() => {
                   onChange(opt.value);
                   setOpen(false);
@@ -129,7 +142,7 @@ export function FilterDropup<T extends string | number | null>({
                   <span className="text-[10px] text-gray-500">{opt.description}</span>
                 )}
                 {selected && (
-                  <svg className="w-3 h-3 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-3 h-3 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
                   </svg>
                 )}

@@ -1,3 +1,4 @@
+import { PACKET_TYPE_LABELS, packetColorCss } from "./packetColors";
 import type { LinkMode } from "./types";
 
 export function MapLegend({
@@ -17,32 +18,47 @@ export function MapLegend({
   return (
     <div
       id="legend"
+      role="group"
+      aria-labelledby="legend-heading"
       className="bg-gray-900/80 backdrop-blur-xl rounded-xl shadow-2xl border border-white/10 p-3"
     >
-      <div className="text-xs font-semibold text-gray-300 mb-2">
+      <div id="legend-heading" className="text-xs font-semibold text-gray-300 mb-2">
         Legend
       </div>
       <div className="space-y-1.5 text-[11px] text-gray-400">
+        {/* Nodes */}
         <div className="flex items-center gap-2">
-          <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-sm shrink-0" />
+          <div className="w-2.5 h-2.5 rounded-full shadow-sm shrink-0" style={{ backgroundColor: "#32f032" }} />
           <span>Online node</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-2.5 h-2.5 rounded-full bg-gray-600 border border-gray-500 shrink-0" />
+          <div className="w-2.5 h-2.5 rounded-full shadow-sm shrink-0" style={{ backgroundColor: "#72798a" }} />
           <span>Offline node</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="w-3.5 h-3.5 flex items-center justify-center shrink-0">
-            <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-orange-400 shadow-sm" />
+            <div className="w-2.5 h-2.5 rounded-full ring-2 ring-orange-400 shadow-sm" style={{ backgroundColor: "#32f032" }} />
           </div>
           <span>Selected node</span>
         </div>
         <div className="flex items-center gap-2">
-          <svg viewBox="0 0 20 20" className="w-4 h-4 shrink-0">
+          <svg viewBox="0 0 24 4" preserveAspectRatio="none" className="w-4 h-0.5 shrink-0" aria-hidden="true">
+            <defs>
+              <linearGradient id="legend-recency-fade" x1="0" x2="1" y1="0" y2="0">
+                <stop offset="0%" stopColor="#FFFFFF" stopOpacity="1.0" />
+                <stop offset="100%" stopColor="#FFFFFF" stopOpacity="0.2" />
+              </linearGradient>
+            </defs>
+            <rect x="0" y="0" width="24" height="4" fill="url(#legend-recency-fade)" />
+          </svg>
+          <span>Brightness = recency (nodes &amp; links)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <svg viewBox="0 0 20 20" className="w-4 h-4 shrink-0" aria-hidden="true">
             <circle cx="10" cy="10" r="7" fill="none" stroke="#72798a" strokeWidth="3" />
             <circle
               cx="10" cy="10" r="7"
-              fill="none" stroke="#22c55e" strokeWidth="3"
+              fill="none" stroke="#32f032" strokeWidth="3"
               strokeDasharray="30 100"
               transform="rotate(-90 10 10)"
             />
@@ -53,9 +69,9 @@ export function MapLegend({
 
         <div className="border-t border-white/10 my-1" />
 
-        {/* Link color = SNR (quality). Kind is conveyed by line style below. */}
+        {/* Links — color = SNR (quality); kind = line style */}
         <div className="flex items-center gap-2">
-          <svg viewBox="0 0 24 4" preserveAspectRatio="none" className="w-4 h-0.5 shrink-0">
+          <svg viewBox="0 0 24 4" preserveAspectRatio="none" className="w-4 h-0.5 shrink-0" aria-hidden="true">
             <defs>
               <linearGradient id="legend-snr-gradient" x1="0" x2="1" y1="0" y2="0">
                 <stop offset="0%" stopColor="#FF4444" />
@@ -71,42 +87,55 @@ export function MapLegend({
           <div className="w-4 h-0.5 bg-gray-400 rounded-full shrink-0" />
           <span>SNR unknown</span>
         </div>
-
         <div className="flex items-center gap-2">
-          <svg viewBox="0 0 24 4" preserveAspectRatio="none" className="w-4 h-0.5 shrink-0">
+          <svg viewBox="0 0 24 4" preserveAspectRatio="none" className="w-4 h-0.5 shrink-0" aria-hidden="true">
             <line x1="0" y1="2" x2="24" y2="2" stroke="#cbd5e1" strokeWidth="2.5" strokeLinecap="round" />
           </svg>
           <span>This node heard neighbor</span>
         </div>
         <div className="flex items-center gap-2">
-          <svg viewBox="0 0 24 4" preserveAspectRatio="none" className="w-4 h-0.5 shrink-0">
+          <svg viewBox="0 0 24 4" preserveAspectRatio="none" className="w-4 h-0.5 shrink-0" aria-hidden="true">
             <line x1="0" y1="2" x2="24" y2="2" stroke="#cbd5e1" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="4 3" />
           </svg>
           <span>Neighbor heard this node</span>
         </div>
         <div className="flex items-center gap-2">
-          <svg viewBox="0 0 24 8" preserveAspectRatio="none" className="w-4 h-2 shrink-0">
+          <svg viewBox="0 0 24 8" preserveAspectRatio="none" className="w-4 h-2 shrink-0" aria-hidden="true">
             <path d="M 1 6 Q 12 -2 23 6" stroke="#cbd5e1" strokeWidth="2.5" fill="none" strokeLinecap="round" />
           </svg>
           <span>Mutual link</span>
         </div>
         <div className="flex items-center gap-2">
-          <svg viewBox="0 0 24 4" preserveAspectRatio="none" className="w-4 h-0.5 shrink-0">
+          <svg viewBox="0 0 24 4" preserveAspectRatio="none" className="w-4 h-0.5 shrink-0" aria-hidden="true">
             <line x1="0" y1="2" x2="24" y2="2" stroke="#F59E0B" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="1 3" />
           </svg>
-          <span>Traceroute (inferred)</span>
+          <span>Traceroute path (on select)</span>
         </div>
+
+        <div className="border-t border-white/10 my-1" />
+
+        {/* Live packets (SSE) */}
+        <div className="text-[10px] uppercase tracking-wider text-gray-500">Live packets</div>
         <div className="flex items-center gap-2">
-          <svg viewBox="0 0 24 4" preserveAspectRatio="none" className="w-4 h-0.5 shrink-0">
-            <defs>
-              <linearGradient id="legend-recency-fade" x1="0" x2="1" y1="0" y2="0">
-                <stop offset="0%" stopColor="#FFFFFF" stopOpacity="1.0" />
-                <stop offset="100%" stopColor="#FFFFFF" stopOpacity="0.2" />
-              </linearGradient>
-            </defs>
-            <rect x="0" y="0" width="24" height="4" fill="url(#legend-recency-fade)" />
+          <svg viewBox="0 0 24 10" preserveAspectRatio="none" className="w-4 h-2.5 shrink-0" aria-hidden="true">
+            <path d="M 2 8 Q 12 -1 21 4" stroke="#94a3b8" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+            <circle cx="21" cy="4" r="2.6" fill="#e2e8f0" />
           </svg>
-          <span>Recency (recent → stale)</span>
+          <span>Packet → gateway that heard it</span>
+        </div>
+        <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+          {PACKET_TYPE_LABELS.map(({ type, label }) => (
+            <div key={type} className="flex items-center gap-1.5 min-w-0">
+              <span
+                className="w-2 h-2 rounded-full shrink-0"
+                style={{ backgroundColor: packetColorCss(type) }}
+              />
+              <span className="truncate">{label}</span>
+            </div>
+          ))}
+        </div>
+        <div className="text-[10px] text-gray-500 leading-tight">
+          Traceroutes animate the full multi-hop path.
         </div>
 
         <div className="border-t border-white/10 my-1" />

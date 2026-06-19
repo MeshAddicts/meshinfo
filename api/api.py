@@ -1,12 +1,13 @@
 import asyncio
 import datetime
+import json
 import logging
 import os
 from pathlib import Path
 from fastapi.encoders import jsonable_encoder
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import FileResponse
@@ -290,6 +291,52 @@ class API:
         async def stats(request: Request) -> JSONResponse:
             stats = await self.data.pg_storage.query_stats()
             return jsonable_encoder({"stats": stats})
+
+        @app.get("/v1/events")
+        async def events(request: Request) -> StreamingResponse:
+            """Server-Sent Events stream of live node + chat updates.
+
+            One multiplexed connection per client; each frame carries an
+            ``event:`` type (``node`` | ``chat``). The SPA's useLiveEvents hook
+            patches the node cache in place and refetches chat. ``: ...``
+            comment frames are heartbeats that keep an idle connection alive
+            past uvicorn/proxy keep-alive timeouts. The endpoint inherits the
+            same proxy route as the rest of /v1; Caddy serves it through a
+            dedicated unbuffered handler (flush_interval -1)."""
+            queue = self.data.broadcaster.subscribe()
+
+            async def event_stream():
+                # The initial comment flushes response headers immediately so
+                # the browser fires EventSource.onopen, which drives the
+                # client's reconnect resync.
+                yield ": connected\n\n"
+                try:
+                    while True:
+                        if await request.is_disconnected():
+                            break
+                        try:
+                            event_type, payload = await asyncio.wait_for(
+                                queue.get(), timeout=20.0
+                            )
+                        except asyncio.TimeoutError:
+                            yield ": heartbeat\n\n"
+                            continue
+                        data = json.dumps(payload, default=str)
+                        yield f"event: {event_type}\ndata: {data}\n\n"
+                finally:
+                    # Always deregister — covers disconnect, GeneratorExit, and
+                    # task cancellation so a dropped client can't leak a queue.
+                    self.data.broadcaster.unsubscribe(queue)
+
+            return StreamingResponse(
+                event_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
 
         @app.get("/v1/static-map")
         async def static_map(request: Request) -> Response:

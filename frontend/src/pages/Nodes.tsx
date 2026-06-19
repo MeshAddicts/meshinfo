@@ -9,6 +9,7 @@ import {
 } from "react";
 
 import { HeardBy } from "../components/HeardBy";
+import { LivePill } from "../components/LivePill";
 import { useNodesSearchParams } from "../hooks/useNodesSearchParams";
 import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";
 import { csvEscape, downloadBlob } from "./chat/chatUtils";
@@ -60,7 +61,7 @@ function MobileSheet({
         onClick={onClose}
       />
       <div className="absolute inset-x-0 bottom-0">
-        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
+        <div className="mx-auto max-w-400 px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
           <div className="rounded-t-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-2xl overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
               <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
@@ -156,13 +157,14 @@ export const Nodes = () => {
 
   const {
     data: nodesRaw,
-    fulfilledTimeStamp: dataUpdatedAt,
     isFetching,
     refetch,
   } = useGetNodesQuery(
     undefined,
     {
-      pollingInterval: liveEnabled ? 5000 : 0,
+      // SSE (useLiveEvents) is the live path; this is a slow safety-net poll
+      // for the case the stream drops and fails to reconnect.
+      pollingInterval: liveEnabled ? 60000 : 0,
       skipPollingIfUnfocused: true,
       refetchOnReconnect: liveEnabled,
       refetchOnFocus: liveEnabled,
@@ -517,12 +519,6 @@ export const Nodes = () => {
     return "live" as const;
   }, [liveEnabled, selectedId, listAtTop]);
 
-  const livePillText = useMemo(() => {
-    if (liveUiMode === "live") return "Live";
-    if (liveUiMode === "paused") return "Paused";
-    return "Live off";
-  }, [liveUiMode]);
-
   const livePillTitle = useMemo(() => {
     if (!liveEnabled)
       return "Live mode is off. Auto-refresh is disabled (no polling / focus / reconnect). Click to enable.";
@@ -701,108 +697,57 @@ export const Nodes = () => {
     <div className="w-full h-dvh overflow-hidden flex flex-col">
       {/* Sticky header */}
       <div data-no-clear-selection className="sticky top-0 z-20 shrink-0 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm border-b border-gray-200 dark:border-gray-800">
-        <div className="mx-auto max-w-[1600px] pl-3 pr-14 sm:px-5 py-2 sm:py-3">
+        <div className="mx-auto max-w-400 px-3 sm:px-5 py-2 sm:py-3">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
               <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
                 Nodes
               </h1>
 
-              {/* Desktop meta row (Chat-style) */}
+              {/* Desktop meta row */}
               <div className="mt-1 hidden sm:flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                <span>
-                  Updated:{" "}
-                  <span className="font-medium tabular-nums">
-                    {dataUpdatedAt && dataUpdatedAt > 0
-                      ? new Date(dataUpdatedAt).toLocaleString()
-                      : new Date().toLocaleString()}
-                  </span>
+                <span className={isFetching || manualRefreshing ? "animate-pulse" : ""}>
+                  {isFetching || manualRefreshing ? "Refreshing…" : "Ready"}
                 </span>
-
-                <span className="opacity-60">•</span>
 
                 <button
                   type="button"
                   className="underline hover:no-underline"
                   onClick={doManualRefresh}
-                  aria-busy={manualRefreshing || isFetching}
-                  title={
-                    manualRefreshing
-                      ? "Refreshing…"
-                      : isFetching
-                        ? "Refreshing…"
-                        : "Refresh now"
-                  }
                 >
                   refresh
                 </button>
 
-                <span className="opacity-60">•</span>
-
-                <button
-                  type="button"
-                  className={[
-                    "rounded-full px-2 py-0.5 text-[11px] font-medium border transition",
-                    liveUiMode === "live"
-                      ? "bg-emerald-600 text-white border-emerald-600"
-                      : liveUiMode === "paused"
-                        ? "bg-amber-500 text-white border-amber-500"
-                        : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
-                  ].join(" ")}
-                  onClick={() => setLiveEnabled((v) => !v)}
+                <LivePill
+                  mode={liveUiMode}
+                  onToggle={() => setLiveEnabled((v) => !v)}
                   title={livePillTitle}
-                >
-                  {livePillText}
-                </button>
+                />
 
                 <span className="opacity-60">•</span>
 
                 <HeardBy />
               </div>
 
-              {/* Mobile meta row (compact, Chat-style) */}
+              {/* Mobile meta row (compact) */}
               <div className="mt-1 flex sm:hidden flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
-                <span className="font-medium tabular-nums">
-                  {dataUpdatedAt && dataUpdatedAt > 0
-                    ? new Date(dataUpdatedAt).toLocaleString()
-                    : new Date().toLocaleString()}
+                <span className={isFetching || manualRefreshing ? "animate-pulse" : ""}>
+                  {isFetching || manualRefreshing ? "Refreshing…" : "Ready"}
                 </span>
-
-                <span className="opacity-60">•</span>
 
                 <button
                   type="button"
                   className="underline hover:no-underline"
                   onClick={doManualRefresh}
-                  aria-busy={manualRefreshing || isFetching}
-                  title={
-                    manualRefreshing
-                      ? "Refreshing…"
-                      : isFetching
-                        ? "Refreshing…"
-                        : "Refresh now"
-                  }
                 >
                   refresh
                 </button>
 
-                <span className="opacity-60">•</span>
-
-                <button
-                  type="button"
-                  className={[
-                    "rounded-full px-2 py-0.5 text-[11px] font-medium border transition",
-                    liveUiMode === "live"
-                      ? "bg-emerald-600 text-white border-emerald-600"
-                      : liveUiMode === "paused"
-                        ? "bg-amber-500 text-white border-amber-500"
-                        : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-800 dark:text-gray-200 border-gray-300/50 dark:border-gray-600/50",
-                  ].join(" ")}
-                  onClick={() => setLiveEnabled((v) => !v)}
+                <LivePill
+                  mode={liveUiMode}
+                  onToggle={() => setLiveEnabled((v) => !v)}
                   title={livePillTitle}
-                >
-                  {livePillText}
-                </button>
+                />
               </div>
             </div>
 
@@ -886,7 +831,7 @@ export const Nodes = () => {
 
           {/* Toolbar */}
           <div className="mt-3 flex flex-col lg:flex-row gap-2 lg:items-center lg:justify-between">
-            <div className="flex-1 min-w-0 lg:min-w-[260px]">
+            <div className="flex-1 min-w-0 lg:min-w-65">
               <input
                 id="nodes-search"
                 value={qInput}
@@ -951,7 +896,7 @@ export const Nodes = () => {
               </button>
 
               <div className="flex items-center gap-2">
-                <span className="min-w-[88px] text-xs text-gray-500 dark:text-gray-400 tabular-nums">
+                <span className="min-w-22 text-xs text-gray-500 dark:text-gray-400 tabular-nums">
                   {hasFilters
                     ? `${activeFilterCount} filter${
                         activeFilterCount > 1 ? "s" : ""
@@ -977,7 +922,7 @@ export const Nodes = () => {
           </div>
 
           {/* Status chips: desktop only */}
-          <div className="mt-2 hidden lg:flex items-center gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch] min-h-[30px]">
+          <div className="mt-2 hidden lg:flex items-center gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch] min-h-7.5">
             <StatusChip
               label={`Range: ${urlRange}`}
               active={urlRange !== "all"}
@@ -1030,7 +975,7 @@ export const Nodes = () => {
 
       {/* Main body */}
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
+        <div className="mx-auto max-w-400 px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
             {/* Left: list */}
             <div ref={listContainerRef} className="lg:col-span-2 min-h-0 flex flex-col h-full">
@@ -1077,7 +1022,7 @@ export const Nodes = () => {
 
       {/* Mobile bottom nav */}
       <div className="fixed inset-x-0 bottom-0 z-30 lg:hidden">
-        <div className="mx-auto max-w-[1600px] px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
+        <div className="mx-auto max-w-400 px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
           <div className="mb-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white/90 dark:bg-gray-900/85 backdrop-blur-sm shadow-xs overflow-hidden">
             <div className="grid grid-cols-2 divide-x divide-gray-200 dark:divide-gray-800">
               <button
@@ -1258,15 +1203,6 @@ export const Nodes = () => {
                 Clear filters
               </button>
             ) : null}
-          </div>
-
-          <div className="text-xs text-gray-600 dark:text-gray-400">
-            Updated:{" "}
-            <span className="font-medium tabular-nums">
-              {dataUpdatedAt && dataUpdatedAt > 0
-                ? new Date(dataUpdatedAt).toLocaleString()
-                : new Date().toLocaleString()}
-            </span>
           </div>
         </div>
       </MobileSheet>

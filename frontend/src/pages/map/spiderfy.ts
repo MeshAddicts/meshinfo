@@ -12,6 +12,9 @@ import type {
 } from "geojson";
 import type { GeoJSONSource as MlGeoJSONSource, Map as MlMap } from "maplibre-gl";
 
+import { mbRoleColorExpr } from "../../palette";
+import { prefersReducedMotion } from "../../reducedMotion";
+
 export const SPIDERFY_SOURCE_NODES = "spiderfy-nodes";
 export const SPIDERFY_SOURCE_LEGS = "spiderfy-legs";
 export const SPIDERFY_LAYER_NODES = "spiderfy-node-circles";
@@ -23,16 +26,31 @@ const ANIMATE_MS = 320;
 const GOLDEN_ANGLE = 2.399963229728653; // 137.508°
 const AUTO_SPIDERFY_MIN_ZOOM = 14;
 
-interface SpiderfyState {
+/** One fanned-out cluster of co-located nodes. */
+interface SpiderfyGroup {
   center: [number, number];
   leaves: GeoFeature<GeoPoint, GeoJsonProperties>[];
+}
+
+interface SpiderfyState {
+  groups: SpiderfyGroup[];
   lastZoom: number;
 }
 
 let activeState: SpiderfyState | null = null;
 
-export function getActiveSpiderfyState(): SpiderfyState | null {
-  return activeState;
+// Signature of a fan set the user explicitly dismissed (clustering-off). The
+// auto pass refuses to re-fan exactly this set until it changes, so dismissing
+// sticks instead of popping straight back open on the next pan.
+let dismissedSignature: string | null = null;
+
+/** Stable signature of a set of fanned node ids (order-independent). */
+function groupsSignature(groups: SpiderfyGroup[]): string {
+  return groups
+    .flatMap((g) => g.leaves.map((l) => l.properties?.id as string | undefined))
+    .filter(Boolean)
+    .sort()
+    .join(",");
 }
 
 function pixelsToDegrees(pixels: number, zoom: number): number {
@@ -81,33 +99,56 @@ function interpolatePositions(
   ]);
 }
 
-function nodesGeoJSON(
-  leaves: GeoFeature<GeoPoint, GeoJsonProperties>[],
-  positions: [number, number][],
-): FeatureCollection<GeoPoint, GeoJsonProperties> {
+/** Combined node + leg GeoJSON for every active group at animation progress `t`
+ *  (t≥1 = fully fanned). Groups render into one source pair so any number of
+ *  stacks can be fanned at once. */
+function composeData(
+  groups: SpiderfyGroup[],
+  zoom: number,
+  t: number,
+): {
+  nodes: FeatureCollection<GeoPoint, GeoJsonProperties>;
+  legs: FeatureCollection<GeoLineString, GeoJsonProperties>;
+} {
+  const nodeFeatures: GeoFeature<GeoPoint, GeoJsonProperties>[] = [];
+  const legFeatures: GeoFeature<GeoLineString, GeoJsonProperties>[] = [];
+
+  groups.forEach((group, gi) => {
+    const targets = fanPositions(group.center, group.leaves.length, zoom);
+    const positions = t >= 1 ? targets : interpolatePositions(group.center, targets, t);
+
+    group.leaves.forEach((leaf, i) => {
+      nodeFeatures.push({
+        type: "Feature",
+        id: leaf.properties?.id ?? `spider-${gi}-${i}`,
+        properties: { ...leaf.properties, _spiderfied: true },
+        geometry: { type: "Point", coordinates: positions[i] },
+      });
+      legFeatures.push({
+        type: "Feature",
+        properties: { index: i, centerLng: group.center[0], centerLat: group.center[1] },
+        geometry: { type: "LineString", coordinates: [group.center, positions[i]] },
+      });
+    });
+  });
+
   return {
-    type: "FeatureCollection",
-    features: leaves.map((leaf, i) => ({
-      type: "Feature" as const,
-      id: leaf.properties?.id ?? `spider-${i}`,
-      properties: { ...leaf.properties, _spiderfied: true },
-      geometry: { type: "Point" as const, coordinates: positions[i] },
-    })),
+    nodes: { type: "FeatureCollection", features: nodeFeatures },
+    legs: { type: "FeatureCollection", features: legFeatures },
   };
 }
 
-function legsGeoJSON(
-  center: [number, number],
-  positions: [number, number][],
-): FeatureCollection<GeoLineString, GeoJsonProperties> {
-  return {
-    type: "FeatureCollection",
-    features: positions.map((pos, i) => ({
-      type: "Feature" as const,
-      properties: { index: i, centerLng: center[0], centerLat: center[1] },
-      geometry: { type: "LineString" as const, coordinates: [center, pos] },
-    })),
-  };
+/** Push composed data to the spiderfy sources; false if they've been removed. */
+function applyData(
+  map: MlMap,
+  data: ReturnType<typeof composeData>,
+): boolean {
+  const nodeSrc = map.getSource(SPIDERFY_SOURCE_NODES) as MlGeoJSONSource | undefined;
+  const legSrc = map.getSource(SPIDERFY_SOURCE_LEGS) as MlGeoJSONSource | undefined;
+  if (!nodeSrc || !legSrc) return false;
+  nodeSrc.setData(data.nodes);
+  legSrc.setData(data.legs);
+  return true;
 }
 
 /** getClusterLeaves with a timeout; returns [] if the cluster_id is stale or the callback never fires. */
@@ -171,6 +212,7 @@ export function isSpiderfied(map: MlMap): boolean {
 
 export function removeSpiderfyLayers(map: MlMap): void {
   activeState = null;
+  dismissedSignature = null; // teardown clears any remembered dismissal...
   for (const id of [SPIDERFY_LAYER_LABELS, SPIDERFY_LAYER_NODES, SPIDERFY_LAYER_LEGS, SPIDERFY_LAYER_LEGS_SHADOW]) {
     if (map.getLayer(id)) map.removeLayer(id);
   }
@@ -223,12 +265,7 @@ function addSpiderfyLayers(map: MlMap): void {
         12,
         8,
       ],
-      "circle-color": [
-        "case",
-        ["boolean", ["get", "online"], false],
-        "#32f032",
-        "rgba(0,0,0,0.50)",
-      ],
+      "circle-color": mbRoleColorExpr,
       "circle-stroke-width": 2.5,
       "circle-stroke-color": [
         "case",
@@ -258,6 +295,41 @@ function addSpiderfyLayers(map: MlMap): void {
   });
 }
 
+/** Shared render core: fan every group out around its center. When the layers
+ *  are already present (a reconcile/update) the data is just swapped — sources
+ *  are kept so feature-state (selection) survives. `animate` only applies to a
+ *  fresh fan; updates render instantly. Assumes `groups` is non-empty. */
+function renderSpiderfy(
+  map: MlMap,
+  groups: SpiderfyGroup[],
+  zoom: number,
+  animate: boolean,
+): Promise<void> {
+  const fresh = !isSpiderfied(map);
+  activeState = { groups, lastZoom: zoom };
+  if (fresh) addSpiderfyLayers(map);
+
+  if (!animate || !fresh || prefersReducedMotion()) {
+    applyData(map, composeData(groups, zoom, 1));
+    return Promise.resolve();
+  }
+
+  return new Promise<void>((resolve) => {
+    const start = performance.now();
+    function frame(now: number) {
+      const t = Math.min((now - start) / ANIMATE_MS, 1);
+      if (!applyData(map, composeData(groups, zoom, t))) {
+        removeSpiderfyLayers(map);
+        resolve();
+        return;
+      }
+      if (t < 1) requestAnimationFrame(frame);
+      else resolve();
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
 export async function spiderfy(
   map: MlMap,
   clusterId: number,
@@ -282,70 +354,44 @@ export async function spiderfy(
 
   if (leaves.length === 0) return;
 
-  activeState = { center, leaves, lastZoom: zoom };
-  const finalPositions = fanPositions(center, leaves.length, zoom);
+  return renderSpiderfy(map, [{ center, leaves }], zoom, animate);
+}
 
-  addSpiderfyLayers(map);
-
-  const nodeSrc = map.getSource(SPIDERFY_SOURCE_NODES) as MlGeoJSONSource;
-  const legSrc = map.getSource(SPIDERFY_SOURCE_LEGS) as MlGeoJSONSource;
-
-  if (!animate) {
-    nodeSrc.setData(nodesGeoJSON(leaves, finalPositions));
-    legSrc.setData(legsGeoJSON(center, finalPositions));
-    return;
-  }
-
-  return new Promise<void>((resolve) => {
-    const start = performance.now();
-    function frame(now: number) {
-      const t = Math.min((now - start) / ANIMATE_MS, 1);
-      const pos = interpolatePositions(center, finalPositions, t);
-      try {
-        nodeSrc.setData(nodesGeoJSON(leaves, pos));
-        legSrc.setData(legsGeoJSON(center, pos));
-      } catch {
-        removeSpiderfyLayers(map);
-        resolve();
-        return;
-      }
-      if (t < 1) requestAnimationFrame(frame);
-      else resolve();
-    }
-    requestAnimationFrame(frame);
-  });
+/** Spiderfy an explicit set of co-located features. Used when clustering is OFF
+ *  and the user clicks a spot where several plain nodes overlap — there is no
+ *  cluster to query, so the caller supplies the stacked leaves directly. */
+export async function spiderfyFeatures(
+  map: MlMap,
+  center: [number, number],
+  leaves: GeoFeature<GeoPoint, GeoJsonProperties>[],
+  zoom: number,
+  animate = true,
+): Promise<void> {
+  removeSpiderfyLayers(map);
+  if (leaves.length === 0) return;
+  return renderSpiderfy(map, [{ center, leaves }], zoom, animate);
 }
 
 export async function unspiderfy(map: MlMap): Promise<void> {
   if (!isSpiderfied(map)) return;
 
   const state = activeState;
-  const nodeSrc = map.getSource(SPIDERFY_SOURCE_NODES) as MlGeoJSONSource | undefined;
-  const legSrc = map.getSource(SPIDERFY_SOURCE_LEGS) as MlGeoJSONSource | undefined;
-
-  if (!nodeSrc || !legSrc || !state) {
+  if (!state || !map.getSource(SPIDERFY_SOURCE_NODES)) {
     removeSpiderfyLayers(map);
     return;
   }
-  // Bind narrowed non-null values for the inner frame() closure (TS loses
-  // the outer control-flow narrowing across the Promise boundary).
-  const s = state;
-  const ns = nodeSrc;
-  const ls = legSrc;
-
-  const positions = fanPositions(s.center, s.leaves.length, map.getZoom());
+  const groups = state.groups;
+  const zoom = map.getZoom();
   activeState = null;
+
+  if (prefersReducedMotion()) { removeSpiderfyLayers(map); return; }
 
   return new Promise<void>((resolve) => {
     const start = performance.now();
     const duration = ANIMATE_MS * 0.7;
     function frame(now: number) {
       const t = Math.min((now - start) / duration, 1);
-      const pos = interpolatePositions(s.center, positions, 1 - t);
-      try {
-        ns.setData(nodesGeoJSON(s.leaves, pos));
-        ls.setData(legsGeoJSON(s.center, pos));
-      } catch {
+      if (!applyData(map, composeData(groups, zoom, 1 - t))) {
         removeSpiderfyLayers(map);
         resolve();
         return;
@@ -357,6 +403,14 @@ export async function unspiderfy(map: MlMap): Promise<void> {
   });
 }
 
+/** Dismiss the active fans and remember the set so the clustering-off auto pass
+ *  won't immediately re-open exactly what the user just closed. */
+export function dismissPlainSpiderfy(map: MlMap): void {
+  const sig = activeState ? groupsSignature(activeState.groups) : null;
+  removeSpiderfyLayers(map); // clears dismissedSignature...
+  dismissedSignature = sig; // ...then record what was dismissed
+}
+
 export function updateSpiderfyPositions(map: MlMap): void {
   if (!activeState || !isSpiderfied(map)) return;
 
@@ -366,16 +420,9 @@ export function updateSpiderfyPositions(map: MlMap): void {
     return;
   }
 
-  const { center, leaves } = activeState;
   activeState.lastZoom = zoom;
-  const positions = fanPositions(center, leaves.length, zoom);
-
   try {
-    const nodeSrc = map.getSource(SPIDERFY_SOURCE_NODES) as MlGeoJSONSource | undefined;
-    const legSrc = map.getSource(SPIDERFY_SOURCE_LEGS) as MlGeoJSONSource | undefined;
-    if (!nodeSrc || !legSrc) return;
-    nodeSrc.setData(nodesGeoJSON(leaves, positions));
-    legSrc.setData(legsGeoJSON(center, positions));
+    applyData(map, composeData(activeState.groups, zoom, 1));
   } catch { /* sources may have been removed */ }
 }
 
@@ -428,4 +475,86 @@ export async function autoSpiderfyVisibleClusters(
       return;
     }
   }
+}
+
+// Plain-node circle radius (px) — must match the "plain-nodes" layer paint.
+const PLAIN_NODE_RADIUS_PX = 8;
+
+/** Build a centered group from member feature indices into `pts`. */
+function groupFromIndices(
+  indices: number[],
+  pts: { f: GeoFeature<GeoPoint, GeoJsonProperties> }[],
+): SpiderfyGroup {
+  const leaves = indices.map((k) => pts[k].f);
+  let lng = 0, lat = 0;
+  for (const lf of leaves) {
+    const c = (lf.geometry as GeoPoint).coordinates;
+    lng += c[0];
+    lat += c[1];
+  }
+  return { center: [lng / leaves.length, lat / leaves.length], leaves };
+}
+
+/** Clustering-OFF analogue of autoSpiderfyVisibleClusters: there is no cluster
+ *  source, so detect every group of plain nodes whose circles overlap at the
+ *  current zoom (single-linkage by screen distance) and fan them ALL out.
+ *  Reconciles on each call — new stacks fan in, separated ones collapse — and
+ *  skips re-rendering when the set is unchanged or was just dismissed. */
+export async function autoSpiderfyOverlappingPlainNodes(map: MlMap): Promise<void> {
+  if (!map.getLayer("plain-nodes")) return;
+
+  const currentZoom = map.getZoom();
+  if (currentZoom < AUTO_SPIDERFY_MIN_ZOOM) {
+    if (activeState) removeSpiderfyLayers(map);
+    return;
+  }
+
+  const feats = map.queryRenderedFeatures({ layers: ["plain-nodes"] });
+
+  // Dedupe by node id (tiling repeats features) and record screen position.
+  const seen = new Set<string>();
+  const pts: { f: GeoFeature<GeoPoint, GeoJsonProperties>; x: number; y: number }[] = [];
+  for (const f of feats) {
+    const id = f.properties?.id as string | undefined;
+    if (!id || seen.has(id) || f.geometry?.type !== "Point") continue;
+    seen.add(id);
+    const c = (f.geometry as GeoPoint).coordinates;
+    const p = map.project([c[0], c[1]]);
+    pts.push({ f: f as GeoFeature<GeoPoint, GeoJsonProperties>, x: p.x, y: p.y });
+  }
+
+  // Single-linkage grouping by screen distance; keep every group of 2+.
+  // Circles overlap when their centers are within one diameter.
+  const t2 = (PLAIN_NODE_RADIUS_PX * 2) ** 2;
+  const used = new Array(pts.length).fill(false);
+  const groups: SpiderfyGroup[] = [];
+  for (let i = 0; i < pts.length; i++) {
+    if (used[i]) continue;
+    const member = [i];
+    used[i] = true;
+    for (let g = 0; g < member.length; g++) {
+      const a = pts[member[g]];
+      for (let j = 0; j < pts.length; j++) {
+        if (used[j]) continue;
+        const dx = a.x - pts[j].x;
+        const dy = a.y - pts[j].y;
+        if (dx * dx + dy * dy <= t2) { used[j] = true; member.push(j); }
+      }
+    }
+    if (member.length >= 2) groups.push(groupFromIndices(member, pts));
+  }
+
+  const nextSig = groupsSignature(groups);
+  const currentSig = activeState ? groupsSignature(activeState.groups) : "";
+  if (nextSig === currentSig) return; // already showing exactly this set
+  if (nextSig === dismissedSignature) return; // user just dismissed this set
+
+  dismissedSignature = null; // the overlap set changed — old dismissal is stale
+  if (groups.length === 0) {
+    removeSpiderfyLayers(map);
+    return;
+  }
+  // Animate only the first fan; later reconciles swap data in place so existing
+  // fans don't re-expand and the selection highlight survives.
+  await renderSpiderfy(map, groups, currentZoom, !activeState);
 }

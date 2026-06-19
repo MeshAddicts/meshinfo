@@ -12,6 +12,8 @@ type ClutterStatus = { tilesPresent: number; tilesTotal: number } | null;
 export function useScanState() {
   const [scanSummary, setScanSummary] = useState<ScanSummary | null>(null);
   const [isScanning, setIsScanning] = useState(false);
+  /** Last scan error, or null. */
+  const [scanError, setScanError] = useState<string | null>(null);
   const [scanHoverId, setScanHoverId] = useState<string | null>(null);
   /** DEM tile source used for the last scan. */
   const [scanDemSource, setScanDemSource] = useState<DemSource | null>(null);
@@ -77,6 +79,7 @@ export function useScanState() {
     // Results
     scanSummary, setScanSummary,
     isScanning, setIsScanning,
+    scanError, setScanError,
     scanHoverId, setScanHoverId,
     scanDemSource, setScanDemSource,
     scanClutterStatus, setScanClutterStatus,

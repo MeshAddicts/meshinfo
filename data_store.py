@@ -6,7 +6,9 @@ from datetime import datetime, timedelta
 import logging
 from zoneinfo import ZoneInfo
 import aiohttp
+from fastapi.encoders import jsonable_encoder
 
+from broadcaster import Broadcaster
 from models.node import Node
 from storage.db.postgres import PostgresStorage
 import utils
@@ -104,6 +106,9 @@ class DataStore:
     self.mqtt_connect_time: datetime = self.config['server']['start_time']
     # Bounded so MQTT producers shed load if the Discord consumer stalls.
     self.discord_event_queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
+    # Live SSE fan-out (node + chat). Lives here (not on MQTT) so it survives
+    # MQTT supervise-restarts and is reachable from both ingest and the API.
+    self.broadcaster = Broadcaster()
     self.pg_storage = PostgresStorage(config)
 
   def update(self, key, value):
@@ -163,6 +168,15 @@ class DataStore:
         await self.pg_storage.write_node(id, n)
         # Refresh cache only after a confirmed write.
         self.pg_storage.cache_node_set(id, n)
+        # Live push: only after a confirmed persist, and only when someone is
+        # listening. jsonable_encoder snapshots `n` (datetimes→ISO, dicts
+        # copied) so a later handler mutating the live cache ref can't race the
+        # serialization. Matches the per-node shape /v1/nodes emits.
+        if self.broadcaster.subscriber_count:
+          try:
+            self.broadcaster.publish("node", jsonable_encoder(n))
+          except Exception as e:
+            logger.debug("node broadcast failed for %s: %s", id, e)
       except Exception as e:
         logger.error("Failed to write node %s to Postgres: %s", id, e)
 

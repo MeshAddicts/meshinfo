@@ -5,6 +5,7 @@
  * Mapbox terrain-rgb decode:  elev_m = -10000 + ((R*256² + G*256 + B) * 0.1)
  * Tilezen terrarium decode:   elev_m = (R*256 + G + B/256) - 32768
  */
+import { fetchWithTimeout } from "./fetchWithTimeout";
 import type { DEM, DEMBounds } from "./terrainDEM";
 
 /** Nominal output tile size; real size taken from each decoded tile (256 or 512). */
@@ -127,9 +128,10 @@ async function fetchTile(
   if (hit) return hit;
 
   const url = `${TILE_URL}/${z}/${x}/${y}.pngraw?access_token=${encodeURIComponent(token)}`;
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url);
   if (!res.ok) {
-    throw new Error(`terrain-rgb tile fetch failed ${z}/${x}/${y}: HTTP ${res.status}`);
+    const auth = res.status === 401 || res.status === 403 ? " (check Mapbox token)" : "";
+    throw new Error(`terrain-rgb tile fetch failed ${z}/${x}/${y}: HTTP ${res.status}${auth}`);
   }
   const blob = await res.blob();
   const bitmap = await createImageBitmap(blob);
@@ -171,7 +173,7 @@ async function fetchTilezenTile(
   if (hit) return hit;
 
   const url = `${TILEZEN_URL}/${z}/${x}/${y}.png`;
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url);
   if (!res.ok) {
     throw new Error(`tilezen tile fetch failed ${z}/${x}/${y}: HTTP ${res.status}`);
   }
@@ -327,6 +329,7 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
   // Parallel fetch; individual failures → null tile.
   // Antimeridian wrap + sync pre-seed for in-flight dedupe — see landcoverTiles.ts.
   const tileMap = new Map<string, CachedTile | null>();
+  let failureCount = 0;
   const jobs: Promise<void>[] = [];
   for (let x = xMin; x <= xMax; x++) {
     const fetchX = ((x % scale) + scale) % scale;
@@ -338,6 +341,7 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
         fetchTile(zoom, fetchX, y, token)
           .then((t) => void tileMap.set(key, t))
           .catch((err) => {
+            failureCount += 1;
             console.warn("[terrainRgb]", err);
             tileMap.set(key, null);
           }),
@@ -345,6 +349,12 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
     }
   }
   await Promise.all(jobs);
+
+  // Mirror the Tilezen twin: wholesale failure surfaces as an error, not a hollow DEM.
+  const totalTiles = tileMap.size;
+  if (failureCount > totalTiles / 2) {
+    throw new Error(`terrain-rgb bulk DEM failed: ${failureCount}/${totalTiles} tiles errored`);
+  }
 
   // Bilinear resample; nearest-neighbor dropped narrow peaks (~500 m underread on CA buttes)
   const data = new Float32Array(targetWidth * targetHeight);
@@ -364,7 +374,9 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
     const xWrapped = ((tileX % scale) + scale) % scale;
     const t = tileMap.get(`${zoom}/${xWrapped}/${tileY}`);
     if (!t) return NaN;
-    return t.data[py * t.size + px];
+    const cx = px < 0 ? 0 : px >= t.size ? t.size - 1 : px;
+    const cy = py < 0 ? 0 : py >= t.size ? t.size - 1 : py;
+    return t.data[cy * t.size + cx];
   };
 
   for (let j = 0; j < targetHeight; j++) {
@@ -394,7 +406,8 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
 
       const top = v00 + (v10 - v00) * fx;
       const bot = v01 + (v11 - v01) * fx;
-      data[j * targetWidth + i] = top + (bot - top) * fy;
+      const e = top + (bot - top) * fy;
+      data[j * targetWidth + i] = e < -500 || e > 9000 ? NaN : e;
     }
   }
 
@@ -466,7 +479,9 @@ export async function buildDemFromTilezen(opts: BuildDemOptions): Promise<DEM> {
     const xWrapped = ((tileX % scale) + scale) % scale;
     const t = tileMap.get(`${zoom}/${xWrapped}/${tileY}`);
     if (!t) return NaN;
-    return t.data[py * t.size + px];
+    const cx = px < 0 ? 0 : px >= t.size ? t.size - 1 : px;
+    const cy = py < 0 ? 0 : py >= t.size ? t.size - 1 : py;
+    return t.data[cy * t.size + cx];
   };
 
   for (let j = 0; j < targetHeight; j++) {
@@ -495,7 +510,8 @@ export async function buildDemFromTilezen(opts: BuildDemOptions): Promise<DEM> {
 
       const top = v00 + (v10 - v00) * fx;
       const bot = v01 + (v11 - v01) * fx;
-      data[j * targetWidth + i] = top + (bot - top) * fy;
+      const e = top + (bot - top) * fy;
+      data[j * targetWidth + i] = e < -500 || e > 9000 ? NaN : e;
     }
   }
 
