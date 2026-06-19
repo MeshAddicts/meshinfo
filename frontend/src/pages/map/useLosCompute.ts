@@ -247,7 +247,9 @@ export function useLosCompute(params: LosComputeParams) {
     const fitKey = `${fromPos[0]},${fromPos[1]}-${toPos[0]},${toPos[1]}`;
     if (losFitKeyRef.current !== fitKey) {
       losFitKeyRef.current = fitKey;
-      const bounds = new maplibregl.LngLatBounds(fromPos, toPos);
+      const bounds = new maplibregl.LngLatBounds();
+      bounds.extend(fromPos);
+      bounds.extend(toPos);
       mb.fitBounds(bounds, { padding: 120, duration: 600, maxZoom: 11 });
     }
 
