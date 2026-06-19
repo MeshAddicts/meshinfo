@@ -23,6 +23,44 @@ export function queryTerrainElevationMSL(map: MlMap, lnglat: [number, number]): 
   return e / exaggeration;
 }
 
+/** Parse "lat, lng" → [lng, lat]. Accepts a trailing ° and N/S/E/W hemisphere
+ *  (e.g. "37.5° N, 122.3° W"), comma- or whitespace-separated. Returns null if
+ *  invalid or out of range. */
+export function parseLatLng(input: string): [number, number] | null {
+  const cleaned = input.trim().replace(/°/g, "");
+  let latStr: string;
+  let lngStr: string;
+  if (cleaned.includes(",")) {
+    const parts = cleaned.split(",");
+    if (parts.length !== 2) return null;
+    [latStr, lngStr] = parts;
+  } else {
+    const toks = cleaned.split(/\s+/).filter(Boolean);
+    if (toks.length === 2) [latStr, lngStr] = toks;
+    else if (toks.length === 4) { latStr = `${toks[0]} ${toks[1]}`; lngStr = `${toks[2]} ${toks[3]}`; }
+    else return null;
+  }
+  const parse = (t: string): number | null => {
+    const m = t.trim().match(/^(-?\d+(?:\.\d+)?)\s*([NSEW])?$/i);
+    if (!m) return null;
+    let v = Number(m[1]);
+    const h = m[2]?.toUpperCase();
+    if (h === "S" || h === "W") v = -Math.abs(v);
+    return Number.isFinite(v) ? v : null;
+  };
+  const lat = parse(latStr);
+  const lng = parse(lngStr);
+  if (lat == null || lng == null) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return [lng, lat];
+}
+
+/** Format a [lng, lat] pair as "lat, lng" (Google-Maps order) at the given
+ *  precision (default 5 dp ≈ 1 m). */
+export function formatLatLng(lng: number, lat: number, precision = 5): string {
+  return `${lat.toFixed(precision)}, ${lng.toFixed(precision)}`;
+}
+
 export function relativeTime(iso: string | null | undefined): string {
   if (!iso) return "Unknown";
   const ms = Date.now() - new Date(iso).getTime();

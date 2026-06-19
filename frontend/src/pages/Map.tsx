@@ -21,9 +21,10 @@ import { ClusterDonutLayer } from "./map/clusterDonutLayer";
 import { type ClusterHover,ClusterHoverCard } from "./map/ClusterHoverCard";
 import { FiltersResetPill } from "./map/FiltersResetPill";
 import { circularMeanLng } from "./map/geo";
-import { bestSnr, computeMaxRange, geodesicCircleCoords, mbRoleColorExpr, queryTerrainElevationMSL, relativeTime, signalBarsHtml, TRANSPARENT_1PX_PNG } from "./map/helpers";
+import { bestSnr, computeMaxRange, formatLatLng, geodesicCircleCoords, mbRoleColorExpr, queryTerrainElevationMSL, relativeTime, signalBarsHtml, TRANSPARENT_1PX_PNG } from "./map/helpers";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
 import { LosTubeLayer } from "./map/losTubeLayer";
+import { MapCoordinatePill } from "./map/MapCoordinatePill";
 import { MapCoveragePanel } from "./map/MapCoveragePanel";
 import { MapDetailsPanel } from "./map/MapDetailsPanel";
 import { MapHealthWidget } from "./map/MapHealthWidget";
@@ -208,6 +209,15 @@ export function Map() {
   const isDraggingMarkerRef = useRef(false);
   /** Terrain elevation (MSL m) under the cursor. */
   const [hoverElevationM, setHoverElevationM] = useState<number | null>(null);
+  /** Live cursor position [lng, lat]; null when the cursor isn't over the map. */
+  const [hoverCoord, setHoverCoord] = useState<[number, number] | null>(null);
+  /** Map-center [lng, lat] — the coordinate pill's fallback when not hovering. */
+  const [centerCoord, setCenterCoord] = useState<[number, number] | null>(null);
+  /** Whether the jump-to-coordinate pin is currently dropped. */
+  const [hasCoordPin, setHasCoordPin] = useState(false);
+  /** Draggable jump-to pin; independent of tool state. */
+  const coordPinMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const coordPinPopupRef = useRef<maplibregl.Popup | null>(null);
 
   const [settingsPanelOpen, setSettingsPanelOpen] = useState<boolean>(() => {
     const stored = readJson<boolean | null>(LS_KEYS.settingsPanelOpen, null);
@@ -272,7 +282,11 @@ export function Map() {
     if (!settingsPanelOpen) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setSettingsPanelOpen(false);
+      if (e.key !== "Escape") return;
+      // Leave Escape for an editable field (e.g. the coordinate pill's input).
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      setSettingsPanelOpen(false);
     };
 
     document.addEventListener("keydown", onKeyDown);
@@ -748,6 +762,63 @@ export function Map() {
     setDetailsData(null);
   }
 
+  /** Center the map on a coordinate and drop (or move) the jump-to pin. Camera +
+   *  DOM marker only, so it doesn't touch tool state. */
+  const jumpToCoord = useCallback((lngLat: [number, number]) => {
+    const map = mbMapRef.current;
+    if (!map) return;
+    const [lng, lat] = lngLat;
+
+    // Center on the point; zoom in to a useful level but never zoom out.
+    map.easeTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 14), duration: 800 });
+
+    const popupHtml = () => {
+      const ll = coordPinMarkerRef.current?.getLngLat() ?? { lng, lat };
+      return `<div style="font-size:11px;font-weight:600;white-space:nowrap">📍 ${formatLatLng(ll.lng, ll.lat)}</div>`;
+    };
+
+    if (coordPinMarkerRef.current) {
+      coordPinMarkerRef.current.setLngLat([lng, lat]);
+      coordPinPopupRef.current?.setHTML(popupHtml());
+      if (coordPinPopupRef.current && !coordPinPopupRef.current.isOpen()) {
+        coordPinMarkerRef.current.togglePopup();
+      }
+    } else {
+      const popup = new maplibregl.Popup({ offset: 28, closeButton: true, className: "map-coord-pin-popup" }).setHTML(popupHtml());
+      const marker = new maplibregl.Marker({ color: "#ec4899", draggable: true })
+        .setLngLat([lng, lat])
+        .setPopup(popup)
+        .addTo(map);
+      // Pause the cursor-elevation handler while dragging; refresh coords on drop.
+      marker.on("dragstart", () => { isDraggingMarkerRef.current = true; });
+      marker.on("dragend", () => {
+        isDraggingMarkerRef.current = false;
+        popup.setHTML(popupHtml());
+      });
+      coordPinMarkerRef.current = marker;
+      coordPinPopupRef.current = popup;
+      marker.togglePopup(); // open initially
+    }
+    setHasCoordPin(true);
+  }, []);
+
+  /** Remove the jump-to pin (and its popup). */
+  const clearCoordPin = useCallback(() => {
+    coordPinPopupRef.current?.remove();
+    coordPinPopupRef.current = null;
+    coordPinMarkerRef.current?.remove();
+    coordPinMarkerRef.current = null;
+    setHasCoordPin(false);
+  }, []);
+
+  // Tear down the jump-to pin when the map page unmounts.
+  useEffect(() => {
+    return () => {
+      coordPinPopupRef.current?.remove();
+      coordPinMarkerRef.current?.remove();
+    };
+  }, []);
+
   // ----------------------------
   // MapLibre: init + layers
   // ----------------------------
@@ -862,6 +933,8 @@ export function Map() {
     }
 
     mbMapRef.current = map;
+    // Seed the coordinate pill's fallback before the first moveend fires.
+    setCenterCoord(initialCenter);
 
     // Surface style/source/tile load failures instead of a silent blank map.
     map.on("error", (e) => {
@@ -933,6 +1006,8 @@ export function Map() {
       localStorage.setItem("savedZoom", map.getZoom().toString());
       localStorage.setItem("savedPitch", map.getPitch().toString());
       localStorage.setItem("savedBearing", map.getBearing().toString());
+      // Keep the coordinate pill's not-hovering fallback in sync with the view.
+      setCenterCoord([c.lng, c.lat]);
       // Mirror view into ?lat/lng/z (debounced); here so it follows recreation.
       pushViewToUrlRef.current();
     });
@@ -2113,6 +2188,10 @@ export function Map() {
       // Throttled via rAF so we don't call queryTerrainElevation on every pixel.
       let elevRafQueued = false;
       let pendingElevE: { lng: number; lat: number } | null = null;
+      // Gate setHoverCoord on a real 5dp change so a stationary cursor doesn't
+      // re-render the whole Map page each rAF frame.
+      let lastHoverLng = NaN;
+      let lastHoverLat = NaN;
       const onMapMouseMove = (e: maplibregl.MapMouseEvent) => {
         // Skip during marker drag — setHoverElevationM re-renders Map.tsx each
         // frame and stutters the marker behind the cursor.
@@ -2123,6 +2202,13 @@ export function Map() {
         requestAnimationFrame(() => {
           elevRafQueued = false;
           if (!pendingElevE || !mbMapRef.current) return;
+          const lng = Math.round(pendingElevE.lng * 1e5) / 1e5;
+          const lat = Math.round(pendingElevE.lat * 1e5) / 1e5;
+          if (lng !== lastHoverLng || lat !== lastHoverLat) {
+            lastHoverLng = lng;
+            lastHoverLat = lat;
+            setHoverCoord([lng, lat]);
+          }
           try {
             // Real MSL meters — users expect the elevation pill to match a topo map,
             // not the rendered terrain's exaggerated value. See queryTerrainElevationMSL.
@@ -2133,7 +2219,12 @@ export function Map() {
           }
         });
       };
-      const onMapMouseOut = () => setHoverElevationM(null);
+      const onMapMouseOut = () => {
+        setHoverElevationM(null);
+        setHoverCoord(null);
+        lastHoverLng = NaN;
+        lastHoverLat = NaN;
+      };
       map.on("mousemove", onMapMouseMove);
       map.on("mouseout", onMapMouseOut);
 
@@ -2680,17 +2771,14 @@ export function Map() {
         <span className="text-gray-200">Animations</span>
       </button>
 
-      {/* Live terrain elevation under the cursor — helps sanity-check coverage
-          paints. Only renders when 3D terrain is on and we got a valid sample. */}
-      {terrain3D && hoverElevationM != null && (
-        <div className="fixed top-3 left-[calc(var(--map-pad)+30rem)] sm:left-[calc(var(--map-pad)+33.75rem)] z-30 px-2.5 py-1 rounded-full text-[11px] font-medium border border-white/10 bg-gray-900/80 backdrop-blur-xl text-gray-300 shadow-2xl pointer-events-none select-none flex items-center gap-1.5">
-          <svg className="w-3 h-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21l6-6 4 4 8-8" />
-          </svg>
-          <span className="tabular-nums">{Math.round(hoverElevationM)} m</span>
-          <span className="text-gray-600 text-[9px] uppercase tracking-wider">elev</span>
-        </div>
-      )}
+      <MapCoordinatePill
+        coord={hoverCoord}
+        centerCoord={centerCoord}
+        elevationM={terrain3D ? hoverElevationM : null}
+        hasPin={hasCoordPin}
+        onJump={jumpToCoord}
+        onClearPin={clearCoordPin}
+      />
 
       {/* Tools drawer — global, top-left next to search */}
       <MapToolsDrawer
