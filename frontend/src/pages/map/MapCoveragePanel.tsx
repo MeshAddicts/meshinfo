@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AggressionSlider, BuildingStatusChip, CanopyStatusChip, ClassLegend, ClutterStatusChip } from "./ClutterUI";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, type MergeOrigin, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
 import { COVERAGE_DETAIL_SIZE,type CoverageDetail } from "./coverageDetail";
+import { parseLatLng } from "./helpers";
 import { NumericDraftInput } from "./NumericDraftInput";
 import { Segmented } from "./Segmented";
 import type { DemSource } from "./terrainRgb";
@@ -12,37 +13,6 @@ interface MergeNodeOption {
   id: string;
   shortname?: string;
   longname?: string;
-}
-
-/** Parse "lat, lng" → [lng, lat]. Accepts a trailing ° and N/S/E/W hemisphere
- *  (e.g. "37.5° N, 122.3° W"). Returns null if invalid. */
-function parseLatLng(input: string): [number, number] | null {
-  const cleaned = input.trim().replace(/°/g, "");
-  let latStr: string;
-  let lngStr: string;
-  if (cleaned.includes(",")) {
-    const parts = cleaned.split(",");
-    if (parts.length !== 2) return null;
-    [latStr, lngStr] = parts;
-  } else {
-    const toks = cleaned.split(/\s+/).filter(Boolean);
-    if (toks.length === 2) [latStr, lngStr] = toks;
-    else if (toks.length === 4) { latStr = `${toks[0]} ${toks[1]}`; lngStr = `${toks[2]} ${toks[3]}`; }
-    else return null;
-  }
-  const parse = (t: string): number | null => {
-    const m = t.trim().match(/^(-?\d+(?:\.\d+)?)\s*([NSEW])?$/i);
-    if (!m) return null;
-    let v = Number(m[1]);
-    const h = m[2]?.toUpperCase();
-    if (h === "S" || h === "W") v = -Math.abs(v);
-    return Number.isFinite(v) ? v : null;
-  };
-  const lat = parse(latStr);
-  const lng = parse(lngStr);
-  if (lat == null || lng == null) return null;
-  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
-  return [lng, lat];
 }
 
 /** Info icon with hover/focus tooltip. `align` picks the edge it anchors to. */
