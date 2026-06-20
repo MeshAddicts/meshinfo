@@ -839,9 +839,12 @@ export function MapCoveragePanel({
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
                     </summary>
-                    <div className="fixed z-50 overflow-y-auto p-2.5 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-gray-400 leading-relaxed space-y-1 text-[10px]
+                    <div className={`fixed z-50 overflow-y-auto p-2.5 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-gray-400 leading-relaxed space-y-1 text-[10px]
                       inset-x-3 top-4 bottom-4 w-auto max-w-none
-                      sm:absolute sm:inset-auto sm:right-0 sm:top-full sm:mt-1 sm:bottom-auto sm:w-85 sm:max-w-[calc(100vw-1rem)] sm:max-h-[60dvh]">
+                      sm:absolute sm:inset-auto sm:right-0 sm:w-85 sm:max-w-[calc(100vw-1rem)] sm:max-h-[60dvh] ${
+                        // Minimized panel sits at the screen bottom — open upward; downward only has room when expanded.
+                        minimized ? "sm:bottom-full sm:mb-1 sm:top-auto" : "sm:top-full sm:mt-1 sm:bottom-auto"
+                      }`}>
                       <button
                         type="button"
                         onClick={(e) => {
