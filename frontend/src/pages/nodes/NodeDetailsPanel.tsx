@@ -14,7 +14,13 @@ import { getElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLin
 import { formatTimestamp } from "../../utils/formatTimestamp";
 import { calculateDistanceBetweenNodes } from "../../utils/getDistanceBetweenTwoNodes";
 import { NodeMap } from "../NodeMap";
-import { classifyAltitude, getGroundElevation } from "./groundElevation";
+import {
+  classifyAltitude,
+  type GroundSample,
+  MAX_VALIDATABLE_UNCERTAINTY_M,
+  positionUncertaintyM,
+} from "./altitudeAssessment";
+import { getGroundElevation } from "./groundElevation";
 import {
   cleanNodeId,
   getLatLon,
@@ -266,18 +272,24 @@ export function NodeDetailsPanel({
   // ll is a fresh array each render; depend on its primitives instead.
   const lng = ll?.[0] ?? null;
   const lat = ll?.[1] ?? null;
-  const [groundM, setGroundM] = useState<number | null>(null);
+  const precisionBits = n?.position?.precision_bits ?? null;
+  const [ground, setGround] = useState<GroundSample | null>(null);
   useEffect(() => {
-    if (lng == null || lat == null || !id) { setGroundM(null); return; }
+    // Skip the fetch when the position is too imprecise to validate altitude against terrain.
+    if (lng == null || lat == null || !id ||
+        positionUncertaintyM(precisionBits) > MAX_VALIDATABLE_UNCERTAINTY_M) {
+      setGround(null);
+      return;
+    }
     let cancelled = false;
-    void getGroundElevation(id, lng, lat).then((elev) => {
-      if (!cancelled) setGroundM(elev);
+    void getGroundElevation(id, lng, lat).then((g) => {
+      if (!cancelled) setGround(g);
     });
     return () => { cancelled = true; };
-  }, [id, lng, lat]);
-  const altSanity = useMemo(
-    () => classifyAltitude(n?.position?.altitude, groundM),
-    [n?.position?.altitude, groundM],
+  }, [id, lng, lat, precisionBits]);
+  const altAssessment = useMemo(
+    () => classifyAltitude(n?.position?.altitude, ground, precisionBits),
+    [n?.position?.altitude, ground, precisionBits],
   );
 
   const distanceFromServer =
@@ -411,21 +423,31 @@ export function NodeDetailsPanel({
               <KV
                 k="Altitude"
                 v={
-                  altSanity.reportedM != null ? (
+                  altAssessment.reportedM != null ? (
                     <span className="inline-flex items-center gap-1.5">
-                      <span>{altSanity.reportedM} m</span>
-                      {altSanity.suspectReason && (
+                      <span>{altAssessment.reportedM} m</span>
+                      {altAssessment.suspectReason && (
                         <span
-                          className="group relative inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md
-                            bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30
-                            text-[10px] font-medium cursor-help"
-                          title={altSanity.suspectReason}
+                          className={`group relative inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md
+                            text-[10px] font-medium cursor-help border ${
+                              altAssessment.severity === "info"
+                                ? "bg-slate-500/15 text-slate-600 dark:text-slate-300 border-slate-500/30"
+                                : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30"
+                            }`}
+                          title={altAssessment.suspectReason}
                         >
-                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                              d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
-                          </svg>
-                          suspect
+                          {altAssessment.severity === "info" ? (
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                          ) : (
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                d="M12 9v2m0 4h.01M5.07 19h13.86c1.54 0 2.5-1.67 1.73-3L13.73 4a2 2 0 00-3.46 0L3.34 16c-.77 1.33.19 3 1.73 3z" />
+                            </svg>
+                          )}
+                          {altAssessment.severity === "info" ? "note" : "check"}
                         </span>
                       )}
                     </span>
