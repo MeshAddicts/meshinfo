@@ -186,6 +186,14 @@ export interface INeighbor {
 
 export interface INodePosition {
   altitude?: number;
+  /** Height above WGS84 ellipsoid; alternative datum some devices report instead of MSL. */
+  altitude_hae?: number;
+  /** Geoid undulation N, where MSL = HAE − N. */
+  altitude_geoidal_separation?: number;
+  /** Meshtastic LocSource enum: 1=manual, 2=internal GPS, 3=external GPS. */
+  location_source?: number;
+  /** Meshtastic AltSource enum: 1=manual, 2=internal, 3=external, 4=barometric. */
+  altitude_source?: number;
   latitude_i: number;
   latitude: number;
   longitude_i: number;

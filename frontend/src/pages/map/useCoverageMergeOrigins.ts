@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 
+import { effectiveAltitudeMslM } from "../nodes/altitudeAssessment";
 import type { MergeOrigin } from "./coverageAnalysis";
 import type { IMapNode } from "./types";
 
@@ -39,7 +40,7 @@ export function useCoverageMergeOrigins(nodes: Record<string, IMapNode>, toolFro
             id: cleanId,
             label: n?.shortname || n?.longname || cleanId,
             position: [pos[0], pos[1]],
-            altitudeM: n?.position?.altitude ?? null,
+            altitudeM: effectiveAltitudeMslM(n?.position),
           }],
     );
   }, [nodes]);

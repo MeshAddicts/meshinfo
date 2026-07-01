@@ -288,8 +288,8 @@ export function NodeDetailsPanel({
     return () => { cancelled = true; };
   }, [id, lng, lat, precisionBits]);
   const altAssessment = useMemo(
-    () => classifyAltitude(n?.position?.altitude, ground, precisionBits),
-    [n?.position?.altitude, ground, precisionBits],
+    () => classifyAltitude(n?.position ?? null, ground),
+    [n?.position, ground],
   );
 
   const distanceFromServer =

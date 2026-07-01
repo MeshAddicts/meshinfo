@@ -5,6 +5,7 @@ import maplibregl, {
 import { useCallback, useEffect, useRef } from "react";
 
 import { env } from "../../env";
+import { effectiveAltitudeMslM } from "../nodes/altitudeAssessment";
 import { normalizeLng, shortestLngDelta } from "./geo";
 import { computeP2PLoss } from "./itm";
 import { DEFAULT_ITM_ENV } from "./itmEnv";
@@ -108,7 +109,7 @@ export function useLosCompute(params: LosComputeParams) {
       const n = nodes[toolFromId] ?? nodes[`!${toolFromId}`];
       if (!n?.map_position) { setLosResult(null); return; }
       fromPos = [n.map_position[0], n.map_position[1]];
-      fromAltitude = n.position?.altitude ?? null;
+      fromAltitude = effectiveAltitudeMslM(n.position);
     } else {
       fromPos = losVirtualFrom!;
     }
@@ -119,7 +120,7 @@ export function useLosCompute(params: LosComputeParams) {
       const n = nodes[toolToId] ?? nodes[`!${toolToId}`];
       if (!n?.map_position) { setLosResult(null); return; }
       toPos = [n.map_position[0], n.map_position[1]];
-      toAltitude = n.position?.altitude ?? null;
+      toAltitude = effectiveAltitudeMslM(n.position);
     } else {
       toPos = losVirtualTo!;
     }
