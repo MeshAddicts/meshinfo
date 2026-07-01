@@ -674,9 +674,10 @@ class PostgresStorage:
         await conn.execute(
             """
             INSERT INTO node_positions (
-                node_id, latitude_i, longitude_i, altitude, time, precision_bits, geocoded, last_geocoding
+                node_id, latitude_i, longitude_i, altitude, time, precision_bits, geocoded, last_geocoding,
+                altitude_hae, altitude_geoidal_separation, location_source, altitude_source
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12)
             ON CONFLICT (node_id) DO UPDATE SET
                 latitude_i = EXCLUDED.latitude_i,
                 longitude_i = EXCLUDED.longitude_i,
@@ -684,7 +685,11 @@ class PostgresStorage:
                 time = EXCLUDED.time,
                 precision_bits = EXCLUDED.precision_bits,
                 geocoded = EXCLUDED.geocoded,
-                last_geocoding = EXCLUDED.last_geocoding
+                last_geocoding = EXCLUDED.last_geocoding,
+                altitude_hae = EXCLUDED.altitude_hae,
+                altitude_geoidal_separation = EXCLUDED.altitude_geoidal_separation,
+                location_source = EXCLUDED.location_source,
+                altitude_source = EXCLUDED.altitude_source
             WHERE
                 -- normal case: only accept newer-or-equal timestamps
                 (EXCLUDED.time IS NOT NULL AND (node_positions.time IS NULL OR EXCLUDED.time >= node_positions.time))
@@ -700,6 +705,10 @@ class PostgresStorage:
             position.get("precision_bits"),
             geocoded,
             last_geocoding,
+            position.get("altitude_hae"),
+            position.get("altitude_geoidal_separation"),
+            position.get("location_source"),
+            position.get("altitude_source"),
         )
 
     async def _write_node_neighborinfo(self, conn, node_id: str, neighborinfo: Dict[str, Any]):
@@ -1488,6 +1497,10 @@ class PostgresStorage:
                                 "altitude": row["altitude"],
                                 "time": row["time"],
                                 "precision_bits": row["precision_bits"],
+                                "altitude_hae": row["altitude_hae"],
+                                "altitude_geoidal_separation": row["altitude_geoidal_separation"],
+                                "location_source": row["location_source"],
+                                "altitude_source": row["altitude_source"],
                                 "geocoded": self._jsonb(row["geocoded"], None),
                                 "last_geocoding": row["last_geocoding"].isoformat() if row["last_geocoding"] else None,
                             }

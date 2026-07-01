@@ -292,6 +292,12 @@ ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS host_metrics JSONB;
 ALTER TABLE node_telemetry_current ADD COLUMN IF NOT EXISTS traffic_management_stats JSONB;
 ALTER TABLE nodes ADD COLUMN IF NOT EXISTS last_channel VARCHAR(10);
 
+-- Position datum/provenance: lets the frontend normalize HAE→MSL and flag manual/barometric readings.
+ALTER TABLE node_positions ADD COLUMN IF NOT EXISTS altitude_hae INTEGER;
+ALTER TABLE node_positions ADD COLUMN IF NOT EXISTS altitude_geoidal_separation INTEGER;
+ALTER TABLE node_positions ADD COLUMN IF NOT EXISTS location_source SMALLINT;
+ALTER TABLE node_positions ADD COLUMN IF NOT EXISTS altitude_source SMALLINT;
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Discord bridge tables
 -- ─────────────────────────────────────────────────────────────────────────────

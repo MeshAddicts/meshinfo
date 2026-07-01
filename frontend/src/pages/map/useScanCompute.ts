@@ -6,6 +6,7 @@ import { useEffect, useRef } from "react";
 
 import { env } from "../../env";
 import { ORIGIN_COLOR } from "../../palette";
+import { effectiveAltitudeMslM } from "../nodes/altitudeAssessment";
 import { buildBuildingRaster, type BuildingRaster } from "./buildingTiles";
 import { buildCanopyRaster, type CanopyRaster } from "./canopyTiles";
 import { AGGRESSION_STOPS, type CoverageReliability, reliabilityPreset } from "./coverageAnalysis";
@@ -101,7 +102,7 @@ export function useScanCompute(params: ScanComputeParams) {
       const n = nodes[toolFromId] ?? nodes[`!${toolFromId}`];
       if (n?.map_position) {
         origin = [n.map_position[0], n.map_position[1]];
-        originAltitude = n.position?.altitude ?? null;
+        originAltitude = effectiveAltitudeMslM(n.position);
         originShortname = n.shortname ?? undefined;
       }
     } else if (toolVirtualPos) {
@@ -169,7 +170,7 @@ export function useScanCompute(params: ScanComputeParams) {
             id: norm,
             shortname: node.shortname ?? undefined,
             position: [lng, lat],
-            altitudeM: node.position?.altitude ?? null,
+            altitudeM: effectiveAltitudeMslM(node.position),
           });
         }
 
