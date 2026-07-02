@@ -23,7 +23,9 @@ import { FiltersResetPill } from "./map/FiltersResetPill";
 import { circularMeanLng } from "./map/geo";
 import { bestSnr, computeMaxRange, geodesicCircleCoords, mbRoleColorExpr, queryTerrainElevationMSL, relativeTime, signalBarsHtml, TRANSPARENT_1PX_PNG } from "./map/helpers";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
+import { CoverageLookupCard } from "./map/live/CoverageLookupCard";
 import { LiveCoveragePill } from "./map/live/LiveCoveragePill";
+import { useCoverageLookup } from "./map/live/useCoverageLookup";
 import { useServerCoverageTiles } from "./map/live/useServerCoverageTiles";
 import { LosTubeLayer } from "./map/losTubeLayer";
 import { MapCoveragePanel } from "./map/MapCoveragePanel";
@@ -466,6 +468,12 @@ export function Map() {
     enabled: liveCoverage,
     mapReady: mapLoaded,
     opacity: liveCoverageOpacity,
+  });
+  const coverageHover = useCoverageLookup({
+    mbMapRef,
+    enabled: liveCoverage && liveCoverageState.status === "ready",
+    mapReady: mapLoaded,
+    suspended: activeTool != null,
   });
 
   // Reset the whole tool state. Also imperatively clears map visual geometry
@@ -2711,6 +2719,7 @@ export function Map() {
       />
 
       <ClusterHoverCard hover={clusterHover} nodes={nodes} />
+      <CoverageLookupCard hover={clusterHover ? null : coverageHover} nodes={nodes} />
 
       <button
         type="button"

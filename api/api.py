@@ -4,6 +4,8 @@ import json
 import logging
 import os
 from pathlib import Path
+
+import aiohttp
 from fastapi.encoders import jsonable_encoder
 import uvicorn
 from fastapi import FastAPI, Request
@@ -390,15 +392,40 @@ class API:
                 logger.exception("Failed to read coverage metadata")
                 return JSONResponse({"error": "metadata unreadable"}, status_code=500)
 
+        @app.get("/v1/coverage/lookup")
+        async def coverage_lookup(request: Request) -> JSONResponse:
+            """Nodes covering a point, sorted by margin. Proxies the coverage-worker."""
+            cov_cfg = self.config.get("coverage", {}) or {}
+            if not cov_cfg.get("enabled", False):
+                return JSONResponse({"error": "coverage disabled"}, status_code=404)
+            try:
+                lng = float(request.query_params["lng"])
+                lat = float(request.query_params["lat"])
+            except (KeyError, ValueError):
+                return JSONResponse({"error": "bad lng/lat"}, status_code=400)
+            url = cov_cfg.get("lookup_url", "http://coverage-worker:9301")
+            try:
+                timeout = aiohttp.ClientTimeout(total=5)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get(f"{url}/lookup", params={"lng": lng, "lat": lat}) as r:
+                        return JSONResponse(await r.json(), status_code=r.status, headers={"Cache-Control": "no-cache"})
+            except Exception:
+                return JSONResponse({"error": "lookup unavailable"}, status_code=503)
+
         @app.post("/v1/coverage/notify")
         async def coverage_notify(request: Request) -> JSONResponse:
-            """Coverage-worker → SSE `coverage` event so live maps refetch tiles. Internal use."""
+            """Coverage-worker → SSE `coverage` event so live maps refetch tiles.
+            The request body is ignored: the broadcast payload is read from the
+            baked metadata on disk, so an unauthenticated POST can only announce
+            what is actually served."""
+            cov_cfg = self.config.get("coverage", {}) or {}
+            meta_path = Path(cov_cfg.get("tile_dir", "output/coverage")) / "metadata.json"
             try:
-                payload = await request.json()
+                payload = json.loads(await asyncio.to_thread(meta_path.read_text))
             except Exception:
-                payload = {}
+                return JSONResponse({"error": "no baked metadata"}, status_code=404)
             self.data.broadcaster.publish("coverage", jsonable_encoder(payload))
-            logger.info("Coverage tiles ready: %s", payload.get("version") if isinstance(payload, dict) else payload)
+            logger.info("Coverage tiles ready: %s", payload.get("version"))
             return JSONResponse({"status": "ok"})
 
         # Land-cover tiles for the coverage/scan clutter model. Pre-baked by
@@ -462,21 +489,21 @@ class API:
                 )
 
         # Live network-coverage tile pyramid, baked by the coverage-worker.
+        # Created + mounted unconditionally when enabled so a fresh deploy needs
+        # no meshinfo restart after the worker's first bake.
         coverage_cfg = self.config.get("coverage", {}) or {}
         if coverage_cfg.get("enabled", False):
             tile_dir = Path(coverage_cfg.get("tile_dir", "output/coverage"))
-            if tile_dir.is_dir():
+            try:
+                tile_dir.mkdir(parents=True, exist_ok=True)
                 app.mount(
                     "/tiles/coverage",
                     TileFiles(directory=str(tile_dir)),
                     name="coverage_tiles",
                 )
                 logger.info("Mounted coverage tiles at /tiles/coverage from %s", tile_dir.resolve())
-            else:
-                logger.info(
-                    "Coverage tiles enabled but %s does not exist yet — the coverage-worker will populate it.",
-                    tile_dir,
-                )
+            except Exception:
+                logger.exception("Failed to mount coverage tiles from %s", tile_dir)
 
         # Strip stray quote chars — compose YAML can wrap values producing `'"*"'`.
         # Empty env → no middleware (the previous `[""]` was a deny-all that looked configured).

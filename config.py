@@ -158,6 +158,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "coverage": {
         "enabled": False,
         "tile_dir": "output/coverage",
+        "lookup_url": "http://coverage-worker:9301",
     },
     "debug": False,
 }

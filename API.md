@@ -54,6 +54,18 @@ Tile endpoints are mounted only when the corresponding `[landcover]` / `[canopy]
 / `[buildings]` section is enabled in `config.toml` and the bake has been run
 (see `scripts/README-*.md`).
 
+### Live coverage (requires the coverage-worker container)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/tiles/coverage/{z}/{x}/{y}.png` | Live network-coverage tile pyramid (z5–z11), rebaked as nodes come and go. |
+| GET | `/v1/coverage/metadata` | Bake metadata: `bounds`, `minZoom`/`maxZoom`, `nodeCount`, `generatedAt`, `sources`. 404 until first bake. |
+| GET | `/v1/coverage/lookup` | Nodes covering a point, strongest first. Required: `lng`, `lat`. Returns `{"total": n, "entries": [{"id", "marginDb"}]}` (top 12). 503 when the worker is unreachable. |
+| POST | `/v1/coverage/notify` | Worker → server: broadcasts the on-disk metadata as an SSE `coverage` event so open maps refresh. Request body ignored. |
+
+All four require `[coverage] enabled = true`; see
+[frontend/coverage-worker/README.md](frontend/coverage-worker/README.md).
+
 ## Errors
 
 - `400 {"error": "..."}` — malformed query params (non-integer `limit`/`days`, missing required `lat`/`lon`, etc.)

@@ -17,6 +17,8 @@ export const OUTPUT_DIR = process.env.COVERAGE_OUTPUT_DIR ?? "output/coverage";
 export const CACHE_DIR = process.env.COVERAGE_CACHE_DIR ?? `${OUTPUT_DIR}-cache`;
 /** Drop cached margins for nodes inactive this long. */
 export const CACHE_PRUNE_DAYS = Number(process.env.COVERAGE_CACHE_PRUNE_DAYS ?? 7);
+/** Hover-lookup HTTP port (internal; meshinfo proxies /v1/coverage/lookup to it). */
+export const LOOKUP_PORT = Number(process.env.COVERAGE_LOOKUP_PORT ?? 9301);
 
 /** Output zoom range. MAX_ZOOM bounds paint detail (z11 ≈ 60 m/px at lat 38). */
 export const MAX_ZOOM = Number(process.env.COVERAGE_MAX_ZOOM ?? 11);

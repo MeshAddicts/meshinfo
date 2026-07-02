@@ -372,8 +372,11 @@ source = "JRC GHS-BUILT-H R2023A"
 # ─────────────────────────────────────────────────────────────────────────────
 
 [coverage]
-enabled = false
+enabled = false                 # then: docker compose --profile coverage up -d coverage-worker
 tile_dir = "output/coverage"    # shared with the coverage-worker container
+# Worker endpoint backing the map's hover lookup ("which nodes cover this point").
+lookup_url = "http://coverage-worker:9301"
+# Full guide (tuning, small hosts, troubleshooting): frontend/coverage-worker/README.md
 
 # ─────────────────────────────────────────────────────────────────────────────
 # UI Customization — Optional
