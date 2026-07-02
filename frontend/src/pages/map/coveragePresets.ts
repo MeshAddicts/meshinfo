@@ -29,14 +29,16 @@ export interface CoveragePanelSettings {
   showRays: boolean;
 }
 
-/** Version-stable preset payload. */
+/** Version-stable preset payload. `customTxDbm`/`customSensitivityDbm` carry
+ *  the Custom-slot scratch values even when a catalog entry is selected, so a
+ *  restore doesn't clobber them with the selection's effective value. */
 export interface CoveragePreset {
   v: 1;
   name: string;
   savedAt: string;
-  tx: { hardware: string; txDbm: number; antenna: string; antennaDbi: number; antennaHeightM: number };
+  tx: { hardware: string; txDbm: number; antenna: string; antennaDbi: number; antennaHeightM: number; customTxDbm?: number };
   rx: { hardware: string; antenna: string; antennaDbi: number; heightM: number };
-  modem: { id: string; sensitivityDbm: number };
+  modem: { id: string; sensitivityDbm: number; customSensitivityDbm?: number };
   env: { clutterEnabled: boolean; aggression: string; canopyEnabled: boolean; buildingsEnabled: boolean };
   accuracy: { reliability: string; detail: string };
   overlays: { contours: boolean; rays: boolean };
@@ -67,9 +69,14 @@ export function snapshotPreset(name: string, s: CoveragePanelSettings): Coverage
       antenna: ant.label,
       antennaDbi: ant.dbi,
       antennaHeightM: s.antennaHeightM,
+      customTxDbm: s.customTxDbm,
     },
     rx: { hardware: rxHw.label, antenna: rxAnt.label, antennaDbi: rxAnt.dbi, heightM: s.rxHeightM },
-    modem: { id: modem.id, sensitivityDbm: modem.isCustom ? s.customSensitivityDbm : modem.sensitivityDbm },
+    modem: {
+      id: modem.id,
+      sensitivityDbm: modem.isCustom ? s.customSensitivityDbm : modem.sensitivityDbm,
+      customSensitivityDbm: s.customSensitivityDbm,
+    },
     env: {
       clutterEnabled: s.clutterEnabled,
       aggression: AGGRESSION_STOPS[s.aggressionIdx]?.id ?? AGGRESSION_STOPS[DEFAULT_AGGRESSION_IDX].id,
@@ -107,6 +114,7 @@ export function resolvePreset(p: CoveragePreset): CoveragePanelSettings {
   const rxHw = resolveHardware(p.rx.hardware);
   const modemIdx = MESHTASTIC_PRESETS.findIndex((m) => m.id === p.modem.id);
   const customModemIdx = MESHTASTIC_PRESETS.findIndex((m) => m.isCustom);
+  const modemIsCustom = modemIdx < 0 || (MESHTASTIC_PRESETS[modemIdx]?.isCustom ?? false);
   const aggressionIdx = AGGRESSION_STOPS.findIndex((a) => a.id === p.env.aggression);
   const detail = (Object.keys(COVERAGE_DETAIL_SIZE) as CoverageDetail[]).includes(p.accuracy.detail as CoverageDetail)
     ? (p.accuracy.detail as CoverageDetail)
@@ -114,16 +122,20 @@ export function resolvePreset(p: CoveragePreset): CoveragePanelSettings {
   const reliability = RELIABILITY_PRESETS.some((r) => r.id === p.accuracy.reliability)
     ? (p.accuracy.reliability as CoverageReliability)
     : "typical";
+  // Scratch values: prefer the explicit fields; older payloads fall back to
+  // the effective value only when the selection actually IS the Custom slot.
+  const scratchTxDbm = p.tx.customTxDbm ?? (hw.isCustom ? p.tx.txDbm : 22);
+  const scratchSensDbm = p.modem.customSensitivityDbm ?? (modemIsCustom ? p.modem.sensitivityDbm : -133);
   return {
     hardwareIdx: hw.idx,
-    customTxDbm: clampNum(p.tx.txDbm, 10, 35, 22),
+    customTxDbm: clampNum(scratchTxDbm, 10, 35, 22),
     antennaIdx: resolveAntenna(p.tx.antenna, p.tx.antennaDbi),
     antennaHeightM: clampNum(p.tx.antennaHeightM, 0, 300, 2),
     rxHardwareIdx: rxHw.idx,
     rxAntennaIdx: resolveAntenna(p.rx.antenna, p.rx.antennaDbi),
     rxHeightM: clampNum(p.rx.heightM, 0, 300, 2),
     presetIdx: modemIdx >= 0 ? modemIdx : (customModemIdx >= 0 ? customModemIdx : 0),
-    customSensitivityDbm: clampNum(p.modem.sensitivityDbm, -150, -100, -130),
+    customSensitivityDbm: clampNum(scratchSensDbm, -150, -100, -133),
     aggressionIdx: aggressionIdx >= 0 ? aggressionIdx : DEFAULT_AGGRESSION_IDX,
     clutterEnabled: !!p.env.clutterEnabled,
     canopyEnabled: !!p.env.canopyEnabled,
@@ -136,7 +148,7 @@ export function resolvePreset(p: CoveragePreset): CoveragePanelSettings {
 }
 
 /** Shape-check one candidate (import or LS read); returns a sanitized copy or null. */
-function sanitizePreset(raw: unknown): CoveragePreset | null {
+export function sanitizePreset(raw: unknown): CoveragePreset | null {
   if (typeof raw !== "object" || raw === null) return null;
   const p = raw as Record<string, unknown>;
   if (p.v !== 1 || typeof p.name !== "string" || p.name.trim() === "") return null;
@@ -158,6 +170,7 @@ function sanitizePreset(raw: unknown): CoveragePreset | null {
       antenna: str(tx.antenna, ""),
       antennaDbi: clampNum(tx.antennaDbi, -5, 20, 3),
       antennaHeightM: clampNum(tx.antennaHeightM, 0, 300, 2),
+      customTxDbm: typeof tx.customTxDbm === "number" ? clampNum(tx.customTxDbm, 10, 35, 22) : undefined,
     },
     rx: {
       hardware: str(rx.hardware, ""),
@@ -165,7 +178,11 @@ function sanitizePreset(raw: unknown): CoveragePreset | null {
       antennaDbi: clampNum(rx.antennaDbi, -5, 20, 3),
       heightM: clampNum(rx.heightM, 0, 300, 2),
     },
-    modem: { id: str(modem.id, "LongFast"), sensitivityDbm: clampNum(modem.sensitivityDbm, -150, -100, -130) },
+    modem: {
+      id: str(modem.id, "LongFast"),
+      sensitivityDbm: clampNum(modem.sensitivityDbm, -150, -100, -130),
+      customSensitivityDbm: typeof modem.customSensitivityDbm === "number" ? clampNum(modem.customSensitivityDbm, -150, -100, -133) : undefined,
+    },
     env: {
       clutterEnabled: !!env.clutterEnabled,
       aggression: str(env.aggression, AGGRESSION_STOPS[DEFAULT_AGGRESSION_IDX].id),

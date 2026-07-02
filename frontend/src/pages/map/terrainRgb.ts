@@ -289,11 +289,18 @@ export interface BuildDemOptions {
 /** Tile source for DEM attribution. */
 export type DemSource = "tilezen" | "mapbox-terrain-rgb";
 
+export interface BuiltDem {
+  dem: DEM;
+  /** Tiles that errored (network/decode); their pixels are NaN holes. */
+  tilesFailed: number;
+  tilesTotal: number;
+}
+
 /** Try Tilezen; fall back to Mapbox terrain-rgb when a token is configured. Returns source tag for attribution. */
-export async function buildDem(opts: BuildDemOptions): Promise<{ dem: DEM; source: DemSource }> {
+export async function buildDem(opts: BuildDemOptions): Promise<BuiltDem & { source: DemSource }> {
   try {
-    const dem = await buildDemFromTilezen(opts);
-    return { dem, source: "tilezen" };
+    const built = await buildDemFromTilezen(opts);
+    return { ...built, source: "tilezen" };
   } catch (err) {
     if (!opts.token) {
       console.warn("[terrainRgb] Bulk DEM from Tilezen failed (no Mapbox fallback — token not configured):", err);
@@ -303,13 +310,13 @@ export async function buildDem(opts: BuildDemOptions): Promise<{ dem: DEM; sourc
       "[terrainRgb] Bulk DEM from Tilezen failed, falling back to Mapbox terrain-rgb:",
       err,
     );
-    const dem = await buildDemFromTerrainRgb(opts);
-    return { dem, source: "mapbox-terrain-rgb" };
+    const built = await buildDemFromTerrainRgb(opts);
+    return { ...built, source: "mapbox-terrain-rgb" };
   }
 }
 
 /** Stitch terrain tiles for bounds, bilinear-resample to target grid. Per-tile failures → NaN pixels. */
-export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM> {
+export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<BuiltDem> {
   const { bounds, targetWidth, targetHeight, token } = opts;
   const maxTiles = opts.maxTiles ?? DEFAULT_MAX_TILES_PER_REQUEST;
 
@@ -412,11 +419,15 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<DEM
     }
   }
 
-  return { data, width: targetWidth, height: targetHeight, bounds };
+  return {
+    dem: { data, width: targetWidth, height: targetHeight, bounds },
+    tilesFailed: failureCount,
+    tilesTotal: totalTiles,
+  };
 }
 
 /** Tilezen twin of buildDemFromTerrainRgb. 256 px tiles, max z=15. */
-export async function buildDemFromTilezen(opts: BuildDemOptions): Promise<DEM> {
+export async function buildDemFromTilezen(opts: BuildDemOptions): Promise<BuiltDem> {
   const { bounds, targetWidth, targetHeight } = opts;
   const maxTiles = opts.maxTiles ?? DEFAULT_MAX_TILES_PER_REQUEST;
 
@@ -516,5 +527,9 @@ export async function buildDemFromTilezen(opts: BuildDemOptions): Promise<DEM> {
     }
   }
 
-  return { data, width: targetWidth, height: targetHeight, bounds };
+  return {
+    dem: { data, width: targetWidth, height: targetHeight, bounds },
+    tilesFailed: failureCount,
+    tilesTotal: totalTiles,
+  };
 }

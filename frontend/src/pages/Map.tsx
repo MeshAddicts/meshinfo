@@ -365,6 +365,13 @@ export function Map() {
   const activeToolRef = useRef(activeTool);
   const toolStepRef = useRef(toolStep);
   const toolFromIdRef = useRef(toolFromId);
+  // Merge-origin pick mode, read by the bind-once node/cluster click handlers
+  const pickingMergeOriginRef = useRef(mergeOrigins.pickingMergeOrigin);
+  const addMergeOriginByIdRef = useRef(mergeOrigins.addCoverageMergeOriginById);
+  // Coverage double-Esc guard: timestamp of the first (arming) Esc press
+  const coverageEscArmedAtRef = useRef(0);
+  // Scan-from-here overlay state, read by the bind-once Escape handler
+  const keepCoveragePaintRef = useRef(coverage.keepCoveragePaint);
 
   const isPickingNode = activeTool != null && toolStep !== "result";
   const terrain3DRef = useRef(terrain3D);
@@ -387,6 +394,9 @@ export function Map() {
   useEffect(() => { linkModeRef.current = linkMode; }, [linkMode]);
   useEffect(() => { roleFilterRef.current = roleFilter; }, [roleFilter]);
   useEffect(() => { activeToolRef.current = activeTool; }, [activeTool]);
+  useEffect(() => { pickingMergeOriginRef.current = mergeOrigins.pickingMergeOrigin; }, [mergeOrigins.pickingMergeOrigin]);
+  useEffect(() => { addMergeOriginByIdRef.current = mergeOrigins.addCoverageMergeOriginById; }, [mergeOrigins.addCoverageMergeOriginById]);
+  useEffect(() => { keepCoveragePaintRef.current = coverage.keepCoveragePaint; }, [coverage.keepCoveragePaint]);
   useEffect(() => { toolStepRef.current = toolStep; }, [toolStep]);
   useEffect(() => { toolFromIdRef.current = toolFromId; }, [toolFromId]);
   useEffect(() => { terrain3DRef.current = terrain3D; }, [terrain3D]);
@@ -468,6 +478,10 @@ export function Map() {
     setToolFromId(null);
     setToolToId(null);
     setToolVirtualPos(null);
+    // Merge origins are contextual to one analysis; closing the tool ends it
+    mergeOrigins.clearCoverageMergeOrigins();
+    // Stale arm must not let a later session close on a single Esc
+    coverageEscArmedAtRef.current = 0;
     losState.setLosVirtualFrom(null);
     losState.setLosVirtualTo(null);
     losCompute.losFitKeyRef.current = null;
@@ -1814,6 +1828,12 @@ export function Map() {
         const cluster = e.features?.[0];
         if (!cluster) return;
 
+        // A cluster click zooms; while picking a merge origin it must not
+        // also drop a coordinate pin underneath.
+        if (pickingMergeOriginRef.current) {
+          (e.originalEvent as MouseEvent & { _mergePickConsumed?: boolean })._mergePickConsumed = true;
+        }
+
         // Spiral fans put inner leaves inside the donut's hit circle — let the
         // leaf click be handled by onNodeLayerClick instead of re-spiderfying.
         if (hitsSpiderfyNode(e.point)) return;
@@ -1973,6 +1993,21 @@ export function Map() {
         if (!feature) return;
         const id = (feature.properties?.id ?? "") as string;
         if (!id) return;
+
+        // Merge-origin pick mode: a node click adds that node (with its GPS
+        // altitude) instead of dropping a coordinate pin or opening selection
+        if (pickingMergeOriginRef.current) {
+          (e.originalEvent as MouseEvent & { _mergePickConsumed?: boolean })._mergePickConsumed = true;
+          const cleanId = id.startsWith("!") ? id.slice(1) : id;
+          const primaryId = (toolFromIdRef.current ?? "").replace(/^!/, "");
+          if (cleanId === primaryId) {
+            toast("That node is already the primary origin.");
+          } else {
+            addMergeOriginByIdRef.current(id);
+          }
+          mergeOrigins.setPickingMergeOrigin(false);
+          return;
+        }
 
         // Tool pick modes intercept node clicks
         const activeToolCur = activeToolRef.current;
@@ -2199,6 +2234,24 @@ export function Map() {
         switch (e.key) {
           case "Escape":
             if (activeToolRef.current) {
+              // Merge-origin picking consumes Esc (the pick hook's own
+              // listener cancels it) — don't also arm/close the tool.
+              if (pickingMergeOriginRef.current) break;
+              // A coverage session carries state (paint, pins, settings) — one
+              // stray Esc shouldn't destroy it. Require a confirming Esc.
+              // keepCoveragePaint covers the Scan-from-here overlay too.
+              if (
+                (activeToolRef.current === "coverage" || keepCoveragePaintRef.current) &&
+                toolStepRef.current === "result"
+              ) {
+                const now = Date.now();
+                if (now - coverageEscArmedAtRef.current > 3000) {
+                  coverageEscArmedAtRef.current = now;
+                  toast("Press Esc again to close Coverage.");
+                  break;
+                }
+                coverageEscArmedAtRef.current = 0;
+              }
               resetTool();
               break;
             }

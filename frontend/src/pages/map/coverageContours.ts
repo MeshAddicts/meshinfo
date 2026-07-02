@@ -172,14 +172,15 @@ function stitchSegments(
   return lines;
 }
 
-/** Grid (x,y) → lng/lat. Row 0 = north, row height-1 = south. */
+/** Grid (x,y) → lng/lat. Row 0 = north. Cell-center convention ((x+0.5)/w),
+ *  matching where renderCoverageRaster computes and the ImageSource paints. */
 function gridToLngLat(
   x: number, y: number,
   width: number, height: number,
   bounds: DEMBounds,
 ): [number, number] {
-  const lng = bounds.west + (x / (width - 1)) * (bounds.east - bounds.west);
-  const lat = bounds.north - (y / (height - 1)) * (bounds.north - bounds.south);
+  const lng = bounds.west + ((x + 0.5) / width) * (bounds.east - bounds.west);
+  const lat = bounds.north - ((y + 0.5) / height) * (bounds.north - bounds.south);
   return [lng, lat];
 }
 

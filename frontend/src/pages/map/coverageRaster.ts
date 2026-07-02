@@ -194,9 +194,11 @@ export function renderCoverageRaster(
     txHeights[k] = Math.max(0.5, Math.min(3000, origins[k].antennaHeightAboveGroundM));
   }
 
-  // Step over OUTPUT grid; terrain via bilinear sampleDEMAt is (lng,lat)-continuous
-  const lonStep = (bounds.east - bounds.west) / (outputWidth - 1);
-  const latStep = (bounds.north - bounds.south) / (outputHeight - 1);
+  // Step over OUTPUT grid at pixel CENTERS ((i+0.5)/w) so each computed value
+  // sits exactly where the ImageSource paints it (texture spans bounds
+  // edge-to-edge). Terrain via bilinear sampleDEMAt is (lng,lat)-continuous.
+  const lonStep = (bounds.east - bounds.west) / outputWidth;
+  const latStep = (bounds.north - bounds.south) / outputHeight;
 
   // Reusable input object (65k+ computes per frame → don't allocate). ITM wants AGL, clamped [0.5, 3000].
   const itmInput = {
@@ -229,11 +231,11 @@ export function renderCoverageRaster(
     : null;
 
   for (let j = rowStart; j < rowEnd; j++) {
-    const lat = bounds.north - j * latStep;
+    const lat = bounds.north - (j + 0.5) * latStep;
     const outRowOffset = (j - rowStart) * outputWidth;
     for (let i = 0; i < outputWidth; i++) {
       const outPxIdx = outRowOffset + i;
-      const lng = bounds.west + i * lonStep;
+      const lng = bounds.west + (i + 0.5) * lonStep;
       const demElev = sampleDEMAt(dem, lng, lat);
       if (Number.isNaN(demElev)) {
         rgba[outPxIdx * 4 + 3] = 0;

@@ -7,8 +7,8 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { toast } from "../../components/toastStore";
 import { env } from "../../env";
 import { effectiveAltitudeMslM } from "../nodes/altitudeAssessment";
-import { buildBuildingRaster, type BuildingRaster, downsampleBuildingRaster } from "./buildingTiles";
-import { buildCanopyRaster, type CanopyRaster, downsampleCanopyRaster } from "./canopyTiles";
+import { type BuildingRaster, downsampleBuildingRaster } from "./buildingTiles";
+import { type CanopyRaster, downsampleCanopyRaster } from "./canopyTiles";
 import { AGGRESSION_STOPS, type MergeOrigin, reliabilityPreset, REPRESENTATIVE_CLUTTER_DB } from "./coverageAnalysis";
 import { type ContourFeatureCollection, extractCoverageContours } from "./coverageContours";
 import { COVERAGE_DETAIL_MAX_TILES, COVERAGE_DETAIL_SIZE } from "./coverageDetail";
@@ -19,10 +19,12 @@ import type { SliceOrigin } from "./coverageSliceWorker";
 import { CoverageWorkerPool } from "./coverageWorkerPool";
 import { queryTerrainElevationMSL } from "./helpers";
 import { CABLE_LOSS_DB, clampRxHeightM, DEFAULT_ITM_ENV, FADE_MARGIN_DB, FREQ_MHZ } from "./itmEnv";
-import { buildClutterRaster, type ClutterRaster, downsampleClutterRaster } from "./landcoverTiles";
+import { type ClutterRaster, downsampleClutterRaster } from "./landcoverTiles";
+import { buildCoverageRasters } from "./rasterBuildClient";
 import { type DEM, type DEMBounds, downsampleDEM, sampleDEMAt, unionDemBoundsAround } from "./terrainDEM";
-import { buildDem, type DemSource, fetchElevationAt } from "./terrainRgb";
+import { type DemSource, fetchElevationAt } from "./terrainRgb";
 import type { IMapNode } from "./types";
+import { MAX_MERGE_ORIGINS } from "./useCoverageMergeOrigins";
 import type { CoverageState } from "./useCoverageState";
 
 type CoverageComputeParams = {
@@ -96,7 +98,10 @@ export function useCoverageCompute(params: CoverageComputeParams) {
     const aggression = c.coverageClutterEnabled
       ? (AGGRESSION_STOPS[c.coverageAggressionIdx]?.value ?? 1.0)
       : 0;
-    const clutter = REPRESENTATIVE_CLUTTER_DB * aggression;
+    // Half-weighted: the bbox must CONTAIN the real footprint, and open
+    // terrain sees far less per-pixel clutter than the representative value —
+    // full weight clipped flat-desert coverage at the DEM edge.
+    const clutter = REPRESENTATIVE_CLUTTER_DB * aggression * 0.5;
     const budget =
       c.coverageTxDbm +
       c.coverageAntennaDbi +
@@ -185,6 +190,14 @@ export function useCoverageCompute(params: CoverageComputeParams) {
   const lastNoncesRef = useRef<{ retry: number; recalc: number }>({ retry: 0, recalc: 0 });
   /** Retry-nonce value at the last fetch; a bump busts the raster fetch cache. */
   const lastRetryNonceRef = useRef(0);
+  /** DEM source of the previous fetch; a silent provider swap changes the
+   *  whole terrain model, so surface it. */
+  const lastDemSourceRef = useRef<DemSource | null>(null);
+  /** fetchKeys already warned about edge-clipped coverage, plus a rate limit —
+   *  cap-bound networks clip on every recompute and each merge-origin add
+   *  mints a new key. */
+  const edgeClipWarnedKeysRef = useRef<Set<string>>(new Set());
+  const lastEdgeClipToastAtRef = useRef(0);
   /** Live full computes; the no-op early-return only tidies UI state when 0. */
   const activeComputeCountRef = useRef(0);
   /** computeKey whose run was cancelled — the paint doesn't reflect it, so
@@ -614,49 +627,41 @@ export function useCoverageCompute(params: CoverageComputeParams) {
           if (!cacheHit) {
             const tFetch = performance.now();
             c.setIsFetchingCoverageTerrain(true);
-            const [{ dem, source: demSourceUsed }, clutter, canopy, buildings] = await Promise.all([
-              buildDem({
-                bounds: demBounds,
-                targetWidth: DEM_SIZE,
-                targetHeight: DEM_SIZE,
-                token: mapboxToken,
-                maxTiles: COVERAGE_DETAIL_MAX_TILES[c.coverageDetail],
-              }),
-              c.coverageClutterEnabled
-                ? buildClutterRaster({
-                    bounds: demBounds,
-                    targetWidth: DEM_SIZE,
-                    targetHeight: DEM_SIZE,
-                    maxTiles: COVERAGE_DETAIL_MAX_TILES[c.coverageDetail],
-                  })
-                : Promise.resolve(null),
-              c.coverageCanopyEnabled
-                ? buildCanopyRaster({
-                    bounds: demBounds,
-                    targetWidth: DEM_SIZE,
-                    targetHeight: DEM_SIZE,
-                    maxTiles: COVERAGE_DETAIL_MAX_TILES[c.coverageDetail],
-                  })
-                : Promise.resolve(null),
-              c.coverageBuildingsEnabled
-                ? buildBuildingRaster({
-                    bounds: demBounds,
-                    targetWidth: DEM_SIZE,
-                    targetHeight: DEM_SIZE,
-                    maxTiles: COVERAGE_DETAIL_MAX_TILES[c.coverageDetail],
-                  })
-                : Promise.resolve(null),
-            ]);
+            // Fetch + decode + 2048² resample run in the raster-build worker
+            const built = await buildCoverageRasters({
+              bounds: demBounds,
+              size: DEM_SIZE,
+              maxTiles: COVERAGE_DETAIL_MAX_TILES[c.coverageDetail],
+              token: mapboxToken,
+              wantClutter: c.coverageClutterEnabled,
+              wantCanopy: c.coverageCanopyEnabled,
+              wantBuildings: c.coverageBuildingsEnabled,
+            });
             mark("demFetchMs", tFetch);
             if (requestId !== coverageRequestIdRef.current) {
               c.setIsFetchingCoverageTerrain(false);
               return;
             }
             c.setIsFetchingCoverageTerrain(false);
+            const { dem, clutter, canopy, buildings } = built;
+            if (built.demTilesFailed > 0) {
+              toast(
+                `${built.demTilesFailed}/${built.demTilesTotal} terrain tiles failed to load — coverage may have gaps. Retry refetches them.`,
+                { kind: "error" },
+              );
+            }
+            if (lastDemSourceRef.current && lastDemSourceRef.current !== built.demSource) {
+              toast(
+                built.demSource === "mapbox-terrain-rgb"
+                  ? "Terrain source fell back to Mapbox terrain-rgb — the paint may shift versus previous runs."
+                  : "Terrain source restored to Tilezen (USGS 3DEP/SRTM).",
+              );
+            }
+            lastDemSourceRef.current = built.demSource;
             fetched = {
               key: fetchKey,
               dem, clutter, canopy, buildings,
-              demSource: demSourceUsed,
+              demSource: built.demSource,
               clutterStatus: clutter ? { tilesPresent: clutter.tilesPresent, tilesTotal: clutter.tilesTotal } : null,
               canopyStatus: canopy ? { tilesPresent: canopy.tilesPresent, tilesTotal: canopy.tilesTotal } : null,
               buildingsStatus: buildings ? { tilesPresent: buildings.tilesPresent, tilesTotal: buildings.tilesTotal } : null,
@@ -815,6 +820,34 @@ export function useCoverageCompute(params: CoverageComputeParams) {
           // Don't cache a hollow DEM (transient tile failure) — Retry must refetch
           if (rendered.demCoveredPixels / rendered.totalPx < 0.05 && coverageFetchCacheRef.current?.key === fetchKey) {
             coverageFetchCacheRef.current = null;
+          }
+
+          // Reachable pixels on the bbox border mean the true footprint likely
+          // extends past the analysis area (bbox sizing is a heuristic)
+          if (!edgeClipWarnedKeysRef.current.has(fetchKey)) {
+            const m = rendered.marginDb;
+            const w = rendered.outputWidth;
+            const h = rendered.outputHeight;
+            let clipped = false;
+            for (let i = 0; i < w && !clipped; i++) {
+              if (m[i] >= 0 || m[(h - 1) * w + i] >= 0) clipped = true;
+            }
+            for (let j = 1; j < h - 1 && !clipped; j++) {
+              if (m[j * w] >= 0 || m[j * w + w - 1] >= 0) clipped = true;
+            }
+            if (clipped) {
+              if (edgeClipWarnedKeysRef.current.size > 32) edgeClipWarnedKeysRef.current.clear();
+              edgeClipWarnedKeysRef.current.add(fetchKey);
+              // Rate-limit the toast; the key is recorded regardless so an
+              // unchanged analysis area never re-warns
+              const now = Date.now();
+              if (now - lastEdgeClipToastAtRef.current > 60_000) {
+                lastEdgeClipToastAtRef.current = now;
+                toast(
+                  "Coverage reaches the edge of the analysis area — the real footprint may extend farther than painted.",
+                );
+              }
+            }
           }
 
           // 4. Publish margin + metadata; contours/rays are built lazily by
@@ -1208,20 +1241,28 @@ export function useCoverageCompute(params: CoverageComputeParams) {
     const prevCursor = canvas.style.cursor;
     canvas.style.cursor = "crosshair";
     const onClick = (e: maplibregl.MapMouseEvent) => {
+      // Node/cluster handlers (Map.tsx) claim their clicks first — a node
+      // click adds the node itself as a merge origin, not a coordinate pin.
+      if ((e.originalEvent as MouseEvent & { _mergePickConsumed?: boolean })._mergePickConsumed) {
+        return;
+      }
       const lng = e.lngLat.lng;
       const lat = e.lngLat.lat;
       // 6-dp coords give ~0.1 m precision and a stable id key.
       const id = `virtual:${lng.toFixed(6)},${lat.toFixed(6)}`;
-      setCoverageMergeOrigins((prev) =>
-        prev.some((o) => o.id === id)
-          ? prev
-          : [...prev, {
-              id,
-              label: `Pin ${lat.toFixed(4)}, ${lng.toFixed(4)}`,
-              position: [lng, lat],
-              altitudeM: null,
-            }],
-      );
+      setCoverageMergeOrigins((prev) => {
+        if (prev.some((o) => o.id === id)) return prev;
+        if (prev.length >= MAX_MERGE_ORIGINS) {
+          toast(`Merge-origin limit reached (${MAX_MERGE_ORIGINS}) — remove one first.`);
+          return prev;
+        }
+        return [...prev, {
+          id,
+          label: `Pin ${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+          position: [lng, lat],
+          altitudeM: null,
+        }];
+      });
       setPickingMergeOrigin(false);
     };
     const onKey = (e: KeyboardEvent) => {

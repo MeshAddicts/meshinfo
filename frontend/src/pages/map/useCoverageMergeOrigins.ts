@@ -1,8 +1,12 @@
 import { useCallback, useMemo, useState } from "react";
 
+import { toast } from "../../components/toastStore";
 import { effectiveAltitudeMslM } from "../nodes/altitudeAssessment";
 import type { MergeOrigin } from "./coverageAnalysis";
 import type { IMapNode } from "./types";
+
+/** Each merge origin multiplies per-pixel ITM cost; 8 keeps Survey tractable. */
+export const MAX_MERGE_ORIGINS = 8;
 
 /** Coverage-merge origins are session-only by design — contextual to one analysis. */
 export function useCoverageMergeOrigins(nodes: Record<string, IMapNode>, toolFromId: string | null) {
@@ -33,16 +37,19 @@ export function useCoverageMergeOrigins(nodes: Record<string, IMapNode>, toolFro
     const pos = n?.map_position;
     if (!pos) return;
     const cleanId = nodeId.startsWith("!") ? nodeId.slice(1) : nodeId;
-    setCoverageMergeOrigins((prev) =>
-      prev.some((o) => o.id === cleanId)
-        ? prev
-        : [...prev, {
-            id: cleanId,
-            label: n?.shortname || n?.longname || cleanId,
-            position: [pos[0], pos[1]],
-            altitudeM: effectiveAltitudeMslM(n?.position),
-          }],
-    );
+    setCoverageMergeOrigins((prev) => {
+      if (prev.some((o) => o.id === cleanId)) return prev;
+      if (prev.length >= MAX_MERGE_ORIGINS) {
+        toast(`Merge-origin limit reached (${MAX_MERGE_ORIGINS}) — remove one first.`);
+        return prev;
+      }
+      return [...prev, {
+        id: cleanId,
+        label: n?.shortname || n?.longname || cleanId,
+        position: [pos[0], pos[1]],
+        altitudeM: effectiveAltitudeMslM(n?.position),
+      }];
+    });
   }, [nodes]);
 
   const mergeNodeOptions = useMemo(() => {

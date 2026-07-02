@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, DEFAULT_AGGRESSION_IDX, effectiveSensitivityDbm, MESHTASTIC_PRESETS } from "./coverageAnalysis";
 import type { CoverageDetail } from "./coverageDetail";
+import { type CoveragePanelSettings, resolvePreset, sanitizePreset, snapshotPreset } from "./coveragePresets";
 import { clampAggressionIdx } from "./helpers";
 import { LS_KEYS, readJson, writeJson } from "./storage";
 import type { DemSource } from "./terrainRgb";
@@ -42,16 +43,27 @@ export function useCoverageState() {
   // Drives the building-height status chip; null until first compute.
   const [coverageBuildingsStatus, setCoverageBuildingsStatus] = useState<ClutterStatus>(null);
 
+  // Last-used settings, restored via the semantic preset payload so indices
+  // survive catalog reordering across versions. Env toggles keep their own
+  // (authoritative) keys below; Detail stays session-scoped — the heavy tiers
+  // are deliberately opt-in per session.
+  const [restored] = useState<CoveragePanelSettings | null>(() => {
+    const raw = readJson<unknown>(LS_KEYS.coverageLastSettings, null);
+    if (!raw) return null;
+    const clean = sanitizePreset(raw);
+    return clean ? resolvePreset(clean) : null;
+  });
+
   // Index into COMMON_ANTENNAS (value-based <select> can't distinguish same-dBi models)
-  const [coverageAntennaIdx, setCoverageAntennaIdx] = useState(3);
+  const [coverageAntennaIdx, setCoverageAntennaIdx] = useState(restored?.antennaIdx ?? 3);
   const coverageAntennaDbi = COMMON_ANTENNAS[coverageAntennaIdx]?.dbi ?? 3;
-  const [coverageHardwareIdx, setCoverageHardwareIdx] = useState(0);
+  const [coverageHardwareIdx, setCoverageHardwareIdx] = useState(restored?.hardwareIdx ?? 0);
   // Asymmetric RX defaults: Heltec V3 + rubber duck @ 2 m (stock portable)
-  const [coverageRxHardwareIdx, setCoverageRxHardwareIdx] = useState(4);
-  const [coverageRxAntennaIdx, setCoverageRxAntennaIdx] = useState(0);
+  const [coverageRxHardwareIdx, setCoverageRxHardwareIdx] = useState(restored?.rxHardwareIdx ?? 4);
+  const [coverageRxAntennaIdx, setCoverageRxAntennaIdx] = useState(restored?.rxAntennaIdx ?? 0);
   const coverageRxAntennaDbi = COMMON_ANTENNAS[coverageRxAntennaIdx]?.dbi ?? 3;
-  const [coverageRxHeightM, setCoverageRxHeightM] = useState(2);
-  const [coverageCustomTxDbm, setCoverageCustomTxDbm] = useState(22);
+  const [coverageRxHeightM, setCoverageRxHeightM] = useState(restored?.rxHeightM ?? 2);
+  const [coverageCustomTxDbm, setCoverageCustomTxDbm] = useState(restored?.customTxDbm ?? 22);
   const coverageTxDbm = COMMON_HARDWARE[coverageHardwareIdx]?.isCustom
     ? coverageCustomTxDbm
     : (COMMON_HARDWARE[coverageHardwareIdx]?.txDbm ?? 22);
@@ -87,18 +99,18 @@ export function useCoverageState() {
     setCoverageBuildingsEnabledRaw(v);
     writeJson(LS_KEYS.coverageBuildingsEnabled, v);
   }, []);
-  const [coveragePresetIdx, setCoveragePresetIdx] = useState(0); // MediumFast
-  const [coverageCustomSensDbm, setCoverageCustomSensDbm] = useState(-133);
+  const [coveragePresetIdx, setCoveragePresetIdx] = useState(restored?.presetIdx ?? 0); // MediumFast
+  const [coverageCustomSensDbm, setCoverageCustomSensDbm] = useState(restored?.customSensitivityDbm ?? -133);
   const coverageSensitivityDbm = MESHTASTIC_PRESETS[coveragePresetIdx]?.isCustom
     ? coverageCustomSensDbm
     : (MESHTASTIC_PRESETS[coveragePresetIdx]?.sensitivityDbm ?? -130);
   // Session-scoped (not persisted)
   const [coverageDetail, setCoverageDetail] = useState<CoverageDetail>("standard");
   // Antenna AGL (m); overrides GPS altitude on node-anchored origins
-  const [coverageAntennaHeightM, setCoverageAntennaHeightM] = useState(2);
-  const [coverageReliability, setCoverageReliability] = useState<CoverageReliability>("typical");
+  const [coverageAntennaHeightM, setCoverageAntennaHeightM] = useState(restored?.antennaHeightM ?? 2);
+  const [coverageReliability, setCoverageReliability] = useState<CoverageReliability>(restored?.reliability ?? "typical");
   // Ref mirror so the drag-preview closure sees latest without re-binding
-  const coverageAntennaHeightMRef = useRef(2);
+  const coverageAntennaHeightMRef = useRef(restored?.antennaHeightM ?? 2);
   useEffect(() => {
     coverageAntennaHeightMRef.current = coverageAntennaHeightM;
   }, [coverageAntennaHeightM]);
@@ -108,8 +120,37 @@ export function useCoverageState() {
     return effectiveSensitivityDbm(coverageSensitivityDbm, hw.chipset, hw.sensitivityOffsetDb ?? 0);
   }, [coverageSensitivityDbm, coverageRxHardwareIdx]);
 
-  const [showCoverageContours, setShowCoverageContours] = useState(false);
-  const [showCoverageRays, setShowCoverageRays] = useState(false);
+  const [showCoverageContours, setShowCoverageContours] = useState(restored?.showContours ?? false);
+  const [showCoverageRays, setShowCoverageRays] = useState(restored?.showRays ?? false);
+
+  // Write-through of the full settings bag (debounced; slider drags coalesce).
+  // A ref keeps the latest bag so unmount can flush a still-pending write.
+  const lastSettingsBagRef = useRef<CoveragePanelSettings | null>(null);
+  useEffect(() => {
+    const bag: CoveragePanelSettings = {
+      hardwareIdx: coverageHardwareIdx, customTxDbm: coverageCustomTxDbm,
+      antennaIdx: coverageAntennaIdx, antennaHeightM: coverageAntennaHeightM,
+      rxHardwareIdx: coverageRxHardwareIdx, rxAntennaIdx: coverageRxAntennaIdx, rxHeightM: coverageRxHeightM,
+      presetIdx: coveragePresetIdx, customSensitivityDbm: coverageCustomSensDbm,
+      aggressionIdx: coverageAggressionIdx, clutterEnabled: coverageClutterEnabled,
+      canopyEnabled: coverageCanopyEnabled, buildingsEnabled: coverageBuildingsEnabled,
+      detail: coverageDetail, reliability: coverageReliability,
+      showContours: showCoverageContours, showRays: showCoverageRays,
+    };
+    lastSettingsBagRef.current = bag;
+    const t = window.setTimeout(() => {
+      writeJson(LS_KEYS.coverageLastSettings, snapshotPreset("__last", bag));
+    }, 500);
+    return () => window.clearTimeout(t);
+  }, [coverageHardwareIdx, coverageCustomTxDbm, coverageAntennaIdx, coverageAntennaHeightM, coverageRxHardwareIdx, coverageRxAntennaIdx, coverageRxHeightM, coveragePresetIdx, coverageCustomSensDbm, coverageAggressionIdx, coverageClutterEnabled, coverageCanopyEnabled, coverageBuildingsEnabled, coverageDetail, coverageReliability, showCoverageContours, showCoverageRays]);
+  useEffect(() => {
+    return () => {
+      // Unmount flush — changes made within the debounce window still persist
+      if (lastSettingsBagRef.current) {
+        writeJson(LS_KEYS.coverageLastSettings, snapshotPreset("__last", lastSettingsBagRef.current));
+      }
+    };
+  }, []);
 
   return {
     // Results

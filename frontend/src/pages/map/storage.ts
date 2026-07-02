@@ -30,6 +30,8 @@ export const LS_KEYS = {
   coveragePresets: "meshinfo.map.coveragePresets",
   /** Coverage auto-recompute on setting changes (default true). */
   coverageAutoRecalc: "meshinfo.map.coverageAutoRecalc",
+  /** Last-used coverage settings (semantic CoveragePreset payload). */
+  coverageLastSettings: "meshinfo.map.coverageLastSettings",
 } as const;
 
 export function readJson<T>(key: string, fallback: T): T {

@@ -67,18 +67,20 @@ export function extractCoverageRays(opts: ExtractRaysOptions): VisibilityRayFeat
   const demToLat = (gy: number) =>
     bounds.north - (gy / (demH - 1)) * (bounds.north - bounds.south);
 
-  const margScaleX = marginW / demW;
-  const margScaleY = marginH / demH;
-
-  // DEM-pixel metres at bbox mid-lat, for viewshed angles and earth-bulge
+  // Per-axis DEM-pixel metres: union bboxes (merge origins) aren't square in
+  // metres, so a single scale would skew azimuths and distances N-S vs E-W.
   const midLat = (bounds.north + bounds.south) / 2;
   const bboxWidthM =
     (bounds.east - bounds.west) * 111_320 * Math.cos((midLat * Math.PI) / 180);
-  const metersPerDemPixel = bboxWidthM / (demW - 1);
+  const bboxHeightM = (bounds.north - bounds.south) * 111_320;
+  const mPerPxX = bboxWidthM / (demW - 1);
+  const mPerPxY = bboxHeightM / (demH - 1);
+  /** Step length in true metres (finest pixel), so distM = t × stepM exactly. */
+  const stepM = Math.min(mPerPxX, mPerPxY);
 
   const features: Feature<LineString, { azimuth: number; marginDb: number }>[] = [];
 
-  const maxSteps = Math.ceil(Math.hypot(demW, demH));
+  const maxSteps = Math.ceil(Math.hypot(demW * mPerPxX, demH * mPerPxY) / stepM);
 
   const pushSegment = (
     az: number,
@@ -103,9 +105,10 @@ export function extractCoverageRays(opts: ExtractRaysOptions): VisibilityRayFeat
 
   for (let az = 0; az < 360; az += azimuthStepDeg) {
     const azRad = (az * Math.PI) / 180;
-    // Azimuth: 0° = N, clockwise; grid y+ = south
-    const dx = Math.sin(azRad);
-    const dy = -Math.cos(azRad);
+    // Azimuth: 0° = N, clockwise; grid y+ = south. Direction is a true-metre
+    // unit vector converted to (anisotropic) grid units per step.
+    const dx = (Math.sin(azRad) * stepM) / mPerPxX;
+    const dy = (-Math.cos(azRad) * stepM) / mPerPxY;
 
     // R2 viewshed: running max terrain-to-observer angle. Visible iff pixel top exceeds it.
     let maxAngle = -Infinity;
@@ -146,7 +149,7 @@ export function extractCoverageRays(opts: ExtractRaysOptions): VisibilityRayFeat
         continue;
       }
 
-      const distM = t * metersPerDemPixel;
+      const distM = t * stepM;
       // 4/3-earth bulge: d²/(2·R_eff). Keeps long rays from faking over-the-horizon.
       const earthDrop = (distM * distM) / (2 * EFFECTIVE_EARTH_RADIUS_M);
       const effTerrainElev = terrainElev - earthDrop;
@@ -159,8 +162,10 @@ export function extractCoverageRays(opts: ExtractRaysOptions): VisibilityRayFeat
       const visible = pixelAngle > maxAngle;
       if (terrainAngle > maxAngle) maxAngle = terrainAngle;
 
-      const margPx = Math.min(marginW - 1, Math.floor(gx * margScaleX));
-      const margPy = Math.min(marginH - 1, Math.floor(gy * margScaleY));
+      // DEM edge-convention coord → normalized position → margin CELL (the
+      // margin grid uses cell-center convention)
+      const margPx = Math.min(marginW - 1, Math.max(0, Math.floor((gx / (demW - 1)) * marginW)));
+      const margPy = Math.min(marginH - 1, Math.max(0, Math.floor((gy / (demH - 1)) * marginH)));
       const m = margin[margPy * marginW + margPx];
       const marginOk = !Number.isNaN(m) && m >= 0;
 

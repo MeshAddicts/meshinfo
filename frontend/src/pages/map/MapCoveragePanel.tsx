@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { AggressionSlider, BuildingStatusChip, CanopyStatusChip, ClassLegend, ClutterStatusChip } from "./ClutterUI";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, type MergeOrigin, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
@@ -19,11 +19,13 @@ interface MergeNodeOption {
 
 /** Info icon with hover/focus tooltip. `align` picks the edge it anchors to. */
 function InfoTip({ children, align = "right" }: { children: React.ReactNode; align?: "left" | "right" }) {
+  const tipId = useId();
   return (
     <span className="relative inline-flex items-center group">
       <button
         type="button"
         aria-label="More information"
+        aria-describedby={tipId}
         className="inline-flex items-center text-gray-600 group-hover:text-gray-400 transition-colors rounded focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/60"
       >
         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -31,6 +33,8 @@ function InfoTip({ children, align = "right" }: { children: React.ReactNode; ali
         </svg>
       </button>
       <span
+        id={tipId}
+        role="tooltip"
         className={`invisible group-hover:visible group-focus-within:visible absolute bottom-full mb-1 w-60 max-w-[calc(100vw-1rem)] p-2 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl text-[10px] text-gray-300 leading-relaxed z-50 normal-case tracking-normal font-normal ${
           align === "left" ? "left-0" : "right-0"
         }`}
