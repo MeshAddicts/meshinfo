@@ -64,11 +64,14 @@ function EndpointCoordLabel({
   color,
   position,
   onPositionChange,
+  fullWidth = false,
 }: {
   label: string;
   color: string;
   position: [number, number] | null;
   onPositionChange?: (pos: [number, number]) => void;
+  /** Fill the parent (endpoint config column) instead of the fixed header width. */
+  fullWidth?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -84,8 +87,8 @@ function EndpointCoordLabel({
           setBad(false);
           setEditing(true);
         }}
-        title={onPositionChange ? "Click to enter coordinates (lat, lng)" : undefined}
-        className="font-medium truncate enabled:cursor-pointer enabled:hover:underline decoration-dotted underline-offset-2"
+        title={onPositionChange ? "Click to edit or copy coordinates (lat, lng)" : undefined}
+        className="font-medium truncate max-w-full enabled:cursor-pointer enabled:hover:underline decoration-dotted underline-offset-2"
         style={{ color }}
       >
         {label}
@@ -96,6 +99,7 @@ function EndpointCoordLabel({
     <input
       type="text"
       autoFocus
+      onFocus={(e) => e.currentTarget.select()}
       value={draft}
       placeholder="lat, lng"
       aria-label={`${label} coordinates as lat, lng`}
@@ -120,7 +124,7 @@ function EndpointCoordLabel({
         setBad(false);
         if (parsed) onPositionChange(parsed);
       }}
-      className={`min-w-0 w-40 rounded-md bg-white/10 border px-1.5 py-0.5 text-[11px] font-mono text-gray-100
+      className={`min-w-0 ${fullWidth ? "w-full" : "w-40"} rounded-md bg-white/10 border px-1.5 py-0.5 text-[11px] font-mono text-gray-100
         focus:outline-hidden focus:ring-1 ${
           bad
             ? "border-red-500/60 focus:border-red-500/80 focus:ring-red-500/40"
@@ -138,6 +142,8 @@ function EndpointConfig({
   antIdx, onAntIdxChange,
   heightM, onHeightChange,
   usingGpsAltitude = false,
+  position = null,
+  onPositionChange,
 }: {
   label: string;
   color: string;
@@ -149,6 +155,9 @@ function EndpointConfig({
   onHeightChange: (m: number) => void;
   /** Node reported a GPS altitude, so the Height field doesn't affect the result. */
   usingGpsAltitude?: boolean;
+  /** Endpoint coords; makes the label click-to-edit like the header one. */
+  position?: [number, number] | null;
+  onPositionChange?: (pos: [number, number]) => void;
 }) {
   const [heightInput, setHeightInput] = useState(String(heightM));
   useEffect(() => { setHeightInput(String(heightM)); }, [heightM]);
@@ -167,7 +176,13 @@ function EndpointConfig({
 
   return (
     <div className="w-full sm:w-36 sm:shrink-0 p-2 space-y-1.5 text-[10px]">
-      <div className="font-medium truncate" style={{ color }}>{label}</div>
+      <EndpointCoordLabel
+        label={label}
+        color={color}
+        position={position}
+        onPositionChange={onPositionChange}
+        fullWidth
+      />
       <div>
         <div className="text-gray-500 uppercase tracking-wider mb-0.5">Hardware</div>
         <select
@@ -770,6 +785,8 @@ export function MapLosPanel({
             antIdx={fromAntIdx} onAntIdxChange={onFromAntIdxChange}
             heightM={fromHeightM} onHeightChange={onFromHeightChange}
             usingGpsAltitude={!los.fromIsFallback}
+            position={fromPosition}
+            onPositionChange={onFromPositionChange}
           />
         </div>
         <div className="order-1 sm:order-2 flex-1 min-w-0 px-2 py-1.5 sm:border-x border-white/5">
@@ -790,6 +807,8 @@ export function MapLosPanel({
             antIdx={toAntIdx} onAntIdxChange={onToAntIdxChange}
             heightM={toHeightM} onHeightChange={onToHeightChange}
             usingGpsAltitude={!los.toIsFallback}
+            position={toPosition}
+            onPositionChange={onToPositionChange}
           />
         </div>
       </div>
