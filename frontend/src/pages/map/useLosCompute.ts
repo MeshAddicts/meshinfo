@@ -34,6 +34,7 @@ type LosComputeParams = {
   setLosDemSource: (s: DemSource | null) => void;
   setLosError: (e: string | null) => void;
   setIsComputingLos: (v: boolean) => void;
+  setLosTerrainWarning: (w: string | null) => void;
 };
 
 export function useLosCompute(params: LosComputeParams) {
@@ -43,6 +44,7 @@ export function useLosCompute(params: LosComputeParams) {
     provider, terrain3D, nodes, losResult,
     mbMapRef, losTubeLayerRef,
     setLosResult, setLosDemSource, setLosError, setIsComputingLos,
+    setLosTerrainWarning,
   } = params;
 
   // LOS endpoints from the compute effect; refs so the hover-marker callback reads them without deps churn
@@ -94,6 +96,7 @@ export function useLosCompute(params: LosComputeParams) {
     if (activeTool !== "los" || toolStep !== "result") {
       setLosResult(null);
       setLosError(null);
+      setLosTerrainWarning(null);
       return;
     }
     const hasFrom = toolFromId || losVirtualFrom;
@@ -164,6 +167,8 @@ export function useLosCompute(params: LosComputeParams) {
       const demKey = `${demBounds.west.toFixed(4)},${demBounds.south.toFixed(4)},${demBounds.east.toFixed(4)},${demBounds.north.toFixed(4)}`;
       let dem: DEM;
       let demSourceUsedForLos: DemSource;
+      let demTilesFailed = 0;
+      let demTilesTotal = 0;
       const demCache = losDemCacheRef.current;
       if (demCache && demCache.key === demKey) {
         dem = demCache.dem;
@@ -172,14 +177,21 @@ export function useLosCompute(params: LosComputeParams) {
       } else {
         try {
           // 2048² → ~115 m/px at 200 km. buildDem tries Tilezen first, falls back to Mapbox.
-          ({ dem, source: demSourceUsedForLos } = await buildDem({
+          const built = await buildDem({
             bounds: demBounds,
             targetWidth: 2048,
             targetHeight: 2048,
             token: mapboxToken,
-          }));
+          });
           if (cancelled) return;
-          losDemCacheRef.current = { key: demKey, dem, source: demSourceUsedForLos };
+          dem = built.dem;
+          demSourceUsedForLos = built.source;
+          demTilesFailed = built.tilesFailed;
+          demTilesTotal = built.tilesTotal;
+          // A holed DEM would pin bad terrain under this bbox forever — let failed tiles retry.
+          if (built.tilesFailed === 0) {
+            losDemCacheRef.current = { key: demKey, dem, source: demSourceUsedForLos };
+          }
           setLosDemSource(demSourceUsedForLos);
         } catch (err) {
           console.warn("[Map] LoS DEM fetch failed:", err);
@@ -189,6 +201,12 @@ export function useLosCompute(params: LosComputeParams) {
         }
       }
 
+      // Sample near the DEM's native resolution so narrow ridge crests can't fall
+      // between profile points (a fixed 150 aliases out ridges past ~30 km links).
+      const demMetersPerPx = (2 * halfSpanKm * 1000) / 2048;
+      const samples = Math.min(1000, Math.max(150, Math.ceil((linkKm * 1000) / demMetersPerPx)));
+
+      let nullTerrainSamples = 0;
       let result: LoSResult;
       try {
         result = analyzeLineOfSight({
@@ -199,10 +217,14 @@ export function useLosCompute(params: LosComputeParams) {
           fromAntennaHeightM: losFromHeightM,
           toAntennaHeightM: losToHeightM,
           freqGHz: 0.915,
-          samples: 150,
+          samples,
           queryTerrainM: (lng, lat) => {
             const elev = sampleDEMAt(dem, lng, lat);
-            return Number.isNaN(elev) ? null : elev;
+            if (Number.isNaN(elev)) {
+              nullTerrainSamples++;
+              return null;
+            }
+            return elev;
           },
         });
       } catch (err) {
@@ -213,6 +235,18 @@ export function useLosCompute(params: LosComputeParams) {
       }
       // Show geometric result immediately; ITM enhances async
       setLosResult(result);
+      // Missing terrain reads as sea level in the analysis — never let that pass silently.
+      if (demTilesFailed > 0) {
+        setLosTerrainWarning(
+          `${demTilesFailed} of ${demTilesTotal} terrain tiles failed to load — gaps read as sea level, so this result may be unreliable. Recompute to retry.`,
+        );
+      } else if (nullTerrainSamples > 0) {
+        setLosTerrainWarning(
+          `${nullTerrainSamples} of ${result.points.length} path samples had no terrain data and read as sea level.`,
+        );
+      } else {
+        setLosTerrainWarning(null);
+      }
 
       // ITM enhancement — silently skips if WASM isn't built
       try {
@@ -250,7 +284,8 @@ export function useLosCompute(params: LosComputeParams) {
       losFitKeyRef.current = fitKey;
       const bounds = new maplibregl.LngLatBounds();
       bounds.extend(fromPos);
-      bounds.extend(toPos);
+      // Unwrap so an antimeridian-crossing pair frames the short way, not the whole world
+      bounds.extend([fromPos[0] + shortestLngDelta(fromPos[0], toPos[0]), toPos[1]]);
       mb.fitBounds(bounds, { padding: 120, duration: 600, maxZoom: 11 });
     }
 
@@ -259,7 +294,7 @@ export function useLosCompute(params: LosComputeParams) {
       if (!cancelled) console.warn("[Map] LoS run failed:", err);
     });
     return () => { cancelled = true; };
-  }, [activeTool, toolStep, toolFromId, toolToId, losVirtualFrom, losVirtualTo, losFromHeightM, losToHeightM, provider, terrain3D, nodes, mbMapRef, setLosResult, setLosDemSource, setLosError, setIsComputingLos]);
+  }, [activeTool, toolStep, toolFromId, toolToId, losVirtualFrom, losVirtualTo, losFromHeightM, losToHeightM, provider, terrain3D, nodes, mbMapRef, setLosResult, setLosDemSource, setLosError, setIsComputingLos, setLosTerrainWarning]);
 
   // Push LoS result → 3D tube layer + obstruction source.
   // Altitudes are scaled by terrain exaggeration to stay pinned to the visual surface.

@@ -3,6 +3,8 @@
  * Earth bulge at k=4/3; First Fresnel F₁ = 17.32·√(d₁·d₂/(f·d)) m; 60% clearance threshold.
  */
 
+import { interpLngLatUnwrapped } from "./geo";
+
 const R_EARTH_KM = 6371;
 const K_REFRACTION = 4 / 3;
 const FRESNEL_CLEARANCE_THRESHOLD = 0.6;
@@ -100,14 +102,6 @@ export function haversineKm(a: [number, number], b: [number, number]): number {
   return 2 * R_EARTH_KM * Math.asin(Math.sqrt(s));
 }
 
-function lerpLngLat(
-  from: [number, number],
-  to: [number, number],
-  t: number,
-): [number, number] {
-  return [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
-}
-
 /** Earth bulge (m) at d1 from A toward B (d2 = D - d1). */
 function earthBulgeM(d1Km: number, d2Km: number): number {
   return (d1Km * d2Km * 1000) / (2 * K_REFRACTION * R_EARTH_KM);
@@ -183,7 +177,9 @@ export function analyzeLineOfSight(input: LoSInput): LoSResult {
     const distanceKm = totalDistanceKm * t;
     const d2 = totalDistanceKm - distanceKm;
 
-    const [lng, lat] = lerpLngLat(from, to, t);
+    // Seam-aware interp: keeps antimeridian-crossing paths on the short way,
+    // matching the tube layer / hover marker / DEM bbox.
+    const [lng, lat] = interpLngLatUnwrapped(from, to, t);
     const ground = queryTerrainM(lng, lat) ?? 0;
 
     const chord = fromHeightM + (toHeightM - fromHeightM) * t;

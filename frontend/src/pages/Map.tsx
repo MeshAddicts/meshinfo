@@ -20,7 +20,7 @@ import { ActivityLayer } from "./map/activityLayer";
 import { ClusterDonutLayer } from "./map/clusterDonutLayer";
 import { type ClusterHover,ClusterHoverCard } from "./map/ClusterHoverCard";
 import { FiltersResetPill } from "./map/FiltersResetPill";
-import { circularMeanLng } from "./map/geo";
+import { circularMeanLng, normalizeLng } from "./map/geo";
 import { bestSnr, computeMaxRange, formatLatLng, geodesicCircleCoords, mbRoleColorExpr, queryTerrainElevationMSL, relativeTime, signalBarsHtml, TRANSPARENT_1PX_PNG } from "./map/helpers";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
 import { LosTubeLayer } from "./map/losTubeLayer";
@@ -425,6 +425,7 @@ export function Map() {
     setLosDemSource: losState.setLosDemSource,
     setLosError: losState.setLosError,
     setIsComputingLos: losState.setIsComputingLos,
+    setLosTerrainWarning: losState.setLosTerrainWarning,
   });
 
   // Scan compute + per-class visibility + clear-on-tool-change + hover effects
@@ -2084,11 +2085,12 @@ export function Map() {
           map.getCanvas().style.cursor = "";
         } else if (t === "los" && step === "pickFrom") {
           setToolFromId(null);
-          losState.setLosVirtualFrom([e.lngLat.lng, e.lngLat.lat]);
+          // normalizeLng: clicks on a wrapped world copy give lngs outside ±180
+          losState.setLosVirtualFrom([normalizeLng(e.lngLat.lng), e.lngLat.lat]);
           setToolStep("pickTo");
         } else if (t === "los" && step === "pickTo") {
           setToolToId(null);
-          losState.setLosVirtualTo([e.lngLat.lng, e.lngLat.lat]);
+          losState.setLosVirtualTo([normalizeLng(e.lngLat.lng), e.lngLat.lat]);
           setToolStep("result");
           map.getCanvas().style.cursor = "";
         }
@@ -2967,6 +2969,7 @@ export function Map() {
           isComputing={terrain3D && !losState.losResult && !losState.losError}
           isRecomputing={losState.isComputingLos && !!losState.losResult}
           error={losState.losError}
+          terrainWarning={losState.losTerrainWarning}
           fromHwIdx={losState.losFromHwIdx} onFromHwIdxChange={losState.setLosFromHwIdx}
           fromAntIdx={losState.losFromAntIdx} onFromAntIdxChange={losState.setLosFromAntIdx}
           fromHeightM={losState.losFromHeightM} onFromHeightChange={losState.setLosFromHeightM}

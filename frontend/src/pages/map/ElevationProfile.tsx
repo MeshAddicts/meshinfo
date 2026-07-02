@@ -6,7 +6,9 @@ const WIDTH = 900;
 const HEIGHT = 130;
 const MARGIN = { top: 8, right: 12, bottom: 20, left: 36 };
 
-/** Cross-sectional elevation profile of a radio link: terrain, LoS chord, Fresnel zone, obstructions. */
+/** Cross-sectional elevation profile of a radio link: terrain, LoS chord, Fresnel zone, obstructions.
+ *  Terrain is drawn as effectiveGround (ground + k=4/3 earth bulge) — the standard curved-earth
+ *  profile — so what the chart shows matches the clearance/verdict math. */
 export function ElevationProfile({
   result,
   fromLabel,
@@ -42,8 +44,8 @@ export function ElevationProfile({
     let minY = Infinity;
     let maxY = -Infinity;
     for (const p of pts) {
-      minY = Math.min(minY, p.ground);
-      maxY = Math.max(maxY, p.chord + p.fresnelRadius, p.ground);
+      minY = Math.min(minY, p.effectiveGround);
+      maxY = Math.max(maxY, p.chord + p.fresnelRadius, p.effectiveGround);
     }
     maxY = Math.max(maxY, result.fromHeightM, result.toHeightM);
     minY = Math.min(minY, result.fromHeightM, result.toHeightM);
@@ -74,7 +76,7 @@ export function ElevationProfile({
   const terrainPath =
     `M ${xScale(0)},${plotH} ` +
     result.points
-      .map((p) => `L ${xScale(p.distanceKm)},${yScale(p.ground)}`)
+      .map((p) => `L ${xScale(p.distanceKm)},${yScale(p.effectiveGround)}`)
       .join(" ") +
     ` L ${xScale(result.totalDistanceKm)},${plotH} Z`;
 
@@ -296,7 +298,7 @@ export function ElevationProfile({
                 strokeWidth={1}
               />
               <circle
-                cy={yScale(hoverPoint.ground)}
+                cy={yScale(hoverPoint.effectiveGround)}
                 r={2.5}
                 fill="#f97316"
                 stroke="white"
@@ -343,6 +345,12 @@ export function ElevationProfile({
             <span className="text-gray-500">Ground:</span>
             <span className="text-amber-300 font-mono">{Math.round(hoverPoint.ground)}m</span>
           </div>
+          {hoverPoint.bulge >= 0.5 && (
+            <div className="flex justify-between gap-3">
+              <span className="text-gray-500">Curvature:</span>
+              <span className="text-amber-300/70 font-mono">+{Math.round(hoverPoint.bulge)}m</span>
+            </div>
+          )}
           <div className="flex justify-between gap-3">
             <span className="text-gray-500">LoS:</span>
             <span className="text-gray-200 font-mono">{Math.round(hoverPoint.chord)}m</span>
