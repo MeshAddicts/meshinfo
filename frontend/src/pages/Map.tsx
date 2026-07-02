@@ -134,7 +134,7 @@ export function Map() {
   const handleLinkHoverRef = useRef<(otherId: string | null) => void>(() => {});
   const selectedNodeIdRef = useRef<string | null>(null);
 
-  const { data: rawNodes = {} } = useGetNodesQuery();
+  const { data: rawNodes = {}, isError: nodesQueryFailed } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
   const { data: rawTraceroutes = [], isLoading: rawTraceroutesLoading } = useGetTraceroutesQuery();
 
@@ -435,6 +435,7 @@ export function Map() {
     losToHeightM: losState.losToHeightM,
     losFreqMhz: losState.losFreqMhz,
     terrain3D, styleEpoch, nodes,
+    nodesLoadFailed: nodesQueryFailed,
     losResult: losState.losResult,
     mbMapRef, losTubeLayerRef,
     isDraggingMarkerRef,
@@ -506,7 +507,8 @@ export function Map() {
     losCompute.losFitKeyRef.current = null;
     losCompute.losFromPosRef.current = null;
     losCompute.losToPosRef.current = null;
-    // Release the cached DEM (up to 16.8 MB) — it only helps within one session
+    // Release the cached rasters (DEM + canopy + buildings — tens of MB on long
+    // links) — they only help within one session
     losCompute.losDemCacheRef.current = null;
     losCompute.losHoverMarkerRef.current?.remove();
     losCompute.losHoverMarkerRef.current = null;
@@ -514,6 +516,8 @@ export function Map() {
     losCompute.losFromMarkerRef.current = null;
     losCompute.losToMarkerRef.current?.remove();
     losCompute.losToMarkerRef.current = null;
+    // Removing a marker mid-drag skips its dragend; unstick the shared flag
+    isDraggingMarkerRef.current = false;
     losState.setLosResult(null);
     losState.setLosError(null);
     losState.setLosTerrainWarning(null);
@@ -614,13 +618,26 @@ export function Map() {
   const [, setSearchParamsLos] = useSearchParams();
   const setSearchParamsLosRef = useRef(setSearchParamsLos);
   setSearchParamsLosRef.current = setSearchParamsLos;
+  // Snapshot the URL at first render: the write effect rewrites the real URL
+  // synchronously (loader-less router), so the restore effect must never read
+  // window.location at effect time — it would see its own params stripped.
+  const losUrlSnapshotRef = useRef<URLSearchParams | null>(null);
+  if (losUrlSnapshotRef.current === null) {
+    losUrlSnapshotRef.current = new URLSearchParams(window.location.search);
+  }
+  const losUrlRestoredRef = useRef(false);
   useEffect(() => {
+    // Hold all writes (including the strip branch) until the mount restore ran
+    if (!losUrlRestoredRef.current) return;
     const showing =
       activeTool === "los" && toolStep === "result" &&
       (toolFromId || losState.losVirtualFrom) && (toolToId || losState.losVirtualTo);
+    // No-op guard: react-router navigates even when the updater returns prev,
+    // so don't call setSearchParams at all when there is nothing to change.
+    const had = new URLSearchParams(window.location.search).get("tool") === "los";
+    if (!showing && !had) return;
     setSearchParamsLosRef.current((prev) => {
       const sp = new URLSearchParams(prev);
-      const had = sp.get("tool") === "los";
       if (showing) {
         sp.set("tool", "los");
         sp.set("from", toolFromId ?? `${losState.losVirtualFrom![1].toFixed(5)},${losState.losVirtualFrom![0].toFixed(5)}`);
@@ -628,21 +645,18 @@ export function Map() {
         sp.set("fh", String(losState.losFromHeightM));
         sp.set("th", String(losState.losToHeightM));
         sp.set("fq", String(losState.losFreqMhz));
-      } else if (had) {
-        for (const k of ["tool", "from", "to", "fh", "th", "fq"]) sp.delete(k);
       } else {
-        return prev;
+        for (const k of ["tool", "from", "to", "fh", "th", "fq"]) sp.delete(k);
       }
       return sp;
     }, { replace: true });
   }, [activeTool, toolStep, toolFromId, toolToId, losState.losVirtualFrom, losState.losVirtualTo, losState.losFromHeightM, losState.losToHeightM, losState.losFreqMhz]);
 
-  // Restore a shared LOS analysis from the URL (once, on mount)
-  const losUrlRestoredRef = useRef(false);
+  // Restore a shared LOS analysis from the URL snapshot (once, on mount)
   useEffect(() => {
     if (losUrlRestoredRef.current) return;
     losUrlRestoredRef.current = true;
-    const sp = new URLSearchParams(window.location.search);
+    const sp = losUrlSnapshotRef.current ?? new URLSearchParams();
     if (sp.get("tool") !== "los") return;
     const parseEnd = (v: string | null): { id: string } | { pos: [number, number] } | null => {
       if (!v) return null;
@@ -666,6 +680,13 @@ export function Map() {
     const fh = num("fh", 0, 300);
     const th = num("th", 0, 300);
     const fq = num("fq", 100, 2500);
+    // The sharer's values drive this session but must not overwrite the
+    // viewer's saved defaults in localStorage.
+    losState.markUrlAppliedSettings(
+      fh ?? losState.losFromHeightM,
+      th ?? losState.losToHeightM,
+      fq ?? losState.losFreqMhz,
+    );
     if (fh != null) losState.setLosFromHeightM(fh);
     if (th != null) losState.setLosToHeightM(th);
     if (fq != null) losState.setLosFreqMhz(fq);

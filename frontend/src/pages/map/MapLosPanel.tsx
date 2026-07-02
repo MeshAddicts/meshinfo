@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { toast } from "../../components/toastStore";
+import { copyTextToClipboard } from "../../utils/clipboard";
 import {
   COMMON_ANTENNAS,
   COMMON_HARDWARE,
@@ -662,10 +663,11 @@ export function MapLosPanel({
           <button
             type="button"
             onClick={() => {
-              navigator.clipboard?.writeText(window.location.href).then(
-                () => toast("Link to this analysis copied."),
-                () => toast("Couldn't copy the link.", { kind: "error" }),
-              );
+              // copyTextToClipboard has an execCommand fallback for plain-HTTP installs
+              void copyTextToClipboard(window.location.href).then((ok) => {
+                if (ok) toast("Link to this analysis copied.");
+                else toast("Couldn't copy the link.", { kind: "error" });
+              });
             }}
             className="p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors"
             aria-label="Copy a shareable link to this analysis"

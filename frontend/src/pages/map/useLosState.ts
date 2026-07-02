@@ -80,8 +80,19 @@ export function useLosState() {
   const [losToAntIdx, setLosToAntIdx] = useState(saved?.toAntIdx ?? DEFAULT_ANT_IDX);
   const [losToHeightM, setLosToHeightM] = useState(saved?.toHeightM ?? 2);
 
+  // Heights/frequency applied from a shared URL must not overwrite the viewer's
+  // saved defaults. While the current trio is exactly what the URL set, skip the
+  // write; the first user-driven change resumes normal persistence.
+  const urlAppliedRef = useRef<{ f: number; t: number; q: number } | null>(null);
+  const markUrlAppliedSettings = (f: number, t: number, q: number) => {
+    urlAppliedRef.current = { f, t, q };
+  };
+
   // Write-through persistence (semantic labels, like coverageLastSettings)
   useEffect(() => {
+    const u = urlAppliedRef.current;
+    if (u && u.f === losFromHeightM && u.t === losToHeightM && u.q === losFreqMhz) return;
+    urlAppliedRef.current = null;
     const payload: LosSavedSettings = {
       freqMhz: losFreqMhz,
       modemId: MESHTASTIC_PRESETS[losPresetIdx]?.id ?? "LongFast",
@@ -109,6 +120,7 @@ export function useLosState() {
     isComputingLos, setIsComputingLos,
     losVirtualFrom, setLosVirtualFrom,
     losVirtualTo, setLosVirtualTo,
+    markUrlAppliedSettings,
     losFreqMhz, setLosFreqMhz,
     losPresetIdx, setLosPresetIdx,
     losFromHwIdx, setLosFromHwIdx,

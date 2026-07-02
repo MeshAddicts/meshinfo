@@ -32,6 +32,8 @@ type LosComputeParams = {
   terrain3D: boolean;
   /** Bumped on style.load — re-pushes tube/obstructions after setStyle wipes them. */
   styleEpoch: number;
+  /** Nodes query errored — an empty `nodes` map is final, not still-loading. */
+  nodesLoadFailed: boolean;
   nodes: Record<string, IMapNode>;
   losResult: LoSResult | null;
   mbMapRef: React.RefObject<MlMap | null>;
@@ -51,7 +53,7 @@ export function useLosCompute(params: LosComputeParams) {
   const {
     activeTool, toolStep, toolFromId, toolToId,
     losVirtualFrom, losVirtualTo, losFromHeightM, losToHeightM,
-    losFreqMhz, terrain3D, styleEpoch, nodes, losResult,
+    losFreqMhz, terrain3D, styleEpoch, nodes, nodesLoadFailed, losResult,
     mbMapRef, losTubeLayerRef,
     isDraggingMarkerRef, onEndpointDragged,
     setLosResult, setLosDemSource, setLosError, setIsComputingLos,
@@ -103,10 +105,15 @@ export function useLosCompute(params: LosComputeParams) {
   useEffect(() => () => {
     losHoverMarkerRef.current?.remove();
     losHoverMarkerRef.current = null;
-    losFromMarkerRef.current?.remove();
-    losFromMarkerRef.current = null;
-    losToMarkerRef.current?.remove();
-    losToMarkerRef.current = null;
+    if (losFromMarkerRef.current || losToMarkerRef.current) {
+      losFromMarkerRef.current?.remove();
+      losFromMarkerRef.current = null;
+      losToMarkerRef.current?.remove();
+      losToMarkerRef.current = null;
+      // A removal mid-drag skips dragend; don't leave the shared flag stuck
+      isDraggingMarkerRef.current = false;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Warm the ITM WASM while the user is still picking endpoints so the first
@@ -156,7 +163,8 @@ export function useLosCompute(params: LosComputeParams) {
       setLosResult(null);
       // Nodes not loaded yet (URL-restored link): stay in the loading state and
       // let the nodes arrival retrigger via the endpoint-scalar/nodesEmpty deps.
-      if (nodesEmpty) return;
+      // A failed nodes query is final — fall through to the error instead.
+      if (nodesEmpty && !nodesLoadFailed) return;
       // A picked endpoint lost its position (e.g. a live update dropped it) —
       // land on the error state, not an eternal spinner.
       setLosError("An endpoint no longer has a map position.");
@@ -251,7 +259,9 @@ export function useLosCompute(params: LosComputeParams) {
           demSourceUsedForLos = built.demSource;
           demTilesFailed = built.demTilesFailed;
           demTilesTotal = built.demTilesTotal;
-          canopy = built.canopy;
+          // stdM is unread on the LOS path (only heightM feeds the profile bands);
+          // dropping it saves 16.8 MB at the 2048² cap while the cache is held.
+          canopy = built.canopy ? { ...built.canopy, stdM: new Float32Array(0) } : null;
           buildings = built.buildings;
           // A holed DEM would pin bad terrain under this bbox forever — let failed tiles retry.
           if (built.demTilesFailed === 0) {
@@ -370,7 +380,7 @@ export function useLosCompute(params: LosComputeParams) {
     return () => { cancelled = true; };
     // styleEpoch: map-readiness signal — a URL-restored analysis mounts before the
     // map exists and needs style.load to retrigger (DEM cache keeps re-runs cheap).
-  }, [activeTool, toolStep, fromLng, fromLat, fromAlt, toLng, toLat, toAlt, losFromHeightM, losToHeightM, losFreqMhz, terrain3D, styleEpoch, nodesEmpty, mbMapRef, setLosResult, setLosDemSource, setLosError, setIsComputingLos, setLosTerrainWarning]);
+  }, [activeTool, toolStep, fromLng, fromLat, fromAlt, toLng, toLat, toAlt, losFromHeightM, losToHeightM, losFreqMhz, terrain3D, styleEpoch, nodesEmpty, nodesLoadFailed, mbMapRef, setLosResult, setLosDemSource, setLosError, setIsComputingLos, setLosTerrainWarning]);
 
   // Push LoS result → 3D tube layer + obstruction source.
   // Altitudes are scaled by terrain exaggeration to stay pinned to the visual surface.
@@ -435,8 +445,13 @@ export function useLosCompute(params: LosComputeParams) {
     ];
     for (const end of ends) {
       if (!showing || end.lng == null || end.lat == null) {
-        end.ref.current?.remove();
-        end.ref.current = null;
+        if (end.ref.current) {
+          // Marker.remove() unbinds drag listeners, so a removal mid-drag would
+          // otherwise leave the shared dragging flag stuck true forever.
+          end.ref.current.remove();
+          end.ref.current = null;
+          isDraggingMarkerRef.current = false;
+        }
         continue;
       }
       if (end.ref.current) {
@@ -455,9 +470,11 @@ export function useLosCompute(params: LosComputeParams) {
         isDraggingMarkerRef.current = false;
         const ll = marker.getLngLat();
         if (dragStart) {
-          const dxM = shortestLngDelta(dragStart.lng, ll.lng) * 111_320 * Math.cos((ll.lat * Math.PI) / 180);
-          const dyM = (ll.lat - dragStart.lat) * 111_320;
-          if (Math.hypot(dxM, dyM) < 5) {
+          // Screen-space threshold: a ground-meter one would swallow deliberate
+          // fine-tuning drags at high zoom (5 m ≈ 33 px at z20).
+          const p0 = mb.project(dragStart);
+          const p1 = mb.project(ll);
+          if (Math.hypot(p1.x - p0.x, p1.y - p0.y) < 6) {
             // Wiggle: snap back instead of detaching a node-anchored endpoint
             marker.setLngLat(dragStart);
             return;
