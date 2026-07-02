@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AggressionSlider, BuildingStatusChip, CanopyStatusChip, ClassLegend, ClutterStatusChip } from "./ClutterUI";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, type MergeOrigin, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
 import { COVERAGE_DETAIL_SIZE,type CoverageDetail } from "./coverageDetail";
+import { type CoveragePanelSettings, readPresetLibrary } from "./coveragePresets";
+import { CoveragePresetsSection } from "./CoveragePresetsSection";
 import { parseLatLng } from "./helpers";
 import { NumericDraftInput } from "./NumericDraftInput";
 import { Segmented } from "./Segmented";
@@ -82,7 +84,7 @@ function Row({
   );
 }
 
-type RowKey = "tx" | "rx" | "env" | "acc" | "ov";
+type RowKey = "presets" | "tx" | "rx" | "env" | "acc" | "ov";
 
 export function MapCoveragePanel({
   result,
@@ -98,6 +100,10 @@ export function MapCoveragePanel({
   errorMessage,
   onRetry,
   onCancel,
+  autoRecalc,
+  onAutoRecalcChange,
+  paramsDirty,
+  onRecalculate,
   antennaIdx,
   onAntennaIdxChange,
   hardwareIdx,
@@ -165,6 +171,13 @@ export function MapCoveragePanel({
   errorMessage: string | null;
   onRetry: () => void;
   onCancel: () => void;
+  /** Auto-recompute on setting changes (persisted). */
+  autoRecalc: boolean;
+  onAutoRecalcChange: (v: boolean) => void;
+  /** True when settings changed but the recompute is deferred (manual mode). */
+  paramsDirty: boolean;
+  /** Runs a recompute with the current settings (reuses cached rasters). */
+  onRecalculate: () => void;
   /** Index into COMMON_ANTENNAS. */
   antennaIdx: number;
   onAntennaIdxChange: (idx: number) => void;
@@ -324,6 +337,42 @@ export function MapCoveragePanel({
   const [expandedRow, setExpandedRow] = useState<RowKey | null>(null);
   const toggleRow = (k: RowKey) => setExpandedRow((cur) => (cur === k ? null : k));
 
+  // Summary state lives here — the section unmounts when its row collapses
+  const [presetCount, setPresetCount] = useState(() => readPresetLibrary().length);
+  const [appliedPresetName, setAppliedPresetName] = useState<string | null>(null);
+  const onPresetCountChange = useCallback((count: number) => setPresetCount(count), []);
+  const currentPresetSettings: CoveragePanelSettings = {
+    hardwareIdx, customTxDbm,
+    antennaIdx, antennaHeightM,
+    rxHardwareIdx, rxAntennaIdx, rxHeightM,
+    presetIdx, customSensitivityDbm,
+    aggressionIdx, clutterEnabled, canopyEnabled, buildingsEnabled,
+    detail, reliability,
+    showContours, showRays,
+  };
+  // Fan out through the per-setting callbacks (React batches into one
+  // recompute); an explicit apply recomputes even in manual mode
+  const applyPresetSettings = (s: CoveragePanelSettings) => {
+    if (!autoRecalc) onRecalculate();
+    onHardwareIdxChange(s.hardwareIdx);
+    onCustomTxDbmChange(s.customTxDbm);
+    onAntennaIdxChange(s.antennaIdx);
+    onAntennaHeightChange(s.antennaHeightM);
+    onRxHardwareIdxChange(s.rxHardwareIdx);
+    onRxAntennaIdxChange(s.rxAntennaIdx);
+    onRxHeightChange(s.rxHeightM);
+    onPresetIdxChange(s.presetIdx);
+    onCustomSensitivityChange(s.customSensitivityDbm);
+    onAggressionIdxChange(s.aggressionIdx);
+    onClutterEnabledChange(s.clutterEnabled);
+    onCanopyEnabledChange(s.canopyEnabled);
+    onBuildingsEnabledChange(s.buildingsEnabled);
+    onDetailChange(s.detail);
+    onReliabilityChange(s.reliability);
+    onShowContoursChange(s.showContours);
+    onShowRaysChange(s.showRays);
+  };
+
   const [minimized, setMinimized] = useState(false);
 
   // Auto-minimize on the first result for each new origin so the painted
@@ -479,11 +528,13 @@ export function MapCoveragePanel({
     const progressPct = progressTotal > 0
       ? Math.round((progressCompleted / progressTotal) * 100)
       : 0;
-    const stageLabel = isFetchingTerrain
-      ? `Fetching terrain for ${originLabel}…`
-      : progressTotal > 0
-        ? `Computing coverage from ${originLabel} · ${progressCompleted}/${progressTotal} slices (${progressPct}%)`
-        : `Computing coverage from ${originLabel}…`;
+    const stageLabel = !isComputing
+      ? "Coverage paused."
+      : isFetchingTerrain
+        ? `Fetching terrain for ${originLabel}…`
+        : progressTotal > 0
+          ? `Computing coverage from ${originLabel} · ${progressCompleted}/${progressTotal} slices (${progressPct}%)`
+          : `Computing coverage from ${originLabel}…`;
     return (
       <div className="fixed z-1050 shadow-2xl border border-white/10 bg-gray-900/90 backdrop-blur-xl
         inset-x-0 bottom-0 rounded-t-2xl p-3 pb-5
@@ -491,11 +542,22 @@ export function MapCoveragePanel({
         sm:rounded-xl sm:pb-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-xs text-gray-400 min-w-0">
-            <div className="w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin shrink-0" />
+            {isComputing && (
+              <div className="w-3 h-3 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin shrink-0" />
+            )}
             <span className="truncate">{stageLabel}</span>
           </div>
           <div className="flex items-center gap-1 shrink-0">
-            {!isFetchingTerrain && (
+            {!isComputing && (
+              <button
+                type="button"
+                onClick={onRecalculate}
+                className="text-[10px] px-2 py-0.5 rounded-md bg-cyan-500/15 border border-cyan-500/40 text-cyan-200 hover:bg-cyan-500/25 transition-colors font-medium"
+              >
+                Compute
+              </button>
+            )}
+            {isComputing && (
               <button
                 type="button"
                 onClick={onCancel}
@@ -619,18 +681,31 @@ export function MapCoveragePanel({
             text-[10px] text-cyan-200 flex items-center gap-2 whitespace-nowrap">
             <div className="w-2.5 h-2.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin shrink-0" />
             <span className="truncate min-w-0">{label}</span>
-            {!isFetchingTerrain && (
-              <button
-                type="button"
-                onClick={onCancel}
-                className="px-1.5 py-0 rounded bg-red-500/15 hover:bg-red-500/25 border border-red-500/40 text-red-200 font-medium transition-colors"
-              >
-                Cancel
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={onCancel}
+              className="px-1.5 py-0 rounded bg-red-500/15 hover:bg-red-500/25 border border-red-500/40 text-red-200 font-medium transition-colors"
+            >
+              Cancel
+            </button>
           </div>
         );
       })()}
+      {/* Manual-mode pending chip: settings changed, recompute deferred. */}
+      {paramsDirty && !isComputing && !errorMessage && (
+        <div className="absolute -top-8 left-1/2 -translate-x-1/2 max-w-[calc(100vw-1rem)] px-3 py-1 rounded-full
+          bg-gray-900/95 backdrop-blur-xl border border-amber-500/40 shadow-2xl
+          text-[10px] text-amber-200 flex items-center gap-2 whitespace-nowrap">
+          <span className="truncate min-w-0">Settings changed</span>
+          <button
+            type="button"
+            onClick={onRecalculate}
+            className="px-1.5 py-0 rounded bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-100 font-medium transition-colors"
+          >
+            Recalculate
+          </button>
+        </div>
+      )}
 
       <div
         className="flex items-center justify-between gap-3 px-3 py-2 border-b border-white/5 shrink-0 max-sm:touch-none"
@@ -995,6 +1070,32 @@ export function MapCoveragePanel({
       </div>
 
       <div className={`px-3 pb-5 space-y-2 overflow-y-auto overscroll-contain min-h-0 flex-1 sm:pb-3 ${minimized ? "hidden" : ""}`}>
+        <Row
+          icon={
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.7} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-4-7 4V5z" />
+            </svg>
+          }
+          title="Presets"
+          summary={
+            appliedPresetName
+              ? <span className="text-cyan-300">{appliedPresetName}</span>
+              : presetCount > 0
+                ? `${presetCount} saved`
+                : "None saved"
+          }
+          expanded={expandedRow === "presets"}
+          onToggle={() => toggleRow("presets")}
+        >
+          <CoveragePresetsSection
+            current={currentPresetSettings}
+            onApply={applyPresetSettings}
+            appliedName={appliedPresetName}
+            onAppliedNameChange={setAppliedPresetName}
+            onCountChange={onPresetCountChange}
+          />
+        </Row>
+
         <Row
           icon={
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1528,6 +1629,34 @@ export function MapCoveragePanel({
                 { value: "survey",   label: "Survey", sub: "2048 px" },
               ]}
             />
+          </div>
+          <div className="flex items-center justify-between gap-2 pt-1 border-t border-white/5">
+            <label className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={autoRecalc}
+                onChange={(e) => onAutoRecalcChange(e.target.checked)}
+                className="w-3.5 h-3.5 accent-cyan-500 cursor-pointer"
+              />
+              <span className="inline-flex items-center gap-1 min-w-0">
+                Auto-recalculate
+                <InfoTip align="left">
+                  Recompute automatically when a setting changes (moving the
+                  pin always recomputes). Turn off to batch several changes
+                  and apply them with one Recalculate — handy at Ultra/Survey
+                  detail where each run takes a while.
+                </InfoTip>
+              </span>
+            </label>
+            {!autoRecalc && paramsDirty && (
+              <button
+                type="button"
+                onClick={onRecalculate}
+                className="px-2 py-0.5 rounded-md border text-[10px] whitespace-nowrap shrink-0 transition-colors bg-amber-500/15 border-amber-500/40 text-amber-200 hover:bg-amber-500/25 font-medium"
+              >
+                Recalculate
+              </button>
+            )}
           </div>
         </Row>
 

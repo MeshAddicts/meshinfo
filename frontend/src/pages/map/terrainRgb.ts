@@ -113,9 +113,10 @@ class TileLRU {
 // ~64 × 512² × 4B ≈ 64 MB worst case
 const tileCache = new TileLRU(64);
 
-// Sized to fit a standard-detail compute (256 max tiles) so back-to-back computes at the
-// same origin hit 100% cache. 256 × 256² × 4B ≈ 64 MB worst case.
-const tilezenCache = new TileLRU(256);
+// Fits a High-detail compute (512 tiles); Ultra/Survey still partially thrash,
+// accepted since the coverage fetch-cache avoids same-origin refetches.
+// 512 × 256² × 4B ≈ 128 MB worst case.
+const tilezenCache = new TileLRU(512);
 
 async function fetchTile(
   z: number,

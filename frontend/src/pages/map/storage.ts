@@ -26,6 +26,10 @@ export const LS_KEYS = {
   /** Building-height tier on/off. Off → bare-earth DEM + class-nominal endpoint h_a. */
   coverageBuildingsEnabled: "meshinfo.map.coverageBuildingsEnabled",
   scanBuildingsEnabled: "meshinfo.map.scanBuildingsEnabled",
+  /** Named coverage-settings presets (CoveragePreset[]). */
+  coveragePresets: "meshinfo.map.coveragePresets",
+  /** Coverage auto-recompute on setting changes (default true). */
+  coverageAutoRecalc: "meshinfo.map.coverageAutoRecalc",
 } as const;
 
 export function readJson<T>(key: string, fallback: T): T {

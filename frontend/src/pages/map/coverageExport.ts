@@ -46,8 +46,6 @@ export function exportCoverage(
     ext = "geojson";
   } else {
     // KML color format: aabbggrr (byte-reversed from CSS hex)
-    const esc = (s: string) =>
-      s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const styleFor = (threshold: number) => {
       if (threshold <= 0) return "contour0";
       if (threshold <= 10) return "contour10";
@@ -67,6 +65,7 @@ export function exportCoverage(
       </LineString>
     </Placemark>`).join("");
 
+    // Lands inside CDATA — escaping would double-encode
     const description = [
       `Model: Longley-Rice v1.4 (ITS) via WASM`,
       `Origin height: ${Math.round(result.originHeightM)} m${result.originIsFallback ? " (fallback)" : ""}`,
@@ -74,7 +73,7 @@ export function exportCoverage(
       `TX: ${result.txDbm} dBm, antenna ${result.txAntennaDbi} dBi`,
       `RX: antenna ${result.rxAntennaDbi} dBi @ ${Math.round(result.rxAntennaHeightAboveGroundM)} m AGL, sensitivity ${result.rxSensitivityDbm} dBm`,
       `Generated: ${stamp}`,
-    ].map(esc).join("\n");
+    ].join("\n");
 
     payload = `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
@@ -99,7 +98,7 @@ export function exportCoverage(
     </Style>
     <Placemark>
       <name>Coverage origin</name>
-      <description><![CDATA[${esc(`${Math.round(result.originHeightM)} m MSL · TX ${result.txDbm} dBm · ${result.txAntennaDbi} dBi`)}]]></description>
+      <description><![CDATA[${`${Math.round(result.originHeightM)} m MSL · TX ${result.txDbm} dBm · ${result.txAntennaDbi} dBi`}]]></description>
       <styleUrl>#origin</styleUrl>
       <Point>
         <coordinates>${result.origin[0]},${result.origin[1]},${Math.round(result.originHeightM)}</coordinates>

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { toast } from "../../components/toastStore";
 import { env } from "../../env";
+import { effectiveAltitudeMslM } from "../nodes/altitudeAssessment";
 import { buildBuildingRaster, type BuildingRaster, downsampleBuildingRaster } from "./buildingTiles";
 import { buildCanopyRaster, type CanopyRaster, downsampleCanopyRaster } from "./canopyTiles";
 import { AGGRESSION_STOPS, type MergeOrigin, reliabilityPreset, REPRESENTATIVE_CLUTTER_DB } from "./coverageAnalysis";
@@ -14,13 +15,13 @@ import { COVERAGE_DETAIL_MAX_TILES, COVERAGE_DETAIL_SIZE } from "./coverageDetai
 import { exportCoverage } from "./coverageExport";
 import type { RasterParams } from "./coverageRaster";
 import { extractCoverageRays, type VisibilityRayFeatureCollection } from "./coverageRays";
-import type { CoverageSliceRequest, SliceOrigin } from "./coverageSliceWorker";
+import type { SliceOrigin } from "./coverageSliceWorker";
 import { CoverageWorkerPool } from "./coverageWorkerPool";
 import { queryTerrainElevationMSL } from "./helpers";
 import { CABLE_LOSS_DB, clampRxHeightM, DEFAULT_ITM_ENV, FADE_MARGIN_DB, FREQ_MHZ } from "./itmEnv";
 import { buildClutterRaster, type ClutterRaster, downsampleClutterRaster } from "./landcoverTiles";
 import { type DEM, type DEMBounds, downsampleDEM, sampleDEMAt, unionDemBoundsAround } from "./terrainDEM";
-import { buildDem, fetchElevationAt } from "./terrainRgb";
+import { buildDem, type DemSource, fetchElevationAt } from "./terrainRgb";
 import type { IMapNode } from "./types";
 import type { CoverageState } from "./useCoverageState";
 
@@ -47,6 +48,30 @@ type CoverageComputeParams = {
   setPickingMergeOrigin: (v: boolean) => void;
   moveCoverageMergeOrigin: (id: string, position: [number, number]) => void;
 };
+
+/** Debounce for parameter-only recomputes; origin moves and explicit
+ *  recalculates run immediately. */
+const PARAM_RECOMPUTE_DEBOUNCE_MS = 350;
+
+/** Fetched rasters + telemetry, reused while bounds/detail/layer toggles are
+ *  unchanged. */
+type FetchedRasters = {
+  key: string;
+  dem: DEM;
+  clutter: ClutterRaster | null;
+  canopy: CanopyRaster | null;
+  buildings: BuildingRaster | null;
+  demSource: DemSource;
+  clutterStatus: { tilesPresent: number; tilesTotal: number } | null;
+  canopyStatus: { tilesPresent: number; tilesTotal: number } | null;
+  buildingsStatus: { tilesPresent: number; tilesTotal: number } | null;
+};
+
+/** Pool raster registration handle; pool identity matters because Cancel
+ *  terminates + recreates the pool, which resets its generation counter. */
+type RasterGenHandle = { pool: CoverageWorkerPool; gen: number; key: string };
+
+const yieldToMain = () => new Promise<void>((r) => setTimeout(r, 0));
 
 export function useCoverageCompute(params: CoverageComputeParams) {
   const {
@@ -91,7 +116,8 @@ export function useCoverageCompute(params: CoverageComputeParams) {
     if (toolFromId) {
       const n = nodes[toolFromId] ?? nodes[`!${toolFromId}`];
       if (!n?.map_position) return null;
-      return { lng: n.map_position[0], lat: n.map_position[1], alt: n.position?.altitude ?? null };
+      // HAE-aware MSL altitude, matching merge-origin resolution
+      return { lng: n.map_position[0], lat: n.map_position[1], alt: effectiveAltitudeMslM(n.position) };
     }
     if (toolVirtualPos) return { lng: toolVirtualPos[0], lat: toolVirtualPos[1], alt: null };
     return null;
@@ -122,29 +148,54 @@ export function useCoverageCompute(params: CoverageComputeParams) {
   }, []);
   useEffect(() => {
     return () => {
+      // Invalidate first so terminate's rejections read as superseded
+      coverageRequestIdRef.current += 1;
       coveragePoolRef.current?.terminate();
       coveragePoolRef.current = null;
     };
   }, []);
 
-  /** Cached authoritative DEM; drag-preview reuses it without re-fetching tiles. */
-  const coverageDemRef = useRef<DEM | null>(null);
-  /** 256² downsample of the above; lets drag preview run LR at ~8-12 fps. */
+  /** Fetched rasters keyed by bounds/detail/layer toggles; parameter-only
+   *  recomputes reuse them (no refetch, no 2048² main-thread resample). */
+  const coverageFetchCacheRef = useRef<FetchedRasters | null>(null);
+  /** Pool registration of the authoritative rasters (worker-side cache). */
+  const coverageRasterGenRef = useRef<RasterGenHandle | null>(null);
+  /** Pool registration of the downsampled drag-preview rasters. */
+  const coverageDragGenRef = useRef<RasterGenHandle | null>(null);
+  /** 256² downsample of the authoritative DEM; drag preview runs LR at ~8-12 fps. */
   const coverageDragDemRef = useRef<DEM | null>(null);
-  /** Authoritative + 256² downsampled class-ID rasters; drag preview reuses these. */
-  const coverageClutterRef = useRef<ClutterRaster | null>(null);
   const coverageDragClutterRef = useRef<ClutterRaster | null>(null);
-  /** Authoritative + 256² downsampled canopy-height rasters; drag preview reuses these. */
-  const coverageCanopyRef = useRef<CanopyRaster | null>(null);
   const coverageDragCanopyRef = useRef<CanopyRaster | null>(null);
-  /** Authoritative + 256² downsampled building-height rasters; drag preview reuses these. */
-  const coverageBuildingsRef = useRef<BuildingRaster | null>(null);
   const coverageDragBuildingsRef = useRef<BuildingRaster | null>(null);
   /** Latest raster params snapshot (drag preview reuses untouched). */
   const coverageLastRasterParamsRef = useRef<RasterParams | null>(null);
   /** Single-flight drag preview; latest pending position fires when current completes. */
   const dragPreviewBusyRef = useRef(false);
   const dragPreviewPendingRef = useRef<[number, number] | null>(null);
+
+  /** Origin ground per rounded lng/lat, so recomputes at the same pin reuse
+   *  the exact same height. Viewport-sourced fallbacks are retried against
+   *  the deterministic z15 fetch on later computes. */
+  const originGroundCacheRef = useRef<Map<string, { value: number; source: "fetch" | "viewport" }>>(new globalThis.Map());
+
+  /** Change-detection for the compute effect: skip refires that don't alter
+   *  the render (poll identity churn, overlay flips, zero-move drags). */
+  const lastComputedKeyRef = useRef<string | null>(null);
+  const lastOriginKeyRef = useRef<string | null>(null);
+  const lastNoncesRef = useRef<{ retry: number; recalc: number }>({ retry: 0, recalc: 0 });
+  /** Retry-nonce value at the last fetch; a bump busts the raster fetch cache. */
+  const lastRetryNonceRef = useRef(0);
+  /** Live full computes; the no-op early-return only tidies UI state when 0. */
+  const activeComputeCountRef = useRef(0);
+  /** computeKey whose run was cancelled — the paint doesn't reflect it, so
+   *  matching settings must offer Recalculate. */
+  const cancelledComputeKeyRef = useRef<string | null>(null);
+  /** Origin metadata of the last painted compute, for lazy ray extraction. */
+  const lastRenderMetaRef = useRef<{
+    origin: [number, number];
+    originHeightM: number;
+    rxHeightM: number;
+  } | null>(null);
 
   /** Cached contour GeoJSON for Export without recomputing. */
   const coverageContoursRef = useRef<ContourFeatureCollection | null>(null);
@@ -166,8 +217,19 @@ export function useCoverageCompute(params: CoverageComputeParams) {
     coverageResultRef.current = c.coverageResult;
   }, [c.coverageResult]);
 
-  /** Export coverage as GeoJSON or KML (iso-margin 0/10/20 dB contours + metadata). */
+  /** Export coverage as GeoJSON or KML (iso-margin 0/10/20 dB contours + metadata).
+   *  Contours are built lazily from the cached margin grid. */
   const handleCoverageExport = useCallback((format: "geojson" | "kml") => {
+    if (!coverageContoursRef.current && coverageMarginRef.current) {
+      const m = coverageMarginRef.current;
+      coverageContoursRef.current = extractCoverageContours({
+        margin: m.data,
+        width: m.width,
+        height: m.height,
+        bounds: m.bounds,
+        thresholdsDb: [0, 10, 20],
+      });
+    }
     if (!coverageResultRef.current || !coverageContoursRef.current) {
       toast("Nothing to export yet — run a coverage prediction first.");
       return;
@@ -176,16 +238,15 @@ export function useCoverageCompute(params: CoverageComputeParams) {
     toast(`Coverage exported as ${format.toUpperCase()}.`, { kind: "success" });
   }, []);
 
-  /** Run pool over a DEM, stitch slices, paint RGBA to `coverage-raster`.
-   *  Shared by main compute + drag preview. Null = superseded or WASM missing. */
+  /** Run pool over the registered raster generation, stitch slices, paint RGBA
+   *  to `coverage-raster`. Shared by main compute + drag preview. The raster
+   *  buffers live in the pool (see setRasters); slices carry only params.
+   *  Null = superseded or WASM missing. */
   const renderCoverageToImageSource = useCallback(async (opts: {
+    /** Authoritative DEM for bounds/dims; buffers already registered on the pool. */
     dem: DEM;
-    /** Optional class-ID raster aligned to DEM bounds. Null = workers fall back to default class. */
-    clutter?: ClutterRaster | null;
-    /** Optional canopy-height raster aligned to DEM bounds. Null = workers fall back to class-nominal. */
-    canopy?: CanopyRaster | null;
-    /** Optional building-height raster aligned to DEM bounds. Null = bare-earth + class-nominal endpoint h_a. */
-    buildings?: BuildingRaster | null;
+    /** Pool raster generation to compute against. */
+    rasterGen: number;
     /** Primary + (optional) merge origins. Single-element array preserves the
      *  pre-merge single-origin compute byte-identically. */
     origins: SliceOrigin[];
@@ -209,14 +270,17 @@ export function useCoverageCompute(params: CoverageComputeParams) {
     outputHeight: number;
     itmUnavailable?: boolean;
   } | null> => {
-    const { dem, clutter, canopy, buildings, origins, params: rp, requestId, onSliceProgress } = opts;
+    const { dem, rasterGen, origins, params: rp, requestId, onSliceProgress } = opts;
     const outputWidth = opts.outputWidth ?? dem.width;
     const outputHeight = opts.outputHeight ?? dem.height;
     const mb = mbMapRef.current;
     if (!mb) return null;
     const pool = ensureCoveragePool();
-    const poolSize = pool.size;
-    const rowsPerTask = Math.ceil(outputHeight / poolSize);
+    // Queued tasks belong to superseded requests; drop them
+    pool.dropQueued();
+    // 2 slices per worker: finer progress + less straggler tail than 1:1
+    const totalSlices = Math.min(pool.size * 2, outputHeight);
+    const rowsPerTask = Math.ceil(outputHeight / totalSlices);
 
     const sliceResponses: Array<{
       rgba: Uint8ClampedArray;
@@ -229,59 +293,22 @@ export function useCoverageCompute(params: CoverageComputeParams) {
       itmUnavailable?: boolean;
     }> = [];
     const tasks: Promise<unknown>[] = [];
-    const totalSlices = Math.min(
-      poolSize,
-      Math.ceil(outputHeight / rowsPerTask),
-    );
     let completedSlices = 0;
     onSliceProgress?.(0, totalSlices);
 
-    for (let i = 0; i < poolSize; i++) {
-      const rowStart = i * rowsPerTask;
-      if (rowStart >= outputHeight) break;
+    for (let rowStart = 0; rowStart < outputHeight; rowStart += rowsPerTask) {
       const rowEnd = Math.min(rowStart + rowsPerTask, outputHeight);
-      const demCopy = new Float32Array(dem.data);
-      // Transferable buffers can't be shared across workers; copy per slice.
-      const clutterCopy = clutter ? new Uint8Array(clutter.data) : null;
-      const canopyHeightCopy = canopy ? new Float32Array(canopy.heightM) : null;
-      const canopyStdCopy = canopy ? new Float32Array(canopy.stdM) : null;
-      const canopyMaskCopy = canopy ? new Float32Array(canopy.mask) : null;
-      const buildingHeightCopy = buildings ? new Float32Array(buildings.heightM) : null;
-      const buildingMaskCopy = buildings ? new Float32Array(buildings.mask) : null;
-      const req: CoverageSliceRequest = {
-        requestId,
-        demBuffer: demCopy.buffer,
-        demWidth: dem.width,
-        demHeight: dem.height,
-        bounds: dem.bounds,
-        origins,
-        params: rp,
-        outputWidth,
-        outputHeight,
-        rowStart,
-        rowEnd,
-        clutterBuffer: clutterCopy?.buffer,
-        clutterWidth: clutter?.width,
-        clutterHeight: clutter?.height,
-        canopyHeightBuffer: canopyHeightCopy?.buffer,
-        canopyStdBuffer: canopyStdCopy?.buffer,
-        canopyMaskBuffer: canopyMaskCopy?.buffer,
-        canopyWidth: canopy?.width,
-        canopyHeight: canopy?.height,
-        buildingHeightBuffer: buildingHeightCopy?.buffer,
-        buildingMaskBuffer: buildingMaskCopy?.buffer,
-        buildingWidth: buildings?.width,
-        buildingHeight: buildings?.height,
-      };
-      const transfer: Transferable[] = [demCopy.buffer];
-      if (clutterCopy) transfer.push(clutterCopy.buffer);
-      if (canopyHeightCopy) transfer.push(canopyHeightCopy.buffer);
-      if (canopyStdCopy) transfer.push(canopyStdCopy.buffer);
-      if (canopyMaskCopy) transfer.push(canopyMaskCopy.buffer);
-      if (buildingHeightCopy) transfer.push(buildingHeightCopy.buffer);
-      if (buildingMaskCopy) transfer.push(buildingMaskCopy.buffer);
       tasks.push(
-        pool.dispatch(req, transfer).then((resp) => {
+        pool.dispatch({
+          requestId,
+          rasterGen,
+          origins,
+          params: rp,
+          outputWidth,
+          outputHeight,
+          rowStart,
+          rowEnd,
+        }).then((resp) => {
           sliceResponses.push(resp);
           completedSlices += 1;
           if (requestId === coverageRequestIdRef.current) {
@@ -289,6 +316,8 @@ export function useCoverageCompute(params: CoverageComputeParams) {
           }
         }),
       );
+      // Yield between dispatches; per-worker buffer clones on gen change are heavy
+      if (rowStart + rowsPerTask < outputHeight) await yieldToMain();
     }
     await Promise.all(tasks);
 
@@ -340,6 +369,11 @@ export function useCoverageCompute(params: CoverageComputeParams) {
         resolve(URL.createObjectURL(blob));
       }, "image/png");
     });
+    // A newer request may have painted while toBlob ran
+    if (requestId !== coverageRequestIdRef.current) {
+      URL.revokeObjectURL(url);
+      return null;
+    }
 
     const src = mb.getSource("coverage-raster") as maplibregl.ImageSource | undefined;
     const coords: [[number, number], [number, number], [number, number], [number, number]] = [
@@ -385,8 +419,13 @@ export function useCoverageCompute(params: CoverageComputeParams) {
       c.setIsComputingCoverage(false);
       c.setIsFetchingCoverageTerrain(false);
       c.setCoverageError(null);
+      c.setCoverageParamsDirty(false);
       c.setCoverageProgress({ completed: 0, total: 0 });
       lastRecenteredOriginRef.current = null;
+      lastComputedKeyRef.current = null;
+      lastOriginKeyRef.current = null;
+      // Invalidate in-flight computes — no ghost paint after close
+      coverageRequestIdRef.current += 1;
       return;
     }
     // Suppress the redundant recompute on overlay enter/exit (params unchanged).
@@ -399,6 +438,8 @@ export function useCoverageCompute(params: CoverageComputeParams) {
       c.setIsComputingCoverage(false);
       c.setIsFetchingCoverageTerrain(false);
       c.setCoverageProgress({ completed: 0, total: 0 });
+      lastComputedKeyRef.current = null;
+      coverageRequestIdRef.current += 1;
       return;
     }
     const mb = mbMapRef.current;
@@ -414,7 +455,7 @@ export function useCoverageCompute(params: CoverageComputeParams) {
       const n = nodes[toolFromId] ?? nodes[`!${toolFromId}`];
       if (n?.map_position) {
         origin = [n.map_position[0], n.map_position[1]];
-        altitude = n.position?.altitude ?? null;
+        altitude = effectiveAltitudeMslM(n.position);
       }
     } else if (toolVirtualPos) {
       origin = toolVirtualPos;
@@ -422,43 +463,30 @@ export function useCoverageCompute(params: CoverageComputeParams) {
     }
     if (!origin) {
       c.setCoverageResult(null);
+      lastComputedKeyRef.current = null;
+      coverageRequestIdRef.current += 1;
       return;
     }
 
-    // Mark as computing but keep the previous result visible so controls stay up
-    c.setIsComputingCoverage(true);
-    c.setCoverageError(null);
-    c.setCoverageProgress({ completed: 0, total: 0 });
+    // Tokenless OK — all sources are Tilezen/self-hosted; the token only
+    // enables the Mapbox terrain-rgb fallback.
+    const mapboxToken = env.MAPBOX_TOKEN ?? "";
 
     const radKm = coverageRadiusKm;
     // Union bbox over primary + merge origins (all share radiusKm since TX
     // params are global); seam-aware so straddling origins don't span the globe.
+    // Positions quantized to the change-detection precision (4/5 dp) so GPS
+    // jitter can't change fetchKey.
     const demBounds = unionDemBoundsAround(
-      [origin, ...coverageMergeOrigins.map((m) => m.position)],
+      [
+        [Number(origin[0].toFixed(4)), Number(origin[1].toFixed(4))] as [number, number],
+        ...coverageMergeOrigins.map(
+          (m) => [Number(m.position[0].toFixed(5)), Number(m.position[1].toFixed(5))] as [number, number],
+        ),
+      ],
       radKm,
       1.05,
     );
-    // Recenter only when the origin actually moved; pure parameter recomputes
-    // (TX power, antenna, clutter on/off, etc.) shouldn't yank the user's view.
-    const prev = lastRecenteredOriginRef.current;
-    const movedSignificantly =
-      !prev ||
-      Math.abs(prev[0] - origin[0]) > 1e-6 ||
-      Math.abs(prev[1] - origin[1]) > 1e-6;
-    if (movedSignificantly) {
-      mb.easeTo({ center: origin, duration: 300 });
-      lastRecenteredOriginRef.current = [origin[0], origin[1]];
-    }
-
-    const mapboxToken = env.MAPBOX_TOKEN;
-    if (!mapboxToken) {
-      console.warn("[Map] Coverage compute aborted — Mapbox token missing.");
-      c.setIsComputingCoverage(false);
-      return;
-    }
-
-    const requestId = ++coverageRequestIdRef.current;
-    let cancelled = false;
 
     // Pool-based compute: fetch DEM once, slice to workers, stitch RGBA.
     // DEM is fixed 2048²; "Detail" only changes OUTPUT_SIZE (paint pixelation, not RF accuracy).
@@ -483,297 +511,424 @@ export function useCoverageCompute(params: CoverageComputeParams) {
       situationPct: rel.situation,
     };
 
-    (async () => {
-      const t0 = performance.now();
-      const timings: Record<string, number> = {};
-      const mark = (name: string, fromMs: number) => {
-        timings[name] = performance.now() - fromMs;
-      };
-      try {
-        // 1. Fetch terrain + (when enabled) land-cover + canopy + buildings in
-        //    parallel; all at DEM_SIZE so the worker samples them at the same
-        //    lng/lat indexing. Skip individual fetches when their respective
-        //    models are toggled off — saves the network + decode cost.
-        const tFetch = performance.now();
-        c.setIsFetchingCoverageTerrain(true);
-        const [{ dem, source: demSourceUsed }, clutter, canopy, buildings] = await Promise.all([
-          buildDem({
-            bounds: demBounds,
-            targetWidth: DEM_SIZE,
-            targetHeight: DEM_SIZE,
-            token: mapboxToken,
-            maxTiles: COVERAGE_DETAIL_MAX_TILES[c.coverageDetail],
-          }),
-          c.coverageClutterEnabled
-            ? buildClutterRaster({
-                bounds: demBounds,
-                targetWidth: DEM_SIZE,
-                targetHeight: DEM_SIZE,
-                maxTiles: COVERAGE_DETAIL_MAX_TILES[c.coverageDetail],
-              })
-            : Promise.resolve(null),
-          c.coverageCanopyEnabled
-            ? buildCanopyRaster({
-                bounds: demBounds,
-                targetWidth: DEM_SIZE,
-                targetHeight: DEM_SIZE,
-                maxTiles: COVERAGE_DETAIL_MAX_TILES[c.coverageDetail],
-              })
-            : Promise.resolve(null),
-          c.coverageBuildingsEnabled
-            ? buildBuildingRaster({
-                bounds: demBounds,
-                targetWidth: DEM_SIZE,
-                targetHeight: DEM_SIZE,
-                maxTiles: COVERAGE_DETAIL_MAX_TILES[c.coverageDetail],
-              })
-            : Promise.resolve(null),
-        ]);
-        c.setCoverageDemSource(demSourceUsed);
-        c.setCoverageClutterStatus(
-          clutter ? { tilesPresent: clutter.tilesPresent, tilesTotal: clutter.tilesTotal } : null,
-        );
-        c.setCoverageCanopyStatus(
-          canopy ? { tilesPresent: canopy.tilesPresent, tilesTotal: canopy.tilesTotal } : null,
-        );
-        c.setCoverageBuildingsStatus(
-          buildings ? { tilesPresent: buildings.tilesPresent, tilesTotal: buildings.tilesTotal } : null,
-        );
-        mark("demFetchMs", tFetch);
-        if (cancelled || requestId !== coverageRequestIdRef.current) {
-          c.setIsFetchingCoverageTerrain(false);
-          return;
-        }
+    // ---- Change detection & scheduling -------------------------------------
+    // Rounding gives GPS-jitter hysteresis: ~11 m position, 10 m altitude
+    const mergeKey = coverageMergeOrigins
+      .map((m) => `${m.id}@${m.position[0].toFixed(5)},${m.position[1].toFixed(5)},${m.altitudeM == null ? "x" : Math.round(m.altitudeM / 10)}`)
+      .join(";");
+    const originKey = `${origin[0].toFixed(4)},${origin[1].toFixed(4)}|${mergeKey}`;
+    const altKey = altitude == null || !Number.isFinite(altitude) ? "x" : String(Math.round(altitude / 10) * 10);
+    const computeKey = JSON.stringify({
+      o: originKey,
+      alt: altKey,
+      r: radKm,
+      p: rasterParams,
+      d: c.coverageDetail,
+      ah: c.coverageAntennaHeightM,
+      layers: [c.coverageClutterEnabled, c.coverageCanopyEnabled, c.coverageBuildingsEnabled],
+      nr: c.coverageRetryNonce,
+      nc: c.coverageRecalcNonce,
+    });
+    if (computeKey === cancelledComputeKeyRef.current) {
+      // Cancelled settings: the paint doesn't reflect them despite
+      // lastComputedKeyRef — keep the dirty chip up
+      c.setCoverageParamsDirty(true);
+      return;
+    }
+    if (computeKey === lastComputedKeyRef.current) {
+      // Settings match the painted result (e.g. changed and changed back,
+      // poll-identity refire, zero-move drag) — nothing to recompute.
+      c.setCoverageParamsDirty(false);
+      if (activeComputeCountRef.current === 0) {
+        // Tidy leftover busy state (e.g. after a drag-preview stomp) — never
+        // while a live compute owns the indicators
+        c.setIsComputingCoverage(false);
         c.setIsFetchingCoverageTerrain(false);
+        c.setCoverageProgress({ completed: 0, total: 0 });
+      }
+      return;
+    }
+    const noncesChanged =
+      lastNoncesRef.current.retry !== c.coverageRetryNonce ||
+      lastNoncesRef.current.recalc !== c.coverageRecalcNonce;
+    const originChanged = lastOriginKeyRef.current !== originKey;
+    const isFirst = lastComputedKeyRef.current === null;
 
-        // Resolve origin ground via two independent sources; we take the MAX because
-        // a low-zoom-averaged reading can only under-report a peak, never over-report:
-        //   1. `queryTerrainElevation` reads the loaded raster-dem tiles. Accurate when
-        //      zoomed in (~5-30 m px at z=13-14); at low zoom can under-read a peak by ~180 m.
-        //   2. `fetchElevationAt` does a dedicated z=15 fetch — viewport-independent,
-        //      LRU-cached. Source: Tilezen (USGS 3DEP / SRTM), Mapbox terrain-RGB fallback.
-        // queryTerrainElevationMSL undoes MapLibre's built-in exaggeration multiply.
-        const mbElev = queryTerrainElevationMSL(mb, origin!);
-        const mbElevOk = typeof mbElev === "number" && Number.isFinite(mbElev);
-        const fetchElev = await fetchElevationAt(origin![0], origin![1], mapboxToken);
-        const fetchOk = fetchElev != null && Number.isFinite(fetchElev);
-        let originGroundHighZoom: number | null = null;
-        if (mbElevOk && fetchOk) {
-          originGroundHighZoom = Math.max(mbElev, fetchElev);
-        } else if (mbElevOk) {
-          originGroundHighZoom = mbElev;
-        } else if (fetchOk) {
-          originGroundHighZoom = fetchElev;
-        }
-        const originGroundFromDem = sampleDEMAt(dem, origin![0], origin![1]);
-        const groundOkDem = !Number.isNaN(originGroundFromDem);
-        const groundOkHz = originGroundHighZoom != null;
-        const groundOk = groundOkHz || groundOkDem;
-        // Narrowed to number with a 0 fallback; downstream usage is guarded by groundOk.
-        const originGround: number = groundOkHz
-          ? (originGroundHighZoom as number)
-          : groundOkDem
-            ? originGroundFromDem
-            : 0;
-        // Guards against junk altitudes (GPS glitch, unit-scaled values); matches losAnalysis.ts
-        const MAX_HEIGHT_ABOVE_TERRAIN_M = 1000;
-        const altValid =
-          altitude != null &&
-          Number.isFinite(altitude) &&
-          (!groundOk ||
-            (altitude >= originGround &&
-              altitude <= originGround + MAX_HEIGHT_ABOVE_TERRAIN_M));
-        const baseM = altValid
-          ? (altitude as number)
-          : (groundOk ? originGround : 0);
-        const originHeightM = baseM + c.coverageAntennaHeightM;
-        const originIsFallback = !groundOk && !altValid;
-        // ITM wants TX height above profile[0] (bbox DEM value). Compensate so TX MSL matches
-        // originHeightM after profile[0]+txHeight. Collapses to antennaHeight on flat terrain.
-        const txAboveGroundM = groundOkDem
-          ? originHeightM - originGroundFromDem
-          : c.coverageAntennaHeightM;
+    if (!c.coverageAutoRecalc && !originChanged && !noncesChanged && !isFirst) {
+      // Manual mode: parameter tweaks wait for the Recalculate button
+      c.setCoverageParamsDirty(true);
+      return;
+    }
+    const delayMs = originChanged || noncesChanged || isFirst ? 0 : PARAM_RECOMPUTE_DEBOUNCE_MS;
 
-        // Sample terrain off the same DEM the workers see so txHeightM (AGL
-        // relative to profile[0]) collapses cleanly to coverageAntennaHeightM
-        // on flat terrain.
-        const mergeOriginsResolved: SliceOrigin[] = [];
-        for (const m of coverageMergeOrigins) {
-          const terrain = sampleDEMAt(dem, m.position[0], m.position[1]);
-          const terrainOk = !Number.isNaN(terrain);
-          const altOk =
-            m.altitudeM != null &&
-            Number.isFinite(m.altitudeM) &&
-            (!terrainOk ||
-              (m.altitudeM >= terrain && m.altitudeM <= terrain + 1000));
-          const baseM = altOk ? (m.altitudeM as number) : (terrainOk ? terrain : 0);
-          const heightM = baseM + c.coverageAntennaHeightM;
-          mergeOriginsResolved.push({
-            position: m.position,
-            heightM,
-            antennaHeightAboveGroundM: terrainOk ? heightM - terrain : c.coverageAntennaHeightM,
-          });
-        }
+    let cancelled = false;
+    const commitAndLaunch = () => {
+      lastComputedKeyRef.current = computeKey;
+      lastOriginKeyRef.current = originKey;
+      cancelledComputeKeyRef.current = null;
+      const retryNonceChanged = lastRetryNonceRef.current !== c.coverageRetryNonce;
+      lastRetryNonceRef.current = c.coverageRetryNonce;
+      // Retry implies the cached ground may be bad too
+      if (retryNonceChanged) originGroundCacheRef.current.clear();
+      lastNoncesRef.current = { retry: c.coverageRetryNonce, recalc: c.coverageRecalcNonce };
+      c.setCoverageParamsDirty(false);
 
-        // 3. Dispatch pool; OUTPUT_SIZE decoupled from DEM_SIZE so Detail only changes paint sharpness
-        const tDispatch = performance.now();
-        const rendered = await renderCoverageToImageSource({
-          dem,
-          clutter,
-          canopy,
-          buildings,
-          origins: [
-            {
-              position: origin!,
-              heightM: originHeightM,
-              antennaHeightAboveGroundM: txAboveGroundM,
+      // Mark as computing but keep the previous result visible so controls stay up
+      c.setIsComputingCoverage(true);
+      c.setCoverageError(null);
+      c.setCoverageProgress({ completed: 0, total: 0 });
+
+      // Recenter only when the origin actually moved; pure parameter recomputes
+      // (TX power, antenna, clutter on/off, etc.) shouldn't yank the user's view.
+      const prev = lastRecenteredOriginRef.current;
+      const movedSignificantly =
+        !prev ||
+        Math.abs(prev[0] - origin![0]) > 1e-6 ||
+        Math.abs(prev[1] - origin![1]) > 1e-6;
+      if (movedSignificantly) {
+        mb.easeTo({ center: origin!, duration: 300 });
+        lastRecenteredOriginRef.current = [origin![0], origin![1]];
+      }
+
+      const requestId = ++coverageRequestIdRef.current;
+
+      activeComputeCountRef.current += 1;
+      (async () => {
+        const t0 = performance.now();
+        const timings: Record<string, number> = {};
+        const mark = (name: string, fromMs: number) => {
+          timings[name] = performance.now() - fromMs;
+        };
+        try {
+          // 1. Rasters: reuse the fetched set when bounds/detail/layer toggles
+          //    are unchanged; otherwise fetch terrain + enabled clutter tiers in
+          //    parallel, all at DEM_SIZE for uniform lng/lat indexing.
+          const fetchKey = [
+            demBounds.west.toFixed(6), demBounds.south.toFixed(6),
+            demBounds.east.toFixed(6), demBounds.north.toFixed(6),
+            c.coverageDetail,
+            c.coverageClutterEnabled, c.coverageCanopyEnabled, c.coverageBuildingsEnabled,
+          ].join("|");
+          let fetched = coverageFetchCacheRef.current;
+          const cacheHit = fetched != null && fetched.key === fetchKey && !retryNonceChanged;
+          if (!cacheHit) {
+            const tFetch = performance.now();
+            c.setIsFetchingCoverageTerrain(true);
+            const [{ dem, source: demSourceUsed }, clutter, canopy, buildings] = await Promise.all([
+              buildDem({
+                bounds: demBounds,
+                targetWidth: DEM_SIZE,
+                targetHeight: DEM_SIZE,
+                token: mapboxToken,
+                maxTiles: COVERAGE_DETAIL_MAX_TILES[c.coverageDetail],
+              }),
+              c.coverageClutterEnabled
+                ? buildClutterRaster({
+                    bounds: demBounds,
+                    targetWidth: DEM_SIZE,
+                    targetHeight: DEM_SIZE,
+                    maxTiles: COVERAGE_DETAIL_MAX_TILES[c.coverageDetail],
+                  })
+                : Promise.resolve(null),
+              c.coverageCanopyEnabled
+                ? buildCanopyRaster({
+                    bounds: demBounds,
+                    targetWidth: DEM_SIZE,
+                    targetHeight: DEM_SIZE,
+                    maxTiles: COVERAGE_DETAIL_MAX_TILES[c.coverageDetail],
+                  })
+                : Promise.resolve(null),
+              c.coverageBuildingsEnabled
+                ? buildBuildingRaster({
+                    bounds: demBounds,
+                    targetWidth: DEM_SIZE,
+                    targetHeight: DEM_SIZE,
+                    maxTiles: COVERAGE_DETAIL_MAX_TILES[c.coverageDetail],
+                  })
+                : Promise.resolve(null),
+            ]);
+            mark("demFetchMs", tFetch);
+            if (requestId !== coverageRequestIdRef.current) {
+              c.setIsFetchingCoverageTerrain(false);
+              return;
+            }
+            c.setIsFetchingCoverageTerrain(false);
+            fetched = {
+              key: fetchKey,
+              dem, clutter, canopy, buildings,
+              demSource: demSourceUsed,
+              clutterStatus: clutter ? { tilesPresent: clutter.tilesPresent, tilesTotal: clutter.tilesTotal } : null,
+              canopyStatus: canopy ? { tilesPresent: canopy.tilesPresent, tilesTotal: canopy.tilesTotal } : null,
+              buildingsStatus: buildings ? { tilesPresent: buildings.tilesPresent, tilesTotal: buildings.tilesTotal } : null,
+            };
+            coverageFetchCacheRef.current = fetched;
+          }
+          const { dem, clutter, canopy, buildings } = fetched!;
+          // After the supersession check, so stale computes can't clobber chips
+          c.setCoverageDemSource(fetched!.demSource);
+          c.setCoverageClutterStatus(fetched!.clutterStatus);
+          c.setCoverageCanopyStatus(fetched!.canopyStatus);
+          c.setCoverageBuildingsStatus(fetched!.buildingsStatus);
+
+          // 2. Origin ground: the z=15 fetch (viewport-independent, LRU-cached;
+          //    Tilezen 3DEP/SRTM, Mapbox fallback) is authoritative. The map
+          //    query depends on loaded viewport tiles — fallback only, never
+          //    max()ed in — and results are pinned per position for the session
+          //    so identical settings paint identically.
+          const groundKey = `${origin![0].toFixed(5)},${origin![1].toFixed(5)}`;
+          const groundCached = originGroundCacheRef.current.get(groundKey) ?? null;
+          let originGroundHighZoom: number | null = groundCached?.value ?? null;
+          if (groundCached == null || groundCached.source === "viewport") {
+            const fetchElev = await fetchElevationAt(origin![0], origin![1], mapboxToken);
+            if (fetchElev != null && Number.isFinite(fetchElev)) {
+              originGroundHighZoom = fetchElev;
+              if (originGroundCacheRef.current.size > 64) originGroundCacheRef.current.clear();
+              originGroundCacheRef.current.set(groundKey, { value: fetchElev, source: "fetch" });
+            } else if (groundCached == null) {
+              const mbElev = queryTerrainElevationMSL(mb, origin!);
+              if (typeof mbElev === "number" && Number.isFinite(mbElev)) {
+                originGroundHighZoom = mbElev;
+                if (originGroundCacheRef.current.size > 64) originGroundCacheRef.current.clear();
+                originGroundCacheRef.current.set(groundKey, { value: mbElev, source: "viewport" });
+              }
+            }
+          }
+          if (requestId !== coverageRequestIdRef.current) return;
+          const originGroundFromDem = sampleDEMAt(dem, origin![0], origin![1]);
+          const groundOkDem = !Number.isNaN(originGroundFromDem);
+          const groundOkHz = originGroundHighZoom != null;
+          const groundOk = groundOkHz || groundOkDem;
+          // Narrowed to number with a 0 fallback; downstream usage is guarded by groundOk.
+          const originGround: number = groundOkHz
+            ? (originGroundHighZoom as number)
+            : groundOkDem
+              ? originGroundFromDem
+              : 0;
+          // Guards against junk altitudes (GPS glitch, unit-scaled values); matches losAnalysis.ts
+          const MAX_HEIGHT_ABOVE_TERRAIN_M = 1000;
+          const altValid =
+            altitude != null &&
+            Number.isFinite(altitude) &&
+            (!groundOk ||
+              (altitude >= originGround &&
+                altitude <= originGround + MAX_HEIGHT_ABOVE_TERRAIN_M));
+          const baseM = altValid
+            ? (altitude as number)
+            : (groundOk ? originGround : 0);
+          const originHeightM = baseM + c.coverageAntennaHeightM;
+          const originIsFallback = !groundOk && !altValid;
+          // ITM wants TX height above profile[0] (bbox DEM value). Compensate so TX MSL matches
+          // originHeightM after profile[0]+txHeight. Collapses to antennaHeight on flat terrain.
+          const txAboveGroundM = groundOkDem
+            ? originHeightM - originGroundFromDem
+            : c.coverageAntennaHeightM;
+
+          // Sample terrain off the same DEM the workers see so txHeightM (AGL
+          // relative to profile[0]) collapses cleanly to coverageAntennaHeightM
+          // on flat terrain.
+          const mergeOriginsResolved: SliceOrigin[] = [];
+          for (const m of coverageMergeOrigins) {
+            const terrain = sampleDEMAt(dem, m.position[0], m.position[1]);
+            const terrainOk = !Number.isNaN(terrain);
+            const altOk =
+              m.altitudeM != null &&
+              Number.isFinite(m.altitudeM) &&
+              (!terrainOk ||
+                (m.altitudeM >= terrain && m.altitudeM <= terrain + 1000));
+            const baseM = altOk ? (m.altitudeM as number) : (terrainOk ? terrain : 0);
+            const heightM = baseM + c.coverageAntennaHeightM;
+            mergeOriginsResolved.push({
+              position: m.position,
+              heightM,
+              antennaHeightAboveGroundM: terrainOk ? heightM - terrain : c.coverageAntennaHeightM,
+            });
+          }
+
+          // 3. Register rasters on the pool (buffers ship per worker per
+          //    generation). Reuse only on a true cache hit AND while the handle
+          //    is the pool's live gen — a refetch means new buffers, and drag
+          //    previews advance the gen.
+          const pool = ensureCoveragePool();
+          const genHandle = coverageRasterGenRef.current;
+          let rasterGen: number;
+          if (
+            cacheHit &&
+            genHandle &&
+            genHandle.pool === pool &&
+            genHandle.key === fetchKey &&
+            genHandle.gen === pool.currentGen
+          ) {
+            rasterGen = genHandle.gen;
+          } else {
+            rasterGen = pool.setRasters({ dem, clutter, canopy, buildings });
+            coverageRasterGenRef.current = { pool, gen: rasterGen, key: fetchKey };
+            // A new authoritative generation obsoletes any drag registration
+            coverageDragGenRef.current = null;
+          }
+          const tDispatch = performance.now();
+          const rendered = await renderCoverageToImageSource({
+            dem,
+            rasterGen,
+            origins: [
+              {
+                position: origin!,
+                heightM: originHeightM,
+                antennaHeightAboveGroundM: txAboveGroundM,
+              },
+              ...mergeOriginsResolved,
+            ],
+            params: rasterParams,
+            requestId,
+            outputWidth: OUTPUT_SIZE,
+            outputHeight: OUTPUT_SIZE,
+            onSliceProgress: (completed, total) => {
+              c.setCoverageProgress({ completed, total });
             },
-            ...mergeOriginsResolved,
-          ],
-          params: rasterParams,
-          requestId,
-          outputWidth: OUTPUT_SIZE,
-          outputHeight: OUTPUT_SIZE,
-          onSliceProgress: (completed, total) => {
-            c.setCoverageProgress({ completed, total });
-          },
-        });
-        mark("poolComputeMs", tDispatch);
-        if (cancelled || requestId !== coverageRequestIdRef.current) return;
-        if (!rendered) {
-          // Current request (supersession returned above) → hard failure; a
-          // vanished map is a benign teardown, so only surface a real failure.
+          });
+          mark("poolComputeMs", tDispatch);
+          if (requestId !== coverageRequestIdRef.current) return;
+          if (!rendered) {
+            // Current request (supersession returned above) → hard failure; a
+            // vanished map is a benign teardown, so only surface a real failure.
+            c.setIsComputingCoverage(false);
+            c.setCoverageProgress({ completed: 0, total: 0 });
+            if (mbMapRef.current) {
+              c.setCoverageResult(null);
+              c.setCoverageError("Coverage compute failed. See the developer console and try again.");
+            }
+            return;
+          }
+          if (rendered.itmUnavailable) {
+            console.warn(
+              "[Map] Coverage compute: ITM WASM not built. Run `yarn build:wasm`.",
+            );
+            c.setCoverageResult(null);
+            c.setIsComputingCoverage(false);
+            c.setCoverageProgress({ completed: 0, total: 0 });
+            c.setCoverageError(
+              "Coverage model unavailable — the ITM WebAssembly module failed to load. " +
+                "Try refreshing the page; if the problem persists, check the developer console.",
+            );
+            return;
+          }
+
+          // Don't cache a hollow DEM (transient tile failure) — Retry must refetch
+          if (rendered.demCoveredPixels / rendered.totalPx < 0.05 && coverageFetchCacheRef.current?.key === fetchKey) {
+            coverageFetchCacheRef.current = null;
+          }
+
+          // 4. Publish margin + metadata; contours/rays are built lazily by
+          //    the overlay effects (saves ~50-150 ms when toggled off)
+          coverageMarginRef.current = {
+            data: rendered.marginDb,
+            width: rendered.outputWidth,
+            height: rendered.outputHeight,
+            bounds: dem.bounds,
+          };
+          lastRenderMetaRef.current = {
+            origin: origin!,
+            originHeightM,
+            rxHeightM: clampRxHeightM(c.coverageRxHeightM),
+          };
+          coverageContoursRef.current = null;
+          coverageRaysRef.current = null;
+
+          const computeMs = performance.now() - t0;
+          if (import.meta.env.DEV) {
+            console.info(
+              `[Map] Coverage compute: ${computeMs.toFixed(0)} ms ` +
+                `for ${OUTPUT_SIZE}² output / ${DEM_SIZE}² dem across ${ensureCoveragePool().size} workers ` +
+                `(${Math.round((rendered.demCoveredPixels / rendered.totalPx) * 100)}% terrain-covered, ` +
+                `rasters ${cacheHit ? "cached" : "fetched"})`,
+              timings,
+            );
+          }
+
+          c.setCoverageResult({
+            origin: origin!,
+            originHeightM,
+            originIsFallback,
+            radiusKm: radKm,
+            clearCount: rendered.clearCount,
+            fresnelCount: rendered.fresnelCount,
+            blockedCount: rendered.blockedCount,
+            scannedPixels: rendered.totalPx,
+            frequencyGHz: 0.915,
+            txAntennaDbi: c.coverageAntennaDbi,
+            rxAntennaDbi: c.coverageRxAntennaDbi,
+            rxAntennaHeightAboveGroundM: c.coverageRxHeightM,
+            txDbm: c.coverageTxDbm,
+            rxSensitivityDbm: c.coverageEffectiveSensitivityDbm,
+          });
           c.setIsComputingCoverage(false);
           c.setCoverageProgress({ completed: 0, total: 0 });
-          if (mbMapRef.current) {
-            c.setCoverageResult(null);
-            c.setCoverageError("Coverage compute failed. See the developer console and try again.");
+
+          // 5. Refresh drag-preview downsamples off the critical path
+          setTimeout(() => {
+            if (requestId !== coverageRequestIdRef.current) return;
+            coverageDragDemRef.current = downsampleDEM(dem, 256, 256);
+            coverageDragClutterRef.current = clutter ? downsampleClutterRaster(clutter, 256, 256) : null;
+            coverageDragCanopyRef.current = canopy ? downsampleCanopyRaster(canopy, 256, 256) : null;
+            coverageDragBuildingsRef.current = buildings ? downsampleBuildingRaster(buildings, 256, 256) : null;
+            coverageDragGenRef.current = null; // re-register on next drag
+            coverageLastRasterParamsRef.current = rasterParams;
+          }, 0);
+        } catch (err) {
+          // Superseded computes must not touch the successor's state. Effect
+          // `cancelled` is deliberately not consulted — a re-run may not
+          // relaunch; only supersession means someone else owns the indicators.
+          if (requestId !== coverageRequestIdRef.current) return;
+          const msg = err instanceof Error ? err.message : String(err);
+          // User cancel / supersession rejects pool tasks — expected, not an error
+          if (/pool (terminated|superseded)/i.test(msg)) {
+            c.setIsComputingCoverage(false);
+            c.setIsFetchingCoverageTerrain(false);
+            c.setCoverageProgress({ completed: 0, total: 0 });
+            // Still current here = the pool moved on underneath us; drop the
+            // registration so the next compute self-heals
+            coverageRasterGenRef.current = null;
+            return;
           }
-          return;
-        }
-        if (rendered.itmUnavailable) {
-          console.warn(
-            "[Map] Coverage compute: ITM WASM not built. Run `yarn build:wasm`.",
-          );
+          console.warn("[Map] Coverage computation failed:", err);
           c.setCoverageResult(null);
           c.setIsComputingCoverage(false);
-          c.setCoverageProgress({ completed: 0, total: 0 });
-          c.setCoverageError(
-            "Coverage model unavailable — the ITM WebAssembly module failed to load. " +
-              "Try refreshing the page; if the problem persists, check the developer console.",
-          );
-          return;
-        }
-
-        // 4. Cache full + downsampled rasters for the drag-preview pass.
-        coverageDemRef.current = dem;
-        coverageDragDemRef.current = downsampleDEM(dem, 256, 256);
-        coverageClutterRef.current = clutter;
-        coverageDragClutterRef.current = clutter ? downsampleClutterRaster(clutter, 256, 256) : null;
-        coverageCanopyRef.current = canopy;
-        coverageDragCanopyRef.current = canopy ? downsampleCanopyRaster(canopy, 256, 256) : null;
-        coverageBuildingsRef.current = buildings;
-        coverageDragBuildingsRef.current = buildings ? downsampleBuildingRaster(buildings, 256, 256) : null;
-        coverageLastRasterParamsRef.current = rasterParams;
-
-        // 5. Iso-contours (0 dB = edge, +10 reliable, +20 strong) from output-sized margin grid
-        coverageMarginRef.current = {
-          data: rendered.marginDb,
-          width: rendered.outputWidth,
-          height: rendered.outputHeight,
-          bounds: dem.bounds,
-        };
-        const contours = extractCoverageContours({
-          margin: rendered.marginDb,
-          width: rendered.outputWidth,
-          height: rendered.outputHeight,
-          bounds: dem.bounds,
-          thresholdsDb: [0, 10, 20],
-        });
-        coverageContoursRef.current = contours;
-        try {
-          const src = mb.getSource("coverage-contours") as MlGeoJSONSource | undefined;
-          src?.setData(contours);
-        } catch (err) { if (import.meta.env.DEV) console.warn("[Map] coverage-contours setData:", err); }
-
-        // 6. Visibility rays: R2 viewshed AND margin grid; costs ~50-100 ms
-        const rays = extractCoverageRays({
-          dem,
-          margin: rendered.marginDb,
-          width: rendered.outputWidth,
-          height: rendered.outputHeight,
-          bounds: dem.bounds,
-          origin: origin!,
-          originHeightM,
-          rxHeightM: clampRxHeightM(c.coverageRxHeightM),
-          azimuthStepDeg: 1,
-        });
-        coverageRaysRef.current = rays;
-        try {
-          const src = mb.getSource("coverage-rays") as MlGeoJSONSource | undefined;
-          src?.setData(rays);
-        } catch (err) { if (import.meta.env.DEV) console.warn("[Map] coverage-rays setData:", err); }
-
-        const computeMs = performance.now() - t0;
-        if (import.meta.env.DEV) {
-          console.info(
-            `[Map] Coverage compute: ${computeMs.toFixed(0)} ms ` +
-              `for ${OUTPUT_SIZE}² output / ${DEM_SIZE}² dem across ${ensureCoveragePool().size} workers ` +
-              `(${Math.round((rendered.demCoveredPixels / rendered.totalPx) * 100)}% terrain-covered)`,
-            timings,
-          );
-        }
-
-        c.setCoverageResult({
-          origin: origin!,
-          originHeightM,
-          originIsFallback,
-          radiusKm: radKm,
-          clearCount: rendered.clearCount,
-          fresnelCount: rendered.fresnelCount,
-          blockedCount: rendered.blockedCount,
-          scannedPixels: rendered.totalPx,
-          frequencyGHz: 0.915,
-          txAntennaDbi: c.coverageAntennaDbi,
-          rxAntennaDbi: c.coverageRxAntennaDbi,
-          rxAntennaHeightAboveGroundM: c.coverageRxHeightM,
-          txDbm: c.coverageTxDbm,
-          rxSensitivityDbm: c.coverageEffectiveSensitivityDbm,
-        });
-        c.setIsComputingCoverage(false);
-        c.setCoverageProgress({ completed: 0, total: 0 });
-      } catch (err) {
-        if (cancelled) return;
-        const msg = err instanceof Error ? err.message : String(err);
-        // User cancel rejects pool tasks with "pool terminated" — expected, not an error
-        if (/pool terminated/i.test(msg)) {
-          c.setIsComputingCoverage(false);
           c.setIsFetchingCoverageTerrain(false);
           c.setCoverageProgress({ completed: 0, total: 0 });
-          return;
+          const isTerrain = /terrain|tile|fetch|network|cors|http/i.test(msg);
+          c.setCoverageError(
+            isTerrain
+              ? "Couldn't fetch terrain tiles. Check your connection and try again."
+              : "Coverage compute failed. See the developer console and try again.",
+          );
         }
-        console.warn("[Map] Coverage computation failed:", err);
-        c.setCoverageResult(null);
-        c.setIsComputingCoverage(false);
-        c.setIsFetchingCoverageTerrain(false);
-        c.setCoverageProgress({ completed: 0, total: 0 });
-        const isTerrain = /terrain|tile|fetch|network|cors|http/i.test(msg);
-        c.setCoverageError(
-          isTerrain
-            ? "Couldn't fetch terrain tiles. Check your connection and try again."
-            : "Coverage compute failed. See the developer console and try again.",
-        );
-      }
-    })();
+      })().finally(() => {
+        activeComputeCountRef.current = Math.max(0, activeComputeCountRef.current - 1);
+      });
+    };
+
+    // Immediate for origin/nonce/first (a deferred launch would flash the
+    // paused state); debounced for parameter tweaks. `cancelled` guards only
+    // the deferred launch — in-flight computes are cancelled solely via
+    // requestId supersession (an effect re-run may not relaunch).
+    let timer: number | null = null;
+    if (delayMs === 0) {
+      commitAndLaunch();
+    } else {
+      timer = window.setTimeout(() => {
+        if (!cancelled) commitAndLaunch();
+      }, delayMs);
+    }
 
     return () => {
       cancelled = true;
+      if (timer != null) window.clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, c.coverageAntennaDbi, c.coverageRxAntennaDbi, c.coverageRxHeightM, c.coverageTxDbm, c.coverageAggressionIdx, c.coverageClutterEnabled, c.coverageCanopyEnabled, c.coverageBuildingsEnabled, coverageMergeOrigins, c.coverageEffectiveSensitivityDbm, c.coverageDetail, c.coverageAntennaHeightM, c.coverageReliability, terrain3D, originLng, originLat, originAlt, c.coverageRetryNonce, c.keepCoveragePaint]);
+  }, [activeTool, toolStep, toolFromId, toolVirtualPos, coverageRadiusKm, c.coverageAntennaDbi, c.coverageRxAntennaDbi, c.coverageRxHeightM, c.coverageTxDbm, c.coverageAggressionIdx, c.coverageClutterEnabled, c.coverageCanopyEnabled, c.coverageBuildingsEnabled, coverageMergeOrigins, c.coverageEffectiveSensitivityDbm, c.coverageDetail, c.coverageAntennaHeightM, c.coverageReliability, terrain3D, originLng, originLat, originAlt, c.coverageRetryNonce, c.coverageRecalcNonce, c.coverageAutoRecalc, c.keepCoveragePaint]);
 
   // Hide coverage layers when leaving tool; sources/layers stay for fast
-  // re-entry. keepCoveragePaint exempts the Scan-from-here overlay.
+  // re-entry. keepCoveragePaint exempts the Scan-from-here overlay. Cached
+  // rasters (~100 MB/worker at full tiers) are released; re-entry refetches.
   useEffect(() => {
     const mb = mbMapRef.current;
     if (!mb) return;
@@ -789,31 +944,78 @@ export function useCoverageCompute(params: CoverageComputeParams) {
           mb.setLayoutProperty("coverage-rays-line", "visibility", "none");
         }
       } catch {}
+      coveragePoolRef.current?.releaseRasters();
+      coverageFetchCacheRef.current = null;
+      coverageRasterGenRef.current = null;
+      coverageDragGenRef.current = null;
+      coverageDragDemRef.current = null;
+      coverageDragClutterRef.current = null;
+      coverageDragCanopyRef.current = null;
+      coverageDragBuildingsRef.current = null;
+      coverageLastRasterParamsRef.current = null;
     }
   }, [activeTool, c.keepCoveragePaint, mbMapRef]);
 
+  // Contours are extracted lazily on first show after each compute
   useEffect(() => {
     const mb = mbMapRef.current;
     if (!mb) return;
+    const show = (activeTool === "coverage" || c.keepCoveragePaint) && c.showCoverageContours;
+    if (show && !coverageContoursRef.current && coverageMarginRef.current) {
+      const m = coverageMarginRef.current;
+      coverageContoursRef.current = extractCoverageContours({
+        margin: m.data,
+        width: m.width,
+        height: m.height,
+        bounds: m.bounds,
+        thresholdsDb: [0, 10, 20],
+      });
+      try {
+        const src = mb.getSource("coverage-contours") as MlGeoJSONSource | undefined;
+        src?.setData(coverageContoursRef.current);
+      } catch (err) { if (import.meta.env.DEV) console.warn("[Map] coverage-contours setData:", err); }
+    }
     if (!mb.getLayer("coverage-contours-line")) return;
     try {
       mb.setLayoutProperty(
         "coverage-contours-line",
         "visibility",
-        (activeTool === "coverage" || c.keepCoveragePaint) && c.showCoverageContours ? "visible" : "none",
+        show ? "visible" : "none",
       );
     } catch {}
   }, [activeTool, c.showCoverageContours, c.coverageResult, c.keepCoveragePaint, mbMapRef]);
 
+  // Rays likewise; needs the full-res DEM from the fetch cache
   useEffect(() => {
     const mb = mbMapRef.current;
     if (!mb) return;
+    const show = (activeTool === "coverage" || c.keepCoveragePaint) && c.showCoverageRays;
+    const meta = lastRenderMetaRef.current;
+    const dem = coverageFetchCacheRef.current?.dem;
+    if (show && !coverageRaysRef.current && coverageMarginRef.current && meta && dem) {
+      const m = coverageMarginRef.current;
+      coverageRaysRef.current = extractCoverageRays({
+        dem,
+        margin: m.data,
+        width: m.width,
+        height: m.height,
+        bounds: m.bounds,
+        origin: meta.origin,
+        originHeightM: meta.originHeightM,
+        rxHeightM: meta.rxHeightM,
+        azimuthStepDeg: 1,
+      });
+      try {
+        const src = mb.getSource("coverage-rays") as MlGeoJSONSource | undefined;
+        src?.setData(coverageRaysRef.current);
+      } catch (err) { if (import.meta.env.DEV) console.warn("[Map] coverage-rays setData:", err); }
+    }
     if (!mb.getLayer("coverage-rays-line")) return;
     try {
       mb.setLayoutProperty(
         "coverage-rays-line",
         "visibility",
-        (activeTool === "coverage" || c.keepCoveragePaint) && c.showCoverageRays ? "visible" : "none",
+        show ? "visible" : "none",
       );
     } catch {}
   }, [activeTool, c.showCoverageRays, c.coverageResult, c.keepCoveragePaint, mbMapRef]);
@@ -854,6 +1056,18 @@ export function useCoverageCompute(params: CoverageComputeParams) {
         .setLngLat(origin)
         .addTo(mb);
 
+      /** Meters between two lng/lat points (equirectangular, fine at pin scale). */
+      const metersBetween = (a: { lng: number; lat: number }, b: { lng: number; lat: number }) => {
+        const dLat = (b.lat - a.lat) * 111_320;
+        const dLng = (b.lng - a.lng) * 111_320 * Math.cos((b.lat * Math.PI) / 180);
+        return Math.hypot(dLat, dLng);
+      };
+      /** Wiggle threshold: below this, no preview and snap back on release
+       *  (keeps node anchor + GPS altitude). */
+      const MICRO_DRAG_M = 8;
+      let dragStartPos: maplibregl.LngLat | null = null;
+      let previewRanThisDrag = false;
+
       // Drag preview: 256² compute off cached downsampled DEM, single-flight, newest-wins
       const runDragPreview = async (lngLat: [number, number]) => {
         if (dragPreviewBusyRef.current) {
@@ -875,7 +1089,7 @@ export function useCoverageCompute(params: CoverageComputeParams) {
           // Real MSL — see queryTerrainElevationMSL helper for the exaggeration math.
           const mbGround = queryTerrainElevationMSL(mb, lngLat);
           const mbGroundOk = typeof mbGround === "number" && Number.isFinite(mbGround);
-          // Never under-report: take the higher of the two sources when both are valid.
+          // Preview-only; dragend runs the full deterministic resolution
           const accurateGround = mbGroundOk && demGroundOk
             ? Math.max(mbGround, demGround)
             : mbGroundOk ? mbGround : demGroundOk ? demGround : 0;
@@ -884,12 +1098,25 @@ export function useCoverageCompute(params: CoverageComputeParams) {
           const txAboveGroundM = demGroundOk
             ? originH - demGround
             : antennaH;
+          // Register the downsampled rasters once per drag session (a full
+          // compute may have advanced the pool generation since)
+          const pool = ensureCoveragePool();
+          let dragGen = coverageDragGenRef.current;
+          if (!dragGen || dragGen.pool !== pool || dragGen.gen !== pool.currentGen) {
+            dragGen = { pool, gen: pool.setRasters({ dem, clutter, canopy, buildings }), key: "drag" };
+            coverageDragGenRef.current = dragGen;
+            // Drag rasters own the pool gen now; full computes must re-register
+            coverageRasterGenRef.current = null;
+          }
+          previewRanThisDrag = true;
           coverageRequestIdRef.current = previewId;
+          // Stomping the id discards any in-flight compute; clear its indicators
+          c.setIsComputingCoverage(false);
+          c.setIsFetchingCoverageTerrain(false);
+          c.setCoverageProgress({ completed: 0, total: 0 });
           await renderCoverageToImageSource({
             dem,
-            clutter,
-            canopy,
-            buildings,
+            rasterGen: dragGen.gen,
             origins: [{
               position: lngLat,
               heightM: originH,
@@ -898,6 +1125,12 @@ export function useCoverageCompute(params: CoverageComputeParams) {
             params: dragParams,
             requestId: previewId,
           });
+        } catch (err) {
+          // Supersession rejections are expected mid-drag
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!/pool (terminated|superseded)/i.test(msg)) {
+            console.warn("[Map] Coverage drag preview failed:", err);
+          }
         } finally {
           dragPreviewBusyRef.current = false;
           const pending = dragPreviewPendingRef.current;
@@ -910,9 +1143,13 @@ export function useCoverageCompute(params: CoverageComputeParams) {
 
       marker.on("dragstart", () => {
         isDraggingMarkerRef.current = true;
+        dragStartPos = marker.getLngLat();
+        previewRanThisDrag = false;
       });
       marker.on("drag", () => {
         const ll = marker.getLngLat();
+        // No preview inside the micro-drag radius — nothing to restore on snapback
+        if (dragStartPos && metersBetween(dragStartPos, ll) < MICRO_DRAG_M) return;
         runDragPreview([ll.lng, ll.lat]);
       });
 
@@ -921,12 +1158,27 @@ export function useCoverageCompute(params: CoverageComputeParams) {
         isDraggingMarkerRef.current = false;
         const ll = marker.getLngLat();
         dragPreviewPendingRef.current = null;
+        if (dragStartPos && metersBetween(dragStartPos, ll) < MICRO_DRAG_M) {
+          // Wiggle: snap back instead of detaching a node-anchored origin
+          marker.setLngLat(dragStartPos);
+          if (previewRanThisDrag) {
+            // Wander-and-return painted low-res previews; force a full repaint
+            c.setCoverageRecalcNonce((n) => n + 1);
+          }
+          return;
+        }
+        // An 8-14 m move can round into the same originKey cell; bump the
+        // nonce so the low-res preview is always replaced
+        if (previewRanThisDrag) c.setCoverageRecalcNonce((n) => n + 1);
         setToolFromId(null);
         setToolVirtualPos([ll.lng, ll.lat]);
       });
       coverageOriginMarkerRef.current = marker;
     }
-  }, [activeTool, toolStep, toolFromId, toolVirtualPos, nodes, mbMapRef, isDraggingMarkerRef, c.coverageAntennaHeightMRef, renderCoverageToImageSource, setToolFromId, setToolVirtualPos]);
+    // c.* used in drag closures are stable setters/refs; depending on the whole
+    // `c` object (new identity per render) would re-run this every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTool, toolStep, toolFromId, toolVirtualPos, nodes, mbMapRef, isDraggingMarkerRef, c.coverageAntennaHeightMRef, ensureCoveragePool, renderCoverageToImageSource, setToolFromId, setToolVirtualPos]);
 
   useEffect(() => {
     return () => {
@@ -936,6 +1188,11 @@ export function useCoverageCompute(params: CoverageComputeParams) {
       }
     };
   }, []);
+
+  // Pre-warm workers + ITM WASM while the user is still picking an origin
+  useEffect(() => {
+    if (activeTool === "coverage") ensureCoveragePool().warmup();
+  }, [activeTool, ensureCoveragePool]);
 
   // While picking, the next map click adds a virtual merge origin and exits.
   // Auto-cancels if the user navigates away from the coverage tool.
@@ -1036,10 +1293,19 @@ export function useCoverageCompute(params: CoverageComputeParams) {
     };
   }, []);
 
+  /** Panel Cancel: the committed computeKey was never painted, so matching
+   *  settings must offer Recalculate. */
+  const setCoverageParamsDirtyStable = c.setCoverageParamsDirty;
+  const markComputeCancelled = useCallback(() => {
+    cancelledComputeKeyRef.current = lastComputedKeyRef.current;
+    setCoverageParamsDirtyStable(true);
+  }, [setCoverageParamsDirtyStable]);
+
   return {
     coverageRadiusKm,
     coverageRequestIdRef,
     skipNextCoverageComputeRef,
+    markComputeCancelled,
     coveragePoolRef,
     coverageContoursRef,
     coverageRaysRef,

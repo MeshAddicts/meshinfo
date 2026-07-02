@@ -15,8 +15,20 @@ export function useCoverageState() {
   const [isComputingCoverage, setIsComputingCoverage] = useState(false);
   const [isFetchingCoverageTerrain, setIsFetchingCoverageTerrain] = useState(false);
   const [coverageError, setCoverageError] = useState<string | null>(null);
-  // Bumped by the panel's Retry button to force a recompute
+  // Retry button: forces a recompute and busts the raster fetch cache
   const [coverageRetryNonce, setCoverageRetryNonce] = useState(0);
+  // Recalculate button (manual mode): forces a recompute, reuses cached rasters
+  const [coverageRecalcNonce, setCoverageRecalcNonce] = useState(0);
+  // Auto-recompute on setting changes (persisted); off = dirty flag + Recalculate
+  const [coverageAutoRecalc, setCoverageAutoRecalcRaw] = useState(() =>
+    readJson<boolean>(LS_KEYS.coverageAutoRecalc, true),
+  );
+  const setCoverageAutoRecalc = useCallback((v: boolean) => {
+    setCoverageAutoRecalcRaw(v);
+    writeJson(LS_KEYS.coverageAutoRecalc, v);
+  }, []);
+  // Settings changed but the recompute is deferred (manual mode)
+  const [coverageParamsDirty, setCoverageParamsDirty] = useState(false);
   // total === 0 means idle / drag preview / terrain fetch
   const [coverageProgress, setCoverageProgress] = useState<{ completed: number; total: number }>({ completed: 0, total: 0 });
   const [coverageDemSource, setCoverageDemSource] = useState<DemSource | null>(null);
@@ -106,6 +118,9 @@ export function useCoverageState() {
     isFetchingCoverageTerrain, setIsFetchingCoverageTerrain,
     coverageError, setCoverageError,
     coverageRetryNonce, setCoverageRetryNonce,
+    coverageRecalcNonce, setCoverageRecalcNonce,
+    coverageAutoRecalc, setCoverageAutoRecalc,
+    coverageParamsDirty, setCoverageParamsDirty,
     coverageProgress, setCoverageProgress,
     coverageDemSource, setCoverageDemSource,
     keepCoveragePaint, setKeepCoveragePaint,

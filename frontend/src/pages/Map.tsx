@@ -2959,10 +2959,16 @@ export function Map() {
             coverageCompute.coveragePoolRef.current?.terminate();
             coverageCompute.coveragePoolRef.current = null;
             coverageCompute.coverageRequestIdRef.current += 1;
+            // Flag the never-painted settings so re-selecting them offers Recalculate
+            coverageCompute.markComputeCancelled();
             coverage.setIsComputingCoverage(false);
             coverage.setIsFetchingCoverageTerrain(false);
             coverage.setCoverageProgress({ completed: 0, total: 0 });
           }}
+          autoRecalc={coverage.coverageAutoRecalc}
+          onAutoRecalcChange={coverage.setCoverageAutoRecalc}
+          paramsDirty={coverage.coverageParamsDirty}
+          onRecalculate={() => coverage.setCoverageRecalcNonce((n) => n + 1)}
           rxHardwareIdx={coverage.coverageRxHardwareIdx}
           onRxHardwareIdxChange={coverage.setCoverageRxHardwareIdx}
           rxAntennaIdx={coverage.coverageRxAntennaIdx}
