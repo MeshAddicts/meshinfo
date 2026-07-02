@@ -32,6 +32,8 @@ export const LS_KEYS = {
   coverageAutoRecalc: "meshinfo.map.coverageAutoRecalc",
   /** Last-used coverage settings (semantic CoveragePreset payload). */
   coverageLastSettings: "meshinfo.map.coverageLastSettings",
+  /** Last-used LOS settings (frequency, modem preset, per-endpoint hw/antenna/height). */
+  losSettings: "meshinfo.map.losSettings",
 } as const;
 
 export function readJson<T>(key: string, fallback: T): T {

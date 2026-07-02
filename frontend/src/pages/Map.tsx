@@ -420,6 +420,7 @@ export function Map() {
     losVirtualTo: losState.losVirtualTo,
     losFromHeightM: losState.losFromHeightM,
     losToHeightM: losState.losToHeightM,
+    losFreqMhz: losState.losFreqMhz,
     terrain3D, styleEpoch, nodes,
     losResult: losState.losResult,
     mbMapRef, losTubeLayerRef,
@@ -558,6 +559,36 @@ export function Map() {
       coverageCompute.coverageRaysRef.current = null;
       coverageCompute.coverageMarginRef.current = null;
     }
+  };
+
+  // Swap LOS endpoints including their per-endpoint configs; the compute
+  // effect picks the change up via its endpoint-scalar deps.
+  const swapLosEndpoints = () => {
+    const fid = toolFromId;
+    setToolFromId(toolToId);
+    setToolToId(fid);
+    const vf = losState.losVirtualFrom;
+    losState.setLosVirtualFrom(losState.losVirtualTo);
+    losState.setLosVirtualTo(vf);
+    const hw = losState.losFromHwIdx;
+    losState.setLosFromHwIdx(losState.losToHwIdx);
+    losState.setLosToHwIdx(hw);
+    const ant = losState.losFromAntIdx;
+    losState.setLosFromAntIdx(losState.losToAntIdx);
+    losState.setLosToAntIdx(ant);
+    const h = losState.losFromHeightM;
+    losState.setLosFromHeightM(losState.losToHeightM);
+    losState.setLosToHeightM(h);
+  };
+
+  // Typed "lat, lng" for a LOS endpoint becomes a virtual pin (detaches any node anchor)
+  const setLosFromPosition = (pos: [number, number]) => {
+    setToolFromId(null);
+    losState.setLosVirtualFrom(pos);
+  };
+  const setLosToPosition = (pos: [number, number]) => {
+    setToolToId(null);
+    losState.setLosVirtualTo(pos);
   };
 
   // Draw shortest traceroute path on both providers
@@ -2083,9 +2114,10 @@ export function Map() {
       map.on("click", (e) => {
         const t = activeToolRef.current;
         const step = toolStepRef.current;
-        // Ignore if clicking on a node layer (handled by onNodeLayerClick)
+        // Ignore if clicking on a node layer (handled by onNodeLayerClick) — the
+        // label layers count too, or a label click drops a pin beside the node.
         const features = map.queryRenderedFeatures(e.point, {
-          layers: ["unclustered-nodes", "plain-nodes", "clusters", SPIDERFY_LAYER_NODES].filter((id) => map.getLayer(id)),
+          layers: ["unclustered-nodes", "plain-nodes", "unclustered-labels", "plain-labels", "clusters", SPIDERFY_LAYER_NODES].filter((id) => map.getLayer(id)),
         });
         if (features.length > 0) return;
 
@@ -2937,7 +2969,7 @@ export function Map() {
               : activeTool === "scan"
                 ? "Scan: pick an origin (or click anywhere for a virtual location)"
                 : activeTool === "los"
-                  ? "LOS: pick the first node"
+                  ? "LOS: pick the first node (or click anywhere on the map)"
                   : "Traceroute: pick the first node"
           }
           hint="Press Esc to cancel"
@@ -2948,7 +2980,7 @@ export function Map() {
         <MapToolPrompt
           message={
             activeTool === "los"
-              ? "LOS: pick the second node"
+              ? "LOS: pick the second node (or click anywhere on the map)"
               : "Traceroute: pick the second node"
           }
           hint="Press Esc to cancel"
@@ -2962,14 +2994,15 @@ export function Map() {
           result={losState.losResult}
           fromLabel={
             toolFromId
-              ? ((nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.shortname ?? toolFromId.slice(0, 8))
+              // `||` not `??` — some nodes report an empty shortname
+              ? ((nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.shortname?.trim() || toolFromId.slice(0, 8))
               : losState.losVirtualFrom
                 ? `${losState.losVirtualFrom[1].toFixed(5)}, ${losState.losVirtualFrom[0].toFixed(5)}`
                 : ""
           }
           toLabel={
             toolToId
-              ? ((nodes[toolToId] ?? nodes[`!${toolToId}`])?.shortname ?? toolToId.slice(0, 8))
+              ? ((nodes[toolToId] ?? nodes[`!${toolToId}`])?.shortname?.trim() || toolToId.slice(0, 8))
               : losState.losVirtualTo
                 ? `${losState.losVirtualTo[1].toFixed(5)}, ${losState.losVirtualTo[0].toFixed(5)}`
                 : ""
@@ -2989,6 +3022,21 @@ export function Map() {
           toHwIdx={losState.losToHwIdx} onToHwIdxChange={losState.setLosToHwIdx}
           toAntIdx={losState.losToAntIdx} onToAntIdxChange={losState.setLosToAntIdx}
           toHeightM={losState.losToHeightM} onToHeightChange={losState.setLosToHeightM}
+          freqMhz={losState.losFreqMhz} onFreqMhzChange={losState.setLosFreqMhz}
+          presetIdx={losState.losPresetIdx} onPresetIdxChange={losState.setLosPresetIdx}
+          fromPosition={
+            toolFromId
+              ? (() => { const p = (nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.map_position; return p ? [p[0], p[1]] as [number, number] : null; })()
+              : losState.losVirtualFrom
+          }
+          toPosition={
+            toolToId
+              ? (() => { const p = (nodes[toolToId] ?? nodes[`!${toolToId}`])?.map_position; return p ? [p[0], p[1]] as [number, number] : null; })()
+              : losState.losVirtualTo
+          }
+          onFromPositionChange={setLosFromPosition}
+          onToPositionChange={setLosToPosition}
+          onSwapEndpoints={swapLosEndpoints}
           demSource={losState.losDemSource}
           onProfileHover={losCompute.handleLosProfileHover}
         />

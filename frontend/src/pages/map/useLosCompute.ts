@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { env } from "../../env";
 import { effectiveAltitudeMslM } from "../nodes/altitudeAssessment";
 import { normalizeLng, shortestLngDelta } from "./geo";
-import { computeP2PLoss } from "./itm";
+import { computeP2PLoss, isItmAvailable } from "./itm";
 import { DEFAULT_ITM_ENV } from "./itmEnv";
 import { analyzeLineOfSight, haversineKm, type LoSResult } from "./losAnalysis";
 import { losPointsToTubeData, LosTubeLayer, obstructionsToGeoJSON, pickObstructions } from "./losTubeLayer";
@@ -25,6 +25,8 @@ type LosComputeParams = {
   losVirtualTo: [number, number] | null;
   losFromHeightM: number;
   losToHeightM: number;
+  /** Link frequency (MHz) — drives Fresnel geometry and ITM. */
+  losFreqMhz: number;
   terrain3D: boolean;
   /** Bumped on style.load — re-pushes tube/obstructions after setStyle wipes them. */
   styleEpoch: number;
@@ -43,7 +45,7 @@ export function useLosCompute(params: LosComputeParams) {
   const {
     activeTool, toolStep, toolFromId, toolToId,
     losVirtualFrom, losVirtualTo, losFromHeightM, losToHeightM,
-    terrain3D, styleEpoch, nodes, losResult,
+    losFreqMhz, terrain3D, styleEpoch, nodes, losResult,
     mbMapRef, losTubeLayerRef,
     setLosResult, setLosDemSource, setLosError, setIsComputingLos,
     setLosTerrainWarning,
@@ -81,6 +83,12 @@ export function useLosCompute(params: LosComputeParams) {
     losHoverMarkerRef.current?.remove();
     losHoverMarkerRef.current = null;
   }, []);
+
+  // Warm the ITM WASM while the user is still picking endpoints so the first
+  // result doesn't pay tile fetch + module load sequentially.
+  useEffect(() => {
+    if (activeTool === "los") void isItmAvailable();
+  }, [activeTool]);
 
   const handleLosProfileHover = useCallback((fraction: number | null) => {
     const mb = mbMapRef.current;
@@ -233,7 +241,7 @@ export function useLosCompute(params: LosComputeParams) {
           toAltitudeM: toAltitude,
           fromAntennaHeightM: losFromHeightM,
           toAntennaHeightM: losToHeightM,
-          freqGHz: 0.915,
+          freqGHz: losFreqMhz / 1000,
           samples,
           queryTerrainM: (lng, lat) => {
             const elev = sampleDEMAt(dem, lng, lat);
@@ -311,7 +319,7 @@ export function useLosCompute(params: LosComputeParams) {
       if (!cancelled) console.warn("[Map] LoS run failed:", err);
     });
     return () => { cancelled = true; };
-  }, [activeTool, toolStep, fromLng, fromLat, fromAlt, toLng, toLat, toAlt, losFromHeightM, losToHeightM, terrain3D, mbMapRef, setLosResult, setLosDemSource, setLosError, setIsComputingLos, setLosTerrainWarning]);
+  }, [activeTool, toolStep, fromLng, fromLat, fromAlt, toLng, toLat, toAlt, losFromHeightM, losToHeightM, losFreqMhz, terrain3D, mbMapRef, setLosResult, setLosDemSource, setLosError, setIsComputingLos, setLosTerrainWarning]);
 
   // Push LoS result → 3D tube layer + obstruction source.
   // Altitudes are scaled by terrain exaggeration to stay pinned to the visual surface.

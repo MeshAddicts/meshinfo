@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { LoSResult } from "./losAnalysis";
 
@@ -26,17 +26,28 @@ export function ElevationProfile({
   onHoverFraction?: (t: number | null) => void;
 }) {
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  // Keyboard-nav announcement for screen readers (pointer moves stay silent)
+  const [announce, setAnnounce] = useState("");
 
   const plotW = WIDTH - MARGIN.left - MARGIN.right;
   const plotH = HEIGHT - MARGIN.top - MARGIN.bottom;
 
-  const { xScale, yScale, yTicks } = useMemo(() => {
+  // The orange map marker must not outlive the chart (error/terrain-off swaps this tree out)
+  useEffect(() => () => { onHoverFraction?.(null); }, [onHoverFraction]);
+
+  // Scales AND path strings memoized together — hover re-renders at pointer rate
+  // and must not rebuild five path strings over every sample each move.
+  const { xScale, yScale, yTicks, terrainPath, fresnelPath, fresnel60Path, chordPath } = useMemo(() => {
     const pts = result.points;
     if (pts.length === 0) {
       return {
         xScale: (_x: number) => 0,
         yScale: (_y: number) => 0,
         yTicks: [] as number[],
+        terrainPath: "",
+        fresnelPath: "",
+        fresnel60Path: "",
+        chordPath: "",
       };
     }
 
@@ -62,7 +73,40 @@ export function ElevationProfile({
     const ticks: number[] = [];
     for (let i = 0; i <= tickCount; i++) ticks.push(paddedMin + step * i);
 
-    return { xScale: xs, yScale: ys, yTicks: ticks };
+    const terrain =
+      `M ${xs(0)},${plotH} ` +
+      pts.map((p) => `L ${xs(p.distanceKm)},${ys(p.effectiveGround)}`).join(" ") +
+      ` L ${xs(result.totalDistanceKm)},${plotH} Z`;
+
+    // Fresnel polygon around chord
+    const fresnelUpper = pts
+      .map((p) => `${xs(p.distanceKm)},${ys(p.chord + p.fresnelRadius)}`)
+      .join(" L ");
+    const fresnelLower = [...pts]
+      .reverse()
+      .map((p) => `${xs(p.distanceKm)},${ys(p.chord - p.fresnelRadius)}`)
+      .join(" L ");
+
+    // 60% Fresnel = usable threshold
+    const fresnel60Upper = pts
+      .map((p) => `${xs(p.distanceKm)},${ys(p.chord + p.fresnelRadius * 0.6)}`)
+      .join(" L ");
+    const fresnel60Lower = [...pts]
+      .reverse()
+      .map((p) => `${xs(p.distanceKm)},${ys(p.chord - p.fresnelRadius * 0.6)}`)
+      .join(" L ");
+
+    return {
+      xScale: xs,
+      yScale: ys,
+      yTicks: ticks,
+      terrainPath: terrain,
+      fresnelPath: `M ${fresnelUpper} L ${fresnelLower} Z`,
+      fresnel60Path: `M ${fresnel60Upper} L ${fresnel60Lower} Z`,
+      chordPath:
+        `M ${xs(0)},${ys(result.fromHeightM)} ` +
+        `L ${xs(result.totalDistanceKm)},${ys(result.toHeightM)}`,
+    };
   }, [result, plotW, plotH]);
 
   if (result.points.length === 0) {
@@ -72,37 +116,6 @@ export function ElevationProfile({
       </div>
     );
   }
-
-  const terrainPath =
-    `M ${xScale(0)},${plotH} ` +
-    result.points
-      .map((p) => `L ${xScale(p.distanceKm)},${yScale(p.effectiveGround)}`)
-      .join(" ") +
-    ` L ${xScale(result.totalDistanceKm)},${plotH} Z`;
-
-  // Fresnel polygon around chord
-  const fresnelUpper = result.points
-    .map((p) => `${xScale(p.distanceKm)},${yScale(p.chord + p.fresnelRadius)}`)
-    .join(" L ");
-  const fresnelLower = [...result.points]
-    .reverse()
-    .map((p) => `${xScale(p.distanceKm)},${yScale(p.chord - p.fresnelRadius)}`)
-    .join(" L ");
-  const fresnelPath = `M ${fresnelUpper} L ${fresnelLower} Z`;
-
-  // 60% Fresnel = usable threshold
-  const fresnel60Upper = result.points
-    .map((p) => `${xScale(p.distanceKm)},${yScale(p.chord + p.fresnelRadius * 0.6)}`)
-    .join(" L ");
-  const fresnel60Lower = [...result.points]
-    .reverse()
-    .map((p) => `${xScale(p.distanceKm)},${yScale(p.chord - p.fresnelRadius * 0.6)}`)
-    .join(" L ");
-  const fresnel60Path = `M ${fresnel60Upper} L ${fresnel60Lower} Z`;
-
-  const chordPath =
-    `M ${xScale(0)},${yScale(result.fromHeightM)} ` +
-    `L ${xScale(result.totalDistanceKm)},${yScale(result.toHeightM)}`;
 
   const losColor = result.losClear
     ? (result.fresnelClear ? "#06b6d4" : "#f97316")
@@ -116,6 +129,12 @@ export function ElevationProfile({
     onHoverFraction?.(
       result.totalDistanceKm > 0 ? result.points[clamped].distanceKm / result.totalDistanceKm : 0,
     );
+    const p = result.points[clamped];
+    setAnnounce(
+      `${p.distanceKm.toFixed(2)} kilometers: ground ${Math.round(p.ground)} meters, ` +
+      `path ${Math.round(p.chord)} meters, clearance ${Math.round(p.clearance) || 0} meters` +
+      (p.blocked ? ", blocked" : p.fresnelIntruded ? ", Fresnel intrusion" : ""),
+    );
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<SVGSVGElement>) => {
@@ -124,7 +143,13 @@ export function ElevationProfile({
     else if (e.key === "ArrowLeft") { e.preventDefault(); setHoverByIndex(cur - 1); }
     else if (e.key === "Home") { e.preventDefault(); setHoverByIndex(0); }
     else if (e.key === "End") { e.preventDefault(); setHoverByIndex(result.points.length - 1); }
-    else if (e.key === "Escape") { setHoverIdx(null); onHoverFraction?.(null); }
+    else if (e.key === "Escape") {
+      // Only clear the hover — without this, the same keypress reaches the
+      // document handler and closes the whole LOS tool.
+      e.stopPropagation();
+      setHoverIdx(null);
+      onHoverFraction?.(null);
+    }
   };
 
   const verdict = result.losClear
@@ -145,31 +170,27 @@ export function ElevationProfile({
       onHoverFraction?.(null);
       return;
     }
-    const distKm = (x / plotW) * result.totalDistanceKm;
-    let bestIdx = 0;
-    let bestDiff = Infinity;
-    for (let i = 0; i < result.points.length; i++) {
-      const diff = Math.abs(result.points[i].distanceKm - distKm);
-      if (diff < bestDiff) {
-        bestDiff = diff;
-        bestIdx = i;
-      }
-    }
+    // Samples are uniformly spaced (distanceKm = total·i/samples) — index math is exact
+    const frac = Math.min(1, Math.max(0, x / plotW));
+    const bestIdx = Math.round(frac * (result.points.length - 1));
     setHoverIdx(bestIdx);
     onHoverFraction?.(result.totalDistanceKm > 0 ? result.points[bestIdx].distanceKm / result.totalDistanceKm : 0);
   };
 
   return (
     <div className="relative">
+      {/* Announces keyboard-driven hover values; the visual tooltip is aria-hidden to SRs */}
+      <div className="sr-only" role="status" aria-live="polite">{announce}</div>
       <svg
         width="100%"
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-        className="block cursor-crosshair focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/60 rounded"
+        className="block cursor-crosshair touch-none focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/60 rounded"
         role="img"
         aria-label={ariaLabel}
         tabIndex={0}
         onKeyDown={handleKeyDown}
         onBlur={() => { setHoverIdx(null); onHoverFraction?.(null); }}
+        onPointerDown={handlePointerMove}
         onPointerMove={handlePointerMove}
         onPointerLeave={() => { setHoverIdx(null); onHoverFraction?.(null); }}
       >
@@ -366,8 +387,8 @@ export function ElevationProfile({
                   : "text-emerald-400"
               }`}
             >
-              {hoverPoint.clearance >= 0 ? "+" : ""}
-              {Math.round(hoverPoint.clearance)}m
+              {(Math.round(hoverPoint.clearance) || 0) >= 0 ? "+" : ""}
+              {Math.round(hoverPoint.clearance) || 0}m
             </span>
           </div>
           {hoverPoint.fresnelRadius > 0 && (

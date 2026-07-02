@@ -89,7 +89,7 @@ export function snapshotPreset(name: string, s: CoveragePanelSettings): Coverage
 }
 
 /** Hardware label → index; unknown labels land on the Custom slot so txDbm is honored. */
-function resolveHardware(label: string): { idx: number; isCustom: boolean } {
+export function resolveHardware(label: string): { idx: number; isCustom: boolean } {
   const i = COMMON_HARDWARE.findIndex((h) => h.label === label);
   if (i >= 0) return { idx: i, isCustom: COMMON_HARDWARE[i].isCustom ?? false };
   const custom = COMMON_HARDWARE.findIndex((h) => h.isCustom);
@@ -97,7 +97,7 @@ function resolveHardware(label: string): { idx: number; isCustom: boolean } {
 }
 
 /** Antenna label → index; unknown labels resolve to the closest gain. */
-function resolveAntenna(label: string, dbi: number): number {
+export function resolveAntenna(label: string, dbi: number): number {
   const i = COMMON_ANTENNAS.findIndex((a) => a.label === label);
   if (i >= 0) return i;
   let best = 0;

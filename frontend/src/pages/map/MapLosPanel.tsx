@@ -5,36 +5,128 @@ import {
   COMMON_HARDWARE,
   effectiveSensitivityDbm,
   MESHTASTIC_PRESETS,
+  type ModemPreset,
 } from "./coverageAnalysis";
 import { ElevationProfile } from "./ElevationProfile";
+import { parseLatLng } from "./helpers";
+import { CABLE_LOSS_DB } from "./itmEnv";
 import type { LoSResult } from "./losAnalysis";
 import type { DemSource } from "./terrainRgb";
 import { useBottomSheetGesture } from "./useBottomSheet";
 
-/** Modem preset assumed for link-budget readout in this panel.
- *  LongFast = Meshtastic default mesh setting; -130 dBm typical SX1262 sensitivity. */
-const LOS_PRESET = MESHTASTIC_PRESETS.find((p) => p.id === "LongFast") ?? MESHTASTIC_PRESETS[1];
+/** Fallback modem preset when the selected index is stale/out of range. */
+const DEFAULT_LOS_PRESET = MESHTASTIC_PRESETS.find((p) => p.id === "LongFast") ?? MESHTASTIC_PRESETS[1];
 
-/** One-direction link budget. Returns null if hw/ant lookups fail. */
+/** Common LoRa region frequencies (distinct MHz values; several regions share one). */
+const LORA_FREQS: { mhz: number; label: string }[] = [
+  { mhz: 915, label: "915 · US/ANZ" },
+  { mhz: 868, label: "868 · EU/RU" },
+  { mhz: 433, label: "433 · EU433" },
+  { mhz: 470, label: "470 · CN" },
+  { mhz: 865, label: "865 · IN" },
+  { mhz: 920, label: "920 · JP/KR/TH" },
+  { mhz: 923, label: "923 · TW/MY/SG" },
+];
+
+/** Normalize −0 → 0 after rounding so sub-half-dB negatives don't show a red unsigned "0". */
+function roundSigned(v: number): number {
+  return Math.round(v) || 0;
+}
+
+/** One-direction link budget vs the given modem preset. Returns null if hw/ant lookups fail. */
 function dirLinkBudget(
   txHwIdx: number,
   txAntIdx: number,
   rxHwIdx: number,
   rxAntIdx: number,
   itmLossDb: number,
+  preset: ModemPreset,
 ): { rssiDbm: number; marginDb: number; sensitivityDbm: number } | null {
   const txHw = COMMON_HARDWARE[txHwIdx];
   const txAnt = COMMON_ANTENNAS[txAntIdx];
   const rxHw = COMMON_HARDWARE[rxHwIdx];
   const rxAnt = COMMON_ANTENNAS[rxAntIdx];
   if (!txHw || !txAnt || !rxHw || !rxAnt) return null;
-  const rssiDbm = txHw.txDbm + txAnt.dbi + rxAnt.dbi - itmLossDb;
+  // CABLE_LOSS_DB keeps this consistent with coverage/scan (itmEnv shares it for that reason)
+  const rssiDbm = txHw.txDbm + txAnt.dbi + rxAnt.dbi - itmLossDb - CABLE_LOSS_DB;
   const sensitivityDbm = effectiveSensitivityDbm(
-    LOS_PRESET.sensitivityDbm,
+    preset.sensitivityDbm,
     rxHw.chipset,
     rxHw.sensitivityOffsetDb ?? 0,
   );
   return { rssiDbm, marginDb: rssiDbm - sensitivityDbm, sensitivityDbm };
+}
+
+/** Endpoint name that click-edits into a "lat, lng" input (mirrors the coverage origin editor). */
+function EndpointCoordLabel({
+  label,
+  color,
+  position,
+  onPositionChange,
+}: {
+  label: string;
+  color: string;
+  position: [number, number] | null;
+  onPositionChange?: (pos: [number, number]) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [bad, setBad] = useState(false);
+
+  if (!onPositionChange || !editing) {
+    return (
+      <button
+        type="button"
+        disabled={!onPositionChange}
+        onClick={() => {
+          setDraft(position ? `${position[1].toFixed(5)}, ${position[0].toFixed(5)}` : "");
+          setBad(false);
+          setEditing(true);
+        }}
+        title={onPositionChange ? "Click to enter coordinates (lat, lng)" : undefined}
+        className="font-medium truncate enabled:cursor-pointer enabled:hover:underline decoration-dotted underline-offset-2"
+        style={{ color }}
+      >
+        {label}
+      </button>
+    );
+  }
+  return (
+    <input
+      type="text"
+      autoFocus
+      value={draft}
+      placeholder="lat, lng"
+      aria-label={`${label} coordinates as lat, lng`}
+      aria-invalid={bad}
+      onChange={(e) => { setDraft(e.target.value); if (bad) setBad(false); }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          const parsed = parseLatLng(draft);
+          if (!parsed) { setBad(true); return; }
+          setEditing(false);
+          onPositionChange(parsed);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          setEditing(false);
+        }
+      }}
+      onBlur={() => {
+        // Bad value on blur = cancel, so a click-away can't move the endpoint to nonsense
+        const parsed = parseLatLng(draft);
+        setEditing(false);
+        setBad(false);
+        if (parsed) onPositionChange(parsed);
+      }}
+      className={`min-w-0 w-40 rounded-md bg-white/10 border px-1.5 py-0.5 text-[11px] font-mono text-gray-100
+        focus:outline-hidden focus:ring-1 ${
+          bad
+            ? "border-red-500/60 focus:border-red-500/80 focus:ring-red-500/40"
+            : "border-cyan-500/40 focus:border-cyan-500/70 focus:ring-cyan-500/40"
+        }`}
+    />
+  );
 }
 
 /** Endpoint config column: hardware/antenna/height for one end of the LOS link. */
@@ -60,7 +152,8 @@ function EndpointConfig({
   const [heightInput, setHeightInput] = useState(String(heightM));
   useEffect(() => { setHeightInput(String(heightM)); }, [heightM]);
   const commitHeight = () => {
-    const n = Number(heightInput.trim());
+    // Accept decimal comma — mobile keyboards emit "," in most non-US locales
+    const n = Number(heightInput.trim().replace(",", "."));
     if (!Number.isFinite(n) || heightInput.trim() === "") {
       onHeightChange(2);
       setHeightInput("2");
@@ -79,11 +172,13 @@ function EndpointConfig({
         <select
           value={hwIdx}
           onChange={(e) => onHwIdxChange(Number(e.target.value))}
+          aria-label={`${label} hardware`}
           className="w-full rounded border border-white/10 bg-white/5 px-1 py-0.5 text-[10px] text-gray-200
             focus:border-cyan-500/50 focus:outline-hidden [&>option]:bg-gray-800 [&>option]:text-gray-200"
         >
+          {/* Custom is a dead end here (no TX-power input like coverage has) — hide it */}
           {COMMON_HARDWARE.map((h, i) => (
-            <option key={i} value={i}>{h.label} ({h.txDbm} dBm)</option>
+            h.isCustom ? null : <option key={i} value={i}>{h.label} ({h.txDbm} dBm)</option>
           ))}
         </select>
       </div>
@@ -92,6 +187,7 @@ function EndpointConfig({
         <select
           value={antIdx}
           onChange={(e) => onAntIdxChange(Number(e.target.value))}
+          aria-label={`${label} antenna`}
           className="w-full rounded border border-white/10 bg-white/5 px-1 py-0.5 text-[10px] text-gray-200
             focus:border-cyan-500/50 focus:outline-hidden [&>option]:bg-gray-800 [&>option]:text-gray-200"
         >
@@ -154,6 +250,13 @@ export function MapLosPanel({
   toHwIdx, onToHwIdxChange,
   toAntIdx, onToAntIdxChange,
   toHeightM, onToHeightChange,
+  freqMhz, onFreqMhzChange,
+  presetIdx, onPresetIdxChange,
+  fromPosition = null,
+  toPosition = null,
+  onFromPositionChange,
+  onToPositionChange,
+  onSwapEndpoints,
   demSource,
   onProfileHover,
 }: {
@@ -178,6 +281,18 @@ export function MapLosPanel({
   toHwIdx: number; onToHwIdxChange: (idx: number) => void;
   toAntIdx: number; onToAntIdxChange: (idx: number) => void;
   toHeightM: number; onToHeightChange: (m: number) => void;
+  /** Link frequency (MHz). */
+  freqMhz: number; onFreqMhzChange: (mhz: number) => void;
+  /** Modem preset index into MESHTASTIC_PRESETS (drives the margin readout). */
+  presetIdx: number; onPresetIdxChange: (idx: number) => void;
+  /** Current endpoint coords (for the click-to-edit prefill). */
+  fromPosition?: [number, number] | null;
+  toPosition?: [number, number] | null;
+  /** Commit a typed "lat, lng" for an endpoint (detaches a node anchor). */
+  onFromPositionChange?: (pos: [number, number]) => void;
+  onToPositionChange?: (pos: [number, number]) => void;
+  /** Swap from/to endpoints including their hw/antenna/height configs. */
+  onSwapEndpoints?: () => void;
   /** DEM tile source (null before first compute). */
   demSource: DemSource | null;
   /** Fires with 0-1 distance fraction on chart hover. */
@@ -372,19 +487,23 @@ export function MapLosPanel({
     red: "bg-red-400",
   }[statusColor];
 
+  const losPreset = MESHTASTIC_PRESETS[presetIdx] ?? DEFAULT_LOS_PRESET;
   // Link budget per direction (TX→RX = from→to and to→from). Both must work for a usable link.
   const fwd = los.itmLossDb != null
-    ? dirLinkBudget(fromHwIdx, fromAntIdx, toHwIdx, toAntIdx, los.itmLossDb)
+    ? dirLinkBudget(fromHwIdx, fromAntIdx, toHwIdx, toAntIdx, los.itmLossDb, losPreset)
     : null;
   const rev = los.itmLossDb != null
-    ? dirLinkBudget(toHwIdx, toAntIdx, fromHwIdx, fromAntIdx, los.itmLossDb)
+    ? dirLinkBudget(toHwIdx, toAntIdx, fromHwIdx, fromAntIdx, los.itmLossDb, losPreset)
     : null;
   const worstMargin = fwd && rev ? Math.min(fwd.marginDb, rev.marginDb) : null;
-  const marginColor = worstMargin == null
+  // Color from the ROUNDED value so a red pill can't sit next to a "0 dB" reading
+  const worstMarginR = worstMargin == null ? null : roundSigned(worstMargin);
+  const marginColor = worstMarginR == null
     ? ""
-    : worstMargin >= 10 ? "text-emerald-300"
-    : worstMargin >= 0 ? "text-yellow-300"
+    : worstMarginR >= 10 ? "text-emerald-300"
+    : worstMarginR >= 0 ? "text-yellow-300"
     : "text-red-300";
+  const elevDiffR = roundSigned(los.elevationDiffM);
 
   return (
     <div
@@ -417,17 +536,41 @@ export function MapLosPanel({
             <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
             {statusLabel}
           </span>
-          <div className="text-[11px] text-gray-300 truncate">
-            <span style={{ color: fromColor }} className="font-medium">{fromLabel}</span>
-            <span className="text-gray-500 mx-1.5">→</span>
-            <span style={{ color: toColor }} className="font-medium">{toLabel}</span>
+          <div className="text-[11px] text-gray-300 truncate flex items-center">
+            <EndpointCoordLabel
+              label={fromLabel}
+              color={fromColor}
+              position={fromPosition}
+              onPositionChange={onFromPositionChange}
+            />
+            {onSwapEndpoints ? (
+              <button
+                type="button"
+                onClick={onSwapEndpoints}
+                title="Swap endpoints (incl. hardware/antenna/height)"
+                aria-label="Swap from and to endpoints"
+                className="mx-1 p-0.5 rounded text-gray-500 hover:text-cyan-300 hover:bg-white/10 transition-colors"
+              >
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                </svg>
+              </button>
+            ) : (
+              <span className="text-gray-500 mx-1.5">→</span>
+            )}
+            <EndpointCoordLabel
+              label={toLabel}
+              color={toColor}
+              position={toPosition}
+              onPositionChange={onToPositionChange}
+            />
           </div>
           <span className="text-gray-500 text-[10px]">·</span>
           <span className="text-[11px] text-gray-300">
             <span className="text-gray-500">{los.totalDistanceKm.toFixed(2)}km</span>
             <span className="text-gray-600 mx-1">·</span>
             <span className="text-gray-500">
-              Δ{los.elevationDiffM >= 0 ? "+" : ""}{Math.round(los.elevationDiffM)}m
+              Δ{elevDiffR >= 0 ? "+" : ""}{elevDiffR}m
             </span>
             <span className="text-gray-600 mx-1">·</span>
             <span className="text-gray-500">
@@ -453,19 +596,19 @@ export function MapLosPanel({
                 </span>
               </>
             )}
-            {worstMargin != null && fwd && rev && (
+            {worstMarginR != null && fwd && rev && (
               <>
                 <span className="text-gray-600 mx-1">·</span>
                 <span
                   className={`font-medium ${marginColor}`}
                   title={
-                    `Link margin vs ${LOS_PRESET.label}.\n` +
-                    `${fromLabel} → ${toLabel}: RSSI ${Math.round(fwd.rssiDbm)} dBm, sens ${Math.round(fwd.sensitivityDbm)} dBm → ${fwd.marginDb >= 0 ? "+" : ""}${Math.round(fwd.marginDb)} dB\n` +
-                    `${toLabel} → ${fromLabel}: RSSI ${Math.round(rev.rssiDbm)} dBm, sens ${Math.round(rev.sensitivityDbm)} dBm → ${rev.marginDb >= 0 ? "+" : ""}${Math.round(rev.marginDb)} dB\n` +
+                    `Link margin vs ${losPreset.label} (incl. ${CABLE_LOSS_DB} dB cable loss).\n` +
+                    `${fromLabel} → ${toLabel}: RSSI ${Math.round(fwd.rssiDbm)} dBm, sens ${Math.round(fwd.sensitivityDbm)} dBm → ${roundSigned(fwd.marginDb) >= 0 ? "+" : ""}${roundSigned(fwd.marginDb)} dB\n` +
+                    `${toLabel} → ${fromLabel}: RSSI ${Math.round(rev.rssiDbm)} dBm, sens ${Math.round(rev.sensitivityDbm)} dBm → ${roundSigned(rev.marginDb) >= 0 ? "+" : ""}${roundSigned(rev.marginDb)} dB\n` +
                     `Worst direction shown — both must be positive for a usable link.`
                   }
                 >
-                  {worstMargin >= 0 ? "+" : ""}{Math.round(worstMargin)} dB
+                  {worstMarginR >= 0 ? "+" : ""}{worstMarginR} dB
                   <span className="text-gray-500 ml-1">margin</span>
                 </span>
               </>
@@ -521,8 +664,8 @@ export function MapLosPanel({
               )}
               {worstMargin != null && (
                 <div className="pt-1 border-t border-white/5">
-                  <strong>Link margin:</strong> RX − sensitivity vs <strong>{LOS_PRESET.label}</strong>{" "}
-                  ({LOS_PRESET.sensitivityDbm} dBm). Worst direction shown.
+                  <strong>Link margin:</strong> RX − sensitivity vs <strong>{losPreset.label}</strong>{" "}
+                  ({losPreset.sensitivityDbm} dBm), incl. {CABLE_LOSS_DB} dB cable loss. Worst direction shown.
                 </div>
               )}
               <div className="pt-1 border-t border-white/5">
@@ -551,6 +694,40 @@ export function MapLosPanel({
             </svg>
           </button>
         </div>
+      </div>
+
+      <div className={`flex items-center gap-3 px-3 py-1 border-b border-white/5 text-[10px] text-gray-500 shrink-0 ${minimized ? "max-sm:hidden" : ""}`}>
+        <label className="flex items-center gap-1.5">
+          <span className="uppercase tracking-wider">Freq</span>
+          <select
+            value={freqMhz}
+            onChange={(e) => onFreqMhzChange(Number(e.target.value))}
+            aria-label="Link frequency (LoRa region)"
+            className="rounded border border-white/10 bg-white/5 px-1 py-0.5 text-[10px] text-gray-200
+              focus:border-cyan-500/50 focus:outline-hidden [&>option]:bg-gray-800 [&>option]:text-gray-200"
+          >
+            {!LORA_FREQS.some((f) => f.mhz === freqMhz) && (
+              <option value={freqMhz}>{freqMhz} MHz</option>
+            )}
+            {LORA_FREQS.map((f) => (
+              <option key={f.mhz} value={f.mhz}>{f.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-1.5">
+          <span className="uppercase tracking-wider">Modem</span>
+          <select
+            value={presetIdx}
+            onChange={(e) => onPresetIdxChange(Number(e.target.value))}
+            aria-label="Modem preset for the link-margin readout"
+            className="rounded border border-white/10 bg-white/5 px-1 py-0.5 text-[10px] text-gray-200
+              focus:border-cyan-500/50 focus:outline-hidden [&>option]:bg-gray-800 [&>option]:text-gray-200"
+          >
+            {MESHTASTIC_PRESETS.map((p, i) => (
+              p.isCustom ? null : <option key={p.id} value={i}>{p.label}</option>
+            ))}
+          </select>
+        </label>
       </div>
 
       {terrainWarning && (
