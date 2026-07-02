@@ -35,14 +35,27 @@ interface SpiderfyGroup {
 interface SpiderfyState {
   groups: SpiderfyGroup[];
   lastZoom: number;
+  /** How the fan was opened. Auto fans obey the zoom floor and the reconcile
+   *  pass; click fans are pinned until the user dismisses them (#514). */
+  origin: "click" | "auto";
+  /** Zoom at open time — click fans collapse only when zooming out below it. */
+  openZoom: number;
 }
 
 let activeState: SpiderfyState | null = null;
 
-// Signature of a fan set the user explicitly dismissed (clustering-off). The
-// auto pass refuses to re-fan exactly this set until it changes, so dismissing
-// sticks instead of popping straight back open on the next pan.
+// Signature of a fan set the user explicitly dismissed. The auto passes refuse
+// to re-fan exactly this set until it changes, so dismissing sticks instead of
+// popping straight back open on the next pan/idle.
 let dismissedSignature: string | null = null;
+
+// True while unspiderfy's collapse animation runs — auto passes must not
+// re-fan (or tear down) mid-collapse.
+let collapsing = false;
+
+// Single-flight guard: the clustering-ON auto pass awaits per-cluster worker
+// round-trips and must not overlap itself.
+let clusterPassBusy = false;
 
 /** Stable signature of a set of fanned node ids (order-independent). */
 function groupsSignature(groups: SpiderfyGroup[]): string {
@@ -53,20 +66,28 @@ function groupsSignature(groups: SpiderfyGroup[]): string {
     .join(",");
 }
 
+// MapLibre GL's world is 512px at z0 (not 256 as in classic slippy-map math).
 function pixelsToDegrees(pixels: number, zoom: number): number {
-  return (pixels / (256 * Math.pow(2, zoom))) * 360;
+  return (pixels / (512 * Math.pow(2, zoom))) * 360;
+}
+
+/** Longitude degrees shrink by cos(lat) on screen; widen lng offsets so fans
+ *  stay round away from the equator. */
+function lngScaleAt(lat: number): number {
+  return 1 / Math.max(0.2, Math.cos((lat * Math.PI) / 180));
 }
 
 function circlePositions(
   center: [number, number],
   count: number,
   zoom: number,
-  radiusPx = 40,
+  radiusPx = 80,
 ): [number, number][] {
   const r = pixelsToDegrees(radiusPx, zoom);
+  const kx = lngScaleAt(center[1]);
   return Array.from({ length: count }, (_, i) => {
     const a = (2 * Math.PI * i) / count - Math.PI / 2;
-    return [center[0] + r * Math.cos(a), center[1] + r * Math.sin(a)] as [number, number];
+    return [center[0] + r * Math.cos(a) * kx, center[1] + r * Math.sin(a)] as [number, number];
   });
 }
 
@@ -74,12 +95,13 @@ function spiralPositions(
   center: [number, number],
   count: number,
   zoom: number,
-  basePx = 30,
+  basePx = 60,
 ): [number, number][] {
+  const kx = lngScaleAt(center[1]);
   return Array.from({ length: count }, (_, i) => {
     const a = i * GOLDEN_ANGLE;
     const r = pixelsToDegrees(basePx * Math.sqrt(i + 1), zoom);
-    return [center[0] + r * Math.cos(a), center[1] + r * Math.sin(a)] as [number, number];
+    return [center[0] + r * Math.cos(a) * kx, center[1] + r * Math.sin(a)] as [number, number];
   });
 }
 
@@ -183,6 +205,25 @@ function tryGetLeaves(
 
 /** Fallback: find N nearest nodes to `center` from a caller-supplied raw node pool
  *  (needed because querySourceFeatures hides features inside clusters). */
+// ~2km proximity cap (degrees², lng cos-corrected) for leaf plausibility.
+const LEAF_MAX_D2 = 0.02 * 0.02;
+
+function leafDist2(center: [number, number], f: GeoFeature<GeoPoint, GeoJsonProperties>): number {
+  const c = (f.geometry as GeoPoint).coordinates;
+  const dx = (c[0] - center[0]) * Math.cos((center[1] * Math.PI) / 180);
+  const dy = c[1] - center[1];
+  return dx * dx + dy * dy;
+}
+
+/** Drop leaves implausibly far from the cluster center — a stale cluster_id
+ *  after setData can silently resolve to a different cluster's members. */
+function leavesNear(
+  leaves: GeoFeature<GeoPoint, GeoJsonProperties>[],
+  center: [number, number],
+): GeoFeature<GeoPoint, GeoJsonProperties>[] {
+  return leaves.filter((f) => leafDist2(center, f) < LEAF_MAX_D2);
+}
+
 function findLeavesNearCenter(
   pool: GeoFeature<GeoPoint, GeoJsonProperties>[] | undefined,
   center: [number, number],
@@ -190,19 +231,12 @@ function findLeavesNearCenter(
 ): GeoFeature<GeoPoint, GeoJsonProperties>[] {
   if (!pool || pool.length === 0) return [];
   const withDist = pool
-    .map((f) => {
-      const c = (f.geometry as GeoPoint).coordinates;
-      const dx = c[0] - center[0];
-      const dy = c[1] - center[1];
-      return { f, d2: dx * dx + dy * dy };
-    })
+    .map((f) => ({ f, d2: leafDist2(center, f) }))
     .sort((a, b) => a.d2 - b.d2);
   const n = Math.max(1, Math.min(pointCount || withDist.length, withDist.length));
-  // Cap at ~2km (degrees² at equator) so we don't grab distant nodes on an invalid cluster
-  const maxD2 = 0.02 * 0.02;
   return withDist
     .slice(0, n)
-    .filter((x) => x.d2 < maxD2)
+    .filter((x) => x.d2 < LEAF_MAX_D2)
     .map((x) => x.f);
 }
 
@@ -304,9 +338,11 @@ function renderSpiderfy(
   groups: SpiderfyGroup[],
   zoom: number,
   animate: boolean,
+  origin: "click" | "auto",
 ): Promise<void> {
   const fresh = !isSpiderfied(map);
-  activeState = { groups, lastZoom: zoom };
+  const state: SpiderfyState = { groups, lastZoom: zoom, origin, openZoom: zoom };
+  activeState = state;
   if (fresh) addSpiderfyLayers(map);
 
   if (!animate || !fresh || prefersReducedMotion()) {
@@ -317,6 +353,11 @@ function renderSpiderfy(
   return new Promise<void>((resolve) => {
     const start = performance.now();
     function frame(now: number) {
+      // A newer render/teardown owns the sources now — stop writing stale frames.
+      if (activeState !== state) {
+        resolve();
+        return;
+      }
       const t = Math.min((now - start) / ANIMATE_MS, 1);
       if (!applyData(map, composeData(groups, zoom, t))) {
         removeSpiderfyLayers(map);
@@ -334,19 +375,19 @@ export async function spiderfy(
   map: MlMap,
   clusterId: number,
   center: [number, number],
-  zoom: number,
   animate = true,
   /** Raw node features used as fallback when the cluster API fails. */
   fallbackPool?: GeoFeature<GeoPoint, GeoJsonProperties>[],
   /** Expected member count — sizes the fallback result. */
   pointCount?: number,
+  origin: "click" | "auto" = "click",
 ): Promise<void> {
-  removeSpiderfyLayers(map);
-
   const source = map.getSource("nodes_clustered") as MlGeoJSONSource | undefined;
   if (!source) return;
 
-  let leaves = await tryGetLeaves(source, clusterId);
+  // Resolve leaves BEFORE touching the existing fan, so a failed or stale
+  // lookup never leaves the map fanless.
+  let leaves = leavesNear(await tryGetLeaves(source, clusterId), center);
 
   if (leaves.length === 0) {
     leaves = findLeavesNearCenter(fallbackPool, center, pointCount ?? 0);
@@ -354,7 +395,15 @@ export async function spiderfy(
 
   if (leaves.length === 0) return;
 
-  return renderSpiderfy(map, [{ center, leaves }], zoom, animate);
+  if (origin === "auto") {
+    // A fan opened (or a dismissal started) during the async lookup wins.
+    if (activeState || collapsing) return;
+    // Don't re-fan the set the user just dismissed.
+    if (groupsSignature([{ center, leaves }]) === dismissedSignature) return;
+  }
+
+  removeSpiderfyLayers(map);
+  return renderSpiderfy(map, [{ center, leaves }], map.getZoom(), animate, origin);
 }
 
 /** Spiderfy an explicit set of co-located features. Used when clustering is OFF
@@ -364,19 +413,23 @@ export async function spiderfyFeatures(
   map: MlMap,
   center: [number, number],
   leaves: GeoFeature<GeoPoint, GeoJsonProperties>[],
-  zoom: number,
   animate = true,
 ): Promise<void> {
-  removeSpiderfyLayers(map);
   if (leaves.length === 0) return;
-  return renderSpiderfy(map, [{ center, leaves }], zoom, animate);
+  removeSpiderfyLayers(map);
+  return renderSpiderfy(map, [{ center, leaves }], map.getZoom(), animate, "click");
 }
 
 export async function unspiderfy(map: MlMap): Promise<void> {
-  if (!isSpiderfied(map)) return;
+  if (!isSpiderfied(map)) {
+    // Layers can vanish without us (style swap, map teardown) — don't let the
+    // stale module state block every future auto pass.
+    activeState = null;
+    return;
+  }
 
   const state = activeState;
-  if (!state || !map.getSource(SPIDERFY_SOURCE_NODES)) {
+  if (!state) {
     removeSpiderfyLayers(map);
     return;
   }
@@ -386,18 +439,28 @@ export async function unspiderfy(map: MlMap): Promise<void> {
 
   if (prefersReducedMotion()) { removeSpiderfyLayers(map); return; }
 
+  collapsing = true;
   return new Promise<void>((resolve) => {
     const start = performance.now();
     const duration = ANIMATE_MS * 0.7;
+    const finish = (removeLayers: boolean) => {
+      collapsing = false;
+      if (removeLayers) removeSpiderfyLayers(map);
+      resolve();
+    };
     function frame(now: number) {
+      // A new fan took ownership mid-collapse — stop without destroying it.
+      if (activeState !== null) {
+        finish(false);
+        return;
+      }
       const t = Math.min((now - start) / duration, 1);
       if (!applyData(map, composeData(groups, zoom, 1 - t))) {
-        removeSpiderfyLayers(map);
-        resolve();
+        finish(true);
         return;
       }
       if (t < 1) requestAnimationFrame(frame);
-      else { removeSpiderfyLayers(map); resolve(); }
+      else finish(true);
     }
     requestAnimationFrame(frame);
   });
@@ -411,11 +474,28 @@ export function dismissPlainSpiderfy(map: MlMap): void {
   dismissedSignature = sig; // ...then record what was dismissed
 }
 
+/** Clustering-ON analogue: animated collapse that also remembers the dismissed
+ *  set, so the auto pass can't re-fan the cluster the user just closed. */
+export function dismissClusterSpiderfy(map: MlMap): void {
+  const sig = activeState ? groupsSignature(activeState.groups) : null;
+  void unspiderfy(map).then(() => {
+    // Only record if nothing new opened while the collapse animation ran.
+    if (sig && !activeState) dismissedSignature = sig;
+  });
+}
+
 export function updateSpiderfyPositions(map: MlMap): void {
   if (!activeState || !isSpiderfied(map)) return;
 
   const zoom = map.getZoom();
-  if (zoom < AUTO_SPIDERFY_MIN_ZOOM) {
+  // Auto fans obey the auto-pass zoom floor. Click fans survive until the user
+  // zooms out below where they opened (cluster membership changes down there);
+  // the 0.5 buffer absorbs pinch/trackpad jitter around the open zoom (#514).
+  const floor =
+    activeState.origin === "auto"
+      ? AUTO_SPIDERFY_MIN_ZOOM
+      : Math.min(activeState.openZoom - 0.5, AUTO_SPIDERFY_MIN_ZOOM);
+  if (zoom < floor) {
     removeSpiderfyLayers(map);
     return;
   }
@@ -430,12 +510,11 @@ export async function autoSpiderfyVisibleClusters(
   map: MlMap,
   fallbackPool?: GeoFeature<GeoPoint, GeoJsonProperties>[],
 ): Promise<void> {
-  if (activeState) return;
+  if (clusterPassBusy || collapsing || activeState) return;
   if (!map.getLayer("clusters")) return;
 
   const maxZoom = map.getMaxZoom();
-  const currentZoom = map.getZoom();
-  if (currentZoom < AUTO_SPIDERFY_MIN_ZOOM) return;
+  if (map.getZoom() < AUTO_SPIDERFY_MIN_ZOOM) return;
 
   const clusterFeatures = map.queryRenderedFeatures({ layers: ["clusters"] });
   if (clusterFeatures.length === 0) return;
@@ -443,37 +522,47 @@ export async function autoSpiderfyVisibleClusters(
   const source = map.getSource("nodes_clustered") as MlGeoJSONSource | undefined;
   if (!source) return;
 
-  for (const cluster of clusterFeatures) {
-    const clusterId = cluster.properties?.cluster_id;
-    if (clusterId == null) continue;
+  clusterPassBusy = true;
+  try {
+    for (const cluster of clusterFeatures) {
+      const clusterId = cluster.properties?.cluster_id;
+      if (clusterId == null) continue;
 
-    // Timeout guards against stale cluster_ids after setData
-    const expansionZoom = await new Promise<number | null>((resolve) => {
-      let done = false;
-      const timer = setTimeout(() => { if (!done) { done = true; resolve(null); } }, 500);
-      try {
-        source.getClusterExpansionZoom(clusterId).then((zoom) => {
-          if (done) return;
-          done = true;
-          clearTimeout(timer);
-          resolve(zoom ?? null);
-        }).catch(() => {
-          if (done) return;
-          done = true;
-          clearTimeout(timer);
-          resolve(null);
-        });
-      } catch { if (!done) { done = true; clearTimeout(timer); resolve(null); } }
-    });
+      // Timeout guards against stale cluster_ids after setData
+      const expansionZoom = await new Promise<number | null>((resolve) => {
+        let done = false;
+        const timer = setTimeout(() => { if (!done) { done = true; resolve(null); } }, 500);
+        try {
+          source.getClusterExpansionZoom(clusterId).then((zoom) => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            resolve(zoom ?? null);
+          }).catch(() => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            resolve(null);
+          });
+        } catch { if (!done) { done = true; clearTimeout(timer); resolve(null); } }
+      });
 
-    if (expansionZoom == null) continue;
+      // Revalidate after every await: a manual fan, a dismissal, or a zoom-out
+      // during the worker round-trip means this pass is stale — never stomp it.
+      if (activeState || collapsing) return;
+      if (map.getZoom() < AUTO_SPIDERFY_MIN_ZOOM) return;
 
-    if (expansionZoom >= maxZoom) {
-      const [lng, lat] = (cluster.geometry as any).coordinates as [number, number];
-      const count = (cluster.properties?.point_count as number) ?? 0;
-      await spiderfy(map, clusterId, [lng, lat], currentZoom, true, fallbackPool, count);
-      return;
+      if (expansionZoom == null) continue;
+
+      if (expansionZoom >= maxZoom) {
+        const [lng, lat] = (cluster.geometry as any).coordinates as [number, number];
+        const count = (cluster.properties?.point_count as number) ?? 0;
+        await spiderfy(map, clusterId, [lng, lat], true, fallbackPool, count, "auto");
+        return;
+      }
     }
+  } finally {
+    clusterPassBusy = false;
   }
 }
 
@@ -501,6 +590,11 @@ function groupFromIndices(
  *  Reconciles on each call — new stacks fan in, separated ones collapse — and
  *  skips re-rendering when the set is unchanged or was just dismissed. */
 export async function autoSpiderfyOverlappingPlainNodes(map: MlMap): Promise<void> {
+  if (collapsing) return;
+  // A click-opened fan is pinned: only the user (click-away, Escape, zoom-out)
+  // closes it — never a reconcile pass triggered by hover repaints or SSE data
+  // ticks (#514).
+  if (activeState?.origin === "click") return;
   if (!map.getLayer("plain-nodes")) return;
 
   const currentZoom = map.getZoom();
@@ -549,6 +643,10 @@ export async function autoSpiderfyOverlappingPlainNodes(map: MlMap): Promise<voi
   if (nextSig === currentSig) return; // already showing exactly this set
   if (nextSig === dismissedSignature) return; // user just dismissed this set
 
+  // A mid-load render (pan/setData retile) yields a partial snapshot; never
+  // reshape or collapse a fan on one — the next idle pass sees the full set.
+  if (!map.areTilesLoaded()) return;
+
   dismissedSignature = null; // the overlap set changed — old dismissal is stale
   if (groups.length === 0) {
     removeSpiderfyLayers(map);
@@ -556,5 +654,21 @@ export async function autoSpiderfyOverlappingPlainNodes(map: MlMap): Promise<voi
   }
   // Animate only the first fan; later reconciles swap data in place so existing
   // fans don't re-expand and the selection highlight survives.
-  await renderSpiderfy(map, groups, currentZoom, !activeState);
+  await renderSpiderfy(map, groups, currentZoom, !activeState, "auto");
+}
+
+/** True when any of the given node ids is currently fanned out. */
+export function anyIdsFanned(ids: string[]): boolean {
+  if (!activeState) return false;
+  const fanned = new Set(
+    activeState.groups.flatMap((g) =>
+      g.leaves.map((l) => l.properties?.id as string | undefined),
+    ),
+  );
+  return ids.some((id) => id && fanned.has(id));
+}
+
+/** Centers of the currently fanned groups (empty when nothing is fanned). */
+export function getActiveFanCenters(): [number, number][] {
+  return activeState ? activeState.groups.map((g) => g.center) : [];
 }

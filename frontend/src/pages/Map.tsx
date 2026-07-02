@@ -38,17 +38,21 @@ import { type PacketArc, PacketCoalescer, type RawPacket } from "./map/packetCoa
 import { packetColor } from "./map/packetColors";
 import { findPathsBetween } from "./map/pathAnalysis";
 import {
+  anyIdsFanned,
   autoSpiderfyOverlappingPlainNodes,
   autoSpiderfyVisibleClusters,
+  dismissClusterSpiderfy,
   dismissPlainSpiderfy,
+  getActiveFanCenters,
   isSpiderfied,
   removeSpiderfyLayers,
   spiderfy,
   SPIDERFY_LAYER_LABELS,
+  SPIDERFY_LAYER_LEGS,
+  SPIDERFY_LAYER_LEGS_SHADOW,
   SPIDERFY_LAYER_NODES,
   SPIDERFY_SOURCE_NODES,
   spiderfyFeatures,
-  unspiderfy,
   updateSpiderfyPositions,
 } from "./map/spiderfy";
 import { LS_KEYS, readJson, writeJson } from "./map/storage";
@@ -1797,6 +1801,12 @@ export function Map() {
       bindFocusHover("unclustered-nodes");
       bindFocusHover("plain-nodes");
 
+      // True when the click point lands on a fanned spiderfy marker — those
+      // clicks must win over the layers still rendered underneath the fan.
+      const hitsSpiderfyNode = (point: maplibregl.Point): boolean =>
+        !!map.getLayer(SPIDERFY_LAYER_NODES) &&
+        map.queryRenderedFeatures(point, { layers: [SPIDERFY_LAYER_NODES] }).length > 0;
+
       // Cluster click — handler is on the invisible circle hit-test layer
       // ("clusters"), NOT the symbol donut layer. Circle hit-testing is reliable
       // geometry; symbol hit-testing is flaky with dynamic icon-size expressions.
@@ -1804,11 +1814,30 @@ export function Map() {
         const cluster = e.features?.[0];
         if (!cluster) return;
 
+        // Spiral fans put inner leaves inside the donut's hit circle — let the
+        // leaf click be handled by onNodeLayerClick instead of re-spiderfying.
+        if (hitsSpiderfyNode(e.point)) return;
+
         const clusterId = cluster.properties?.cluster_id;
         const source = map.getSource("nodes_clustered") as MlGeoJSONSource;
         if (!source || clusterId == null) return;
 
         const [lng, lat] = (cluster.geometry as any).coordinates as [number, number];
+
+        // Re-clicking the fanned cluster's own donut toggles the fan closed
+        // instead of wiping the selection and re-animating it.
+        if (isSpiderfied(map)) {
+          const b = map.project([lng, lat]);
+          const isActiveFan = getActiveFanCenters().some((c) => {
+            const a = map.project(c);
+            return Math.hypot(a.x - b.x, a.y - b.y) < 10;
+          });
+          if (isActiveFan) {
+            dismissClusterSpiderfy(map);
+            return;
+          }
+        }
+
         const currentZoom = map.getZoom();
         const maxZoom = map.getMaxZoom();
 
@@ -1819,7 +1848,8 @@ export function Map() {
           removeSpiderfyLayers(map);
           map.easeTo({ center: [lng, lat], zoom: Math.min(currentZoom + 2, maxZoom) });
         };
-        // getClusterExpansionZoom can be slow on first call; don't discard a slightly-late answer.
+        // getClusterExpansionZoom can be slow (or hang on a stale cluster_id
+        // after setData); fall back to a plain zoom-in if no answer in time.
         const timer = setTimeout(zoomFallback, 600);
 
         source.getClusterExpansionZoom(clusterId).then((zoom) => {
@@ -1837,7 +1867,7 @@ export function Map() {
             const pool = buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()).features
               .filter((f) => f.geometry?.type === "Point") as any;
             const count = (cluster.properties?.point_count as number) ?? 0;
-            void spiderfy(map, clusterId, [lng, lat], currentZoom, true, pool, count);
+            void spiderfy(map, clusterId, [lng, lat], true, pool, count);
           } else {
             // Ensure the zoom change is always perceptible. getClusterExpansionZoom
             // can return values only a tiny delta above current zoom, making the
@@ -1969,23 +1999,37 @@ export function Map() {
         // Clustering OFF: co-located nodes stack so only the top one is
         // clickable. If several overlap at the click, fan them out instead of
         // selecting whichever rendered on top. (#475)
-        if (!clusterEnabledRef.current && !isSpiderfied(map)) {
+        if (!clusterEnabledRef.current) {
           const overlap = findOverlappingPlainNodes(e.point);
           if (overlap.length >= 2) {
+            const ids = overlap.map((f) => (f.properties?.id ?? "") as string);
+            // Clicking the stacked originals under an open fan: keep the fan
+            // and let the user pick a leaf instead of re-fanning.
+            if (anyIdsFanned(ids)) return;
             const center: [number, number] = [
               circularMeanLng(overlap.map((f) => f.geometry.coordinates[0])),
               overlap.reduce((s, f) => s + f.geometry.coordinates[1], 0) / overlap.length,
             ];
-            void spiderfyFeatures(map, center, overlap as any, map.getZoom(), true);
+            void spiderfyFeatures(map, center, overlap as any, true);
             return;
           }
         }
 
         void handleNodeClick(id);
       };
-      map.on("click", "unclustered-nodes", onNodeLayerClick);
-      map.on("click", "plain-nodes", onNodeLayerClick);
+      // The base layers keep rendering under an open fan; when a click lands on
+      // a fanned marker, only the spiderfy binding may handle it (else one click
+      // selects two different nodes or double-consumes a tool pick).
+      map.on("click", "unclustered-nodes", (e) => {
+        if (!hitsSpiderfyNode(e.point)) onNodeLayerClick(e);
+      });
+      map.on("click", "plain-nodes", (e) => {
+        if (!hitsSpiderfyNode(e.point)) onNodeLayerClick(e);
+      });
       map.on("click", SPIDERFY_LAYER_NODES, onNodeLayerClick);
+      map.on("click", SPIDERFY_LAYER_LABELS, (e) => {
+        if (!hitsSpiderfyNode(e.point)) onNodeLayerClick(e);
+      });
 
       // Virtual-origin click (coverage, scan, LOS tools). Fires when the
       // user clicks empty map during pick mode — drops a synthetic pin at
@@ -2027,16 +2071,23 @@ export function Map() {
         const nodeLayers = ["unclustered-nodes", "plain-nodes", "unclustered-labels", "plain-labels"];
         if (map.getLayer(SPIDERFY_LAYER_NODES)) nodeLayers.push(SPIDERFY_LAYER_NODES);
         if (map.getLayer(SPIDERFY_LAYER_LABELS)) nodeLayers.push(SPIDERFY_LAYER_LABELS);
+        if (map.getLayer(SPIDERFY_LAYER_LEGS)) nodeLayers.push(SPIDERFY_LAYER_LEGS, SPIDERFY_LAYER_LEGS_SHADOW);
 
-        const hitNode = map.queryRenderedFeatures(e.point, { layers: nodeLayers }).length > 0;
+        // Small pad so a near-miss while aiming at a fan marker doesn't count
+        // as "empty space" and nuke the whole fan.
+        const PAD = 4;
+        const bbox: [maplibregl.PointLike, maplibregl.PointLike] = [
+          [e.point.x - PAD, e.point.y - PAD],
+          [e.point.x + PAD, e.point.y + PAD],
+        ];
+        const hitNode = map.queryRenderedFeatures(bbox, { layers: nodeLayers }).length > 0;
         const hitCluster =
-          map.queryRenderedFeatures(e.point, { layers: ["clusters"] }).length > 0;
+          map.queryRenderedFeatures(bbox, { layers: ["clusters"] }).length > 0;
         if (hitNode || hitCluster) return;
 
-        // Clustering off: fans are automatic, so dismiss-and-remember (the auto
-        // pass won't immediately re-open the same set). Clustering on: a cluster
-        // donut stays put, so a plain collapse is fine.
-        if (clusterEnabledRef.current) void unspiderfy(map);
+        // Dismiss-and-remember in both modes so the auto pass won't immediately
+        // re-open the set the user just closed.
+        if (clusterEnabledRef.current) dismissClusterSpiderfy(map);
         else dismissPlainSpiderfy(map);
         clearMapboxSelectionAndOverlays();
       });
@@ -2151,7 +2202,9 @@ export function Map() {
               resetTool();
               break;
             }
-            void unspiderfy(map);
+            // Same dismiss-and-remember as the empty-click path, per mode.
+            if (clusterEnabledRef.current) dismissClusterSpiderfy(map);
+            else dismissPlainSpiderfy(map);
             clearMapboxSelectionAndOverlays();
             break;
           case "ArrowLeft":
@@ -2352,6 +2405,9 @@ export function Map() {
         mbTouchCleanupRef.current = null;
       }
       if (mbMapRef.current) {
+        // Reset the spiderfy module state before the map dies — it's module-
+        // global and would otherwise leak a phantom fan into the next mount.
+        removeSpiderfyLayers(mbMapRef.current);
         mbMapRef.current.remove();
         mbMapRef.current = null;
         mbSelectedIdRef.current = null;
@@ -2390,6 +2446,9 @@ export function Map() {
       setDetailsData(null);
       const linksSource = map.getSource("links") as MlGeoJSONSource | undefined;
       linksSource?.setData(emptyLineFeatureCollection());
+      // setStyle wipes the fan layers; reset the module state with them or the
+      // auto passes stay blocked on a fan that no longer exists.
+      removeSpiderfyLayers(map);
 
       map.setStyle(buildMapStyle({ provider, osmBasemap, mapboxToken, mapboxStyle }));
     } catch {}
