@@ -490,6 +490,8 @@ export function Map() {
     losCompute.losFitKeyRef.current = null;
     losCompute.losFromPosRef.current = null;
     losCompute.losToPosRef.current = null;
+    // Release the cached DEM (up to 16.8 MB) — it only helps within one session
+    losCompute.losDemCacheRef.current = null;
     losCompute.losHoverMarkerRef.current?.remove();
     losCompute.losHoverMarkerRef.current = null;
     losState.setLosResult(null);

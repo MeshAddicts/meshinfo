@@ -11,8 +11,9 @@ import { computeP2PLoss } from "./itm";
 import { DEFAULT_ITM_ENV } from "./itmEnv";
 import { analyzeLineOfSight, haversineKm, type LoSResult } from "./losAnalysis";
 import { losPointsToTubeData, LosTubeLayer, obstructionsToGeoJSON, pickObstructions } from "./losTubeLayer";
+import { buildCoverageRasters } from "./rasterBuildClient";
 import { type DEM, demBoundsAround, sampleDEMAt } from "./terrainDEM";
-import { buildDem, type DemSource } from "./terrainRgb";
+import type { DemSource } from "./terrainRgb";
 import type { IMapNode } from "./types";
 
 type LosComputeParams = {
@@ -159,9 +160,12 @@ export function useLosCompute(params: LosComputeParams) {
       const linkKm = 6371 * Math.sqrt(
         dLat * dLat + (dLng * Math.cos(midLatRad)) ** 2,
       );
-      // Square bbox, 15 km minimum so short links still get a useful bbox
-      const halfSpanKm = Math.max(15, linkKm / 2 + Math.max(15, linkKm * 0.15));
+      // Square bbox sized to the link (min 2 km pad) — a 500 m neighbor link
+      // shouldn't fetch a 30 km DEM. Grid targets ~30 m/px (source-native)
+      // capped at 2048, so short links also skip most of the resample cost.
+      const halfSpanKm = linkKm / 2 + Math.max(2, linkKm * 0.15);
       const demBounds = demBoundsAround([midLng, midLat], halfSpanKm, 1.0);
+      const demSize = Math.min(2048, Math.max(256, Math.ceil((2 * halfSpanKm * 1000) / 30)));
 
       const mapboxToken = env.MAPBOX_TOKEN;
       if (!mapboxToken) {
@@ -171,7 +175,7 @@ export function useLosCompute(params: LosComputeParams) {
         return;
       }
 
-      const demKey = `${demBounds.west.toFixed(4)},${demBounds.south.toFixed(4)},${demBounds.east.toFixed(4)},${demBounds.north.toFixed(4)}`;
+      const demKey = `${demSize}:${demBounds.west.toFixed(4)},${demBounds.south.toFixed(4)},${demBounds.east.toFixed(4)},${demBounds.north.toFixed(4)}`;
       let dem: DEM;
       let demSourceUsedForLos: DemSource;
       let demTilesFailed = 0;
@@ -183,20 +187,24 @@ export function useLosCompute(params: LosComputeParams) {
         setLosDemSource(demSourceUsedForLos);
       } else {
         try {
-          // 2048² → ~115 m/px at 200 km. buildDem tries Tilezen first, falls back to Mapbox.
-          const built = await buildDem({
+          // Worker-offloaded (same path as coverage, clutter rasters skipped) so the
+          // tile decode + resample doesn't freeze the map; falls back to main thread.
+          const built = await buildCoverageRasters({
             bounds: demBounds,
-            targetWidth: 2048,
-            targetHeight: 2048,
+            size: demSize,
+            maxTiles: 256,
             token: mapboxToken,
+            wantClutter: false,
+            wantCanopy: false,
+            wantBuildings: false,
           });
           if (cancelled) return;
           dem = built.dem;
-          demSourceUsedForLos = built.source;
-          demTilesFailed = built.tilesFailed;
-          demTilesTotal = built.tilesTotal;
+          demSourceUsedForLos = built.demSource;
+          demTilesFailed = built.demTilesFailed;
+          demTilesTotal = built.demTilesTotal;
           // A holed DEM would pin bad terrain under this bbox forever — let failed tiles retry.
-          if (built.tilesFailed === 0) {
+          if (built.demTilesFailed === 0) {
             losDemCacheRef.current = { key: demKey, dem, source: demSourceUsedForLos };
           }
           setLosDemSource(demSourceUsedForLos);
@@ -212,7 +220,7 @@ export function useLosCompute(params: LosComputeParams) {
 
       // Sample near the DEM's native resolution so narrow ridge crests can't fall
       // between profile points (a fixed 150 aliases out ridges past ~30 km links).
-      const demMetersPerPx = (2 * halfSpanKm * 1000) / 2048;
+      const demMetersPerPx = (2 * halfSpanKm * 1000) / demSize;
       const samples = Math.min(1000, Math.max(150, Math.ceil((linkKm * 1000) / demMetersPerPx)));
 
       let nullTerrainSamples = 0;
@@ -355,6 +363,7 @@ export function useLosCompute(params: LosComputeParams) {
     losToPosRef,
     losHoverMarkerRef,
     losFitKeyRef,
+    losDemCacheRef,
     handleLosProfileHover,
   };
 }
