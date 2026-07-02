@@ -111,6 +111,8 @@ export function Map() {
   const focusedNodeIdRef = useRef<string | null>(null);
   // Sticky after first style.load — `isStyleLoaded()` momentarily lies post-removeSource.
   const styleEverLoadedRef = useRef(false);
+  // Bumped per style.load so effects can re-push data into recreated sources/layers.
+  const [styleEpoch, setStyleEpoch] = useState(0);
   const mbSelectedIdRef = useRef<string | null>(null);
   // Last node-source signature; skips redundant setData. -1 = never set.
   const lastNodesSigRef = useRef<number>(-1);
@@ -418,7 +420,7 @@ export function Map() {
     losVirtualTo: losState.losVirtualTo,
     losFromHeightM: losState.losFromHeightM,
     losToHeightM: losState.losToHeightM,
-    provider, terrain3D, nodes,
+    terrain3D, styleEpoch, nodes,
     losResult: losState.losResult,
     mbMapRef, losTubeLayerRef,
     setLosResult: losState.setLosResult,
@@ -492,6 +494,8 @@ export function Map() {
     losCompute.losHoverMarkerRef.current = null;
     losState.setLosResult(null);
     losState.setLosError(null);
+    losState.setLosTerrainWarning(null);
+    losState.setIsComputingLos(false);
     coverage.setCoverageResult(null);
     coverage.setKeepCoveragePaint(false);
     scan.setScanSummary(null);
@@ -1587,6 +1591,10 @@ export function Map() {
         }
       }
 
+      // Tube altitudes are scaled by exaggeration at upload time; onAdd ran before
+      // terrain was re-applied above, so re-upload against the final exaggeration.
+      losTubeLayerRef.current?.refresh();
+
       // Ensure sources have current data (important after style changes)
       refreshMapboxNodeData();
 
@@ -2446,7 +2454,10 @@ export function Map() {
       }
     };
 
-    map.on("style.load", () => { styleEverLoadedRef.current = true; });
+    map.on("style.load", () => {
+      styleEverLoadedRef.current = true;
+      setStyleEpoch((e) => e + 1);
+    });
     map.on("style.load", ensureSourcesAndLayers);
 
     return () => {
@@ -2966,7 +2977,7 @@ export function Map() {
           terrainNeeded={!terrain3D}
           onEnableTerrain={() => setTerrain3D(true)}
           onClose={resetTool}
-          isComputing={terrain3D && !losState.losResult && !losState.losError}
+          isComputing={losState.isComputingLos}
           isRecomputing={losState.isComputingLos && !!losState.losResult}
           error={losState.losError}
           terrainWarning={losState.losTerrainWarning}

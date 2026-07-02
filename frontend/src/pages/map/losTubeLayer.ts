@@ -97,6 +97,10 @@ export class LosTubeLayer implements maplibregl.CustomLayerInterface {
     this.uMatrix = gl.getUniformLocation(program, "u_matrix");
 
     this.buffer = gl.createBuffer();
+
+    // Re-adding after setStyle: restore the cached geometry, otherwise the tube
+    // silently vanishes until the next result push (onRemove keeps lastData).
+    this.upload();
   }
 
   onRemove(_map: maplibregl.Map, gl: WebGLRenderingContext): void {

@@ -24,8 +24,9 @@ type LosComputeParams = {
   losVirtualTo: [number, number] | null;
   losFromHeightM: number;
   losToHeightM: number;
-  provider: string;
   terrain3D: boolean;
+  /** Bumped on style.load — re-pushes tube/obstructions after setStyle wipes them. */
+  styleEpoch: number;
   nodes: Record<string, IMapNode>;
   losResult: LoSResult | null;
   mbMapRef: React.RefObject<MlMap | null>;
@@ -41,11 +42,28 @@ export function useLosCompute(params: LosComputeParams) {
   const {
     activeTool, toolStep, toolFromId, toolToId,
     losVirtualFrom, losVirtualTo, losFromHeightM, losToHeightM,
-    provider, terrain3D, nodes, losResult,
+    terrain3D, styleEpoch, nodes, losResult,
     mbMapRef, losTubeLayerRef,
     setLosResult, setLosDemSource, setLosError, setIsComputingLos,
     setLosTerrainWarning,
   } = params;
+
+  // Endpoint scalars (not the whole `nodes` object) drive the effects below, so
+  // live SSE node churn can't retrigger a compute unless an endpoint actually moved.
+  const resolveEndpoint = (
+    id: string | null,
+    virtual: [number, number] | null,
+  ): { lng: number | null; lat: number | null; alt: number | null } => {
+    if (id) {
+      const n = nodes[id] ?? nodes[`!${id}`];
+      if (!n?.map_position) return { lng: null, lat: null, alt: null };
+      return { lng: n.map_position[0], lat: n.map_position[1], alt: effectiveAltitudeMslM(n.position) };
+    }
+    if (virtual) return { lng: virtual[0], lat: virtual[1], alt: null };
+    return { lng: null, lat: null, alt: null };
+  };
+  const { lng: fromLng, lat: fromLat, alt: fromAlt } = resolveEndpoint(toolFromId, losVirtualFrom);
+  const { lng: toLng, lat: toLat, alt: toAlt } = resolveEndpoint(toolToId, losVirtualTo);
 
   // LOS endpoints from the compute effect; refs so the hover-marker callback reads them without deps churn
   const losFromPosRef = useRef<[number, number] | null>(null);
@@ -97,36 +115,25 @@ export function useLosCompute(params: LosComputeParams) {
       setLosResult(null);
       setLosError(null);
       setLosTerrainWarning(null);
+      setIsComputingLos(false);
       return;
     }
-    const hasFrom = toolFromId || losVirtualFrom;
-    const hasTo = toolToId || losVirtualTo;
-    if (!hasFrom || !hasTo) { setLosResult(null); return; }
+    if (fromLng == null || fromLat == null || toLng == null || toLat == null) {
+      // A picked endpoint lost its position (e.g. a live update dropped it) —
+      // land on the error state, not an eternal spinner.
+      setLosResult(null);
+      setLosError("An endpoint no longer has a map position.");
+      setIsComputingLos(false);
+      return;
+    }
     if (!terrain3D) { setLosResult(null); return; }
     const mb = mbMapRef.current;
     if (!mb) { setLosResult(null); return; }
 
-    let fromPos: [number, number];
-    let fromAltitude: number | null = null;
-    if (toolFromId) {
-      const n = nodes[toolFromId] ?? nodes[`!${toolFromId}`];
-      if (!n?.map_position) { setLosResult(null); return; }
-      fromPos = [n.map_position[0], n.map_position[1]];
-      fromAltitude = effectiveAltitudeMslM(n.position);
-    } else {
-      fromPos = losVirtualFrom!;
-    }
-
-    let toPos: [number, number];
-    let toAltitude: number | null = null;
-    if (toolToId) {
-      const n = nodes[toolToId] ?? nodes[`!${toolToId}`];
-      if (!n?.map_position) { setLosResult(null); return; }
-      toPos = [n.map_position[0], n.map_position[1]];
-      toAltitude = effectiveAltitudeMslM(n.position);
-    } else {
-      toPos = losVirtualTo!;
-    }
+    const fromPos: [number, number] = [fromLng, fromLat];
+    const fromAltitude = fromAlt;
+    const toPos: [number, number] = [toLng, toLat];
+    const toAltitude = toAlt;
 
     // Stashed for the hover-marker callback (refs avoid deps churn)
     losFromPosRef.current = fromPos;
@@ -194,6 +201,8 @@ export function useLosCompute(params: LosComputeParams) {
           }
           setLosDemSource(demSourceUsedForLos);
         } catch (err) {
+          // A stale run's late rejection must not clobber the newer run's state
+          if (cancelled) return;
           console.warn("[Map] LoS DEM fetch failed:", err);
           setLosError("Couldn't load terrain elevation data. Check your connection and try again.");
           setLosResult(null);
@@ -294,7 +303,7 @@ export function useLosCompute(params: LosComputeParams) {
       if (!cancelled) console.warn("[Map] LoS run failed:", err);
     });
     return () => { cancelled = true; };
-  }, [activeTool, toolStep, toolFromId, toolToId, losVirtualFrom, losVirtualTo, losFromHeightM, losToHeightM, provider, terrain3D, nodes, mbMapRef, setLosResult, setLosDemSource, setLosError, setIsComputingLos, setLosTerrainWarning]);
+  }, [activeTool, toolStep, fromLng, fromLat, fromAlt, toLng, toLat, toAlt, losFromHeightM, losToHeightM, terrain3D, mbMapRef, setLosResult, setLosDemSource, setLosError, setIsComputingLos, setLosTerrainWarning]);
 
   // Push LoS result → 3D tube layer + obstruction source.
   // Altitudes are scaled by terrain exaggeration to stay pinned to the visual surface.
@@ -302,46 +311,31 @@ export function useLosCompute(params: LosComputeParams) {
     const mb = mbMapRef.current;
     if (!mb) return;
 
-    const hasFrom = toolFromId || losVirtualFrom;
-    const hasTo = toolToId || losVirtualTo;
-    const showing =
-      activeTool === "los" && toolStep === "result" && losResult && hasFrom && hasTo;
     const obsSrc = mb.getSource("los-obstructions") as MlGeoJSONSource | undefined;
     const tube = losTubeLayerRef.current;
 
-    if (!showing) {
+    if (
+      activeTool !== "los" || toolStep !== "result" || !losResult ||
+      fromLng == null || fromLat == null || toLng == null || toLat == null
+    ) {
       tube?.setData(null);
       obsSrc?.setData({ type: "FeatureCollection", features: [] });
       return;
     }
 
-    let fromPos: [number, number];
-    let toPos: [number, number];
-    if (toolFromId) {
-      const n = nodes[toolFromId] ?? nodes[`!${toolFromId}`];
-      if (!n?.map_position) return;
-      fromPos = [n.map_position[0], n.map_position[1]];
-    } else {
-      fromPos = losVirtualFrom!;
-    }
-    if (toolToId) {
-      const n = nodes[toolToId] ?? nodes[`!${toolToId}`];
-      if (!n?.map_position) return;
-      toPos = [n.map_position[0], n.map_position[1]];
-    } else {
-      toPos = losVirtualTo!;
-    }
+    const fromPos: [number, number] = [fromLng, fromLat];
+    const toPos: [number, number] = [toLng, toLat];
 
     // Tube layer scales altitudes internally
-    const tubeData = losPointsToTubeData(fromPos, toPos, losResult!.points, losResult!.totalDistanceKm);
+    const tubeData = losPointsToTubeData(fromPos, toPos, losResult.points, losResult.totalDistanceKm);
     tube?.setData(tubeData);
 
     // fill-extrusion doesn't auto-scale base/top — scale manually
     const obstructions = pickObstructions(
       fromPos,
       toPos,
-      losResult!.points,
-      losResult!.totalDistanceKm,
+      losResult.points,
+      losResult.totalDistanceKm,
       3,
     );
     const exagRaw = mb.getTerrain()?.exaggeration;
@@ -352,7 +346,9 @@ export function useLosCompute(params: LosComputeParams) {
       f.properties.topM *= exag;
     });
     obsSrc?.setData(obsGeo);
-  }, [activeTool, toolStep, losResult, toolFromId, toolToId, losVirtualFrom, losVirtualTo, nodes, mbMapRef, losTubeLayerRef]);
+    // styleEpoch dep: setStyle recreates the obstruction source empty and strips the
+    // tube layer's GL objects — this effect re-pushes both after style.load.
+  }, [activeTool, toolStep, losResult, fromLng, fromLat, toLng, toLat, styleEpoch, mbMapRef, losTubeLayerRef]);
 
   return {
     losFromPosRef,
