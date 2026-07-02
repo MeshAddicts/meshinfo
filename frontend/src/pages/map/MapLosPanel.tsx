@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { toast } from "../../components/toastStore";
 import {
   COMMON_ANTENNAS,
   COMMON_HARDWARE,
@@ -641,6 +642,22 @@ export function MapLosPanel({
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={minimized ? "M5 15l7-7 7 7" : "M5 9l7 7 7-7"} />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              navigator.clipboard?.writeText(window.location.href).then(
+                () => toast("Link to this analysis copied."),
+                () => toast("Couldn't copy the link.", { kind: "error" }),
+              );
+            }}
+            className="p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors"
+            aria-label="Copy a shareable link to this analysis"
+            title="Copy a shareable link"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 010 5.656l-3 3a4 4 0 11-5.656-5.656l1.5-1.5m3.5-2.344a4 4 0 010-5.656l3-3a4 4 0 115.656 5.656l-1.5 1.5" />
             </svg>
           </button>
           <details className="text-[10px] text-gray-500 relative">

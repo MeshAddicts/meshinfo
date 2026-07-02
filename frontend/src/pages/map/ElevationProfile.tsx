@@ -37,7 +37,7 @@ export function ElevationProfile({
 
   // Scales AND path strings memoized together — hover re-renders at pointer rate
   // and must not rebuild five path strings over every sample each move.
-  const { xScale, yScale, yTicks, terrainPath, fresnelPath, fresnel60Path, chordPath } = useMemo(() => {
+  const { xScale, yScale, yTicks, terrainPath, fresnelPath, fresnel60Path, chordPath, canopyPath, buildingPath } = useMemo(() => {
     const pts = result.points;
     if (pts.length === 0) {
       return {
@@ -48,15 +48,18 @@ export function ElevationProfile({
         fresnelPath: "",
         fresnel60Path: "",
         chordPath: "",
+        canopyPath: "",
+        buildingPath: "",
       };
     }
 
-    // Y: terrain min → max(chord + fresnel)
+    // Y: terrain min → max(chord + fresnel); clutter tops count toward the max
     let minY = Infinity;
     let maxY = -Infinity;
     for (const p of pts) {
       minY = Math.min(minY, p.effectiveGround);
-      maxY = Math.max(maxY, p.chord + p.fresnelRadius, p.effectiveGround);
+      const clutterTop = p.effectiveGround + Math.max(p.canopyM, p.buildingM);
+      maxY = Math.max(maxY, p.chord + p.fresnelRadius, clutterTop);
     }
     maxY = Math.max(maxY, result.fromHeightM, result.toHeightM);
     minY = Math.min(minY, result.fromHeightM, result.toHeightM);
@@ -96,6 +99,20 @@ export function ElevationProfile({
       .map((p) => `${xs(p.distanceKm)},${ys(p.chord - p.fresnelRadius * 0.6)}`)
       .join(" L ");
 
+    // Clutter bands: value drawn from the terrain surface upward. Zero-height
+    // stretches collapse into invisible slivers so one polygon per band works.
+    const clutterBand = (heightOf: (p: (typeof pts)[number]) => number): string => {
+      if (!pts.some((p) => heightOf(p) > 0.3)) return "";
+      const upper = pts
+        .map((p) => `${xs(p.distanceKm)},${ys(p.effectiveGround + heightOf(p))}`)
+        .join(" L ");
+      const lower = [...pts]
+        .reverse()
+        .map((p) => `${xs(p.distanceKm)},${ys(p.effectiveGround)}`)
+        .join(" L ");
+      return `M ${upper} L ${lower} Z`;
+    };
+
     return {
       xScale: xs,
       yScale: ys,
@@ -106,6 +123,8 @@ export function ElevationProfile({
       chordPath:
         `M ${xs(0)},${ys(result.fromHeightM)} ` +
         `L ${xs(result.totalDistanceKm)},${ys(result.toHeightM)}`,
+      canopyPath: clutterBand((p) => p.canopyM),
+      buildingPath: clutterBand((p) => p.buildingM),
     };
   }, [result, plotW, plotH]);
 
@@ -250,6 +269,18 @@ export function ElevationProfile({
           />
 
           <path d={terrainPath} fill="url(#terrainGradient)" />
+
+          {/* Clutter bands (display only — not part of the LOS verdict) */}
+          {buildingPath && (
+            <path d={buildingPath} fill="rgba(148,163,184,0.35)">
+              <title>Buildings along the path (height above ground)</title>
+            </path>
+          )}
+          {canopyPath && (
+            <path d={canopyPath} fill="rgba(34,197,94,0.28)">
+              <title>Tree canopy along the path (height above ground)</title>
+            </path>
+          )}
 
           <path
             d={chordPath}
@@ -397,6 +428,18 @@ export function ElevationProfile({
               <span className="text-gray-400 font-mono">
                 ±{Math.round(hoverPoint.fresnelRadius)}m
               </span>
+            </div>
+          )}
+          {hoverPoint.canopyM > 0.5 && (
+            <div className="flex justify-between gap-3">
+              <span className="text-gray-500">Canopy:</span>
+              <span className="text-emerald-400/90 font-mono">+{Math.round(hoverPoint.canopyM)}m</span>
+            </div>
+          )}
+          {hoverPoint.buildingM > 0.5 && (
+            <div className="flex justify-between gap-3">
+              <span className="text-gray-500">Building:</span>
+              <span className="text-slate-300 font-mono">+{Math.round(hoverPoint.buildingM)}m</span>
             </div>
           )}
         </div>

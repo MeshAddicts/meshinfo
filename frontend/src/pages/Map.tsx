@@ -5,6 +5,7 @@ import maplibregl, {
   Map as MlMap,
 } from "maplibre-gl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
 
 import { toast } from "../components/toastStore";
 import { env } from "../env";
@@ -413,6 +414,18 @@ export function Map() {
     }
   }, [isPickingNode]);
 
+  // Dragging an endpoint marker detaches any node anchor into a virtual pin
+  const { setLosVirtualFrom, setLosVirtualTo } = losState;
+  const onLosEndpointDragged = useCallback((which: "from" | "to", pos: [number, number]) => {
+    if (which === "from") {
+      setToolFromId(null);
+      setLosVirtualFrom(pos);
+    } else {
+      setToolToId(null);
+      setLosVirtualTo(pos);
+    }
+  }, [setToolFromId, setToolToId, setLosVirtualFrom, setLosVirtualTo]);
+
   // LOS compute + tube layer effects
   const losCompute = useLosCompute({
     activeTool, toolStep, toolFromId, toolToId,
@@ -424,6 +437,8 @@ export function Map() {
     terrain3D, styleEpoch, nodes,
     losResult: losState.losResult,
     mbMapRef, losTubeLayerRef,
+    isDraggingMarkerRef,
+    onEndpointDragged: onLosEndpointDragged,
     setLosResult: losState.setLosResult,
     setLosDemSource: losState.setLosDemSource,
     setLosError: losState.setLosError,
@@ -495,6 +510,10 @@ export function Map() {
     losCompute.losDemCacheRef.current = null;
     losCompute.losHoverMarkerRef.current?.remove();
     losCompute.losHoverMarkerRef.current = null;
+    losCompute.losFromMarkerRef.current?.remove();
+    losCompute.losFromMarkerRef.current = null;
+    losCompute.losToMarkerRef.current?.remove();
+    losCompute.losToMarkerRef.current = null;
     losState.setLosResult(null);
     losState.setLosError(null);
     losState.setLosTerrainWarning(null);
@@ -590,6 +609,72 @@ export function Map() {
     setToolToId(null);
     losState.setLosVirtualTo(pos);
   };
+
+  // Shareable LOS deep link: keep ?tool=los&from&to&fh&th&fq in sync with the analysis
+  const [, setSearchParamsLos] = useSearchParams();
+  const setSearchParamsLosRef = useRef(setSearchParamsLos);
+  setSearchParamsLosRef.current = setSearchParamsLos;
+  useEffect(() => {
+    const showing =
+      activeTool === "los" && toolStep === "result" &&
+      (toolFromId || losState.losVirtualFrom) && (toolToId || losState.losVirtualTo);
+    setSearchParamsLosRef.current((prev) => {
+      const sp = new URLSearchParams(prev);
+      const had = sp.get("tool") === "los";
+      if (showing) {
+        sp.set("tool", "los");
+        sp.set("from", toolFromId ?? `${losState.losVirtualFrom![1].toFixed(5)},${losState.losVirtualFrom![0].toFixed(5)}`);
+        sp.set("to", toolToId ?? `${losState.losVirtualTo![1].toFixed(5)},${losState.losVirtualTo![0].toFixed(5)}`);
+        sp.set("fh", String(losState.losFromHeightM));
+        sp.set("th", String(losState.losToHeightM));
+        sp.set("fq", String(losState.losFreqMhz));
+      } else if (had) {
+        for (const k of ["tool", "from", "to", "fh", "th", "fq"]) sp.delete(k);
+      } else {
+        return prev;
+      }
+      return sp;
+    }, { replace: true });
+  }, [activeTool, toolStep, toolFromId, toolToId, losState.losVirtualFrom, losState.losVirtualTo, losState.losFromHeightM, losState.losToHeightM, losState.losFreqMhz]);
+
+  // Restore a shared LOS analysis from the URL (once, on mount)
+  const losUrlRestoredRef = useRef(false);
+  useEffect(() => {
+    if (losUrlRestoredRef.current) return;
+    losUrlRestoredRef.current = true;
+    const sp = new URLSearchParams(window.location.search);
+    if (sp.get("tool") !== "los") return;
+    const parseEnd = (v: string | null): { id: string } | { pos: [number, number] } | null => {
+      if (!v) return null;
+      const m = v.match(/^(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)$/);
+      if (m) {
+        const lat = Number(m[1]);
+        const lng = Number(m[2]);
+        return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { pos: [lng, lat] } : null;
+      }
+      return /^!?[0-9a-zA-Z_-]{1,32}$/.test(v) ? { id: v.replace(/^!/, "") } : null;
+    };
+    const f = parseEnd(sp.get("from"));
+    const t = parseEnd(sp.get("to"));
+    if (!f || !t) return;
+    const num = (k: string, min: number, max: number): number | null => {
+      const raw = sp.get(k);
+      if (raw == null) return null;
+      const n = Number(raw);
+      return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : null;
+    };
+    const fh = num("fh", 0, 300);
+    const th = num("th", 0, 300);
+    const fq = num("fq", 100, 2500);
+    if (fh != null) losState.setLosFromHeightM(fh);
+    if (th != null) losState.setLosToHeightM(th);
+    if (fq != null) losState.setLosFreqMhz(fq);
+    if ("id" in f) setToolFromId(f.id); else losState.setLosVirtualFrom(f.pos);
+    if ("id" in t) setToolToId(t.id); else losState.setLosVirtualTo(t.pos);
+    setActiveTool("los");
+    setToolStep("result");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Draw shortest traceroute path on both providers
   useEffect(() => {

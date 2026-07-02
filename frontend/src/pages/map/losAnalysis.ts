@@ -44,6 +44,11 @@ export interface LoSInput {
   /** Path samples; default 100. */
   samples?: number;
   queryTerrainM: TerrainSampler;
+  /** Optional clutter samplers (canopy/building height above ground, m). Display
+   *  only — clutter is drawn on the profile, not part of the LOS/Fresnel verdict
+   *  (coverage/ITM model it as loss, not hard blockage). */
+  queryCanopyM?: TerrainSampler;
+  queryBuildingM?: TerrainSampler;
 }
 
 export interface LoSPoint {
@@ -64,6 +69,10 @@ export interface LoSPoint {
   clearanceRatio: number;
   blocked: boolean;
   fresnelIntruded: boolean;
+  /** Canopy height above ground (m); 0 = none/unknown. Chart display only. */
+  canopyM: number;
+  /** Building height above ground (m); 0 = none/unknown. Chart display only. */
+  buildingM: number;
 }
 
 export interface LoSResult {
@@ -125,6 +134,8 @@ export function analyzeLineOfSight(input: LoSInput): LoSResult {
     freqGHz = 0.915,
     samples = 100,
     queryTerrainM,
+    queryCanopyM,
+    queryBuildingM,
   } = input;
   const fromAntH = input.fromAntennaHeightM ?? antennaHeightM;
   const toAntH = input.toAntennaHeightM ?? antennaHeightM;
@@ -230,6 +241,8 @@ export function analyzeLineOfSight(input: LoSInput): LoSResult {
       clearanceRatio,
       blocked,
       fresnelIntruded,
+      canopyM: Math.max(0, queryCanopyM?.(lng, lat) ?? 0),
+      buildingM: Math.max(0, queryBuildingM?.(lng, lat) ?? 0),
     });
   }
 

@@ -6,13 +6,15 @@ import { useCallback, useEffect, useRef } from "react";
 
 import { env } from "../../env";
 import { effectiveAltitudeMslM } from "../nodes/altitudeAssessment";
+import { type BuildingRaster, sampleBuildingAt } from "./buildingTiles";
+import { type CanopyRaster, sampleCanopyAt } from "./canopyTiles";
 import { normalizeLng, shortestLngDelta } from "./geo";
 import { computeP2PLoss, isItmAvailable } from "./itm";
 import { DEFAULT_ITM_ENV } from "./itmEnv";
 import { analyzeLineOfSight, haversineKm, type LoSResult } from "./losAnalysis";
 import { losPointsToTubeData, LosTubeLayer, obstructionsToGeoJSON, pickObstructions } from "./losTubeLayer";
 import { buildCoverageRasters } from "./rasterBuildClient";
-import { type DEM, demBoundsAround, sampleDEMAt } from "./terrainDEM";
+import { type DEM, demBoundsAround, demBoundsContain, sampleDEMAt } from "./terrainDEM";
 import type { DemSource } from "./terrainRgb";
 import type { IMapNode } from "./types";
 
@@ -34,6 +36,10 @@ type LosComputeParams = {
   losResult: LoSResult | null;
   mbMapRef: React.RefObject<MlMap | null>;
   losTubeLayerRef: React.RefObject<LosTubeLayer | null>;
+  /** Suppresses map click handlers while an endpoint marker is dragged. */
+  isDraggingMarkerRef: React.RefObject<boolean>;
+  /** Dragging an endpoint marker commits it as a virtual pin (detaches node anchors). */
+  onEndpointDragged: (which: "from" | "to", pos: [number, number]) => void;
   setLosResult: (r: LoSResult | null) => void;
   setLosDemSource: (s: DemSource | null) => void;
   setLosError: (e: string | null) => void;
@@ -47,9 +53,13 @@ export function useLosCompute(params: LosComputeParams) {
     losVirtualFrom, losVirtualTo, losFromHeightM, losToHeightM,
     losFreqMhz, terrain3D, styleEpoch, nodes, losResult,
     mbMapRef, losTubeLayerRef,
+    isDraggingMarkerRef, onEndpointDragged,
     setLosResult, setLosDemSource, setLosError, setIsComputingLos,
     setLosTerrainWarning,
   } = params;
+
+  // Distinguishes "nodes not loaded yet" (URL-restored link) from "endpoint gone"
+  const nodesEmpty = Object.keys(nodes).length === 0;
 
   // Endpoint scalars (not the whole `nodes` object) drive the effects below, so
   // live SSE node churn can't retrigger a compute unless an endpoint actually moved.
@@ -75,13 +85,28 @@ export function useLosCompute(params: LosComputeParams) {
   const losHoverMarkerRef = useRef<maplibregl.Marker | null>(null);
   // Skips fitBounds re-zoom when the user changes config without moving endpoints
   const losFitKeyRef = useRef<string | null>(null);
-  // Cache the bbox-derived DEM so height tweaks reuse it instead of re-stitching.
-  const losDemCacheRef = useRef<{ key: string; dem: DEM; source: DemSource } | null>(null);
+  // Cached rasters for the last computed link; reused via containment + resolution
+  // checks so height tweaks and endpoint drags skip the re-fetch entirely.
+  const losDemCacheRef = useRef<{
+    dem: DEM;
+    source: DemSource;
+    /** Meters/pixel the cache was built at. */
+    mpp: number;
+    canopy: CanopyRaster | null;
+    buildings: BuildingRaster | null;
+  } | null>(null);
+  // Draggable endpoint markers (result step only)
+  const losFromMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const losToMarkerRef = useRef<maplibregl.Marker | null>(null);
 
-  // Remove the hover marker on unmount (resetTool covers tool changes, not navigation away).
+  // Remove markers on unmount (resetTool covers tool changes, not navigation away).
   useEffect(() => () => {
     losHoverMarkerRef.current?.remove();
     losHoverMarkerRef.current = null;
+    losFromMarkerRef.current?.remove();
+    losFromMarkerRef.current = null;
+    losToMarkerRef.current?.remove();
+    losToMarkerRef.current = null;
   }, []);
 
   // Warm the ITM WASM while the user is still picking endpoints so the first
@@ -128,9 +153,12 @@ export function useLosCompute(params: LosComputeParams) {
       return;
     }
     if (fromLng == null || fromLat == null || toLng == null || toLat == null) {
+      setLosResult(null);
+      // Nodes not loaded yet (URL-restored link): stay in the loading state and
+      // let the nodes arrival retrigger via the endpoint-scalar/nodesEmpty deps.
+      if (nodesEmpty) return;
       // A picked endpoint lost its position (e.g. a live update dropped it) —
       // land on the error state, not an eternal spinner.
-      setLosResult(null);
       setLosError("An endpoint no longer has a map position.");
       setIsComputingLos(false);
       return;
@@ -171,9 +199,13 @@ export function useLosCompute(params: LosComputeParams) {
       // Square bbox sized to the link (min 2 km pad) — a 500 m neighbor link
       // shouldn't fetch a 30 km DEM. Grid targets ~30 m/px (source-native)
       // capped at 2048, so short links also skip most of the resample cost.
+      // The extra 25% fetch pad keeps nearby endpoint drags inside the cached
+      // rasters (containment check below) so they recompute without a fetch.
       const halfSpanKm = linkKm / 2 + Math.max(2, linkKm * 0.15);
-      const demBounds = demBoundsAround([midLng, midLat], halfSpanKm, 1.0);
-      const demSize = Math.min(2048, Math.max(256, Math.ceil((2 * halfSpanKm * 1000) / 30)));
+      const DEM_PAD = 1.25;
+      const demBounds = demBoundsAround([midLng, midLat], halfSpanKm, DEM_PAD);
+      const demWidthM = 2 * halfSpanKm * DEM_PAD * 1000;
+      const demSize = Math.min(2048, Math.max(256, Math.ceil(demWidthM / 30)));
 
       const mapboxToken = env.MAPBOX_TOKEN;
       if (!mapboxToken) {
@@ -183,37 +215,47 @@ export function useLosCompute(params: LosComputeParams) {
         return;
       }
 
-      const demKey = `${demSize}:${demBounds.west.toFixed(4)},${demBounds.south.toFixed(4)},${demBounds.east.toFixed(4)},${demBounds.north.toFixed(4)}`;
+      const neededMpp = demWidthM / demSize;
       let dem: DEM;
       let demSourceUsedForLos: DemSource;
       let demTilesFailed = 0;
       let demTilesTotal = 0;
+      let canopy: CanopyRaster | null = null;
+      let buildings: BuildingRaster | null = null;
+      let usedMpp = neededMpp;
       const demCache = losDemCacheRef.current;
-      if (demCache && demCache.key === demKey) {
+      if (demCache && demBoundsContain(demCache.dem.bounds, demBounds) && demCache.mpp <= neededMpp * 2) {
         dem = demCache.dem;
         demSourceUsedForLos = demCache.source;
+        canopy = demCache.canopy;
+        buildings = demCache.buildings;
+        usedMpp = demCache.mpp;
         setLosDemSource(demSourceUsedForLos);
       } else {
         try {
-          // Worker-offloaded (same path as coverage, clutter rasters skipped) so the
-          // tile decode + resample doesn't freeze the map; falls back to main thread.
+          // Worker-offloaded (same path as coverage) so the tile decode + resample
+          // doesn't freeze the map; falls back to main thread. Canopy/buildings are
+          // fetched for the profile's clutter bands (fault-tolerant: missing bakes
+          // just yield mask-0 rasters and no bands).
           const built = await buildCoverageRasters({
             bounds: demBounds,
             size: demSize,
             maxTiles: 256,
             token: mapboxToken,
             wantClutter: false,
-            wantCanopy: false,
-            wantBuildings: false,
+            wantCanopy: true,
+            wantBuildings: true,
           });
           if (cancelled) return;
           dem = built.dem;
           demSourceUsedForLos = built.demSource;
           demTilesFailed = built.demTilesFailed;
           demTilesTotal = built.demTilesTotal;
+          canopy = built.canopy;
+          buildings = built.buildings;
           // A holed DEM would pin bad terrain under this bbox forever — let failed tiles retry.
           if (built.demTilesFailed === 0) {
-            losDemCacheRef.current = { key: demKey, dem, source: demSourceUsedForLos };
+            losDemCacheRef.current = { dem, source: demSourceUsedForLos, mpp: neededMpp, canopy, buildings };
           }
           setLosDemSource(demSourceUsedForLos);
         } catch (err) {
@@ -228,9 +270,10 @@ export function useLosCompute(params: LosComputeParams) {
 
       // Sample near the DEM's native resolution so narrow ridge crests can't fall
       // between profile points (a fixed 150 aliases out ridges past ~30 km links).
-      const demMetersPerPx = (2 * halfSpanKm * 1000) / demSize;
-      const samples = Math.min(1000, Math.max(150, Math.ceil((linkKm * 1000) / demMetersPerPx)));
+      const samples = Math.min(1000, Math.max(150, Math.ceil((linkKm * 1000) / usedMpp)));
 
+      const canopyRaster = canopy;
+      const buildingRaster = buildings;
       let nullTerrainSamples = 0;
       let result: LoSResult;
       try {
@@ -251,6 +294,12 @@ export function useLosCompute(params: LosComputeParams) {
             }
             return elev;
           },
+          queryCanopyM: canopyRaster
+            ? (lng, lat) => sampleCanopyAt(canopyRaster, lng, lat)?.heightM ?? null
+            : undefined,
+          queryBuildingM: buildingRaster
+            ? (lng, lat) => sampleBuildingAt(buildingRaster, lng, lat)?.heightM ?? null
+            : undefined,
         });
       } catch (err) {
         console.warn("[Map] LoS analysis failed:", err);
@@ -319,7 +368,9 @@ export function useLosCompute(params: LosComputeParams) {
       if (!cancelled) console.warn("[Map] LoS run failed:", err);
     });
     return () => { cancelled = true; };
-  }, [activeTool, toolStep, fromLng, fromLat, fromAlt, toLng, toLat, toAlt, losFromHeightM, losToHeightM, losFreqMhz, terrain3D, mbMapRef, setLosResult, setLosDemSource, setLosError, setIsComputingLos, setLosTerrainWarning]);
+    // styleEpoch: map-readiness signal — a URL-restored analysis mounts before the
+    // map exists and needs style.load to retrigger (DEM cache keeps re-runs cheap).
+  }, [activeTool, toolStep, fromLng, fromLat, fromAlt, toLng, toLat, toAlt, losFromHeightM, losToHeightM, losFreqMhz, terrain3D, styleEpoch, nodesEmpty, mbMapRef, setLosResult, setLosDemSource, setLosError, setIsComputingLos, setLosTerrainWarning]);
 
   // Push LoS result → 3D tube layer + obstruction source.
   // Altitudes are scaled by terrain exaggeration to stay pinned to the visual surface.
@@ -366,12 +417,66 @@ export function useLosCompute(params: LosComputeParams) {
     // tube layer's GL objects — this effect re-pushes both after style.load.
   }, [activeTool, toolStep, losResult, fromLng, fromLat, toLng, toLat, styleEpoch, mbMapRef, losTubeLayerRef]);
 
+  // Draggable endpoint markers while a result is shown; dragging one converts
+  // the endpoint to a virtual pin (with a micro-drag snap-back for wiggles).
+  useEffect(() => {
+    const mb = mbMapRef.current;
+    if (!mb) return;
+    const showing = activeTool === "los" && toolStep === "result";
+    const ends: Array<{
+      which: "from" | "to";
+      lng: number | null;
+      lat: number | null;
+      ref: React.RefObject<maplibregl.Marker | null>;
+      color: string;
+    }> = [
+      { which: "from", lng: fromLng, lat: fromLat, ref: losFromMarkerRef, color: "#06b6d4" },
+      { which: "to", lng: toLng, lat: toLat, ref: losToMarkerRef, color: "#d946ef" },
+    ];
+    for (const end of ends) {
+      if (!showing || end.lng == null || end.lat == null) {
+        end.ref.current?.remove();
+        end.ref.current = null;
+        continue;
+      }
+      if (end.ref.current) {
+        end.ref.current.setLngLat([end.lng, end.lat]);
+        continue;
+      }
+      const marker = new maplibregl.Marker({ color: end.color, draggable: true, scale: 0.75 })
+        .setLngLat([end.lng, end.lat])
+        .addTo(mb);
+      let dragStart: maplibregl.LngLat | null = null;
+      marker.on("dragstart", () => {
+        isDraggingMarkerRef.current = true;
+        dragStart = marker.getLngLat();
+      });
+      marker.on("dragend", () => {
+        isDraggingMarkerRef.current = false;
+        const ll = marker.getLngLat();
+        if (dragStart) {
+          const dxM = shortestLngDelta(dragStart.lng, ll.lng) * 111_320 * Math.cos((ll.lat * Math.PI) / 180);
+          const dyM = (ll.lat - dragStart.lat) * 111_320;
+          if (Math.hypot(dxM, dyM) < 5) {
+            // Wiggle: snap back instead of detaching a node-anchored endpoint
+            marker.setLngLat(dragStart);
+            return;
+          }
+        }
+        onEndpointDragged(end.which, [normalizeLng(ll.lng), ll.lat]);
+      });
+      end.ref.current = marker;
+    }
+  }, [activeTool, toolStep, fromLng, fromLat, toLng, toLat, styleEpoch, mbMapRef, isDraggingMarkerRef, onEndpointDragged]);
+
   return {
     losFromPosRef,
     losToPosRef,
     losHoverMarkerRef,
     losFitKeyRef,
     losDemCacheRef,
+    losFromMarkerRef,
+    losToMarkerRef,
     handleLosProfileHover,
   };
 }
