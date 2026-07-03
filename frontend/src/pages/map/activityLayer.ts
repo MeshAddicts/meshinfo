@@ -340,6 +340,17 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
     this.scheduleNextFrame();
   }
 
+  /** One comet leg + landing ripple; returns the leg's duration (ms) so a
+   *  caller can choreograph a camera chase against it. */
+  spawnLeg(from: LngLat, to: LngLat, color: RGB, weight: number, now: number): number {
+    if (!this.gl || !this.buffer) return 0;
+    const dur = this.arcDur(from, to);
+    this.writeArc(from, to, color, weight, now, dur);
+    this.spawnRing(to, color, now + dur * 0.9, RIPPLE_MS, 0.8);
+    this.scheduleNextFrame();
+    return dur;
+  }
+
   /** Sequential comet through a resolved multi-hop path (traceroute), hop by hop. */
   spawnPath(points: LngLat[], color: RGB, weight: number, now: number): void {
     if (!this.gl || !this.buffer || points.length === 0) return;

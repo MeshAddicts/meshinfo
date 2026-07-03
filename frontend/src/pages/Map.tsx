@@ -68,6 +68,7 @@ import { useLosState } from "./map/useLosState";
 import { useScanCompute } from "./map/useScanCompute";
 import { useScanState } from "./map/useScanState";
 import { useTraceCompute } from "./map/useTraceCompute";
+import { useTraceFlyover } from "./map/useTraceFlyover";
 import { useUrlMapSync } from "./map/useUrlMapSync";
 import {
   applyClusterVisibility,
@@ -137,6 +138,9 @@ export function Map() {
   const traceTubeLayerRef = useRef<LosTubeLayer | null>(null);
   /** '?' markers for position-less hops of the analyzed path. */
   const traceGhostMarkersRef = useRef<maplibregl.Marker[]>([]);
+  /** Deep-link state: one-shot URL restore + a pending play=1 tour request. */
+  const traceUrlRestoredRef = useRef(false);
+  const tracePendingPlayRef = useRef(false);
   const mbHandlersBoundRef = useRef(false);
   const mbCurrentStyleUrlRef = useRef<string | null>(null);
   const mbKeydownHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
@@ -514,6 +518,13 @@ export function Map() {
     nodesRef, mbMapRef, traceTubeLayerRef,
   });
 
+  // "Ride the Packet": camera chase along the analyzed route
+  const traceFlyover = useTraceFlyover({ mbMapRef, activityLayerRef, nodesRef });
+  // Ref twins for the bind-once map handlers (Esc, ambient-spawn gate)
+  const flyoverCancelRef = useRef(traceFlyover.cancelFlyover);
+  flyoverCancelRef.current = traceFlyover.cancelFlyover;
+  const flyoverFlyingRef = traceFlyover.flyingRef;
+
   // Scan compute + per-class visibility + clear-on-tool-change + hover effects
   const scanCompute = useScanCompute({
     activeTool, toolStep, toolFromId, toolVirtualPos,
@@ -598,6 +609,8 @@ export function Map() {
       traceRefetchTimerRef.current = null;
     }
     setTraceSelectedSig(null);
+    traceFlyover.cancelFlyover();
+    tracePendingPlayRef.current = false;
     for (const m of traceGhostMarkersRef.current) m.remove();
     traceGhostMarkersRef.current = [];
     // Release the route's cached rasters (tens of MB on long routes)
@@ -848,6 +861,71 @@ export function Map() {
     setToolStep("result");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Shareable traceroute deep link: keep ?tool=traceroute&from&to in sync
+  // (same shared snapshot as LOS — the two tools are mutually exclusive).
+  useEffect(() => {
+    if (!traceUrlRestoredRef.current) return;
+    const showing = activeTool === "traceroute" && toolStep === "result" && !!toolFromId && !!toolToId;
+    const had = new URLSearchParams(window.location.search).get("tool") === "traceroute";
+    if (!showing && !had) return;
+    setSearchParamsLosRef.current((prev) => {
+      const sp = new URLSearchParams(prev);
+      if (showing) {
+        sp.set("tool", "traceroute");
+        sp.set("from", toolFromId);
+        sp.set("to", toolToId);
+        // play=1 is a one-shot request from a shared link — never persist it
+        sp.delete("play");
+      } else {
+        for (const k of ["tool", "from", "to", "play"]) sp.delete(k);
+      }
+      return sp;
+    }, { replace: true });
+  }, [activeTool, toolStep, toolFromId, toolToId]);
+
+  // Restore a shared traceroute analysis from the URL snapshot (once, on mount)
+  useEffect(() => {
+    if (traceUrlRestoredRef.current) return;
+    traceUrlRestoredRef.current = true;
+    const sp = losUrlSnapshotRef.current ?? new URLSearchParams();
+    if (sp.get("tool") !== "traceroute") return;
+    const idOf = (v: string | null): string | null =>
+      v && /^!?[0-9a-zA-Z_-]{1,32}$/.test(v) ? v.replace(/^!/, "") : null;
+    const f = idOf(sp.get("from"));
+    const t = idOf(sp.get("to"));
+    if (!f || !t || f === t) {
+      // Invalid share link: the write effect never re-runs (no state changed),
+      // so strip the stale params here or they linger in the URL forever.
+      setSearchParamsLosRef.current((prev) => {
+        const spx = new URLSearchParams(prev);
+        for (const k of ["tool", "from", "to", "play"]) spx.delete(k);
+        return spx;
+      }, { replace: true });
+      return;
+    }
+    setToolFromId(f);
+    setToolToId(t);
+    setActiveTool("traceroute");
+    setToolStep("result");
+    if (sp.get("play") === "1") tracePendingPlayRef.current = true;
+  }, []);
+
+  // A shared link with play=1 starts the tour once data + positions are in.
+  useEffect(() => {
+    if (!tracePendingPlayRef.current) return;
+    // The mount run precedes the restore's state commit — wait, don't clear.
+    // The one-shot flag is dropped on the real exits: resetTool + path select.
+    if (activeTool !== "traceroute" || toolStep !== "result") return;
+    if (prefersReducedMotion()) {
+      tracePendingPlayRef.current = false;
+      return;
+    }
+    if (!traceSelectedPath) return; // traceroutes still loading — retry on next change
+    if (traceFlyover.startFlyover(traceSelectedPath)) tracePendingPlayRef.current = false;
+    // tracePosKey: retries as hop positions stream in after a cold deep-link load
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTool, toolStep, traceSelectedPath, tracePosKey, styleEpoch]);
 
   // Draw the observed traceroute paths between the picked pair — the analyzed
   // (selected) path bold and per-leg with ghost markers for position-less hops,
@@ -2749,11 +2827,19 @@ export function Map() {
             ae === mapRef.current ||
             ae.classList?.contains("maplibregl-canvas");
           if (!navOk) return;
+          // Keyboard pan/zoom is user camera input — it takes the wheel back
+          // from a running flyover (panBy/zoomIn carry no originalEvent, so
+          // the hook's own movestart gate can't see them).
+          if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "=", "+", "-", "_"].includes(e.key)) {
+            flyoverCancelRef.current();
+          }
         }
 
         const PAN_PX = 100;
         switch (e.key) {
           case "Escape":
+            // A running flyover consumes Esc — stop the tour, keep the tool.
+            if (flyoverCancelRef.current()) break;
             if (activeToolRef.current) {
               // Merge-origin picking consumes Esc (the pick hook's own
               // listener cancels it) — don't also arm/close the tool.
@@ -3170,6 +3256,7 @@ export function Map() {
 
   useLiveEvent<RawPacket>("packet", (p) => {
     if (!livePacketsRef.current || prefersReducedMotion()) return;
+    if (flyoverFlyingRef.current) return; // spotlight: the tour owns the stage
     if (p.type === "traceroute") return; // handled by the dedicated multi-hop tracer
     const coalescer = (coalescerRef.current ??= new PacketCoalescer());
     const arc = coalescer.ingest(p, Date.now());
@@ -3220,6 +3307,7 @@ export function Map() {
   // routes; debounce by mesh id and draw only the single most complete path.
   useLiveEvent<TraceEv>("traceroute", (t) => {
     if (!livePacketsRef.current || prefersReducedMotion()) return;
+    if (flyoverFlyingRef.current) return; // spotlight: the tour owns the stage
     const buf = (tracerouteBufRef.current ??= new globalThis.Map());
     const key = t.id != null ? `id:${t.id}` : `ft:${t.from}:${t.to}`;
     const existing = buf.get(key);
@@ -3230,7 +3318,8 @@ export function Map() {
     const timer = setTimeout(() => {
       const entry = buf.get(key);
       buf.delete(key);
-      if (entry) animateTraceroute(entry.ev);
+      // The gate at ingest can't cover timers armed before the tour started
+      if (entry && !flyoverFlyingRef.current) animateTraceroute(entry.ev);
     }, TRACEROUTE_DEBOUNCE_MS);
     buf.set(key, { ev: t, timer });
   });
@@ -3684,7 +3773,11 @@ export function Map() {
           toColor="#d946ef"
           paths={tracePaths}
           selectedSig={traceSelectedPath ? traceSelectedPath.hops.join(">") : null}
-          onSelectPath={setTraceSelectedSig}
+          onSelectPath={(sig) => {
+            traceFlyover.cancelFlyover(); // a tour follows one path only
+            tracePendingPlayRef.current = false;
+            setTraceSelectedSig(sig);
+          }}
           analysis={traceCompute.traceAnalysis}
           isComputing={traceCompute.isComputingTrace}
           analysisError={traceCompute.traceError}
@@ -3693,6 +3786,12 @@ export function Map() {
           onEnableTerrain={openTerrainSetup}
           showDirect={traceShowDirect}
           onToggleDirect={setTraceShowDirect}
+          isFlying={traceFlyover.isFlying}
+          canFly={!prefersReducedMotion()}
+          onToggleFlyover={() => {
+            if (traceFlyover.isFlying) traceFlyover.cancelFlyover();
+            else if (traceSelectedPath) traceFlyover.startFlyover(traceSelectedPath);
+          }}
           loading={rawTraceroutesLoading || pairTraceroutesLoading}
           liveNodes={nodes}
           onNodeSelect={(id) => handleNodeSelectRef.current(id)}

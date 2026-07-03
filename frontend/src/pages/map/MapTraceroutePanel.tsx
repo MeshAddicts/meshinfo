@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { toast } from "../../components/toastStore";
+import { copyTextToClipboard } from "../../utils/clipboard";
 import { unwrapLngTo } from "./geo";
 import { relativeTime } from "./helpers";
 import { type AnalyzedPath, tsToMs } from "./pathAnalysis";
@@ -51,6 +53,9 @@ export function MapTraceroutePanel({
   onEnableTerrain,
   showDirect,
   onToggleDirect,
+  isFlying,
+  canFly,
+  onToggleFlyover,
   loading,
   liveNodes,
   onNodeSelect,
@@ -74,6 +79,10 @@ export function MapTraceroutePanel({
   onEnableTerrain?: () => void;
   showDirect: boolean;
   onToggleDirect: (v: boolean) => void;
+  /** "Ride the Packet" camera tour along the selected route. */
+  isFlying?: boolean;
+  canFly?: boolean;
+  onToggleFlyover?: () => void;
   loading?: boolean;
   liveNodes: Record<string, IMapNode>;
   onNodeSelect: (id: string) => void;
@@ -183,16 +192,58 @@ export function MapTraceroutePanel({
             <span style={{ color: toColor }} className="font-medium">{toLabel}</span>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors shrink-0"
-          aria-label="Close"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-          </svg>
-        </button>
+        <div className="flex items-center gap-0.5 shrink-0">
+          {canFly && onToggleFlyover && selected && toCoords(selected.hops).length >= 2 && (
+            <button
+              type="button"
+              onClick={onToggleFlyover}
+              className={`p-1 rounded-md transition-colors ${
+                isFlying
+                  ? "text-cyan-300 bg-cyan-500/15 hover:bg-cyan-500/25"
+                  : "text-gray-500 hover:text-gray-300 hover:bg-white/10"
+              }`}
+              aria-label={isFlying ? "Stop the route tour" : "Ride the packet — camera tour along this route"}
+              title={isFlying ? "Stop tour (Esc)" : "Ride the packet"}
+            >
+              {isFlying ? (
+                <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="7" y="7" width="10" height="10" rx="1" />
+                </svg>
+              ) : (
+                <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M8 5.5v13l11-6.5-11-6.5z" />
+                </svg>
+              )}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              // copyTextToClipboard has an execCommand fallback for plain-HTTP installs
+              void copyTextToClipboard(window.location.href).then((ok) => {
+                if (ok) toast("Link to this traceroute copied.");
+                else toast("Couldn't copy the link.", { kind: "error" });
+              });
+            }}
+            className="p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors"
+            aria-label="Copy a shareable link to this traceroute"
+            title="Copy a shareable link"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 010 5.656l-3 3a4 4 0 11-5.656-5.656l1.5-1.5m3.5-2.344a4 4 0 010-5.656l3-3a4 4 0 115.656 5.656l-1.5 1.5" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 rounded-md text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors"
+            aria-label="Close"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       <div className={`p-3 overflow-y-auto overscroll-contain flex-1 min-h-0 ${minimized ? "max-sm:hidden" : ""}`}>
