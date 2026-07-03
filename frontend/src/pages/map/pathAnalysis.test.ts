@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { ITraceroutesResponse } from "../../types";
-import { decodeSnr, findPathsBetween } from "./pathAnalysis";
+import { computeTraceEdgeStats, decodeSnr, findPathsBetween } from "./pathAnalysis";
 
-/** Minimal traceroute row; O=requester, D=destination. */
+/** Minimal traceroute row; O=0000000a requester, D=0000000d destination. */
 function row(overrides: Partial<ITraceroutesResponse>): ITraceroutesResponse {
   return {
     channel: 0,
-    from: "0000000o",
+    from: "0000000a",
     to: "0000000d",
     id: 1,
     payload: { route: [] },
@@ -32,11 +32,11 @@ describe("decodeSnr", () => {
 
 describe("findPathsBetween", () => {
   it("orients request rows as from → route → to", () => {
-    const paths = findPathsBetween("0000000o", "0000000d", [
-      row({ route_ids: ["000000r1", "000000r2"] }),
+    const paths = findPathsBetween("0000000a", "0000000d", [
+      row({ route_ids: ["000000b1", "000000b2"] }),
     ]);
     expect(paths).toHaveLength(1);
-    expect(paths[0].hops).toEqual(["0000000o", "000000r1", "000000r2", "0000000d"]);
+    expect(paths[0].hops).toEqual(["0000000a", "000000b1", "000000b2", "0000000d"]);
     expect(paths[0].legSnrDb).toBeUndefined();
   });
 
@@ -44,14 +44,14 @@ describe("findPathsBetween", () => {
     // Reply for trace O→R1→R2→D: header from=D, to=O; route stays request-order.
     const reply = row({
       from: "0000000d",
-      to: "0000000o",
-      route_ids: ["000000r1", "000000r2"],
+      to: "0000000a",
+      route_ids: ["000000b1", "000000b2"],
       payload: { route: [], snr_towards: [-29, 8, -128] },
     });
-    const paths = findPathsBetween("0000000o", "0000000d", [reply]);
+    const paths = findPathsBetween("0000000a", "0000000d", [reply]);
     expect(paths).toHaveLength(1);
     // True travel order O→R1→R2→D, not the scrambled D-header order
-    expect(paths[0].hops).toEqual(["0000000o", "000000r1", "000000r2", "0000000d"]);
+    expect(paths[0].hops).toEqual(["0000000a", "000000b1", "000000b2", "0000000d"]);
     expect(paths[0].legSnrDb).toEqual([-7.25, 2, null]);
     expect(paths[0].legSnrReversed).toBe(false);
   });
@@ -59,12 +59,12 @@ describe("findPathsBetween", () => {
   it("reverses hops and legs when picked opposite to travel order", () => {
     const reply = row({
       from: "0000000d",
-      to: "0000000o",
-      route_ids: ["000000r1"],
+      to: "0000000a",
+      route_ids: ["000000b1"],
       payload: { route: [], snr_towards: [-29, 8] },
     });
-    const paths = findPathsBetween("0000000d", "0000000o", [reply]);
-    expect(paths[0].hops).toEqual(["0000000d", "000000r1", "0000000o"]);
+    const paths = findPathsBetween("0000000d", "0000000a", [reply]);
+    expect(paths[0].hops).toEqual(["0000000d", "000000b1", "0000000a"]);
     expect(paths[0].legSnrDb).toEqual([2, -7.25]);
     expect(paths[0].legSnrReversed).toBe(true);
   });
@@ -72,23 +72,61 @@ describe("findPathsBetween", () => {
   it("keeps unresolvable hops as placeholders so alignment holds", () => {
     const reply = row({
       from: "0000000d",
-      to: "0000000o",
-      route_ids: ["Some Longname", "000000r2"] as string[],
+      to: "0000000a",
+      route_ids: ["Some Longname", "000000b2"] as string[],
       payload: { route: [], snr_towards: [4, 8, 12] },
     });
-    const paths = findPathsBetween("0000000o", "0000000d", [reply]);
+    const paths = findPathsBetween("0000000a", "0000000d", [reply]);
     expect(paths[0].hops).toHaveLength(4);
     expect(paths[0].legSnrDb).toEqual([1, 2, 3]);
   });
 
   it("ranks newest first with hop count as tiebreak, counting repeats", () => {
     const stale1hop = row({ id: 1, route_ids: [], timestamp: 100 });
-    const fresh2hopA = row({ id: 2, route_ids: ["000000r1"], timestamp: 900 });
-    const fresh2hopB = row({ id: 3, route_ids: ["000000r1"], timestamp: 950 });
-    const paths = findPathsBetween("0000000o", "0000000d", [stale1hop, fresh2hopA, fresh2hopB]);
-    expect(paths[0].hops).toEqual(["0000000o", "000000r1", "0000000d"]);
+    const fresh2hopA = row({ id: 2, route_ids: ["000000b1"], timestamp: 900 });
+    const fresh2hopB = row({ id: 3, route_ids: ["000000b1"], timestamp: 950 });
+    const paths = findPathsBetween("0000000a", "0000000d", [stale1hop, fresh2hopA, fresh2hopB]);
+    expect(paths[0].hops).toEqual(["0000000a", "000000b1", "0000000d"]);
     expect(paths[0].count).toBe(2);
     expect(paths[0].timestamp).toBe(950);
     expect(paths[1].hopCount).toBe(1);
+  });
+});
+
+describe("computeTraceEdgeStats", () => {
+  it("counts undirected edge traversals once per run", () => {
+    const runs = [
+      row({ id: 1, route_ids: ["000000b1"], timestamp: 100 }),
+      // Reverse direction — same undirected edges
+      row({ id: 2, from: "0000000d", to: "0000000a", route_ids: ["000000b1"], timestamp: 200 }),
+      row({ id: 3, route_ids: [], timestamp: 300 }),
+    ];
+    const stats = computeTraceEdgeStats(runs);
+    const byKey = new Map(stats.map((e) => [`${e.aId}|${e.bId}`, e]));
+    expect(byKey.get("0000000a|000000b1")?.count).toBe(2);
+    expect(byKey.get("0000000d|000000b1")?.count).toBe(2);
+    expect(byKey.get("0000000a|0000000d")?.count).toBe(1);
+    expect(byKey.get("0000000a|000000b1")?.lastTimestamp).toBe(200);
+  });
+
+  it("orients reply rows before counting edges (header swap ≠ reversal)", () => {
+    // Reply for O→R1→R2→D: header from=D, to=O, request-ordered route
+    const reply = row({
+      from: "0000000d",
+      to: "0000000a",
+      route_ids: ["000000b1", "000000b2"],
+      payload: { route: [], snr_towards: [4, 8, 12] },
+    });
+    const stats = computeTraceEdgeStats([reply]);
+    const keys = stats.map((e) => `${e.aId}|${e.bId}`).sort();
+    // Real legs O–R1, R1–R2, R2–D — not the phantom D–R1 / R2–O
+    expect(keys).toEqual(["0000000a|000000b1", "0000000d|000000b2", "000000b1|000000b2"]);
+  });
+
+  it("skips edges touching unresolved hops", () => {
+    const stats = computeTraceEdgeStats([
+      row({ id: 9, route_ids: ["Some Longname"] as string[], timestamp: 50 }),
+    ]);
+    expect(stats).toEqual([]);
   });
 });

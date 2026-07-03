@@ -45,6 +45,24 @@ interface ExtractedPath {
   forward: boolean;
 }
 
+/** Travel-ordered full path for one row. Reply rows (the only ones carrying
+ *  the full per-leg SNR: the destination appends its own reading, so
+ *  snr_towards = route + 1) keep the REQUEST's route order but swap the header
+ *  endpoints — the towards path is to → route → from, matching the official
+ *  client. EVERY consumer of a row's hop sequence must route through here: a
+ *  header swap is NOT a path reversal, so an ad-hoc [from,...route,to] walk
+ *  attributes endpoint-adjacent legs to the wrong nodes on reply rows. */
+function orientRow(
+  tr: ITraceroutesResponse,
+  tFrom: string,
+  tTo: string,
+  route: string[],
+): { fullPath: string[]; isReply: boolean } {
+  const snrTow = tr?.payload?.snr_towards;
+  const isReply = Array.isArray(snrTow) && snrTow.length === route.length + 1;
+  return { fullPath: isReply ? [tTo, ...route, tFrom] : [tFrom, ...route, tTo], isReply };
+}
+
 /** Extract the a→b sub-path of one traceroute row, or null if it doesn't
  *  contain both nodes. Shared by the dedup (paths) and chronological (runs)
  *  views so orientation semantics can never drift apart. */
@@ -57,13 +75,8 @@ function extractPathFromRow(a: string, b: string, tr: ITraceroutesResponse): Ext
   const route: string[] = ((tr?.route_ids ?? tr?.route ?? []) as (string | number)[])
     .map((r) => normNodeId(r) || `?${String(r)}`);
 
-  // Reply rows (the only ones carrying the full per-leg SNR: the destination
-  // appends its own reading, so snr_towards = route + 1) keep the REQUEST's
-  // route order but swap the header endpoints — the towards path is
-  // to → route → from, matching the official client's rendering.
   const snrTow = tr?.payload?.snr_towards;
-  const isReply = Array.isArray(snrTow) && snrTow.length === route.length + 1;
-  const fullPath = isReply ? [tTo, ...route, tFrom] : [tFrom, ...route, tTo];
+  const { fullPath, isReply } = orientRow(tr, tFrom, tTo, route);
 
   const idxA = fullPath.indexOf(a);
   const idxB = fullPath.indexOf(b);
@@ -78,7 +91,7 @@ function extractPathFromRow(a: string, b: string, tr: ITraceroutesResponse): Ext
   // snr_towards has one entry per leg of the request-oriented full path;
   // slice the legs covering [lo, hi] and flip them when we flipped the hops.
   let legSnrDb: (number | null)[] | undefined;
-  if (isReply) {
+  if (isReply && Array.isArray(snrTow)) {
     const legs = snrTow.slice(lo, hi).map(decodeSnr);
     legSnrDb = forward ? legs : legs.slice().reverse();
   }
@@ -171,6 +184,55 @@ export function findRunsBetween(
   }
   runs.sort((x, y) => x.timestamp - y.timestamp);
   return runs;
+}
+
+/** Undirected hop-edge traversal stats across all observed traceroutes. */
+export interface TraceEdgeStat {
+  /** Sorted pair (aId < bId). */
+  aId: string;
+  bId: string;
+  /** Observed runs traversing this edge (an edge counts once per run). */
+  count: number;
+  lastTimestamp: number;
+}
+
+/** Resolved node ids normalize to bare lowercase hex; longnames and `?<raw>`
+ *  placeholders don't, and their edges can't be positioned or clicked. */
+const RESOLVED_ID = /^[0-9a-f]{1,8}$/;
+
+/** Count how often each adjacent hop pair appears across runs — the mesh's
+ *  busiest links. Edges touching an unresolved hop are skipped, and reply
+ *  rows are travel-ordered via orientRow (endpoint-adjacent edges would
+ *  otherwise be attributed to the wrong nodes). */
+export function computeTraceEdgeStats(traceroutes: ITraceroutesResponse[]): TraceEdgeStat[] {
+  const byKey = new Map<string, TraceEdgeStat>();
+  for (const tr of traceroutes) {
+    const tFrom = normNodeId(tr?.from);
+    const tTo = normNodeId(tr?.to);
+    if (!tFrom || !tTo) continue;
+    const route = ((tr?.route_ids ?? tr?.route ?? []) as (string | number)[])
+      .map((r) => normNodeId(r) || `?${String(r)}`);
+    const { fullPath } = orientRow(tr, tFrom, tTo, route);
+    const ts = tr.timestamp ?? 0;
+    const seenInRun = new Set<string>();
+    for (let i = 0; i + 1 < fullPath.length; i++) {
+      const a = fullPath[i];
+      const b = fullPath[i + 1];
+      if (a === b || !RESOLVED_ID.test(a) || !RESOLVED_ID.test(b)) continue;
+      const [ka, kb] = a < b ? [a, b] : [b, a];
+      const key = `${ka}|${kb}`;
+      if (seenInRun.has(key)) continue;
+      seenInRun.add(key);
+      const e = byKey.get(key);
+      if (e) {
+        e.count += 1;
+        if (ts > e.lastTimestamp) e.lastTimestamp = ts;
+      } else {
+        byKey.set(key, { aId: ka, bId: kb, count: 1, lastTimestamp: ts });
+      }
+    }
+  }
+  return [...byKey.values()];
 }
 
 /** Epoch that may be seconds or milliseconds → milliseconds. */

@@ -25,6 +25,7 @@ import { FiltersResetPill } from "./map/FiltersResetPill";
 import { circularMeanLng, normalizeLng, unwrapLngTo } from "./map/geo";
 import { bestSnr, computeMaxRange, formatLatLng, geodesicCircleCoords, mbRoleColorExpr, queryTerrainElevationMSL, relativeTime, signalBarsHtml, TRANSPARENT_1PX_PNG } from "./map/helpers";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId, recencyOpacityFromAgeMs } from "./map/linkFeatures";
+import { haversineKm } from "./map/losAnalysis";
 import { LosTubeLayer } from "./map/losTubeLayer";
 import { MapCoordinatePill } from "./map/MapCoordinatePill";
 import { MapCoveragePanel } from "./map/MapCoveragePanel";
@@ -35,10 +36,11 @@ import { MapScanPanel } from "./map/MapScanPanel";
 import { MapSearchBar } from "./map/MapSearchBar";
 import { MapSettingsPanel } from "./map/MapSettingsPanel";
 import { MapToolPrompt, MapToolsDrawer } from "./map/MapToolsDrawer";
+import { type CorridorSort, MapTraceCorridorsPanel, type TraceCorridor } from "./map/MapTraceCorridorsPanel";
 import { MapTraceroutePanel } from "./map/MapTraceroutePanel";
 import { type PacketArc, PacketCoalescer, type RawPacket } from "./map/packetCoalescer";
 import { packetColor } from "./map/packetColors";
-import { findPathsBetween, findRunsBetween, tsToMs } from "./map/pathAnalysis";
+import { computeTraceEdgeStats, findPathsBetween, findRunsBetween, tsToMs } from "./map/pathAnalysis";
 import type { ScanClass } from "./map/scanAnalysis";
 import {
   anyIdsFanned,
@@ -222,6 +224,10 @@ export function Map() {
   // and whether the direct-path counterfactual overlay is drawn.
   const [traceSelectedSig, setTraceSelectedSig] = useState<string | null>(null);
   const [traceShowDirect, setTraceShowDirect] = useState(true);
+  // Busiest-links column: viewport filter + a moveend tick to recompute on pan
+  const [traceCorridorsInView, setTraceCorridorsInView] = useState(true);
+  const [traceCorridorSort, setTraceCorridorSort] = useState<CorridorSort>("busiest");
+  const [mapMoveEpoch, setMapMoveEpoch] = useState(0);
 
   // Pair-scoped traceroute history for the tool — escapes the 1000-row global
   // window that makes most pairs come back empty. Merged with the global cache
@@ -545,6 +551,52 @@ export function Map() {
       .join("|");
   }, [traceSelectedPath, nodes]);
 
+  // Busiest observed links, ranked by traversal count — the tool's browse mode.
+  // Counted over rawTraceroutes (the uniform global window), NOT traceData:
+  // merging the open pair's deep history would self-inflate whichever corridor
+  // was clicked. Stats are split out so pan/zoom only re-runs the cheap filter.
+  const traceEdgeStats = useMemo(
+    () => (activeTool === "traceroute" ? computeTraceEdgeStats(rawTraceroutes) : []),
+    [activeTool, rawTraceroutes],
+  );
+  const traceCorridors = useMemo((): TraceCorridor[] => {
+    if (traceEdgeStats.length === 0) return [];
+    const bounds = traceCorridorsInView ? mbMapRef.current?.getBounds() : null;
+    // Seam-tolerant: wrapped node lngs must also match against ±360 aliases,
+    // since a viewport straddling the antimeridian has unwrapped bounds.
+    const inBounds = (p: [number, number]): boolean =>
+      !bounds ||
+      bounds.contains(p) ||
+      bounds.contains([p[0] + 360, p[1]]) ||
+      bounds.contains([p[0] - 360, p[1]]);
+    const out: TraceCorridor[] = [];
+    for (const e of traceEdgeStats) {
+      const na = nodes[e.aId] ?? nodes[`!${e.aId}`];
+      const nb = nodes[e.bId] ?? nodes[`!${e.bId}`];
+      if (!na?.map_position || !nb?.map_position) continue;
+      if (!(inBounds(na.map_position) && inBounds(nb.map_position))) continue;
+      out.push({
+        aId: e.aId,
+        bId: e.bId,
+        aLabel: na.shortname?.trim() || e.aId.slice(0, 8),
+        bLabel: nb.shortname?.trim() || e.bId.slice(0, 8),
+        aPos: na.map_position,
+        bPos: nb.map_position,
+        count: e.count,
+        distanceKm: haversineKm(na.map_position, nb.map_position),
+        lastTimestamp: e.lastTimestamp,
+      });
+    }
+    out.sort((x, y) =>
+      traceCorridorSort === "longest"
+        ? y.distanceKm - x.distanceKm || y.count - x.count
+        : y.count - x.count || y.lastTimestamp - x.lastTimestamp,
+    );
+    return out.slice(0, 15);
+    // mapMoveEpoch: pan/zoom re-runs the viewport filter
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [traceEdgeStats, nodes, traceCorridorsInView, traceCorridorSort, mapMoveEpoch]);
+
   // Traceroute per-hop RF analysis ("Why This Path") + graded tube / pylons / direct overlay
   const traceCompute = useTraceCompute({
     activeTool, toolStep,
@@ -561,6 +613,20 @@ export function Map() {
   const flyoverCancelRef = useRef(traceFlyover.cancelFlyover);
   flyoverCancelRef.current = traceFlyover.cancelFlyover;
   const flyoverFlyingRef = traceFlyover.flyingRef;
+
+  // Corridor row click → jump straight to the analysis for that pair
+  const handleCorridorPick = useCallback((aId: string, bId: string) => {
+    traceFlyover.cancelFlyover();
+    tracePendingPlayRef.current = false;
+    setTraceSelectedSig(null);
+    setToolFromId(aId);
+    setToolToId(bId);
+    setToolStep("result");
+    // The pick flow's crosshair must not survive a jump past pickTo
+    const canvas = mbMapRef.current?.getCanvas();
+    if (canvas) canvas.style.cursor = "";
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Scan compute + per-class visibility + clear-on-tool-change + hover effects
   const scanCompute = useScanCompute({
@@ -2418,6 +2484,9 @@ export function Map() {
       bindHover("unclustered-nodes");
       bindHover("plain-nodes");
 
+      // Recompute viewport-scoped panels (busiest links) after pan/zoom settles
+      map.on("moveend", () => setMapMoveEpoch((v) => v + 1));
+
       // Focus-on-hover: hovering a node highlights its ego-network (the node +
       // its neighbors + nodes that heard it) and dims everything else.
       const LINK_LAYER_BASE_OPACITY: Record<string, number> = {
@@ -3878,6 +3947,25 @@ export function Map() {
             coverage.setKeepCoveragePaint(true);
             setActiveTool("scan");
           }}
+        />
+      )}
+
+      {/* Busiest-links column — browse corridors while the traceroute tool is active */}
+      {activeTool === "traceroute" && (
+        <MapTraceCorridorsPanel
+          corridors={traceCorridors}
+          sortMode={traceCorridorSort}
+          onSortModeChange={setTraceCorridorSort}
+          inViewOnly={traceCorridorsInView}
+          onToggleInView={setTraceCorridorsInView}
+          activePair={
+            toolFromId && toolToId
+              ? [normNodeId(toolFromId), normNodeId(toolToId)]
+              : null
+          }
+          hideOnMobile={toolStep === "result"}
+          onHover={handleTraceHighlight}
+          onPick={handleCorridorPick}
         />
       )}
 
