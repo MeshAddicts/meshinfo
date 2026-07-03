@@ -612,6 +612,9 @@ export function Map() {
     // recreate the callback (would defeat MapScanPanel's memo).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Ref so the bind-once Escape handler can reuse the panel's exact close behavior.
+  const handleScanCloseRef = useRef(handleScanClose);
+  handleScanCloseRef.current = handleScanClose;
   const handleScanEnableTerrain = useCallback(() => setTerrain3D(true), []);
   const handleScanSelectResult = useCallback((id: string) => {
     // Fly to the target, then open its details panel.
@@ -2446,13 +2449,18 @@ export function Map() {
               // Merge-origin picking consumes Esc (the pick hook's own
               // listener cancels it) — don't also arm/close the tool.
               if (pickingMergeOriginRef.current) break;
-              // Coverage, a standalone scan, and a Scan-from-here overlay each carry
-              // state (paint/pins/settings, and scan's ~800-tile DEM) — one stray Esc
-              // shouldn't destroy it. Require a confirming Esc, worded for the tool on screen.
+              // Scan opened as a coverage overlay: Esc returns to coverage (paint
+              // preserved), matching the panel's close button — not a teardown of both.
+              // Coverage's own guard then governs the final close.
+              if (keepCoveragePaintRef.current && activeToolRef.current === "scan") {
+                handleScanCloseRef.current();
+                break;
+              }
+              // Coverage and a standalone scan each carry state (paint/pins/settings,
+              // and scan's ~800-tile DEM) — one stray Esc shouldn't destroy it. Require
+              // a confirming Esc, worded for the tool on screen.
               if (
-                (activeToolRef.current === "coverage" ||
-                  activeToolRef.current === "scan" ||
-                  keepCoveragePaintRef.current) &&
+                (activeToolRef.current === "coverage" || activeToolRef.current === "scan") &&
                 toolStepRef.current === "result"
               ) {
                 const now = Date.now();
