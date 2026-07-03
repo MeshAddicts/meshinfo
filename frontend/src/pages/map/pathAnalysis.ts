@@ -7,10 +7,15 @@ export interface AnalyzedPath {
   hopCount: number;
   snr?: number;
   rssi?: number;
+  /** Newest observation of this exact hop sequence (epoch, s or ms as stored). */
   timestamp: number;
+  /** Observations of this exact hop sequence in the fetched window. */
+  count: number;
 }
 
-/** Unique traceroute paths between two nodes (either direction), sorted by hopCount asc. */
+/** Unique traceroute paths between two nodes (either direction), newest first.
+ *  Freshness outranks hop count: a stale one-hop fluke must not beat the route
+ *  the mesh is actually using now. */
 export function findPathsBetween(
   fromId: string,
   toId: string,
@@ -20,8 +25,7 @@ export function findPathsBetween(
   const b = normNodeId(toId);
   if (!a || !b || a === b) return [];
 
-  const paths: AnalyzedPath[] = [];
-  const seenSignatures = new Set<string>();
+  const bySig = new Map<string, AnalyzedPath>();
 
   for (const tr of traceroutes) {
     const tFrom = normNodeId(tr?.from);
@@ -41,18 +45,33 @@ export function findPathsBetween(
     const hops = idxA < idxB ? sub : sub.slice().reverse();
 
     const sig = hops.join(">");
-    if (seenSignatures.has(sig)) continue;
-    seenSignatures.add(sig);
-
-    paths.push({
+    const ts = tr.timestamp ?? 0;
+    const existing = bySig.get(sig);
+    if (existing) {
+      existing.count += 1;
+      if (ts > existing.timestamp) {
+        existing.timestamp = ts;
+        existing.snr = tr.snr;
+        existing.rssi = tr.rssi;
+      }
+      continue;
+    }
+    bySig.set(sig, {
       hops,
       hopCount: hops.length - 1,
       snr: tr.snr,
       rssi: tr.rssi,
-      timestamp: tr.timestamp ?? 0,
+      timestamp: ts,
+      count: 1,
     });
   }
 
-  paths.sort((x, y) => x.hopCount - y.hopCount || y.timestamp - x.timestamp);
+  const paths = [...bySig.values()];
+  paths.sort((x, y) => y.timestamp - x.timestamp || x.hopCount - y.hopCount);
   return paths;
+}
+
+/** Epoch that may be seconds or milliseconds → milliseconds. */
+export function tsToMs(ts: number): number {
+  return ts > 1e12 ? ts : ts * 1000;
 }

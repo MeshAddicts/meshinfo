@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { ITraceroutesResponse } from "../../types";
-import { findPathsBetween } from "./pathAnalysis";
+import { unwrapLngTo } from "./geo";
+import { relativeTime } from "./helpers";
+import { type AnalyzedPath, findPathsBetween, tsToMs } from "./pathAnalysis";
 import { PathHopList } from "./PathHopList";
 import type { IMapNode } from "./types";
 import { useBottomSheetGesture } from "./useBottomSheet";
@@ -17,7 +19,7 @@ export function MapTraceroutePanel({
   loading,
   liveNodes,
   onNodeSelect,
-  onHoverLink,
+  onHighlight,
   onClose,
 }: {
   fromId: string;
@@ -30,11 +32,19 @@ export function MapTraceroutePanel({
   loading?: boolean;
   liveNodes: Record<string, IMapNode>;
   onNodeSelect: (id: string) => void;
-  onHoverLink?: (id: string | null) => void;
+  /** Spotlight the given path segment on the map (null clears). */
+  onHighlight?: (coords: [number, number][] | null) => void;
   onClose: () => void;
 }) {
-  const paths = findPathsBetween(fromId, toId, traceroutes);
-  const shortest = paths[0];
+  // `traceroutes` arrives pre-merged from Map.tsx (global window + pair-scoped
+  // history), so the list here always matches what's drawn on the map.
+  const paths = useMemo(
+    () => findPathsBetween(fromId, toId, traceroutes),
+    [fromId, toId, traceroutes],
+  );
+
+  const latest = paths[0];
+  const alternates = paths.slice(1, 6);
   const [minimized, setMinimized] = useState(false);
   const sheet = useBottomSheetGesture({
     onClose,
@@ -42,6 +52,32 @@ export function MapTraceroutePanel({
     onMinimize: () => setMinimized(true),
     onExpand: () => setMinimized(false),
   });
+
+  // Don't leave a stale spotlight behind when the sheet closes.
+  useEffect(() => () => onHighlight?.(null), [onHighlight]);
+
+  const posOf = (id: string): [number, number] | null => {
+    const n = liveNodes[id] ?? liveNodes[`!${id}`];
+    return n?.map_position ? [n.map_position[0], n.map_position[1]] : null;
+  };
+  /** Known-position coords, chain-unwrapped so seam-crossing legs draw short. */
+  const toCoords = (ids: string[]): [number, number][] => {
+    const out: [number, number][] = [];
+    for (const id of ids) {
+      const pos = posOf(id);
+      if (!pos) continue;
+      const prev = out[out.length - 1];
+      out.push(prev ? [unwrapLngTo(prev[0], pos[0]), pos[1]] : pos);
+    }
+    return out;
+  };
+  const highlightPath = (p: AnalyzedPath) => onHighlight?.(toCoords(p.hops));
+  // Chip leave falls back to the whole path (the cursor is still in the card).
+  const highlightHop = (p: AnalyzedPath, i: number | null) =>
+    i == null ? highlightPath(p) : onHighlight?.(toCoords(p.hops.slice(Math.max(0, i - 1), i + 2)));
+
+  const observedAgo = (ts: number): string | null =>
+    ts ? relativeTime(new Date(tsToMs(ts)).toISOString()) : null;
 
   return (
     <div
@@ -95,40 +131,74 @@ export function MapTraceroutePanel({
       </div>
 
       <div className={`p-3 overflow-y-auto overscroll-contain flex-1 min-h-0 ${minimized ? "max-sm:hidden" : ""}`}>
-        {loading && traceroutes.length === 0 ? (
+        {loading && paths.length === 0 ? (
           <div className="px-2 py-3 text-xs text-gray-500">
             Loading traceroutes…
           </div>
         ) : paths.length === 0 ? (
           <div className="px-2 py-3 text-xs text-gray-500">
-            No known traceroute path between these nodes.
+            No traceroute has been observed between these nodes yet.
+            <div className="mt-1 text-[10px] text-gray-600">
+              Routes appear when a traceroute crossing both nodes is heard on the mesh.
+            </div>
           </div>
         ) : (
           <div className="space-y-1.5">
-            {shortest && (
-              <div className="px-2 py-1.5 rounded bg-cyan-500/10 border border-cyan-500/20 text-xs">
-                <div className="text-cyan-400 text-[10px] uppercase tracking-wider mb-0.5">Shortest Path</div>
-                <div className="text-gray-200">
-                  {shortest.hopCount} {shortest.hopCount === 1 ? "hop" : "hops"}
-                  {shortest.snr != null && <span className="text-gray-500 ml-2">SNR {shortest.snr.toFixed(1)} dB</span>}
+            {latest && (
+              <div
+                className="px-2 py-1.5 rounded bg-cyan-500/10 border border-cyan-500/20 text-xs"
+                onMouseEnter={() => highlightPath(latest)}
+                onMouseLeave={() => onHighlight?.(null)}
+              >
+                <div className="flex items-center justify-between gap-2 mb-0.5">
+                  <div className="text-cyan-400 text-[10px] uppercase tracking-wider">Latest Route</div>
+                  {observedAgo(latest.timestamp) && (
+                    <div className="text-[10px] text-gray-500 tabular-nums shrink-0">observed {observedAgo(latest.timestamp)}</div>
+                  )}
                 </div>
-                <PathHopList hops={shortest.hops} liveNodes={liveNodes} onNodeSelect={onNodeSelect} onHoverLink={onHoverLink} />
+                <div className="text-gray-200">
+                  {latest.hopCount} {latest.hopCount === 1 ? "hop" : "hops"}
+                  {latest.count > 1 && <span className="text-gray-500 ml-2">seen {latest.count}×</span>}
+                  {latest.snr != null && <span className="text-gray-500 ml-2">SNR {latest.snr.toFixed(1)} dB</span>}
+                </div>
+                <PathHopList
+                  hops={latest.hops}
+                  liveNodes={liveNodes}
+                  onNodeSelect={onNodeSelect}
+                  onHoverHop={(i) => highlightHop(latest, i)}
+                />
               </div>
             )}
 
-            {paths.length > 1 && (
+            {alternates.length > 0 && (
               <div className="px-2 pt-1">
                 <div className="text-gray-500 text-[10px] uppercase tracking-wider mb-1">
-                  Alternative Paths ({paths.length - 1 > 5 ? `showing 5 of ${paths.length - 1}` : paths.length - 1})
+                  Other Observed Paths ({paths.length - 1 > 5 ? `showing 5 of ${paths.length - 1}` : paths.length - 1})
                 </div>
                 <div className="space-y-1">
-                  {paths.slice(1, 6).map((p) => (
-                    <div key={p.hops.join(">")} className="text-xs px-2 py-1 rounded bg-white/5">
-                      <div className="text-gray-300">
-                        {p.hopCount} {p.hopCount === 1 ? "hop" : "hops"}
-                        {p.snr != null && <span className="text-gray-500 ml-2">SNR {p.snr.toFixed(1)} dB</span>}
+                  {alternates.map((p) => (
+                    <div
+                      key={p.hops.join(">")}
+                      className="text-xs px-2 py-1 rounded bg-white/5 hover:bg-white/10 transition-colors"
+                      onMouseEnter={() => highlightPath(p)}
+                      onMouseLeave={() => onHighlight?.(null)}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-gray-300">
+                          {p.hopCount} {p.hopCount === 1 ? "hop" : "hops"}
+                          {p.count > 1 && <span className="text-gray-500 ml-2">seen {p.count}×</span>}
+                          {p.snr != null && <span className="text-gray-500 ml-2">SNR {p.snr.toFixed(1)} dB</span>}
+                        </div>
+                        {observedAgo(p.timestamp) && (
+                          <div className="text-[10px] text-gray-500 tabular-nums shrink-0">{observedAgo(p.timestamp)}</div>
+                        )}
                       </div>
-                      <PathHopList hops={p.hops} liveNodes={liveNodes} onNodeSelect={onNodeSelect} onHoverLink={onHoverLink} />
+                      <PathHopList
+                        hops={p.hops}
+                        liveNodes={liveNodes}
+                        onNodeSelect={onNodeSelect}
+                        onHoverHop={(i) => highlightHop(p, i)}
+                      />
                     </div>
                   ))}
                 </div>

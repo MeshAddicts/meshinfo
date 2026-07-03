@@ -2004,20 +2004,52 @@ class PostgresStorage:
             logger.error(f"Failed to query telemetry from PostgreSQL: {e}")
             return []
 
-    async def query_all_traceroutes(self, limit: int = 1000) -> List[Dict[str, Any]]:
-        """Query all traceroutes."""
+    async def query_all_traceroutes(
+        self,
+        limit: int = 1000,
+        from_node_id: Optional[str] = None,
+        to_node_id: Optional[str] = None,
+        range_seconds: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Query traceroutes, newest first, optionally filtered.
+
+        With both endpoints given, the pair matches in either direction
+        (consumers orient the path client-side). A single endpoint filters
+        just that column. `range_seconds` windows on created_at.
+        """
         if not self.enabled or not self.pool:
             return []
+
+        where = []
+        params: List[Any] = []
+        if from_node_id and to_node_id:
+            params += [from_node_id, to_node_id]
+            where.append(
+                "((from_node_id = $1 AND to_node_id = $2)"
+                " OR (from_node_id = $2 AND to_node_id = $1))"
+            )
+        elif from_node_id:
+            params.append(from_node_id)
+            where.append(f"from_node_id = ${len(params)}")
+        elif to_node_id:
+            params.append(to_node_id)
+            where.append(f"to_node_id = ${len(params)}")
+        if range_seconds:
+            params.append(range_seconds)
+            where.append(f"created_at >= NOW() - make_interval(secs => ${len(params)})")
+        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+        params.append(limit)
 
         try:
             async with self.pool.acquire() as conn:
                 rows = await conn.fetch(
-                    """
+                    f"""
                     SELECT * FROM traceroutes
+                    {where_sql}
                     ORDER BY created_at DESC
-                    LIMIT $1
+                    LIMIT ${len(params)}
                     """,
-                    limit,
+                    *params,
                 )
 
                 traceroutes = []

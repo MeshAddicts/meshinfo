@@ -132,8 +132,19 @@ export const apiSlice = createApi({
       transformResponse: (response: { telemetry: ITelemetryResponse[] }) => response.telemetry ?? [],
       providesTags: (_result, _err, id) => [{ type: "Telemetry", id }],
     }),
-    getTraceroutes: builder.query<ITraceroutesResponse[], void>({
-      query: () => "traceroutes",
+    getTraceroutes: builder.query<
+      ITraceroutesResponse[],
+      { from?: string; to?: string; range?: string; limit?: number } | void
+    >({
+      query: (params) => {
+        const sp = new URLSearchParams();
+        if (params && params.from) sp.set("from", params.from);
+        if (params && params.to) sp.set("to", params.to);
+        if (params && params.range && params.range !== "all") sp.set("range", params.range);
+        if (params && params.limit) sp.set("limit", String(params.limit));
+        const qs = sp.toString();
+        return qs ? `traceroutes?${qs}` : "traceroutes";
+      },
       providesTags: [{ type: "Traceroutes", id: "LIST" }],
     }),
     getMessages: builder.query<

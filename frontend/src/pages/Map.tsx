@@ -9,11 +9,12 @@ import { useSearchParams } from "react-router";
 
 import { toast } from "../components/toastStore";
 import { env } from "../env";
+import { useAppDispatch } from "../hooks";
 import { useLiveEvent } from "../hooks/useLiveEvent";
 import { reverseGeocode } from "../maps/geocoder";
 import { buildMapStyle, ensureBuildings3D, ensureTerrain, isDarkBasemap, type OsmBasemap, removeBuildings3D, removeTerrain } from "../maps/mapStyle";
-import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
-import { NodeRole, roleTitles } from "../types";
+import { apiSlice, useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
+import { type ITraceroutesResponse, NodeRole, roleTitles } from "../types";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { normalizeNodeId8 } from "../utils/normalizeNodeId8";
 import { prefersReducedMotion } from "../utils/reducedMotion";
@@ -21,9 +22,9 @@ import { ActivityLayer } from "./map/activityLayer";
 import { ClusterDonutLayer } from "./map/clusterDonutLayer";
 import { type ClusterHover,ClusterHoverCard } from "./map/ClusterHoverCard";
 import { FiltersResetPill } from "./map/FiltersResetPill";
-import { circularMeanLng, normalizeLng } from "./map/geo";
+import { circularMeanLng, normalizeLng, unwrapLngTo } from "./map/geo";
 import { bestSnr, computeMaxRange, formatLatLng, geodesicCircleCoords, mbRoleColorExpr, queryTerrainElevationMSL, relativeTime, signalBarsHtml, TRANSPARENT_1PX_PNG } from "./map/helpers";
-import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
+import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId, recencyOpacityFromAgeMs } from "./map/linkFeatures";
 import { LosTubeLayer } from "./map/losTubeLayer";
 import { MapCoordinatePill } from "./map/MapCoordinatePill";
 import { MapCoveragePanel } from "./map/MapCoveragePanel";
@@ -37,7 +38,7 @@ import { MapToolPrompt, MapToolsDrawer } from "./map/MapToolsDrawer";
 import { MapTraceroutePanel } from "./map/MapTraceroutePanel";
 import { type PacketArc, PacketCoalescer, type RawPacket } from "./map/packetCoalescer";
 import { packetColor } from "./map/packetColors";
-import { findPathsBetween } from "./map/pathAnalysis";
+import { findPathsBetween, tsToMs } from "./map/pathAnalysis";
 import type { ScanClass } from "./map/scanAnalysis";
 import {
   anyIdsFanned,
@@ -125,6 +126,12 @@ export function Map() {
   const flushRafRef = useRef<number | null>(null);
   // Per-mesh-id debounce of multi-gateway traceroute copies → one comet, longest route.
   const tracerouteBufRef = useRef<Map<string, { ev: TraceEv; timer: ReturnType<typeof setTimeout> }> | null>(null);
+  // Traceroute tool: endpoint markers, one-shot fit per pair, live-refetch throttle.
+  const traceFromMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const traceToMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const traceFitKeyRef = useRef<string | null>(null);
+  const traceRefetchAtRef = useRef(0);
+  const traceRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mbHandlersBoundRef = useRef(false);
   const mbCurrentStyleUrlRef = useRef<string | null>(null);
   const mbKeydownHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
@@ -135,6 +142,7 @@ export function Map() {
   const handleLinkHoverRef = useRef<(otherId: string | null) => void>(() => {});
   const selectedNodeIdRef = useRef<string | null>(null);
 
+  const dispatch = useAppDispatch();
   const { data: rawNodes = {}, isError: nodesQueryFailed } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
   const { data: rawTraceroutes = [], isLoading: rawTraceroutesLoading } = useGetTraceroutesQuery();
@@ -199,6 +207,24 @@ export function Map() {
   const [toolFromId, setToolFromId] = useState<string | null>(null);
   const [toolToId, setToolToId] = useState<string | null>(null);
   const [toolVirtualPos, setToolVirtualPos] = useState<[number, number] | null>(null);
+
+  // Pair-scoped traceroute history for the tool — escapes the 1000-row global
+  // window that makes most pairs come back empty. Merged with the global cache
+  // so routes crossing the pair as intermediate hops still count.
+  const tracePairActive = activeTool === "traceroute" && !!toolFromId && !!toolToId;
+  // isLoading (not isFetching): true only on a pair's first fetch, so throttled
+  // background refetches neither flicker the panel nor re-gate the fitBounds.
+  const { data: pairTraceroutes = [], isLoading: pairTraceroutesLoading } = useGetTraceroutesQuery(
+    { from: toolFromId ?? "", to: toolToId ?? "", limit: 500 },
+    { skip: !tracePairActive },
+  );
+  const traceData = useMemo(() => {
+    if (pairTraceroutes.length === 0) return rawTraceroutes;
+    // globalThis: the component name shadows the Map constructor
+    const byKey = new globalThis.Map<string, ITraceroutesResponse>();
+    for (const tr of [...rawTraceroutes, ...pairTraceroutes]) byKey.set(`${tr.id}:${tr.from}`, tr);
+    return [...byKey.values()];
+  }, [rawTraceroutes, pairTraceroutes]);
 
   // 3D terrain
   const [terrain3D, setTerrain3D] = useState<boolean>(() => readJson<boolean>(LS_KEYS.terrain3D, true));
@@ -522,6 +548,15 @@ export function Map() {
     losCompute.losFromMarkerRef.current = null;
     losCompute.losToMarkerRef.current?.remove();
     losCompute.losToMarkerRef.current = null;
+    traceFromMarkerRef.current?.remove();
+    traceFromMarkerRef.current = null;
+    traceToMarkerRef.current?.remove();
+    traceToMarkerRef.current = null;
+    traceFitKeyRef.current = null;
+    if (traceRefetchTimerRef.current) {
+      clearTimeout(traceRefetchTimerRef.current);
+      traceRefetchTimerRef.current = null;
+    }
     // Removing a marker mid-drag skips its dragend; unstick the shared flag
     isDraggingMarkerRef.current = false;
     losState.setLosResult(null);
@@ -553,6 +588,10 @@ export function Map() {
       } catch {}
       try {
         (mb.getSource("path-analysis") as MlGeoJSONSource | undefined)?.setData(empty);
+      } catch {}
+      // A hop/path spotlight from the traceroute panel must not outlive the tool
+      try {
+        (mb.getSource("link-highlight") as MlGeoJSONSource | undefined)?.setData(empty);
       } catch {}
       if (coverageCompute.coverageOriginMarkerRef.current) {
         coverageCompute.coverageOriginMarkerRef.current.remove();
@@ -758,36 +797,101 @@ export function Map() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Draw shortest traceroute path on both providers
+  // Draw all observed traceroute paths between the picked pair — newest on top,
+  // alternates recency-faded — plus endpoint markers and a one-shot fitBounds.
   useEffect(() => {
-    const computePathCoords = (): [number, number][] | null => {
-      if (activeTool !== "traceroute" || toolStep !== "result") return null;
-      if (!toolFromId || !toolToId) return null;
-      const paths = findPathsBetween(toolFromId, toolToId, rawTraceroutes);
-      if (paths.length === 0) return null;
-      const shortest = paths[0];
-      const coords: [number, number][] = [];
-      for (const hop of shortest.hops) {
-        const n = nodes[hop] ?? nodes[`!${hop}`];
-        if (n?.map_position) coords.push([n.map_position[0], n.map_position[1]]);
-      }
-      return coords.length >= 2 ? coords : null;
+    const mb = mbMapRef.current;
+    if (!mb) return;
+
+    const clearTraceMarkers = () => {
+      traceFromMarkerRef.current?.remove();
+      traceFromMarkerRef.current = null;
+      traceToMarkerRef.current?.remove();
+      traceToMarkerRef.current = null;
     };
 
-    const mb = mbMapRef.current;
-    if (mb) {
-      const src = mb.getSource("path-analysis") as MlGeoJSONSource | undefined;
-      if (src) {
-        const coords = computePathCoords();
-        src.setData(
-          coords
-            ? { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: coords } }] }
-            : { type: "FeatureCollection", features: [] },
-        );
-      }
+    const src = mb.getSource("path-analysis") as MlGeoJSONSource | undefined;
+    if (activeTool !== "traceroute" || toolStep !== "result" || !toolFromId || !toolToId) {
+      src?.setData({ type: "FeatureCollection", features: [] });
+      clearTraceMarkers();
+      traceFitKeyRef.current = null;
+      return;
     }
+    if (!src) return;
 
-  }, [activeTool, toolStep, toolFromId, toolToId, rawTraceroutes, nodes]);
+    // nodesRef, not the nodes memo: SSE flushes rebuild `nodes` every 400 ms,
+    // which would churn setData/markers here for no visual change.
+    const posOf = (id: string): [number, number] | null => {
+      const n = nodesRef.current[id] ?? nodesRef.current[`!${id}`];
+      return n?.map_position ? [n.map_position[0], n.map_position[1]] : null;
+    };
+
+    const paths = findPathsBetween(toolFromId, toolToId, traceData);
+    const now = Date.now();
+    const features: GeoJSON.Feature[] = [];
+    paths.slice(0, 6).forEach((p, rank) => {
+      const coords: [number, number][] = [];
+      for (const hop of p.hops) {
+        const pos = posOf(hop);
+        if (!pos) continue; // hop with unknown position — skip (honest gap)
+        const prev = coords[coords.length - 1];
+        // Chain-unwrap so seam-crossing legs draw the short way
+        coords.push(prev ? [unwrapLngTo(prev[0], pos[0]), pos[1]] : pos);
+      }
+      if (coords.length < 2) return;
+      features.push({
+        type: "Feature",
+        properties: {
+          primary: rank === 0,
+          // Higher sort key renders later → newest path on top
+          sort: -rank,
+          opacity: rank === 0
+            ? 0.95
+            : Math.min(0.55, 0.55 * recencyOpacityFromAgeMs(now - tsToMs(p.timestamp))),
+        },
+        geometry: { type: "LineString", coordinates: coords },
+      });
+    });
+    src.setData({ type: "FeatureCollection", features });
+
+    const fromPos = posOf(toolFromId);
+    const toPos = posOf(toolToId);
+    if (!fromPos || !toPos) {
+      clearTraceMarkers();
+      return;
+    }
+    if (traceFromMarkerRef.current) traceFromMarkerRef.current.setLngLat(fromPos);
+    else traceFromMarkerRef.current = new maplibregl.Marker({ color: "#06b6d4", scale: 0.75 }).setLngLat(fromPos).addTo(mb);
+    if (traceToMarkerRef.current) traceToMarkerRef.current.setLngLat(toPos);
+    else traceToMarkerRef.current = new maplibregl.Marker({ color: "#d946ef", scale: 0.75 }).setLngLat(toPos).addTo(mb);
+
+    // Fit once per pair, not on every data refresh — but not before the
+    // pair-scoped history lands, or the fit would exclude the actual routes.
+    const fitKey = `${toolFromId}-${toolToId}`;
+    if (!pairTraceroutesLoading && traceFitKeyRef.current !== fitKey) {
+      traceFitKeyRef.current = fitKey;
+      const bounds = new maplibregl.LngLatBounds();
+      bounds.extend(fromPos);
+      // Unwrap so an antimeridian-crossing pair frames the short way
+      bounds.extend([unwrapLngTo(fromPos[0], toPos[0]), toPos[1]]);
+      for (const f of features) {
+        for (const c of (f.geometry as GeoJSON.LineString).coordinates) bounds.extend(c as [number, number]);
+      }
+      mb.fitBounds(bounds, { padding: 120, duration: 600, maxZoom: 12 });
+    }
+    // styleEpoch: setStyle recreates the path-analysis source empty — redraw after style.load
+  }, [activeTool, toolStep, toolFromId, toolToId, traceData, pairTraceroutesLoading, styleEpoch]);
+
+  // Traceroute panel hover → spotlight the hovered leg / alternate path.
+  const handleTraceHighlight = useCallback((coords: [number, number][] | null) => {
+    const src = mbMapRef.current?.getSource("link-highlight") as MlGeoJSONSource | undefined;
+    if (!src) return;
+    src.setData(
+      coords && coords.length >= 2
+        ? { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: coords } }] }
+        : { type: "FeatureCollection", features: [] },
+    );
+  }, []);
 
   /** Cluster donut + count text dim. Combines the tool-active dim (when an RF
    *  tool is in result step, so the raster reads clearly) with focus-on-hover
@@ -969,16 +1073,22 @@ export function Map() {
         const coverageSrc = map.getSource("coverage") as MlGeoJSONSource | undefined;
         coverageSrc?.setData({ type: "FeatureCollection", features: [] });
       } catch {}
-      // Clear link highlight
-      try {
-        const hlSrc = map.getSource("link-highlight") as MlGeoJSONSource | undefined;
-        hlSrc?.setData({ type: "FeatureCollection", features: [] });
-      } catch {}
-      // Clear path analysis
-      try {
-        const paSrc = map.getSource("path-analysis") as MlGeoJSONSource | undefined;
-        paSrc?.setData({ type: "FeatureCollection", features: [] });
-      } catch {}
+      // The traceroute tool owns link-highlight + path-analysis while showing
+      // results (empty-map clicks and panel closes must not wipe its routes —
+      // nothing would redraw them).
+      const traceResultActive = activeToolRef.current === "traceroute" && toolStepRef.current === "result";
+      if (!traceResultActive) {
+        // Clear link highlight
+        try {
+          const hlSrc = map.getSource("link-highlight") as MlGeoJSONSource | undefined;
+          hlSrc?.setData({ type: "FeatureCollection", features: [] });
+        } catch {}
+        // Clear path analysis
+        try {
+          const paSrc = map.getSource("path-analysis") as MlGeoJSONSource | undefined;
+          paSrc?.setData({ type: "FeatureCollection", features: [] });
+        } catch {}
+      }
     }
 
     // Hide the panel
@@ -1300,11 +1410,16 @@ export function Map() {
           id: "path-analysis-line",
           type: "line",
           source: "path-analysis",
-          layout: { "line-join": "round", "line-cap": "round" },
+          layout: {
+            "line-join": "round",
+            "line-cap": "round",
+            // Higher key renders later → the newest (primary) path sits on top
+            "line-sort-key": ["get", "sort"],
+          },
           paint: {
-            "line-color": "#06b6d4",
-            "line-width": 4,
-            "line-opacity": 0.95,
+            "line-color": ["case", ["get", "primary"], "#06b6d4", "#38bdf8"],
+            "line-width": ["case", ["get", "primary"], 4, 2],
+            "line-opacity": ["get", "opacity"],
           },
         });
       }
@@ -2926,9 +3041,36 @@ export function Map() {
     buf.set(key, { ev: t, timer });
   });
 
+  // Keep traceroute data fresh while the tool is open: the Map page never
+  // polls, so refetch on tool entry and throttle-refetch on live events.
+  // Tag invalidation refreshes every active traceroutes query (global + pair).
+  const invalidateTraceroutes = useCallback(() => {
+    traceRefetchAtRef.current = Date.now();
+    dispatch(apiSlice.util.invalidateTags([{ type: "Traceroutes", id: "LIST" }]));
+  }, [dispatch]);
+  useEffect(() => {
+    if (activeTool === "traceroute") invalidateTraceroutes();
+  }, [activeTool, invalidateTraceroutes]);
+  useLiveEvent<TraceEv>("traceroute", () => {
+    if (activeToolRef.current !== "traceroute") return;
+    // Leading + trailing throttle: an event inside the window schedules one
+    // deferred refetch instead of being dropped (the page never polls, so a
+    // dropped event would leave the just-run traceroute invisible).
+    const remaining = 10_000 - (Date.now() - traceRefetchAtRef.current);
+    if (remaining > 0) {
+      traceRefetchTimerRef.current ??= setTimeout(() => {
+        traceRefetchTimerRef.current = null;
+        if (activeToolRef.current === "traceroute") invalidateTraceroutes();
+      }, remaining);
+      return;
+    }
+    invalidateTraceroutes();
+  });
+
   useEffect(
     () => () => {
       if (flushRafRef.current != null) cancelAnimationFrame(flushRafRef.current);
+      if (traceRefetchTimerRef.current) clearTimeout(traceRefetchTimerRef.current);
       const buf = tracerouteBufRef.current;
       if (buf) {
         for (const { timer } of buf.values()) clearTimeout(timer);
@@ -3353,11 +3495,11 @@ export function Map() {
           toLabel={(nodes[toolToId] ?? nodes[`!${toolToId}`])?.shortname ?? toolToId.slice(0, 8)}
           fromColor="#06b6d4"
           toColor="#d946ef"
-          traceroutes={rawTraceroutes}
-          loading={rawTraceroutesLoading}
+          traceroutes={traceData}
+          loading={rawTraceroutesLoading || pairTraceroutesLoading}
           liveNodes={nodes}
           onNodeSelect={(id) => handleNodeSelectRef.current(id)}
-          onHoverLink={(id) => handleLinkHoverRef.current(id)}
+          onHighlight={handleTraceHighlight}
           onClose={resetTool}
         />
       )}
