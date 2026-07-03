@@ -6,7 +6,7 @@ import maplibregl, { type CustomRenderMethodInput } from "maplibre-gl";
 
 import { normalizeLng, shortestLngDelta } from "./geo";
 
-export type LosSegmentColor = "clear" | "fresnel" | "blocked";
+export type LosSegmentColor = "clear" | "fresnel" | "blocked" | "gap";
 
 export interface LosTubePoint {
   lng: number;
@@ -23,12 +23,14 @@ export interface LosTubeData {
 const COLOR_CLEAR: [number, number, number] = [0.024, 0.714, 0.831]; // #06b6d4 cyan
 const COLOR_FRESNEL: [number, number, number] = [0.976, 0.451, 0.086]; // #f97316 orange
 const COLOR_BLOCKED: [number, number, number] = [0.94, 0.27, 0.27]; // #ef4444 red
+const COLOR_GAP: [number, number, number] = [0.42, 0.45, 0.5]; // #6b7280 gray — unanalyzed (ghost-hop) leg
 
 function colorFor(cls: LosSegmentColor): [number, number, number] {
   switch (cls) {
     case "clear": return COLOR_CLEAR;
     case "fresnel": return COLOR_FRESNEL;
     case "blocked": return COLOR_BLOCKED;
+    case "gap": return COLOR_GAP;
   }
 }
 
@@ -46,9 +48,13 @@ function compile(gl: WebGLRenderingContext, type: number, source: string): WebGL
 }
 
 export class LosTubeLayer implements maplibregl.CustomLayerInterface {
-  readonly id = "los-tube";
+  readonly id: string;
   readonly type = "custom" as const;
   readonly renderingMode = "3d" as const;
+
+  constructor(id = "los-tube") {
+    this.id = id;
+  }
 
   private map: maplibregl.Map | null = null;
   private gl: WebGLRenderingContext | null = null;

@@ -45,8 +45,15 @@ export interface ITraceroutesResponse {
   from: string;
   hop_start?: number;
   id: number;
+  /** Full RouteDiscovery. SNR arrays are firmware-scaled ×4 with -128 = unknown.
+   *  Rows carrying the full snr_towards (length = route + 1) are REPLY packets:
+   *  their towards path reads header `to` → route → header `from` (the route
+   *  stays request-oriented while the reply header swaps the endpoints). */
   payload: {
-    route: string[];
+    route: (string | number)[];
+    route_back?: (string | number)[];
+    snr_towards?: number[];
+    snr_back?: number[];
   };
   route: string[];
   route_ids?: string[];
