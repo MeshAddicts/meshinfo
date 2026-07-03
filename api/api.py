@@ -221,7 +221,19 @@ class API:
 
         @app.get("/v1/traceroutes")
         async def traceroutes(request: Request) -> JSONResponse:
-            traceroutes_data = await self.data.pg_storage.query_all_traceroutes()
+            from_param = request.query_params.get("from")
+            to_param = request.query_params.get("to")
+            range_seconds = self._parse_range(request.query_params.get("range"))
+            try:
+                limit = int(request.query_params.get("limit", 1000))
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "limit must be an integer"}, status_code=400)
+            traceroutes_data = await self.data.pg_storage.query_all_traceroutes(
+                limit=max(1, min(limit, 10000)),
+                from_node_id=self._coerce_node_id(from_param) if from_param else None,
+                to_node_id=self._coerce_node_id(to_param) if to_param else None,
+                range_seconds=range_seconds,
+            )
             return jsonable_encoder(traceroutes_data)
 
         @app.get("/v1/messages")

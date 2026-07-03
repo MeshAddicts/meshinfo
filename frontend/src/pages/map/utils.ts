@@ -129,8 +129,10 @@ export function nodesDataSignature(
   for (const f of fc.features) {
     const p = f.properties ?? {};
     const c = (f.geometry as GeoPoint).coordinates;
+    // No raw last_seen (would re-cluster per flush; `dim` carries recency,
+    // tooltips read the store). shortname IS hashed — renames must re-upload.
     mix(
-      `${f.id}|${p.last_seen ?? ""}|${p.online ? 1 : 0}|${p.role ?? ""}|${p.dim ?? ""}|` +
+      `${f.id}|${p.shortname ?? ""}|${p.online ? 1 : 0}|${p.role ?? ""}|${p.dim ?? ""}|` +
         `${Math.round((c[0] ?? 0) * 1e5)}|${Math.round((c[1] ?? 0) * 1e5)}`,
     );
   }

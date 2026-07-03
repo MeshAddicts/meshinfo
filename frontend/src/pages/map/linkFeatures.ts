@@ -15,7 +15,7 @@ function straightCoords(from: [number, number], to: [number, number]): [number, 
 }
 
 /** Time-since-heard → opacity multiplier. Stale links taper to 0.3 (still visible). */
-function recencyOpacityFromAgeMs(ageMs: number | null): number {
+export function recencyOpacityFromAgeMs(ageMs: number | null): number {
   if (ageMs == null || !Number.isFinite(ageMs)) return 0.6;
   const m = ageMs / 60_000;
   if (m <= 15) return 1.0;

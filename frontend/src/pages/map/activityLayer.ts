@@ -135,6 +135,7 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
   private cpu = new Float32Array(MAX_POINTS * FLOATS);
   private writeHead = 0;
   private maxExpiry = 0; // performance.now() ms of the last live primitive
+  private arcExpiry = 0; // last live COMET's end — rings alone tolerate a lower fps
   private alpha = 1;
   private repaintHandle: number | null = null;
   private lastRenderTs = 0; // performance.now() of the last actual render (fps cap)
@@ -211,12 +212,15 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
   }
 
   /** Keep-alive repaint, vsync-aligned via rAF, capped to ~30fps by frame-skip.
-   *  Uniform spacing avoids the jitter a setTimeout clock produced. */
+   *  Halves to ~15fps when the camera is idle and only rings remain — each
+   *  triggerRepaint redraws the whole scene (terrain + satellite). */
   private scheduleNextFrame(): void {
     if (this.repaintHandle != null || !this.map) return;
     this.repaintHandle = requestAnimationFrame((ts) => {
       this.repaintHandle = null;
-      if (ts - this.lastRenderTs < FRAME_MS - 1) {
+      const ringsOnly = performance.now() > this.arcExpiry;
+      const cap = ringsOnly && this.map && !this.map.isMoving() ? FRAME_MS * 2 : FRAME_MS;
+      if (ts - this.lastRenderTs < cap - 1) {
         this.scheduleNextFrame(); // too soon — wait for the next vsync, don't render yet
         return;
       }
@@ -319,6 +323,7 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
     }
     this.emit(d, ARC_SAMPLES);
     this.maxExpiry = Math.max(this.maxExpiry, t0 + dur);
+    this.arcExpiry = Math.max(this.arcExpiry, t0 + dur);
   }
 
   /** Comet duration from on-screen distance → constant travel speed at any zoom. */
@@ -338,6 +343,26 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
     this.writeArc(from, to, color, weight, now, dur);
     this.spawnRing(to, color, now + dur * 0.82, RIPPLE_MS, weight);
     this.scheduleNextFrame();
+  }
+
+  /** One comet leg + landing ripple; returns its duration (ms) for camera
+   *  choreography. speedScale slows below ambient (0.5 = half speed). */
+  spawnLeg(
+    from: LngLat,
+    to: LngLat,
+    color: RGB,
+    weight: number,
+    now: number,
+    opts?: { speedScale?: number; minMs?: number; maxMs?: number; landingRing?: boolean },
+  ): number {
+    if (!this.gl || !this.buffer) return 0;
+    const base = this.arcDur(from, to) / (opts?.speedScale ?? 1);
+    const dur = Math.min(opts?.maxMs ?? MAX_ARC_MS, Math.max(opts?.minMs ?? MIN_ARC_MS, base));
+    this.writeArc(from, to, color, weight, now, dur);
+    // landingRing:false — caller fires its own arrival pulse (two rings read doubled)
+    if (opts?.landingRing !== false) this.spawnRing(to, color, now + dur * 0.9, RIPPLE_MS, 0.8);
+    this.scheduleNextFrame();
+    return dur;
   }
 
   /** Sequential comet through a resolved multi-hop path (traceroute), hop by hop. */

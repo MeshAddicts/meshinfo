@@ -9,11 +9,12 @@ import { useSearchParams } from "react-router";
 
 import { toast } from "../components/toastStore";
 import { env } from "../env";
+import { useAppDispatch } from "../hooks";
 import { useLiveEvent } from "../hooks/useLiveEvent";
 import { reverseGeocode } from "../maps/geocoder";
 import { buildMapStyle, ensureBuildings3D, ensureTerrain, isDarkBasemap, type OsmBasemap, removeBuildings3D, removeTerrain } from "../maps/mapStyle";
-import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
-import { NodeRole, roleTitles } from "../types";
+import { apiSlice, useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
+import { type ITraceroutesResponse, NodeRole, roleTitles } from "../types";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { normalizeNodeId8 } from "../utils/normalizeNodeId8";
 import { prefersReducedMotion } from "../utils/reducedMotion";
@@ -21,11 +22,12 @@ import { ActivityLayer } from "./map/activityLayer";
 import { ClusterDonutLayer } from "./map/clusterDonutLayer";
 import { type ClusterHover,ClusterHoverCard } from "./map/ClusterHoverCard";
 import { FiltersResetPill } from "./map/FiltersResetPill";
-import { circularMeanLng, normalizeLng } from "./map/geo";
+import { circularMeanLng, normalizeLng, unwrapLngTo } from "./map/geo";
 import { bestSnr, computeMaxRange, formatLatLng, geodesicCircleCoords, mbRoleColorExpr, queryTerrainElevationMSL, relativeTime, signalBarsHtml, TRANSPARENT_1PX_PNG } from "./map/helpers";
-import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
+import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId, recencyOpacityFromAgeMs } from "./map/linkFeatures";
+import { haversineKm } from "./map/losAnalysis";
 import { LosTubeLayer } from "./map/losTubeLayer";
-import { MapCoordinatePill } from "./map/MapCoordinatePill";
+import { type CoordPillSink, MapCoordinatePill } from "./map/MapCoordinatePill";
 import { MapCoveragePanel } from "./map/MapCoveragePanel";
 import { MapDetailsPanel } from "./map/MapDetailsPanel";
 import { MapHealthWidget } from "./map/MapHealthWidget";
@@ -34,10 +36,11 @@ import { MapScanPanel } from "./map/MapScanPanel";
 import { MapSearchBar } from "./map/MapSearchBar";
 import { MapSettingsPanel } from "./map/MapSettingsPanel";
 import { MapToolPrompt, MapToolsDrawer } from "./map/MapToolsDrawer";
+import { type CorridorSort, MapTraceCorridorsPanel, type TraceCorridor } from "./map/MapTraceCorridorsPanel";
 import { MapTraceroutePanel } from "./map/MapTraceroutePanel";
 import { type PacketArc, PacketCoalescer, type RawPacket } from "./map/packetCoalescer";
 import { packetColor } from "./map/packetColors";
-import { findPathsBetween } from "./map/pathAnalysis";
+import { computeTraceEdgeStats, findPathsBetween, findRunsBetween, tsToMs } from "./map/pathAnalysis";
 import type { ScanClass } from "./map/scanAnalysis";
 import {
   anyIdsFanned,
@@ -66,6 +69,8 @@ import { useLosCompute } from "./map/useLosCompute";
 import { useLosState } from "./map/useLosState";
 import { useScanCompute } from "./map/useScanCompute";
 import { useScanState } from "./map/useScanState";
+import { useTraceCompute } from "./map/useTraceCompute";
+import { useTraceFlyover } from "./map/useTraceFlyover";
 import { useUrlMapSync } from "./map/useUrlMapSync";
 import {
   applyClusterVisibility,
@@ -125,6 +130,21 @@ export function Map() {
   const flushRafRef = useRef<number | null>(null);
   // Per-mesh-id debounce of multi-gateway traceroute copies → one comet, longest route.
   const tracerouteBufRef = useRef<Map<string, { ev: TraceEv; timer: ReturnType<typeof setTimeout> }> | null>(null);
+  // Rate-limits the catcher's "new traceroute" toast (request+reply = two packet ids).
+  const traceCatchToastAtRef = useRef(0);
+  // Traceroute tool: endpoint markers, one-shot fit per pair, live-refetch throttle.
+  const traceFromMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const traceToMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const traceFitKeyRef = useRef<string | null>(null);
+  const traceRefetchAtRef = useRef(0);
+  const traceRefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 3D graded tube for the analyzed route; created once per map. */
+  const traceTubeLayerRef = useRef<LosTubeLayer | null>(null);
+  /** '?' markers for position-less hops of the analyzed path. */
+  const traceGhostMarkersRef = useRef<maplibregl.Marker[]>([]);
+  /** Deep-link state: one-shot URL restore + a pending play=1 tour request. */
+  const traceUrlRestoredRef = useRef(false);
+  const tracePendingPlayRef = useRef(false);
   const mbHandlersBoundRef = useRef(false);
   const mbCurrentStyleUrlRef = useRef<string | null>(null);
   const mbKeydownHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
@@ -135,6 +155,7 @@ export function Map() {
   const handleLinkHoverRef = useRef<(otherId: string | null) => void>(() => {});
   const selectedNodeIdRef = useRef<string | null>(null);
 
+  const dispatch = useAppDispatch();
   const { data: rawNodes = {}, isError: nodesQueryFailed } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
   const { data: rawTraceroutes = [], isLoading: rawTraceroutesLoading } = useGetTraceroutesQuery();
@@ -199,7 +220,49 @@ export function Map() {
   const [toolFromId, setToolFromId] = useState<string | null>(null);
   const [toolToId, setToolToId] = useState<string | null>(null);
   const [toolVirtualPos, setToolVirtualPos] = useState<[number, number] | null>(null);
+  // Traceroute tool: which observed path is analyzed/bold (null = most recent),
+  // and whether the direct-path counterfactual overlay is drawn.
+  const [traceSelectedSig, setTraceSelectedSig] = useState<string | null>(null);
+  const [traceShowDirect, setTraceShowDirect] = useState(true);
+  // Busiest-links column: viewport filter + a moveend tick to recompute on pan
+  const [traceCorridorsInView, setTraceCorridorsInView] = useState(true);
+  const [traceCorridorSort, setTraceCorridorSort] = useState<CorridorSort>("busiest");
+  const [mapMoveEpoch, setMapMoveEpoch] = useState(0);
 
+  // Pair-scoped traceroute history for the tool — escapes the 1000-row global
+  // window that makes most pairs come back empty. Merged with the global cache
+  // so routes crossing the pair as intermediate hops still count.
+  const tracePairActive = activeTool === "traceroute" && !!toolFromId && !!toolToId;
+  // isLoading (not isFetching): true only on a pair's first fetch, so throttled
+  // background refetches neither flicker the panel nor re-gate the fitBounds.
+  const { data: pairTraceroutes = [], isLoading: pairTraceroutesLoading } = useGetTraceroutesQuery(
+    { from: toolFromId ?? "", to: toolToId ?? "", limit: 500 },
+    { skip: !tracePairActive },
+  );
+  const traceData = useMemo(() => {
+    if (pairTraceroutes.length === 0) return rawTraceroutes;
+    // globalThis: the component name shadows the Map constructor
+    const byKey = new globalThis.Map<string, ITraceroutesResponse>();
+    for (const tr of [...rawTraceroutes, ...pairTraceroutes]) byKey.set(`${tr.id}:${tr.from}`, tr);
+    return [...byKey.values()];
+  }, [rawTraceroutes, pairTraceroutes]);
+  const tracePaths = useMemo(
+    () => (activeTool === "traceroute" && toolFromId && toolToId
+      ? findPathsBetween(toolFromId, toolToId, traceData)
+      : []),
+    [activeTool, toolFromId, toolToId, traceData],
+  );
+  const traceSelectedPath = useMemo(
+    () => tracePaths.find((p) => p.hops.join(">") === traceSelectedSig) ?? tracePaths[0] ?? null,
+    [tracePaths, traceSelectedSig],
+  );
+  // Chronological run history for the time-machine strip (oldest first)
+  const traceRuns = useMemo(
+    () => (activeTool === "traceroute" && toolFromId && toolToId
+      ? findRunsBetween(toolFromId, toolToId, traceData)
+      : []),
+    [activeTool, toolFromId, toolToId, traceData],
+  );
   // 3D terrain
   const [terrain3D, setTerrain3D] = useState<boolean>(() => readJson<boolean>(LS_KEYS.terrain3D, true));
   const terrainExaggeration = 1.5;
@@ -215,12 +278,8 @@ export function Map() {
   const losTubeLayerRef = useRef<LosTubeLayer | null>(null);
   /** Suppresses the cursor-elevation mousemove handler so marker drag doesn't stutter. */
   const isDraggingMarkerRef = useRef(false);
-  /** Terrain elevation (MSL m) under the cursor. */
-  const [hoverElevationM, setHoverElevationM] = useState<number | null>(null);
-  /** Live cursor position [lng, lat]; null when the cursor isn't over the map. */
-  const [hoverCoord, setHoverCoord] = useState<[number, number] | null>(null);
-  /** Map-center [lng, lat] — the coordinate pill's fallback when not hovering. */
-  const [centerCoord, setCenterCoord] = useState<[number, number] | null>(null);
+  /** Hover/center feed for the coordinate pill (per-frame state lives there). */
+  const coordPillSinkRef = useRef<CoordPillSink | null>(null);
   /** Whether the jump-to-coordinate pin is currently dropped. */
   const [hasCoordPin, setHasCoordPin] = useState(false);
   /** Draggable jump-to pin; independent of tool state. */
@@ -369,6 +428,7 @@ export function Map() {
   const activeToolRef = useRef(activeTool);
   const toolStepRef = useRef(toolStep);
   const toolFromIdRef = useRef(toolFromId);
+  const toolToIdRef = useRef(toolToId);
   // Merge-origin pick mode, read by the bind-once node/cluster click handlers
   const pickingMergeOriginRef = useRef(mergeOrigins.pickingMergeOrigin);
   const addMergeOriginByIdRef = useRef(mergeOrigins.addCoverageMergeOriginById);
@@ -403,6 +463,7 @@ export function Map() {
   useEffect(() => { keepCoveragePaintRef.current = coverage.keepCoveragePaint; }, [coverage.keepCoveragePaint]);
   useEffect(() => { toolStepRef.current = toolStep; }, [toolStep]);
   useEffect(() => { toolFromIdRef.current = toolFromId; }, [toolFromId]);
+  useEffect(() => { toolToIdRef.current = toolToId; }, [toolToId]);
   useEffect(() => { terrain3DRef.current = terrain3D; }, [terrain3D]);
   useEffect(() => { buildings3DRef.current = buildings3D; }, [buildings3D]);
   useEffect(() => { channelFilterRef.current = channelFilter; }, [channelFilter]);
@@ -447,6 +508,148 @@ export function Map() {
     setIsComputingLos: losState.setIsComputingLos,
     setLosTerrainWarning: losState.setLosTerrainWarning,
   });
+
+  // Lit-up picking: nodes sharing any observed route with the picked origin
+  const traceCandidates = useMemo(() => {
+    if (activeTool !== "traceroute" || toolStep !== "pickTo" || !toolFromId) return [];
+    const a = normNodeId(toolFromId);
+    if (!a) return [];
+    const set = new Set<string>();
+    for (const tr of traceData) {
+      const tFrom = normNodeId(tr?.from);
+      const tTo = normNodeId(tr?.to);
+      if (!tFrom || !tTo) continue;
+      const path = [
+        tFrom,
+        ...((tr.route_ids ?? tr.route ?? []) as (string | number)[]).map((r) => normNodeId(r)).filter(Boolean),
+        tTo,
+      ];
+      if (!path.includes(a)) continue;
+      // Positioned candidates only — the rings and the prompt count must agree
+      for (const h of path) {
+        if (!h || h === a) continue;
+        const n = nodes[h] ?? nodes[`!${h}`];
+        if (n?.map_position) set.add(h);
+      }
+    }
+    return [...set];
+  }, [activeTool, toolStep, toolFromId, traceData, nodes]);
+
+  // Position signature of the analyzed hops: a value-stable string, so SSE
+  // identity churn doesn't retrigger grading but a hop actually moving does.
+  const tracePosKey = useMemo(() => {
+    if (!traceSelectedPath) return "";
+    return traceSelectedPath.hops
+      .map((id) => {
+        const p = (nodes[id] ?? nodes[`!${id}`])?.map_position;
+        return p ? `${p[0].toFixed(5)},${p[1].toFixed(5)}` : "?";
+      })
+      .join("|");
+  }, [traceSelectedPath, nodes]);
+
+  // Busiest observed links, ranked by traversal count — the tool's browse mode.
+  // Counted over rawTraceroutes (the uniform global window), NOT traceData:
+  // merging the open pair's deep history would self-inflate whichever corridor
+  // was clicked. Stats are split out so pan/zoom only re-runs the cheap filter.
+  const traceEdgeStats = useMemo(
+    () => (activeTool === "traceroute" ? computeTraceEdgeStats(rawTraceroutes) : []),
+    [activeTool, rawTraceroutes],
+  );
+  const traceCorridors = useMemo((): TraceCorridor[] => {
+    if (traceEdgeStats.length === 0) return [];
+    const bounds = traceCorridorsInView ? mbMapRef.current?.getBounds() : null;
+    // Seam-tolerant: wrapped node lngs must also match against ±360 aliases,
+    // since a viewport straddling the antimeridian has unwrapped bounds.
+    const inBounds = (p: [number, number]): boolean =>
+      !bounds ||
+      bounds.contains(p) ||
+      bounds.contains([p[0] + 360, p[1]]) ||
+      bounds.contains([p[0] - 360, p[1]]);
+    const out: TraceCorridor[] = [];
+    for (const e of traceEdgeStats) {
+      const na = nodes[e.aId] ?? nodes[`!${e.aId}`];
+      const nb = nodes[e.bId] ?? nodes[`!${e.bId}`];
+      if (!na?.map_position || !nb?.map_position) continue;
+      if (!(inBounds(na.map_position) && inBounds(nb.map_position))) continue;
+      out.push({
+        aId: e.aId,
+        bId: e.bId,
+        aLabel: na.shortname?.trim() || e.aId.slice(0, 8),
+        bLabel: nb.shortname?.trim() || e.bId.slice(0, 8),
+        aPos: na.map_position,
+        bPos: nb.map_position,
+        count: e.count,
+        distanceKm: haversineKm(na.map_position, nb.map_position),
+        lastTimestamp: e.lastTimestamp,
+      });
+    }
+    out.sort((x, y) =>
+      traceCorridorSort === "longest"
+        ? y.distanceKm - x.distanceKm || y.count - x.count
+        : y.count - x.count || y.lastTimestamp - x.lastTimestamp,
+    );
+    return out.slice(0, 15);
+    // mapMoveEpoch: pan/zoom re-runs the viewport filter
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [traceEdgeStats, nodes, traceCorridorsInView, traceCorridorSort, mapMoveEpoch]);
+
+  // Traceroute per-hop RF analysis ("Why This Path") + graded tube / pylons / direct overlay
+  const traceCompute = useTraceCompute({
+    activeTool, toolStep,
+    path: traceSelectedPath,
+    posKey: tracePosKey,
+    terrain3D, styleEpoch,
+    showDirect: traceShowDirect,
+    nodesRef, mbMapRef, traceTubeLayerRef,
+  });
+
+  // "Ride the Packet": camera chase along the analyzed route
+  const traceFlyover = useTraceFlyover({ mbMapRef, activityLayerRef, nodesRef });
+  /** View persistence (localStorage/URL/pill), set by the bind-once moveend block. */
+  const saveViewRef = useRef<() => void>(() => {});
+  // The tour's final moveend races the flying flag — sync once on tour end
+  useEffect(() => {
+    if (!traceFlyover.isFlying) saveViewRef.current();
+  }, [traceFlyover.isFlying]);
+  // Ref twins for the bind-once map handlers (Esc, ambient-spawn gate)
+  const flyoverCancelRef = useRef(traceFlyover.cancelFlyover);
+  flyoverCancelRef.current = traceFlyover.cancelFlyover;
+  const flyoverFlyingRef = traceFlyover.flyingRef;
+
+  // Stable callbacks for the memoized trace panels (same pattern as scan's)
+  const handleToolPanelClose = useCallback(() => resetToolRef.current(), []);
+  const handlePanelNodeSelect = useCallback((id: string) => handleNodeSelectRef.current(id), []);
+  const handleTraceSelectPath = useCallback((sig: string) => {
+    traceFlyover.cancelFlyover(); // a tour follows one path only
+    tracePendingPlayRef.current = false;
+    setTraceSelectedSig(sig);
+    // cancelFlyover is identity-stable
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const handleToggleFlyover = useCallback(() => {
+    if (traceFlyover.isFlying) traceFlyover.cancelFlyover();
+    else if (traceSelectedPath) traceFlyover.startFlyover(traceSelectedPath);
+    // start/cancel are identity-stable; only the data deps matter
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [traceFlyover.isFlying, traceSelectedPath]);
+  const traceActivePair = useMemo(
+    () => (toolFromId && toolToId ? ([normNodeId(toolFromId), normNodeId(toolToId)] as [string, string]) : null),
+    [toolFromId, toolToId],
+  );
+
+  // Corridor row click → jump straight to the analysis for that pair
+  const handleCorridorPick = useCallback((aId: string, bId: string) => {
+    traceFlyover.cancelFlyover();
+    tracePendingPlayRef.current = false;
+    setTraceSelectedSig(null);
+    setToolFromId(aId);
+    setToolToId(bId);
+    setToolStep("result");
+    // The pick flow's crosshair must not survive a jump past pickTo
+    const canvas = mbMapRef.current?.getCanvas();
+    if (canvas) canvas.style.cursor = "";
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Scan compute + per-class visibility + clear-on-tool-change + hover effects
   const scanCompute = useScanCompute({
@@ -522,6 +725,23 @@ export function Map() {
     losCompute.losFromMarkerRef.current = null;
     losCompute.losToMarkerRef.current?.remove();
     losCompute.losToMarkerRef.current = null;
+    traceFromMarkerRef.current?.remove();
+    traceFromMarkerRef.current = null;
+    traceToMarkerRef.current?.remove();
+    traceToMarkerRef.current = null;
+    traceFitKeyRef.current = null;
+    if (traceRefetchTimerRef.current) {
+      clearTimeout(traceRefetchTimerRef.current);
+      traceRefetchTimerRef.current = null;
+    }
+    setTraceSelectedSig(null);
+    traceFlyover.cancelFlyover();
+    tracePendingPlayRef.current = false;
+    for (const m of traceGhostMarkersRef.current) m.remove();
+    traceGhostMarkersRef.current = [];
+    // Release the route's cached rasters (tens of MB on long routes)
+    traceCompute.traceDemCacheRef.current = null;
+    try { traceTubeLayerRef.current?.setData(null); } catch {}
     // Removing a marker mid-drag skips its dragend; unstick the shared flag
     isDraggingMarkerRef.current = false;
     losState.setLosResult(null);
@@ -553,6 +773,19 @@ export function Map() {
       } catch {}
       try {
         (mb.getSource("path-analysis") as MlGeoJSONSource | undefined)?.setData(empty);
+      } catch {}
+      // A hop/path spotlight from the traceroute panel must not outlive the tool
+      try {
+        (mb.getSource("link-highlight") as MlGeoJSONSource | undefined)?.setData(empty);
+      } catch {}
+      try {
+        (mb.getSource("trace-obstructions") as MlGeoJSONSource | undefined)?.setData(empty);
+      } catch {}
+      try {
+        (mb.getSource("trace-direct") as MlGeoJSONSource | undefined)?.setData(empty);
+      } catch {}
+      try {
+        (mb.getSource("trace-candidates") as MlGeoJSONSource | undefined)?.setData(empty);
       } catch {}
       if (coverageCompute.coverageOriginMarkerRef.current) {
         coverageCompute.coverageOriginMarkerRef.current.remove();
@@ -758,36 +991,269 @@ export function Map() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Draw shortest traceroute path on both providers
+  // Shareable traceroute deep link: keep ?tool=traceroute&from&to in sync
+  // (same shared snapshot as LOS — the two tools are mutually exclusive).
   useEffect(() => {
-    const computePathCoords = (): [number, number][] | null => {
-      if (activeTool !== "traceroute" || toolStep !== "result") return null;
-      if (!toolFromId || !toolToId) return null;
-      const paths = findPathsBetween(toolFromId, toolToId, rawTraceroutes);
-      if (paths.length === 0) return null;
-      const shortest = paths[0];
-      const coords: [number, number][] = [];
-      for (const hop of shortest.hops) {
-        const n = nodes[hop] ?? nodes[`!${hop}`];
-        if (n?.map_position) coords.push([n.map_position[0], n.map_position[1]]);
+    if (!traceUrlRestoredRef.current) return;
+    const showing = activeTool === "traceroute" && toolStep === "result" && !!toolFromId && !!toolToId;
+    const had = new URLSearchParams(window.location.search).get("tool") === "traceroute";
+    if (!showing && !had) return;
+    setSearchParamsLosRef.current((prev) => {
+      const sp = new URLSearchParams(prev);
+      if (showing) {
+        sp.set("tool", "traceroute");
+        sp.set("from", toolFromId);
+        sp.set("to", toolToId);
+        // play=1 is a one-shot request from a shared link — never persist it
+        sp.delete("play");
+      } else {
+        for (const k of ["tool", "from", "to", "play"]) sp.delete(k);
       }
-      return coords.length >= 2 ? coords : null;
+      return sp;
+    }, { replace: true });
+  }, [activeTool, toolStep, toolFromId, toolToId]);
+
+  // Restore a shared traceroute analysis from the URL snapshot (once, on mount)
+  useEffect(() => {
+    if (traceUrlRestoredRef.current) return;
+    traceUrlRestoredRef.current = true;
+    const sp = losUrlSnapshotRef.current ?? new URLSearchParams();
+    if (sp.get("tool") !== "traceroute") return;
+    const idOf = (v: string | null): string | null =>
+      v && /^!?[0-9a-zA-Z_-]{1,32}$/.test(v) ? v.replace(/^!/, "") : null;
+    const f = idOf(sp.get("from"));
+    const t = idOf(sp.get("to"));
+    if (!f || !t || f === t) {
+      // Invalid share link: the write effect never re-runs (no state changed),
+      // so strip the stale params here or they linger in the URL forever.
+      setSearchParamsLosRef.current((prev) => {
+        const spx = new URLSearchParams(prev);
+        for (const k of ["tool", "from", "to", "play"]) spx.delete(k);
+        return spx;
+      }, { replace: true });
+      return;
+    }
+    setToolFromId(f);
+    setToolToId(t);
+    setActiveTool("traceroute");
+    setToolStep("result");
+    if (sp.get("play") === "1") tracePendingPlayRef.current = true;
+  }, []);
+
+  // A shared link with play=1 starts the tour once data + positions are in.
+  useEffect(() => {
+    if (!tracePendingPlayRef.current) return;
+    // The mount run precedes the restore's state commit — wait, don't clear.
+    // The one-shot flag is dropped on the real exits: resetTool + path select.
+    if (activeTool !== "traceroute" || toolStep !== "result") return;
+    if (prefersReducedMotion()) {
+      tracePendingPlayRef.current = false;
+      return;
+    }
+    if (!traceSelectedPath) return; // traceroutes still loading — retry on next change
+    if (traceFlyover.startFlyover(traceSelectedPath)) tracePendingPlayRef.current = false;
+    // tracePosKey: retries as hop positions stream in after a cold deep-link load
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTool, toolStep, traceSelectedPath, tracePosKey, styleEpoch]);
+
+  // Draw the observed traceroute paths between the picked pair — the analyzed
+  // (selected) path bold and per-leg with ghost markers for position-less hops,
+  // alternates recency-faded — plus endpoint markers and a one-shot fitBounds.
+  useEffect(() => {
+    const mb = mbMapRef.current;
+    if (!mb) return;
+
+    const clearTraceMarkers = () => {
+      traceFromMarkerRef.current?.remove();
+      traceFromMarkerRef.current = null;
+      traceToMarkerRef.current?.remove();
+      traceToMarkerRef.current = null;
+    };
+    const clearGhostMarkers = () => {
+      for (const m of traceGhostMarkersRef.current) m.remove();
+      traceGhostMarkersRef.current = [];
     };
 
-    const mb = mbMapRef.current;
-    if (mb) {
-      const src = mb.getSource("path-analysis") as MlGeoJSONSource | undefined;
-      if (src) {
-        const coords = computePathCoords();
-        src.setData(
-          coords
-            ? { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: coords } }] }
-            : { type: "FeatureCollection", features: [] },
-        );
+    const src = mb.getSource("path-analysis") as MlGeoJSONSource | undefined;
+    if (activeTool !== "traceroute" || toolStep !== "result" || !toolFromId || !toolToId) {
+      src?.setData({ type: "FeatureCollection", features: [] });
+      clearTraceMarkers();
+      clearGhostMarkers();
+      traceFitKeyRef.current = null;
+      return;
+    }
+    if (!src) return;
+
+    // nodesRef, not the nodes memo: SSE flushes rebuild `nodes` every 400 ms,
+    // which would churn setData/markers here for no visual change.
+    const posOf = (id: string): [number, number] | null => {
+      const n = nodesRef.current[id] ?? nodesRef.current[`!${id}`];
+      return n?.map_position ? [n.map_position[0], n.map_position[1]] : null;
+    };
+
+    const primary = traceSelectedPath;
+    const now = Date.now();
+    const features: GeoJSON.Feature[] = [];
+    clearGhostMarkers();
+
+    // Selected path: one feature per drawn segment so legs spanning ghost hops
+    // render dashed, with '?' markers spread across each gap run.
+    if (primary) {
+      const positions = primary.hops.map(posOf);
+      const positioned = positions
+        .map((pos, i) => ({ pos, i }))
+        .filter((x): x is { pos: [number, number]; i: number } => x.pos != null);
+      let prevLng: number | null = null;
+      for (let k = 0; k + 1 < positioned.length; k++) {
+        const A = positioned[k];
+        const B = positioned[k + 1];
+        const aLng = prevLng == null ? A.pos[0] : unwrapLngTo(prevLng, A.pos[0]);
+        const bLng = unwrapLngTo(aLng, B.pos[0]);
+        prevLng = bLng;
+        const isGap = B.i - A.i > 1;
+        features.push({
+          type: "Feature",
+          properties: { primary: true, gap: isGap, sort: 1000, opacity: 0.95, width: 4 },
+          geometry: { type: "LineString", coordinates: [[aLng, A.pos[1]], [bLng, B.pos[1]]] },
+        });
+        if (isGap) {
+          // Ghost markers evenly spread along the estimated connector:
+          // shortname chip over a dashed '?' ring, so you can tell WHICH
+          // node's placement is estimated, not just that one is.
+          for (let g = A.i + 1; g < B.i; g++) {
+            const t = (g - A.i) / (B.i - A.i);
+            const lng = normalizeLng(aLng + (bLng - aLng) * t);
+            const lat = A.pos[1] + (B.pos[1] - A.pos[1]) * t;
+            const hopId = primary.hops[g];
+            const ghostNode = nodesRef.current[hopId] ?? nodesRef.current[`!${hopId}`];
+            const label =
+              ghostNode?.shortname?.trim() ||
+              (hopId.startsWith("?") ? hopId.slice(1, 11) : hopId.slice(0, 8));
+            const el = document.createElement("div");
+            el.setAttribute("aria-hidden", "true");
+            el.title = `${label} — position unknown, placement estimated`;
+            el.style.cssText =
+              "display:flex;flex-direction:column;align-items:center;gap:2px;pointer-events:auto;";
+            const chip = document.createElement("div");
+            chip.textContent = label;
+            chip.style.cssText =
+              "padding:1px 6px;border-radius:9999px;background:rgba(17,24,39,0.88);" +
+              "border:1px dashed rgba(156,163,175,0.6);color:#d1d5db;font-size:10px;" +
+              "font-weight:600;white-space:nowrap;";
+            const ring = document.createElement("div");
+            ring.textContent = "?";
+            ring.style.cssText =
+              "width:18px;height:18px;border-radius:50%;border:2px dashed #9ca3af;" +
+              "background:rgba(17,24,39,0.85);color:#d1d5db;font-size:11px;" +
+              "line-height:14px;text-align:center;font-weight:600;";
+            el.append(chip, ring);
+            traceGhostMarkersRef.current.push(
+              // Offset keeps the '?' ring (not the stack's center) on the point
+              new maplibregl.Marker({ element: el, offset: [0, -10] }).setLngLat([lng, lat]).addTo(mb),
+            );
+          }
+        }
       }
     }
 
-  }, [activeTool, toolStep, toolFromId, toolToId, rawTraceroutes, nodes]);
+    // Alternates: whole-path lines, recency-faded, braid-style usage-weighted
+    // widths so the strand the mesh actually favors reads thicker.
+    const primarySig = primary ? primary.hops.join(">") : null;
+    const totalCount = tracePaths.reduce((s, p) => s + p.count, 0) || 1;
+    tracePaths
+      .filter((p) => p.hops.join(">") !== primarySig)
+      .slice(0, 5)
+      .forEach((p, rank) => {
+        const coords: [number, number][] = [];
+        for (const hop of p.hops) {
+          const pos = posOf(hop);
+          if (!pos) continue; // hop with unknown position — skip (honest gap)
+          const prev = coords[coords.length - 1];
+          // Chain-unwrap so seam-crossing legs draw the short way
+          coords.push(prev ? [unwrapLngTo(prev[0], pos[0]), pos[1]] : pos);
+        }
+        if (coords.length < 2) return;
+        features.push({
+          type: "Feature",
+          properties: {
+            primary: false,
+            gap: false,
+            sort: -rank,
+            opacity: Math.min(0.55, 0.55 * recencyOpacityFromAgeMs(now - tsToMs(p.timestamp))),
+            // Capped below the primary's 4 so a dominant alternate can't outweigh it
+            width: Math.min(3.4, 1.4 + 3.2 * Math.min(1, p.count / totalCount)),
+          },
+          geometry: { type: "LineString", coordinates: coords },
+        });
+      });
+    src.setData({ type: "FeatureCollection", features });
+
+    const fromPos = posOf(toolFromId);
+    const toPos = posOf(toolToId);
+    if (!fromPos || !toPos) {
+      clearTraceMarkers();
+      return;
+    }
+    if (traceFromMarkerRef.current) traceFromMarkerRef.current.setLngLat(fromPos);
+    else traceFromMarkerRef.current = new maplibregl.Marker({ color: "#06b6d4", scale: 0.75 }).setLngLat(fromPos).addTo(mb);
+    if (traceToMarkerRef.current) traceToMarkerRef.current.setLngLat(toPos);
+    else traceToMarkerRef.current = new maplibregl.Marker({ color: "#d946ef", scale: 0.75 }).setLngLat(toPos).addTo(mb);
+
+    // Fit once per pair, not on every data refresh — but not before the
+    // pair-scoped history lands, or the fit would exclude the actual routes.
+    const fitKey = `${toolFromId}-${toolToId}`;
+    if (!pairTraceroutesLoading && traceFitKeyRef.current !== fitKey) {
+      traceFitKeyRef.current = fitKey;
+      const bounds = new maplibregl.LngLatBounds();
+      bounds.extend(fromPos);
+      // Unwrap so an antimeridian-crossing pair frames the short way
+      bounds.extend([unwrapLngTo(fromPos[0], toPos[0]), toPos[1]]);
+      for (const f of features) {
+        for (const c of (f.geometry as GeoJSON.LineString).coordinates) bounds.extend(c as [number, number]);
+      }
+      mb.fitBounds(bounds, { padding: 120, duration: 600, maxZoom: 12 });
+    }
+    // styleEpoch: setStyle recreates the path-analysis source empty — redraw after style.load
+  }, [activeTool, toolStep, toolFromId, toolToId, tracePaths, traceSelectedPath, pairTraceroutesLoading, styleEpoch]);
+
+  // Opens the settings panel at the terrain section (drawer + trace panel share it).
+  const openTerrainSetup = useCallback(() => {
+    setSettingsOpenSections((prev) => {
+      const next = new Set(prev);
+      next.add("terrain");
+      return next;
+    });
+    setSettingsPanelOpen(true);
+  }, []);
+
+  // Lit-up picking: ring every node with an observed route through the origin
+  useEffect(() => {
+    const mb = mbMapRef.current;
+    const src = mb?.getSource("trace-candidates") as MlGeoJSONSource | undefined;
+    if (!src) return;
+    if (traceCandidates.length === 0) {
+      src.setData({ type: "FeatureCollection", features: [] });
+      return;
+    }
+    const features: GeoJSON.Feature[] = [];
+    for (const id of traceCandidates) {
+      const p = (nodesRef.current[id] ?? nodesRef.current[`!${id}`])?.map_position;
+      if (p) features.push({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [p[0], p[1]] } });
+    }
+    src.setData({ type: "FeatureCollection", features });
+    // styleEpoch: setStyle recreates the source empty — repaint after style.load
+  }, [traceCandidates, styleEpoch]);
+
+  // Traceroute panel hover → spotlight the hovered leg / alternate path.
+  const handleTraceHighlight = useCallback((coords: [number, number][] | null) => {
+    const src = mbMapRef.current?.getSource("link-highlight") as MlGeoJSONSource | undefined;
+    if (!src) return;
+    src.setData(
+      coords && coords.length >= 2
+        ? { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: coords } }] }
+        : { type: "FeatureCollection", features: [] },
+    );
+  }, []);
 
   /** Cluster donut + count text dim. Combines the tool-active dim (when an RF
    *  tool is in result step, so the raster reads clearly) with focus-on-hover
@@ -969,16 +1435,22 @@ export function Map() {
         const coverageSrc = map.getSource("coverage") as MlGeoJSONSource | undefined;
         coverageSrc?.setData({ type: "FeatureCollection", features: [] });
       } catch {}
-      // Clear link highlight
-      try {
-        const hlSrc = map.getSource("link-highlight") as MlGeoJSONSource | undefined;
-        hlSrc?.setData({ type: "FeatureCollection", features: [] });
-      } catch {}
-      // Clear path analysis
-      try {
-        const paSrc = map.getSource("path-analysis") as MlGeoJSONSource | undefined;
-        paSrc?.setData({ type: "FeatureCollection", features: [] });
-      } catch {}
+      // The traceroute tool owns link-highlight + path-analysis while showing
+      // results (empty-map clicks and panel closes must not wipe its routes —
+      // nothing would redraw them).
+      const traceResultActive = activeToolRef.current === "traceroute" && toolStepRef.current === "result";
+      if (!traceResultActive) {
+        // Clear link highlight
+        try {
+          const hlSrc = map.getSource("link-highlight") as MlGeoJSONSource | undefined;
+          hlSrc?.setData({ type: "FeatureCollection", features: [] });
+        } catch {}
+        // Clear path analysis
+        try {
+          const paSrc = map.getSource("path-analysis") as MlGeoJSONSource | undefined;
+          paSrc?.setData({ type: "FeatureCollection", features: [] });
+        } catch {}
+      }
     }
 
     // Hide the panel
@@ -1156,8 +1628,8 @@ export function Map() {
     }
 
     mbMapRef.current = map;
-    // Seed the coordinate pill's fallback before the first moveend fires.
-    setCenterCoord(initialCenter);
+    // Seed the pill before the first moveend (child effects registered the sink first)
+    coordPillSinkRef.current?.setCenter(initialCenter);
 
     // Surface style/source/tile load failures instead of a silent blank map.
     map.on("error", (e) => {
@@ -1223,16 +1695,22 @@ export function Map() {
       plain?.setData(data);
     };
 
-    map.on("moveend", () => {
+    const saveView = () => {
       const c = map.getCenter();
       localStorage.setItem("savedCenter", JSON.stringify([c.lng, c.lat]));
       localStorage.setItem("savedZoom", map.getZoom().toString());
       localStorage.setItem("savedPitch", map.getPitch().toString());
       localStorage.setItem("savedBearing", map.getBearing().toString());
       // Keep the coordinate pill's not-hovering fallback in sync with the view.
-      setCenterCoord([c.lng, c.lat]);
+      coordPillSinkRef.current?.setCenter([c.lng, c.lat]);
       // Mirror view into ?lat/lng/z (debounced); here so it follows recreation.
       pushViewToUrlRef.current();
+    };
+    saveViewRef.current = saveView;
+    map.on("moveend", () => {
+      // Tours fire one moveend per leg — save only when the camera is the user's
+      if (flyoverFlyingRef.current) return;
+      saveView();
     });
 
     const ensureSourcesAndLayers = () => {
@@ -1300,11 +1778,33 @@ export function Map() {
           id: "path-analysis-line",
           type: "line",
           source: "path-analysis",
+          filter: ["!=", ["get", "gap"], true],
+          layout: {
+            "line-join": "round",
+            "line-cap": "round",
+            // Higher key renders later → the newest (primary) path sits on top
+            "line-sort-key": ["get", "sort"],
+          },
+          paint: {
+            "line-color": ["case", ["get", "primary"], "#06b6d4", "#38bdf8"],
+            "line-width": ["coalesce", ["get", "width"], 2],
+            "line-opacity": ["get", "opacity"],
+          },
+        });
+      }
+      // Legs spanning position-less (ghost) hops: dashed gray — estimated, not observed geometry
+      if (!map.getLayer("path-analysis-line-gap")) {
+        map.addLayer({
+          id: "path-analysis-line-gap",
+          type: "line",
+          source: "path-analysis",
+          filter: ["==", ["get", "gap"], true],
           layout: { "line-join": "round", "line-cap": "round" },
           paint: {
-            "line-color": "#06b6d4",
-            "line-width": 4,
-            "line-opacity": 0.95,
+            "line-color": "#9ca3af",
+            "line-width": 2.5,
+            "line-opacity": 0.7,
+            "line-dasharray": [1.5, 2],
           },
         });
       }
@@ -1485,6 +1985,89 @@ export function Map() {
         } catch (err) {
           console.warn("[Map] Failed to add LoS tube layer:", err);
         }
+      }
+
+      // Traceroute per-hop analysis: obstruction pylons + direct-path
+      // counterfactual + 3D graded tube (own instances so LOS and traceroute
+      // never clear each other's geometry)
+      if (!map.getSource("trace-obstructions")) {
+        map.addSource("trace-obstructions", {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
+      }
+      if (!map.getLayer("trace-obstructions-fill")) {
+        map.addLayer({
+          id: "trace-obstructions-fill",
+          type: "fill-extrusion",
+          source: "trace-obstructions",
+          paint: {
+            "fill-extrusion-color": [
+              "interpolate", ["linear"], ["get", "severity"],
+              0, "#f87171",
+              1, "#b91c1c",
+            ],
+            "fill-extrusion-base": ["get", "baseM"],
+            "fill-extrusion-height": ["get", "topM"],
+            "fill-extrusion-opacity": 0.75,
+            "fill-extrusion-vertical-gradient": true,
+          },
+        });
+      }
+      if (!map.getSource("trace-direct")) {
+        map.addSource("trace-direct", {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
+      }
+      if (!map.getLayer("trace-direct-line")) {
+        map.addLayer({
+          id: "trace-direct-line",
+          type: "line",
+          source: "trace-direct",
+          layout: { "line-join": "round", "line-cap": "round" },
+          paint: {
+            "line-color": [
+              "match", ["get", "verdict"],
+              "blocked", "#ef4444",
+              "fresnel", "#f97316",
+              "#22c55e",
+            ],
+            "line-width": 2.5,
+            "line-opacity": 0.7,
+            "line-dasharray": [2, 2],
+          },
+        });
+      }
+      if (!map.getLayer("trace-tube")) {
+        try {
+          if (!traceTubeLayerRef.current) traceTubeLayerRef.current = new LosTubeLayer("trace-tube");
+          map.addLayer(traceTubeLayerRef.current);
+        } catch (err) {
+          console.warn("[Map] Failed to add trace tube layer:", err);
+        }
+      }
+      // Lit-up picking: rings on nodes with observed routes through the origin
+      if (!map.getSource("trace-candidates")) {
+        map.addSource("trace-candidates", {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
+      }
+      if (!map.getLayer("trace-candidates-ring")) {
+        map.addLayer({
+          id: "trace-candidates-ring",
+          type: "circle",
+          source: "trace-candidates",
+          paint: {
+            "circle-radius": 11,
+            "circle-color": "rgba(0,0,0,0)",
+            "circle-stroke-color": "#06b6d4",
+            "circle-stroke-width": 2,
+            "circle-stroke-opacity": 0.85,
+            "circle-pitch-alignment": "map",
+          },
+        });
       }
 
       if (!map.getSource("scan-links")) {
@@ -1794,6 +2377,7 @@ export function Map() {
       // Tube altitudes are scaled by exaggeration at upload time; onAdd ran before
       // terrain was re-applied above, so re-upload against the final exaggeration.
       losTubeLayerRef.current?.refresh();
+      traceTubeLayerRef.current?.refresh();
 
       // Ensure sources have current data (important after style changes)
       refreshMapboxNodeData();
@@ -1946,6 +2530,13 @@ export function Map() {
 
       bindHover("unclustered-nodes");
       bindHover("plain-nodes");
+
+      // Viewport refilter for the top-links panel — not per tour leg
+      map.on("moveend", () => {
+        if (activeToolRef.current === "traceroute" && !flyoverFlyingRef.current) {
+          setMapMoveEpoch((v) => v + 1);
+        }
+      });
 
       // Focus-on-hover: hovering a node highlights its ego-network (the node +
       // its neighbors + nodes that heard it) and dims everything else.
@@ -2355,6 +2946,8 @@ export function Map() {
         if (spiderfyDebounce != null) window.clearTimeout(spiderfyDebounce);
         spiderfyDebounce = window.setTimeout(() => {
           spiderfyDebounce = null;
+          // Chase zoom is below the spiderfy threshold — skip the O(N) pool per leg
+          if (flyoverFlyingRef.current) return;
           if (clusterEnabledRef.current) {
             const pool = buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()).features
               .filter((f) => f.geometry?.type === "Point") as any;
@@ -2440,11 +3033,21 @@ export function Map() {
             ae === mapRef.current ||
             ae.classList?.contains("maplibregl-canvas");
           if (!navOk) return;
+          // Keyboard pan/zoom is user camera input — it takes the wheel back
+          // from a running flyover (panBy/zoomIn carry no originalEvent, so
+          // the hook's own movestart gate can't see them). Gated on flying so
+          // camera nudges match pointer input during the label linger: they
+          // leave the breadcrumbs alone (Esc dismisses, the timer tidies).
+          if (flyoverFlyingRef.current && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "=", "+", "-", "_"].includes(e.key)) {
+            flyoverCancelRef.current();
+          }
         }
 
         const PAN_PX = 100;
         switch (e.key) {
           case "Escape":
+            // A running flyover consumes Esc — stop the tour, keep the tool.
+            if (flyoverCancelRef.current()) break;
             if (activeToolRef.current) {
               // Merge-origin picking consumes Esc (the pick hook's own
               // listener cancels it) — don't also arm/close the tool.
@@ -2530,24 +3133,20 @@ export function Map() {
           if (!pendingElevE || !mbMapRef.current) return;
           const lng = Math.round(pendingElevE.lng * 1e5) / 1e5;
           const lat = Math.round(pendingElevE.lat * 1e5) / 1e5;
-          if (lng !== lastHoverLng || lat !== lastHoverLat) {
-            lastHoverLng = lng;
-            lastHoverLat = lat;
-            setHoverCoord([lng, lat]);
-          }
+          if (lng === lastHoverLng && lat === lastHoverLat) return;
+          lastHoverLng = lng;
+          lastHoverLat = lat;
+          let elev: number | null = null;
           try {
             // Real MSL meters — users expect the elevation pill to match a topo map,
             // not the rendered terrain's exaggerated value. See queryTerrainElevationMSL.
-            const elev = queryTerrainElevationMSL(mbMapRef.current, [pendingElevE.lng, pendingElevE.lat]);
-            setHoverElevationM(elev);
-          } catch {
-            setHoverElevationM(null);
-          }
+            elev = queryTerrainElevationMSL(mbMapRef.current, [pendingElevE.lng, pendingElevE.lat]);
+          } catch {}
+          coordPillSinkRef.current?.setHover([lng, lat], terrain3DRef.current ? elev : null);
         });
       };
       const onMapMouseOut = () => {
-        setHoverElevationM(null);
-        setHoverCoord(null);
+        coordPillSinkRef.current?.setHover(null, null);
         lastHoverLng = NaN;
         lastHoverLat = NaN;
       };
@@ -2577,7 +3176,8 @@ export function Map() {
             `<strong>${escapeHtml(p.shortname || nodeId)}</strong>` +
             `</div>` +
             (role ? `<span style="opacity:0.6">${role}</span><br/>` : "") +
-            `<span style="opacity:0.6">${relativeTime(p.last_seen)}</span>`
+            // Store, not feature props — last_seen isn't in the setData signature
+            `<span style="opacity:0.6">${relativeTime((nodesRef.current[nodeId] ?? nodesRef.current[`!${nodeId}`])?.last_seen ?? p.last_seen)}</span>`
           )
           .addTo(map);
       };
@@ -2861,6 +3461,7 @@ export function Map() {
 
   useLiveEvent<RawPacket>("packet", (p) => {
     if (!livePacketsRef.current || prefersReducedMotion()) return;
+    if (flyoverFlyingRef.current) return; // spotlight: the tour owns the stage
     if (p.type === "traceroute") return; // handled by the dedicated multi-hop tracer
     const coalescer = (coalescerRef.current ??= new PacketCoalescer());
     const arc = coalescer.ingest(p, Date.now());
@@ -2907,10 +3508,55 @@ export function Map() {
     layer.spawnPath(pts, packetColor("traceroute"), 0.9, performance.now());
   }, []);
 
-  // The same traceroute is uploaded by many gateways with divergent recorded
-  // routes; debounce by mesh id and draw only the single most complete path.
+  // True when a live traceroute involves BOTH picked endpoints of the open tool.
+  const tracePairMatches = (t: TraceEv): boolean => {
+    if (activeToolRef.current !== "traceroute" || toolStepRef.current !== "result") return false;
+    const a = normNodeId(toolFromIdRef.current ?? "");
+    const b = normNodeId(toolToIdRef.current ?? "");
+    if (!a || !b) return false;
+    const path = [t.from, ...(t.route_ids ?? []), t.to].map((x) => normNodeId(x ?? ""));
+    return path.includes(a) && path.includes(b);
+  };
+
+  // (Live traceroute comets are handled by the unified buffer further down,
+  // after the refetch plumbing it depends on is declared.)
+
+  // Keep traceroute data fresh while the tool is open: the Map page never
+  // polls, so refetch on tool entry and throttle-refetch on live events.
+  // Tag invalidation refreshes every active traceroutes query (global + pair).
+  const invalidateTraceroutes = useCallback(() => {
+    traceRefetchAtRef.current = Date.now();
+    dispatch(apiSlice.util.invalidateTags([{ type: "Traceroutes", id: "LIST" }]));
+  }, [dispatch]);
+  useEffect(() => {
+    if (activeTool === "traceroute") invalidateTraceroutes();
+  }, [activeTool, invalidateTraceroutes]);
+  useLiveEvent<TraceEv>("traceroute", () => {
+    if (activeToolRef.current !== "traceroute") return;
+    // Leading + trailing throttle: an event inside the window schedules one
+    // deferred refetch instead of being dropped (the page never polls, so a
+    // dropped event would leave the just-run traceroute invisible).
+    const remaining = 10_000 - (Date.now() - traceRefetchAtRef.current);
+    if (remaining > 0) {
+      traceRefetchTimerRef.current ??= setTimeout(() => {
+        traceRefetchTimerRef.current = null;
+        if (activeToolRef.current === "traceroute") invalidateTraceroutes();
+      }, remaining);
+      return;
+    }
+    invalidateTraceroutes();
+  });
+
+  // One debounce buffer for live traceroutes: multi-gateway copies merge to
+  // the longest route, and ambient-vs-catcher is decided at FLUSH time on the
+  // merged copy — deciding at ingest split one traceroute across two buffers
+  // (double or zero comets when gateway copies disagreed or the tool state
+  // changed mid-debounce).
   useLiveEvent<TraceEv>("traceroute", (t) => {
-    if (!livePacketsRef.current || prefersReducedMotion()) return;
+    const interesting =
+      tracePairMatches(t) ||
+      (livePacketsRef.current && !prefersReducedMotion() && !flyoverFlyingRef.current);
+    if (!interesting) return;
     const buf = (tracerouteBufRef.current ??= new globalThis.Map());
     const key = t.id != null ? `id:${t.id}` : `ft:${t.from}:${t.to}`;
     const existing = buf.get(key);
@@ -2921,7 +3567,23 @@ export function Map() {
     const timer = setTimeout(() => {
       const entry = buf.get(key);
       buf.delete(key);
-      if (entry) animateTraceroute(entry.ev);
+      if (!entry) return;
+      if (tracePairMatches(entry.ev)) {
+        // Catch It Live: the open pair's traceroute lands the moment it's
+        // heard. The refetch trails the debounce so the DB write has landed;
+        // one shared timer coalesces request+reply bursts.
+        traceRefetchTimerRef.current ??= setTimeout(() => {
+          traceRefetchTimerRef.current = null;
+          if (activeToolRef.current === "traceroute") invalidateTraceroutes();
+        }, 2_000);
+        if (Date.now() - traceCatchToastAtRef.current > 8_000) {
+          traceCatchToastAtRef.current = Date.now();
+          toast("New traceroute observed for this pair.");
+        }
+        if (!prefersReducedMotion() && !flyoverFlyingRef.current) animateTraceroute(entry.ev);
+      } else if (livePacketsRef.current && !prefersReducedMotion() && !flyoverFlyingRef.current) {
+        animateTraceroute(entry.ev);
+      }
     }, TRACEROUTE_DEBOUNCE_MS);
     buf.set(key, { ev: t, timer });
   });
@@ -2929,6 +3591,7 @@ export function Map() {
   useEffect(
     () => () => {
       if (flushRafRef.current != null) cancelAnimationFrame(flushRafRef.current);
+      if (traceRefetchTimerRef.current) clearTimeout(traceRefetchTimerRef.current);
       const buf = tracerouteBufRef.current;
       if (buf) {
         for (const { timer } of buf.values()) clearTimeout(timer);
@@ -3107,9 +3770,7 @@ export function Map() {
       </button>
 
       <MapCoordinatePill
-        coord={hoverCoord}
-        centerCoord={centerCoord}
-        elevationM={terrain3D ? hoverElevationM : null}
+        sinkRef={coordPillSinkRef}
         hasPin={hasCoordPin}
         onJump={jumpToCoord}
         onClearPin={clearCoordPin}
@@ -3126,14 +3787,7 @@ export function Map() {
           }
         }}
         terrainEnabled={terrain3D}
-        onRequestTerrainSetup={() => {
-          setSettingsOpenSections((prev) => {
-            const next = new Set(prev);
-            next.add("terrain");
-            return next;
-          });
-          setSettingsPanelOpen(true);
-        }}
+        onRequestTerrainSetup={openTerrainSetup}
       />
 
       {/* Tool prompts — guide the user through picks */}
@@ -3157,7 +3811,9 @@ export function Map() {
           message={
             activeTool === "los"
               ? "LOS: pick the second node (or click anywhere on the map)"
-              : "Traceroute: pick the second node"
+              : traceCandidates.length > 0
+                ? `Traceroute: pick the second node — ${traceCandidates.length} ringed ${traceCandidates.length === 1 ? "node has" : "nodes have"} observed routes`
+                : "Traceroute: pick the second node (no routes in the recent window touch this origin)"
           }
           hint="Press Esc to cancel"
           onCancel={resetTool}
@@ -3344,6 +4000,21 @@ export function Map() {
         />
       )}
 
+      {/* Busiest-links column — browse corridors while the traceroute tool is active */}
+      {activeTool === "traceroute" && (
+        <MapTraceCorridorsPanel
+          corridors={traceCorridors}
+          sortMode={traceCorridorSort}
+          onSortModeChange={setTraceCorridorSort}
+          inViewOnly={traceCorridorsInView}
+          onToggleInView={setTraceCorridorsInView}
+          activePair={traceActivePair}
+          hideOnMobile={toolStep === "result"}
+          onHover={handleTraceHighlight}
+          onPick={handleCorridorPick}
+        />
+      )}
+
       {/* Floating Traceroute panel */}
       {activeTool === "traceroute" && toolStep === "result" && toolFromId && toolToId && (
         <MapTraceroutePanel
@@ -3353,12 +4024,26 @@ export function Map() {
           toLabel={(nodes[toolToId] ?? nodes[`!${toolToId}`])?.shortname ?? toolToId.slice(0, 8)}
           fromColor="#06b6d4"
           toColor="#d946ef"
-          traceroutes={rawTraceroutes}
-          loading={rawTraceroutesLoading}
+          paths={tracePaths}
+          runs={traceRuns}
+          selectedSig={traceSelectedPath ? traceSelectedPath.hops.join(">") : null}
+          onSelectPath={handleTraceSelectPath}
+          analysis={traceCompute.traceAnalysis}
+          isComputing={traceCompute.isComputingTrace}
+          analysisError={traceCompute.traceError}
+          analysisWarning={traceCompute.traceWarning}
+          terrain3D={terrain3D}
+          onEnableTerrain={openTerrainSetup}
+          showDirect={traceShowDirect}
+          onToggleDirect={setTraceShowDirect}
+          isFlying={traceFlyover.isFlying}
+          canFly={!prefersReducedMotion()}
+          onToggleFlyover={handleToggleFlyover}
+          loading={rawTraceroutesLoading || pairTraceroutesLoading}
           liveNodes={nodes}
-          onNodeSelect={(id) => handleNodeSelectRef.current(id)}
-          onHoverLink={(id) => handleLinkHoverRef.current(id)}
-          onClose={resetTool}
+          onNodeSelect={handlePanelNodeSelect}
+          onHighlight={handleTraceHighlight}
+          onClose={handleToolPanelClose}
         />
       )}
 
