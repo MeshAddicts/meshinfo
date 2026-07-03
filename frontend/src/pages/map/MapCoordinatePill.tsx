@@ -4,30 +4,49 @@ import { toast } from "../../components/toastStore";
 import { copyTextToClipboard } from "../../utils/clipboard";
 import { formatLatLng, parseLatLng } from "./helpers";
 
+/** Imperative feed for the pill's per-frame values — held here (not in
+ *  Map.tsx) so cursor movement re-renders only the pill. */
+export interface CoordPillSink {
+  /** Cursor [lng, lat] + terrain elevation (MSL m); nulls on mouse-out. */
+  setHover: (coord: [number, number] | null, elevationM: number | null) => void;
+  /** Map-center fallback, updated on moveend. */
+  setCenter: (coord: [number, number]) => void;
+}
+
 /**
  * Live-coordinate pill: shows the lat/lng under the cursor (plus terrain
  * elevation when 3D is on), or the map center when not hovering. Click to paste
  * a "lat, lng" and jump-to-center with a pin, without disturbing the active tool.
  */
 export function MapCoordinatePill({
-  coord,
-  centerCoord,
-  elevationM,
+  sinkRef,
   hasPin,
   onJump,
   onClearPin,
 }: {
-  /** Live cursor position [lng, lat], or null when not hovering the map. */
-  coord: [number, number] | null;
-  /** Map-center [lng, lat] fallback shown when not hovering. */
-  centerCoord: [number, number] | null;
-  /** Terrain elevation (MSL m) under the cursor, or null. */
-  elevationM: number | null;
+  /** Registration point for the map's hover/center publishers. */
+  sinkRef: React.MutableRefObject<CoordPillSink | null>;
   /** Whether a jump-to pin is currently dropped. */
   hasPin: boolean;
   onJump: (lngLat: [number, number]) => void;
   onClearPin: () => void;
 }) {
+  const [coord, setCoord] = useState<[number, number] | null>(null);
+  const [elevationM, setElevationM] = useState<number | null>(null);
+  const [centerCoord, setCenterCoord] = useState<[number, number] | null>(null);
+  useEffect(() => {
+    sinkRef.current = {
+      setHover: (c, e) => {
+        setCoord(c);
+        setElevationM(e);
+      },
+      setCenter: setCenterCoord,
+    };
+    return () => {
+      sinkRef.current = null;
+    };
+  }, [sinkRef]);
+
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState(false);

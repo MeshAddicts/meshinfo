@@ -1,18 +1,13 @@
 /**
- * "Ride the Packet": a camera chase along the analyzed traceroute path.
- *
- * For each leg, one comet is spawned (slowed below ambient speed — this is a
- * guided tour, not background traffic) and the camera eases to the landing
- * hop over the same duration, pitched and facing the direction of travel.
- * Each landing gets a dwell beat, an arrival pulse, and a persistent
- * shortname chip, so the route annotates itself behind the packet and the
- * final framed shot shows every stop. Any user camera input, Esc, tool
- * close, or path change cancels the tour. Real data only — the comet is the
- * same primitive live traceroutes draw, just choreographed.
+ * "Ride the Packet": camera chase along the analyzed path. Per leg: one comet
+ * (tour-paced) + camera ease over the same duration; each landing gets a
+ * pulse, a dwell, and a persistent shortname chip. Esc / user camera input /
+ * tool close / path change cancels.
  */
 import maplibregl, { Map as MlMap } from "maplibre-gl";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { liveNodeFlushGate } from "../../utils/liveGate";
 import { prefersReducedMotion } from "../../utils/reducedMotion";
 import type { ActivityLayer } from "./activityLayer";
 import { shortestLngDelta, unwrapLngTo } from "./geo";
@@ -23,14 +18,14 @@ import type { IMapNode } from "./types";
 const CHASE_PITCH = 60;
 const OUTRO_PITCH = 55;
 const INTRO_MS = 1600;
-/** Dwell at each hop — long enough to read its chip, short enough to keep pace. */
+/** Dwell at each hop stop. */
 const HOP_PAUSE_MS = 900;
 const OUTRO_MS = 1400;
 /** Tour comet pacing: slower than ambient traffic, with its own clamps. */
 const TOUR_SPEED_SCALE = 0.55;
 const TOUR_MIN_LEG_MS = 1100;
 const TOUR_MAX_LEG_MS = 4500;
-/** Breadcrumb chips outlive the tour briefly so the framed finale stays labeled. */
+/** Chips linger past the outro so the framed finale stays labeled. */
 const LABEL_LINGER_MS = 3500;
 
 /** Initial great-circle bearing a → b (degrees), seam-aware. */
@@ -69,27 +64,27 @@ export function useTraceFlyover({ mbMapRef, activityLayerRef, nodesRef }: Flyove
     labelMarkersRef.current = [];
   }, []);
 
-  /** Stops a running tour or dismisses lingering breadcrumbs; returns whether
-   *  it had anything to cancel (the Esc chain consumes the keypress on true —
-   *  the labeled finale visually extends the tour, so Esc must too). */
+  /** Stops a running tour or dismisses lingering chips; true if it consumed
+   *  anything (the Esc chain relies on this). */
   const cancelFlyover = useCallback((): boolean => {
     if (!flyingRef.current) {
+      // A stuck latch freezes live node updates app-wide — never leave it set while idle
+      liveNodeFlushGate.suspended = false;
       const hadLabels = labelMarkersRef.current.length > 0 || labelLingerTimerRef.current !== null;
       clearLabels();
       return hadLabels;
     }
     genRef.current++;
     flyingRef.current = false;
+    liveNodeFlushGate.suspended = false;
     setIsFlying(false);
     clearLabels();
     mbMapRef.current?.stop();
     return true;
   }, [mbMapRef, clearLabels]);
 
-  // The user grabbing the camera takes the wheel back. originalEvent is only
-  // present on user-initiated camera events, so the tour's own easeTo calls
-  // can't self-cancel; this one gate covers drag, wheel, dblclick, pinch, and
-  // right-drag rotate/pitch in a single pair of listeners.
+  // originalEvent exists only on user gestures (drag/wheel/dblclick/pinch/rotate),
+  // so the tour's own easeTo calls can't self-cancel.
   useEffect(() => {
     if (!isFlying) return;
     const mb = mbMapRef.current;
@@ -105,11 +100,11 @@ export function useTraceFlyover({ mbMapRef, activityLayerRef, nodesRef }: Flyove
     };
   }, [isFlying, mbMapRef, cancelFlyover]);
 
-  // Never leave the flying flag stuck (or chips behind) if the page navigates
-  // away mid-tour.
+  // Unmount mid-tour: release the flag, latch, and chips
   useEffect(() => () => {
     genRef.current++;
     flyingRef.current = false;
+    liveNodeFlushGate.suspended = false;
     clearLabels();
   }, [clearLabels]);
 
@@ -137,36 +132,41 @@ export function useTraceFlyover({ mbMapRef, activityLayerRef, nodesRef }: Flyove
     cancelFlyover(); // restart cleanly if a tour is already running
     const gen = ++genRef.current;
     flyingRef.current = true;
+    // Pause SSE node flushes (full-page re-render + source re-cluster each)
+    liveNodeFlushGate.suspended = true;
     setIsFlying(true);
 
     const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
     const live = () => genRef.current === gen && mbMapRef.current === mb;
     const color = packetColor("traceroute");
 
-    /** Persistent glass chip above a visited hop, popped in on arrival. */
+    // Pop-in lives on an inner div — MapLibre rewrites the root transform every frame
     const dropLabel = (stop: { pos: [number, number]; label: string }) => {
       const el = document.createElement("div");
       el.setAttribute("aria-hidden", "true");
-      el.textContent = stop.label;
-      el.style.cssText =
+      const chip = document.createElement("div");
+      chip.textContent = stop.label;
+      chip.style.cssText =
         "padding:2px 7px;border-radius:9999px;background:rgba(17,24,39,0.92);" +
         "border:1px solid rgba(34,211,238,0.45);color:#a5f3fc;font-size:11px;" +
         "font-weight:600;white-space:nowrap;pointer-events:none;" +
         "box-shadow:0 2px 8px rgba(0,0,0,0.5);opacity:0;transform:scale(0.7);" +
         "transition:opacity 240ms ease-out, transform 240ms ease-out;";
+      el.appendChild(chip);
       const marker = new maplibregl.Marker({ element: el, offset: [0, -18] })
         .setLngLat(stop.pos)
         .addTo(mb);
       labelMarkersRef.current.push(marker);
       requestAnimationFrame(() => {
-        el.style.opacity = "1";
-        el.style.transform = "scale(1)";
+        chip.style.opacity = "1";
+        chip.style.transform = "scale(1)";
       });
     };
 
     const run = async () => {
-      // Intro: drop onto the origin, facing the first leg
-      const chaseZoom = Math.min(13.5, Math.max(10.5, mb.getZoom() + 1.5));
+      try {
+      // Modest zoom boost — each extra level means cold tiles along the corridor
+      const chaseZoom = Math.min(13, Math.max(10.5, mb.getZoom() + 1));
       mb.easeTo({
         center: stops[0].pos,
         zoom: chaseZoom,
@@ -203,7 +203,7 @@ export function useTraceFlyover({ mbMapRef, activityLayerRef, nodesRef }: Flyove
         });
         await sleep(dur);
         if (!live()) return;
-        // The stop: arrival pulse + its chip, then a beat to take it in
+        // Arrival: pulse + chip, then dwell
         layer.spawnPulse(B.pos, color, performance.now());
         dropLabel(B);
         await sleep(HOP_PAUSE_MS);
@@ -216,9 +216,15 @@ export function useTraceFlyover({ mbMapRef, activityLayerRef, nodesRef }: Flyove
       const cam = mb.cameraForBounds(bounds, { padding: 120, maxZoom: 12 });
       if (cam) mb.easeTo({ ...cam, pitch: OUTRO_PITCH, duration: OUTRO_MS });
       await sleep(OUTRO_MS);
-      if (!live()) return;
-      flyingRef.current = false;
-      setIsFlying(false);
+      } finally {
+        // Only the owning generation releases the flags (cancel/unmount handle theirs)
+        if (genRef.current === gen) {
+          flyingRef.current = false;
+          liveNodeFlushGate.suspended = false;
+          setIsFlying(false);
+        }
+      }
+      if (genRef.current !== gen) return;
       // Let the labeled finale breathe, then tidy up
       labelLingerTimerRef.current = setTimeout(() => {
         labelLingerTimerRef.current = null;

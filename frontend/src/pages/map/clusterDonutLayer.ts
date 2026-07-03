@@ -398,8 +398,12 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
     } else if (this.hasActiveTween(now)) {
       this.uploadVerts(); // ratio tween: re-evaluate every frame
     } else if (terrainOn && this.lastClusters.length > 0 && camSig !== this.lastCamSig) {
-      this.uploadVerts(); // camera moved (or DEM arrived): re-drape once
-      this.lastCamSig = camSig;
+      // Re-drape costs queryTerrainElevation per cluster per camera frame;
+      // while dimmed ≤0.3 (RF tool active) a stale drape is invisible — skip
+      if (this.alpha > 0.3) {
+        this.uploadVerts(); // camera moved (or DEM arrived): re-drape once
+        this.lastCamSig = camSig;
+      }
     }
 
     if (this.vertexCount === 0) return;

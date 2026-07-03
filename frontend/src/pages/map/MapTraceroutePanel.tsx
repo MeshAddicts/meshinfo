@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 
 import { toast } from "../../components/toastStore";
 import { copyTextToClipboard } from "../../utils/clipboard";
@@ -37,7 +37,7 @@ function snrTint(db: number): string {
   return "text-red-300";
 }
 
-export function MapTraceroutePanel({
+function MapTraceroutePanelInner({
   fromLabel,
   toLabel,
   fromColor = "#22c55e",
@@ -580,3 +580,6 @@ export function MapTraceroutePanel({
     </div>
   );
 }
+
+/** Memoized: the Map page re-renders far more often than these props change. */
+export const MapTraceroutePanel = memo(MapTraceroutePanelInner);

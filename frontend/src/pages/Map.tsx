@@ -27,7 +27,7 @@ import { bestSnr, computeMaxRange, formatLatLng, geodesicCircleCoords, mbRoleCol
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId, recencyOpacityFromAgeMs } from "./map/linkFeatures";
 import { haversineKm } from "./map/losAnalysis";
 import { LosTubeLayer } from "./map/losTubeLayer";
-import { MapCoordinatePill } from "./map/MapCoordinatePill";
+import { type CoordPillSink, MapCoordinatePill } from "./map/MapCoordinatePill";
 import { MapCoveragePanel } from "./map/MapCoveragePanel";
 import { MapDetailsPanel } from "./map/MapDetailsPanel";
 import { MapHealthWidget } from "./map/MapHealthWidget";
@@ -278,12 +278,8 @@ export function Map() {
   const losTubeLayerRef = useRef<LosTubeLayer | null>(null);
   /** Suppresses the cursor-elevation mousemove handler so marker drag doesn't stutter. */
   const isDraggingMarkerRef = useRef(false);
-  /** Terrain elevation (MSL m) under the cursor. */
-  const [hoverElevationM, setHoverElevationM] = useState<number | null>(null);
-  /** Live cursor position [lng, lat]; null when the cursor isn't over the map. */
-  const [hoverCoord, setHoverCoord] = useState<[number, number] | null>(null);
-  /** Map-center [lng, lat] — the coordinate pill's fallback when not hovering. */
-  const [centerCoord, setCenterCoord] = useState<[number, number] | null>(null);
+  /** Hover/center feed for the coordinate pill (per-frame state lives there). */
+  const coordPillSinkRef = useRef<CoordPillSink | null>(null);
   /** Whether the jump-to-coordinate pin is currently dropped. */
   const [hasCoordPin, setHasCoordPin] = useState(false);
   /** Draggable jump-to pin; independent of tool state. */
@@ -609,10 +605,37 @@ export function Map() {
 
   // "Ride the Packet": camera chase along the analyzed route
   const traceFlyover = useTraceFlyover({ mbMapRef, activityLayerRef, nodesRef });
+  /** View persistence (localStorage/URL/pill), set by the bind-once moveend block. */
+  const saveViewRef = useRef<() => void>(() => {});
+  // The tour's final moveend races the flying flag — sync once on tour end
+  useEffect(() => {
+    if (!traceFlyover.isFlying) saveViewRef.current();
+  }, [traceFlyover.isFlying]);
   // Ref twins for the bind-once map handlers (Esc, ambient-spawn gate)
   const flyoverCancelRef = useRef(traceFlyover.cancelFlyover);
   flyoverCancelRef.current = traceFlyover.cancelFlyover;
   const flyoverFlyingRef = traceFlyover.flyingRef;
+
+  // Stable callbacks for the memoized trace panels (same pattern as scan's)
+  const handleToolPanelClose = useCallback(() => resetToolRef.current(), []);
+  const handlePanelNodeSelect = useCallback((id: string) => handleNodeSelectRef.current(id), []);
+  const handleTraceSelectPath = useCallback((sig: string) => {
+    traceFlyover.cancelFlyover(); // a tour follows one path only
+    tracePendingPlayRef.current = false;
+    setTraceSelectedSig(sig);
+    // cancelFlyover is identity-stable
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const handleToggleFlyover = useCallback(() => {
+    if (traceFlyover.isFlying) traceFlyover.cancelFlyover();
+    else if (traceSelectedPath) traceFlyover.startFlyover(traceSelectedPath);
+    // start/cancel are identity-stable; only the data deps matter
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [traceFlyover.isFlying, traceSelectedPath]);
+  const traceActivePair = useMemo(
+    () => (toolFromId && toolToId ? ([normNodeId(toolFromId), normNodeId(toolToId)] as [string, string]) : null),
+    [toolFromId, toolToId],
+  );
 
   // Corridor row click → jump straight to the analysis for that pair
   const handleCorridorPick = useCallback((aId: string, bId: string) => {
@@ -1605,8 +1628,8 @@ export function Map() {
     }
 
     mbMapRef.current = map;
-    // Seed the coordinate pill's fallback before the first moveend fires.
-    setCenterCoord(initialCenter);
+    // Seed the pill before the first moveend (child effects registered the sink first)
+    coordPillSinkRef.current?.setCenter(initialCenter);
 
     // Surface style/source/tile load failures instead of a silent blank map.
     map.on("error", (e) => {
@@ -1672,16 +1695,22 @@ export function Map() {
       plain?.setData(data);
     };
 
-    map.on("moveend", () => {
+    const saveView = () => {
       const c = map.getCenter();
       localStorage.setItem("savedCenter", JSON.stringify([c.lng, c.lat]));
       localStorage.setItem("savedZoom", map.getZoom().toString());
       localStorage.setItem("savedPitch", map.getPitch().toString());
       localStorage.setItem("savedBearing", map.getBearing().toString());
       // Keep the coordinate pill's not-hovering fallback in sync with the view.
-      setCenterCoord([c.lng, c.lat]);
+      coordPillSinkRef.current?.setCenter([c.lng, c.lat]);
       // Mirror view into ?lat/lng/z (debounced); here so it follows recreation.
       pushViewToUrlRef.current();
+    };
+    saveViewRef.current = saveView;
+    map.on("moveend", () => {
+      // Tours fire one moveend per leg — save only when the camera is the user's
+      if (flyoverFlyingRef.current) return;
+      saveView();
     });
 
     const ensureSourcesAndLayers = () => {
@@ -2502,8 +2531,12 @@ export function Map() {
       bindHover("unclustered-nodes");
       bindHover("plain-nodes");
 
-      // Recompute viewport-scoped panels (busiest links) after pan/zoom settles
-      map.on("moveend", () => setMapMoveEpoch((v) => v + 1));
+      // Viewport refilter for the top-links panel — not per tour leg
+      map.on("moveend", () => {
+        if (activeToolRef.current === "traceroute" && !flyoverFlyingRef.current) {
+          setMapMoveEpoch((v) => v + 1);
+        }
+      });
 
       // Focus-on-hover: hovering a node highlights its ego-network (the node +
       // its neighbors + nodes that heard it) and dims everything else.
@@ -2913,6 +2946,8 @@ export function Map() {
         if (spiderfyDebounce != null) window.clearTimeout(spiderfyDebounce);
         spiderfyDebounce = window.setTimeout(() => {
           spiderfyDebounce = null;
+          // Chase zoom is below the spiderfy threshold — skip the O(N) pool per leg
+          if (flyoverFlyingRef.current) return;
           if (clusterEnabledRef.current) {
             const pool = buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()).features
               .filter((f) => f.geometry?.type === "Point") as any;
@@ -3098,24 +3133,20 @@ export function Map() {
           if (!pendingElevE || !mbMapRef.current) return;
           const lng = Math.round(pendingElevE.lng * 1e5) / 1e5;
           const lat = Math.round(pendingElevE.lat * 1e5) / 1e5;
-          if (lng !== lastHoverLng || lat !== lastHoverLat) {
-            lastHoverLng = lng;
-            lastHoverLat = lat;
-            setHoverCoord([lng, lat]);
-          }
+          if (lng === lastHoverLng && lat === lastHoverLat) return;
+          lastHoverLng = lng;
+          lastHoverLat = lat;
+          let elev: number | null = null;
           try {
             // Real MSL meters — users expect the elevation pill to match a topo map,
             // not the rendered terrain's exaggerated value. See queryTerrainElevationMSL.
-            const elev = queryTerrainElevationMSL(mbMapRef.current, [pendingElevE.lng, pendingElevE.lat]);
-            setHoverElevationM(elev);
-          } catch {
-            setHoverElevationM(null);
-          }
+            elev = queryTerrainElevationMSL(mbMapRef.current, [pendingElevE.lng, pendingElevE.lat]);
+          } catch {}
+          coordPillSinkRef.current?.setHover([lng, lat], terrain3DRef.current ? elev : null);
         });
       };
       const onMapMouseOut = () => {
-        setHoverElevationM(null);
-        setHoverCoord(null);
+        coordPillSinkRef.current?.setHover(null, null);
         lastHoverLng = NaN;
         lastHoverLat = NaN;
       };
@@ -3145,7 +3176,8 @@ export function Map() {
             `<strong>${escapeHtml(p.shortname || nodeId)}</strong>` +
             `</div>` +
             (role ? `<span style="opacity:0.6">${role}</span><br/>` : "") +
-            `<span style="opacity:0.6">${relativeTime(p.last_seen)}</span>`
+            // Store, not feature props — last_seen isn't in the setData signature
+            `<span style="opacity:0.6">${relativeTime((nodesRef.current[nodeId] ?? nodesRef.current[`!${nodeId}`])?.last_seen ?? p.last_seen)}</span>`
           )
           .addTo(map);
       };
@@ -3738,9 +3770,7 @@ export function Map() {
       </button>
 
       <MapCoordinatePill
-        coord={hoverCoord}
-        centerCoord={centerCoord}
-        elevationM={terrain3D ? hoverElevationM : null}
+        sinkRef={coordPillSinkRef}
         hasPin={hasCoordPin}
         onJump={jumpToCoord}
         onClearPin={clearCoordPin}
@@ -3978,11 +4008,7 @@ export function Map() {
           onSortModeChange={setTraceCorridorSort}
           inViewOnly={traceCorridorsInView}
           onToggleInView={setTraceCorridorsInView}
-          activePair={
-            toolFromId && toolToId
-              ? [normNodeId(toolFromId), normNodeId(toolToId)]
-              : null
-          }
+          activePair={traceActivePair}
           hideOnMobile={toolStep === "result"}
           onHover={handleTraceHighlight}
           onPick={handleCorridorPick}
@@ -4001,11 +4027,7 @@ export function Map() {
           paths={tracePaths}
           runs={traceRuns}
           selectedSig={traceSelectedPath ? traceSelectedPath.hops.join(">") : null}
-          onSelectPath={(sig) => {
-            traceFlyover.cancelFlyover(); // a tour follows one path only
-            tracePendingPlayRef.current = false;
-            setTraceSelectedSig(sig);
-          }}
+          onSelectPath={handleTraceSelectPath}
           analysis={traceCompute.traceAnalysis}
           isComputing={traceCompute.isComputingTrace}
           analysisError={traceCompute.traceError}
@@ -4016,15 +4038,12 @@ export function Map() {
           onToggleDirect={setTraceShowDirect}
           isFlying={traceFlyover.isFlying}
           canFly={!prefersReducedMotion()}
-          onToggleFlyover={() => {
-            if (traceFlyover.isFlying) traceFlyover.cancelFlyover();
-            else if (traceSelectedPath) traceFlyover.startFlyover(traceSelectedPath);
-          }}
+          onToggleFlyover={handleToggleFlyover}
           loading={rawTraceroutesLoading || pairTraceroutesLoading}
           liveNodes={nodes}
-          onNodeSelect={(id) => handleNodeSelectRef.current(id)}
+          onNodeSelect={handlePanelNodeSelect}
           onHighlight={handleTraceHighlight}
-          onClose={resetTool}
+          onClose={handleToolPanelClose}
         />
       )}
 

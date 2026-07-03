@@ -1,7 +1,7 @@
 /** Traceroute corridors panel: the mesh's busiest observed links, ranked by
  *  how many runs traverse them. Hover spotlights the link; click opens the
  *  traceroute analysis for that pair. */
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 
 import { unwrapLngTo } from "./geo";
 import { relativeTime } from "./helpers";
@@ -22,7 +22,7 @@ export interface TraceCorridor {
 
 export type CorridorSort = "busiest" | "longest";
 
-export function MapTraceCorridorsPanel({
+function MapTraceCorridorsPanelInner({
   corridors,
   sortMode,
   onSortModeChange,
@@ -180,3 +180,6 @@ export function MapTraceCorridorsPanel({
     </div>
   );
 }
+
+/** Memoized: the Map page re-renders far more often than these props change. */
+export const MapTraceCorridorsPanel = memo(MapTraceCorridorsPanelInner);
