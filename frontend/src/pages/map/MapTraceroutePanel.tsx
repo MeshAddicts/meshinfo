@@ -4,7 +4,7 @@ import { toast } from "../../components/toastStore";
 import { copyTextToClipboard } from "../../utils/clipboard";
 import { unwrapLngTo } from "./geo";
 import { relativeTime } from "./helpers";
-import { type AnalyzedPath, tsToMs } from "./pathAnalysis";
+import { type AnalyzedPath, type TraceRun, tsToMs } from "./pathAnalysis";
 import { PathHopList } from "./PathHopList";
 import type { IMapNode } from "./types";
 import { useBottomSheetGesture } from "./useBottomSheet";
@@ -43,6 +43,7 @@ export function MapTraceroutePanel({
   fromColor = "#22c55e",
   toColor = "#06b6d4",
   paths,
+  runs,
   selectedSig,
   onSelectPath,
   analysis,
@@ -69,6 +70,8 @@ export function MapTraceroutePanel({
   fromColor?: string;
   toColor?: string;
   paths: AnalyzedPath[];
+  /** Chronological observed runs (oldest first) for the history strip. */
+  runs?: TraceRun[];
   selectedSig: string | null;
   onSelectPath: (sig: string) => void;
   analysis: TraceAnalysis | null;
@@ -140,6 +143,37 @@ export function MapTraceroutePanel({
   const observedAgo = (ts: number): string | null =>
     ts ? relativeTime(new Date(tsToMs(ts)).toISOString()) : null;
 
+  // Time-machine strip state: chronological runs, change count, step cursor
+  const runsList = useMemo(() => runs ?? [], [runs]);
+  const displayRuns = runsList.slice(-60);
+  const routeChanges = useMemo(() => {
+    let n = 0;
+    for (let i = 1; i < runsList.length; i++) if (runsList[i].sig !== runsList[i - 1].sig) n++;
+    return n;
+  }, [runsList]);
+  const [runCursor, setRunCursor] = useState<number | null>(null);
+  const cursorIdx = runCursor != null ? Math.min(runCursor, displayRuns.length - 1) : null;
+  const selectedSigStr = selected ? selected.hops.join(">") : null;
+  // A slid window or an external selection change makes a raw index lie —
+  // restart stepping from the newest run of the (new) selected signature.
+  useEffect(() => {
+    setRunCursor(null);
+  }, [selectedSigStr, runsList.length]);
+  const stepRun = (dir: -1 | 1) => {
+    if (displayRuns.length === 0) return;
+    let base = cursorIdx;
+    if (base == null) {
+      // Start stepping from the newest run of the selected signature
+      for (let i = displayRuns.length - 1; i >= 0; i--) {
+        if (displayRuns[i].sig === selectedSigStr) { base = i; break; }
+      }
+      if (base == null) base = displayRuns.length - 1;
+    }
+    const next = Math.max(0, Math.min(displayRuns.length - 1, base + dir));
+    setRunCursor(next);
+    onSelectPath(displayRuns[next].sig);
+  };
+
   const totalKm = legRows
     ? legRows.reduce((s, l) => s + (l.distanceKm ?? 0), 0)
     : null;
@@ -185,6 +219,13 @@ export function MapTraceroutePanel({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
             </svg>
             Traceroute
+          </span>
+          <span
+            className="inline-flex items-center gap-1 text-[9px] text-emerald-300/90 shrink-0"
+            title="Listening — a new traceroute on this pair lands here the moment a gateway hears it"
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" aria-hidden="true" />
+            live
           </span>
           <div className="text-[11px] text-gray-300 truncate">
             <span style={{ color: fromColor }} className="font-medium">{fromLabel}</span>
@@ -256,6 +297,7 @@ export function MapTraceroutePanel({
             No traceroute has been observed between these nodes yet.
             <div className="mt-1 text-[10px] text-gray-600">
               Routes appear when a traceroute crossing both nodes is heard on the mesh.
+              Trigger one from your Meshtastic app — it will land here the moment a gateway hears it.
             </div>
           </div>
         ) : (
@@ -283,7 +325,13 @@ export function MapTraceroutePanel({
                 <div className="text-gray-200">
                   {selected.hopCount} {selected.hopCount === 1 ? "hop" : "hops"}
                   {totalKm != null && totalKm > 0 && <span className="text-gray-500 ml-2">{totalKm.toFixed(1)} km</span>}
-                  {selected.count > 1 && <span className="text-gray-500 ml-2">seen {selected.count}×</span>}
+                  {runsList.length > 1 ? (
+                    <span className="text-gray-500 ml-2">
+                      {selected.count}/{runsList.length} runs · {Math.round((selected.count / runsList.length) * 100)}%
+                    </span>
+                  ) : selected.count > 1 ? (
+                    <span className="text-gray-500 ml-2">seen {selected.count}×</span>
+                  ) : null}
                   {selected.snr != null && <span className="text-gray-500 ml-2">rx SNR {selected.snr.toFixed(1)} dB</span>}
                 </div>
                 <PathHopList
@@ -364,6 +412,82 @@ export function MapTraceroutePanel({
                 {analysisWarning && (
                   <div className="mt-1.5 text-[10px] text-amber-300/90">{analysisWarning}</div>
                 )}
+              </div>
+            )}
+
+            {displayRuns.length > 1 && (
+              <div className="px-2 py-1.5 rounded bg-white/5 border border-white/10 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-gray-500 text-[10px] uppercase tracking-wider truncate">
+                    Route History
+                    <span className="normal-case tracking-normal text-gray-600 ml-1.5">
+                      {runsList.length} runs · {routeChanges} {routeChanges === 1 ? "change" : "changes"}
+                      {runsList.length > displayRuns.length ? ` · last ${displayRuns.length}` : ""}
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-0.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => stepRun(-1)}
+                      aria-label="Previous run"
+                      className="p-0.5 rounded text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => stepRun(1)}
+                      aria-label="Next run"
+                      className="p-0.5 rounded text-gray-500 hover:text-gray-300 hover:bg-white/10 transition-colors"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  </span>
+                </div>
+                <div
+                  className="flex items-stretch gap-px mt-1.5 h-3.5"
+                  onMouseLeave={() => onHighlight?.(null)}
+                >
+                  {displayRuns.map((run, i) => {
+                    const isSel = run.sig === selectedSigStr;
+                    // First visible tick compares against the run just outside
+                    // the window, or a change at the boundary is never marked
+                    const prevRun = i > 0
+                      ? displayRuns[i - 1]
+                      : runsList.length > displayRuns.length
+                        ? runsList[runsList.length - displayRuns.length - 1]
+                        : null;
+                    const changed = prevRun != null && run.sig !== prevRun.sig;
+                    return (
+                      <button
+                        key={`${run.timestamp}-${i}`}
+                        type="button"
+                        onClick={() => {
+                          setRunCursor(i);
+                          onSelectPath(run.sig);
+                        }}
+                        onMouseEnter={() => onHighlight?.(toCoords(run.hops))}
+                        title={`${observedAgo(run.timestamp) ?? "age unknown"} · ${run.hopCount} ${run.hopCount === 1 ? "hop" : "hops"}${changed ? " · route changed" : ""}`}
+                        aria-label={`Run ${i + 1} of ${displayRuns.length}, ${run.hopCount} hops${changed ? ", route changed" : ""}`}
+                        className={`flex-1 min-w-0.75 rounded-[1px] transition-colors ${
+                          isSel
+                            ? "bg-cyan-400/90"
+                            : changed
+                              ? "bg-amber-400/60 hover:bg-amber-300/80"
+                              : "bg-white/15 hover:bg-white/35"
+                        }`}
+                      />
+                    );
+                  })}
+                </div>
+                <div className="flex justify-between mt-0.5 text-[9px] text-gray-600 tabular-nums">
+                  <span>{observedAgo(displayRuns[0].timestamp) ?? ""}</span>
+                  <span>{observedAgo(displayRuns[displayRuns.length - 1].timestamp) ?? ""}</span>
+                </div>
               </div>
             )}
 

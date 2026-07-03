@@ -38,7 +38,7 @@ import { MapToolPrompt, MapToolsDrawer } from "./map/MapToolsDrawer";
 import { MapTraceroutePanel } from "./map/MapTraceroutePanel";
 import { type PacketArc, PacketCoalescer, type RawPacket } from "./map/packetCoalescer";
 import { packetColor } from "./map/packetColors";
-import { findPathsBetween, tsToMs } from "./map/pathAnalysis";
+import { findPathsBetween, findRunsBetween, tsToMs } from "./map/pathAnalysis";
 import type { ScanClass } from "./map/scanAnalysis";
 import {
   anyIdsFanned,
@@ -128,6 +128,8 @@ export function Map() {
   const flushRafRef = useRef<number | null>(null);
   // Per-mesh-id debounce of multi-gateway traceroute copies → one comet, longest route.
   const tracerouteBufRef = useRef<Map<string, { ev: TraceEv; timer: ReturnType<typeof setTimeout> }> | null>(null);
+  // Rate-limits the catcher's "new traceroute" toast (request+reply = two packet ids).
+  const traceCatchToastAtRef = useRef(0);
   // Traceroute tool: endpoint markers, one-shot fit per pair, live-refetch throttle.
   const traceFromMarkerRef = useRef<maplibregl.Marker | null>(null);
   const traceToMarkerRef = useRef<maplibregl.Marker | null>(null);
@@ -247,6 +249,13 @@ export function Map() {
   const traceSelectedPath = useMemo(
     () => tracePaths.find((p) => p.hops.join(">") === traceSelectedSig) ?? tracePaths[0] ?? null,
     [tracePaths, traceSelectedSig],
+  );
+  // Chronological run history for the time-machine strip (oldest first)
+  const traceRuns = useMemo(
+    () => (activeTool === "traceroute" && toolFromId && toolToId
+      ? findRunsBetween(toolFromId, toolToId, traceData)
+      : []),
+    [activeTool, toolFromId, toolToId, traceData],
   );
   // 3D terrain
   const [terrain3D, setTerrain3D] = useState<boolean>(() => readJson<boolean>(LS_KEYS.terrain3D, true));
@@ -417,6 +426,7 @@ export function Map() {
   const activeToolRef = useRef(activeTool);
   const toolStepRef = useRef(toolStep);
   const toolFromIdRef = useRef(toolFromId);
+  const toolToIdRef = useRef(toolToId);
   // Merge-origin pick mode, read by the bind-once node/cluster click handlers
   const pickingMergeOriginRef = useRef(mergeOrigins.pickingMergeOrigin);
   const addMergeOriginByIdRef = useRef(mergeOrigins.addCoverageMergeOriginById);
@@ -451,6 +461,7 @@ export function Map() {
   useEffect(() => { keepCoveragePaintRef.current = coverage.keepCoveragePaint; }, [coverage.keepCoveragePaint]);
   useEffect(() => { toolStepRef.current = toolStep; }, [toolStep]);
   useEffect(() => { toolFromIdRef.current = toolFromId; }, [toolFromId]);
+  useEffect(() => { toolToIdRef.current = toolToId; }, [toolToId]);
   useEffect(() => { terrain3DRef.current = terrain3D; }, [terrain3D]);
   useEffect(() => { buildings3DRef.current = buildings3D; }, [buildings3D]);
   useEffect(() => { channelFilterRef.current = channelFilter; }, [channelFilter]);
@@ -495,6 +506,32 @@ export function Map() {
     setIsComputingLos: losState.setIsComputingLos,
     setLosTerrainWarning: losState.setLosTerrainWarning,
   });
+
+  // Lit-up picking: nodes sharing any observed route with the picked origin
+  const traceCandidates = useMemo(() => {
+    if (activeTool !== "traceroute" || toolStep !== "pickTo" || !toolFromId) return [];
+    const a = normNodeId(toolFromId);
+    if (!a) return [];
+    const set = new Set<string>();
+    for (const tr of traceData) {
+      const tFrom = normNodeId(tr?.from);
+      const tTo = normNodeId(tr?.to);
+      if (!tFrom || !tTo) continue;
+      const path = [
+        tFrom,
+        ...((tr.route_ids ?? tr.route ?? []) as (string | number)[]).map((r) => normNodeId(r)).filter(Boolean),
+        tTo,
+      ];
+      if (!path.includes(a)) continue;
+      // Positioned candidates only — the rings and the prompt count must agree
+      for (const h of path) {
+        if (!h || h === a) continue;
+        const n = nodes[h] ?? nodes[`!${h}`];
+        if (n?.map_position) set.add(h);
+      }
+    }
+    return [...set];
+  }, [activeTool, toolStep, toolFromId, traceData, nodes]);
 
   // Position signature of the analyzed hops: a value-stable string, so SSE
   // identity churn doesn't retrigger grading but a hop actually moving does.
@@ -657,6 +694,9 @@ export function Map() {
       } catch {}
       try {
         (mb.getSource("trace-direct") as MlGeoJSONSource | undefined)?.setData(empty);
+      } catch {}
+      try {
+        (mb.getSource("trace-candidates") as MlGeoJSONSource | undefined)?.setData(empty);
       } catch {}
       if (coverageCompute.coverageOriginMarkerRef.current) {
         coverageCompute.coverageOriginMarkerRef.current.remove();
@@ -984,7 +1024,7 @@ export function Map() {
         const isGap = B.i - A.i > 1;
         features.push({
           type: "Feature",
-          properties: { primary: true, gap: isGap, sort: 1000, opacity: 0.95 },
+          properties: { primary: true, gap: isGap, sort: 1000, opacity: 0.95, width: 4 },
           geometry: { type: "LineString", coordinates: [[aLng, A.pos[1]], [bLng, B.pos[1]]] },
         });
         if (isGap) {
@@ -1009,8 +1049,10 @@ export function Map() {
       }
     }
 
-    // Alternates: whole-path lines, recency-faded, thinner
+    // Alternates: whole-path lines, recency-faded, braid-style usage-weighted
+    // widths so the strand the mesh actually favors reads thicker.
     const primarySig = primary ? primary.hops.join(">") : null;
+    const totalCount = tracePaths.reduce((s, p) => s + p.count, 0) || 1;
     tracePaths
       .filter((p) => p.hops.join(">") !== primarySig)
       .slice(0, 5)
@@ -1031,6 +1073,8 @@ export function Map() {
             gap: false,
             sort: -rank,
             opacity: Math.min(0.55, 0.55 * recencyOpacityFromAgeMs(now - tsToMs(p.timestamp))),
+            // Capped below the primary's 4 so a dominant alternate can't outweigh it
+            width: Math.min(3.4, 1.4 + 3.2 * Math.min(1, p.count / totalCount)),
           },
           geometry: { type: "LineString", coordinates: coords },
         });
@@ -1074,6 +1118,24 @@ export function Map() {
     });
     setSettingsPanelOpen(true);
   }, []);
+
+  // Lit-up picking: ring every node with an observed route through the origin
+  useEffect(() => {
+    const mb = mbMapRef.current;
+    const src = mb?.getSource("trace-candidates") as MlGeoJSONSource | undefined;
+    if (!src) return;
+    if (traceCandidates.length === 0) {
+      src.setData({ type: "FeatureCollection", features: [] });
+      return;
+    }
+    const features: GeoJSON.Feature[] = [];
+    for (const id of traceCandidates) {
+      const p = (nodesRef.current[id] ?? nodesRef.current[`!${id}`])?.map_position;
+      if (p) features.push({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [p[0], p[1]] } });
+    }
+    src.setData({ type: "FeatureCollection", features });
+    // styleEpoch: setStyle recreates the source empty — repaint after style.load
+  }, [traceCandidates, styleEpoch]);
 
   // Traceroute panel hover → spotlight the hovered leg / alternate path.
   const handleTraceHighlight = useCallback((coords: [number, number][] | null) => {
@@ -1612,7 +1674,7 @@ export function Map() {
           },
           paint: {
             "line-color": ["case", ["get", "primary"], "#06b6d4", "#38bdf8"],
-            "line-width": ["case", ["get", "primary"], 4, 2],
+            "line-width": ["coalesce", ["get", "width"], 2],
             "line-opacity": ["get", "opacity"],
           },
         });
@@ -1871,6 +1933,28 @@ export function Map() {
         } catch (err) {
           console.warn("[Map] Failed to add trace tube layer:", err);
         }
+      }
+      // Lit-up picking: rings on nodes with observed routes through the origin
+      if (!map.getSource("trace-candidates")) {
+        map.addSource("trace-candidates", {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
+      }
+      if (!map.getLayer("trace-candidates-ring")) {
+        map.addLayer({
+          id: "trace-candidates-ring",
+          type: "circle",
+          source: "trace-candidates",
+          paint: {
+            "circle-radius": 11,
+            "circle-color": "rgba(0,0,0,0)",
+            "circle-stroke-color": "#06b6d4",
+            "circle-stroke-width": 2,
+            "circle-stroke-opacity": 0.85,
+            "circle-pitch-alignment": "map",
+          },
+        });
       }
 
       if (!map.getSource("scan-links")) {
@@ -3303,26 +3387,18 @@ export function Map() {
     layer.spawnPath(pts, packetColor("traceroute"), 0.9, performance.now());
   }, []);
 
-  // The same traceroute is uploaded by many gateways with divergent recorded
-  // routes; debounce by mesh id and draw only the single most complete path.
-  useLiveEvent<TraceEv>("traceroute", (t) => {
-    if (!livePacketsRef.current || prefersReducedMotion()) return;
-    if (flyoverFlyingRef.current) return; // spotlight: the tour owns the stage
-    const buf = (tracerouteBufRef.current ??= new globalThis.Map());
-    const key = t.id != null ? `id:${t.id}` : `ft:${t.from}:${t.to}`;
-    const existing = buf.get(key);
-    if (existing) {
-      if ((t.route_ids?.length ?? 0) > (existing.ev.route_ids?.length ?? 0)) existing.ev = t;
-      return;
-    }
-    const timer = setTimeout(() => {
-      const entry = buf.get(key);
-      buf.delete(key);
-      // The gate at ingest can't cover timers armed before the tour started
-      if (entry && !flyoverFlyingRef.current) animateTraceroute(entry.ev);
-    }, TRACEROUTE_DEBOUNCE_MS);
-    buf.set(key, { ev: t, timer });
-  });
+  // True when a live traceroute involves BOTH picked endpoints of the open tool.
+  const tracePairMatches = (t: TraceEv): boolean => {
+    if (activeToolRef.current !== "traceroute" || toolStepRef.current !== "result") return false;
+    const a = normNodeId(toolFromIdRef.current ?? "");
+    const b = normNodeId(toolToIdRef.current ?? "");
+    if (!a || !b) return false;
+    const path = [t.from, ...(t.route_ids ?? []), t.to].map((x) => normNodeId(x ?? ""));
+    return path.includes(a) && path.includes(b);
+  };
+
+  // (Live traceroute comets are handled by the unified buffer further down,
+  // after the refetch plumbing it depends on is declared.)
 
   // Keep traceroute data fresh while the tool is open: the Map page never
   // polls, so refetch on tool entry and throttle-refetch on live events.
@@ -3348,6 +3424,47 @@ export function Map() {
       return;
     }
     invalidateTraceroutes();
+  });
+
+  // One debounce buffer for live traceroutes: multi-gateway copies merge to
+  // the longest route, and ambient-vs-catcher is decided at FLUSH time on the
+  // merged copy — deciding at ingest split one traceroute across two buffers
+  // (double or zero comets when gateway copies disagreed or the tool state
+  // changed mid-debounce).
+  useLiveEvent<TraceEv>("traceroute", (t) => {
+    const interesting =
+      tracePairMatches(t) ||
+      (livePacketsRef.current && !prefersReducedMotion() && !flyoverFlyingRef.current);
+    if (!interesting) return;
+    const buf = (tracerouteBufRef.current ??= new globalThis.Map());
+    const key = t.id != null ? `id:${t.id}` : `ft:${t.from}:${t.to}`;
+    const existing = buf.get(key);
+    if (existing) {
+      if ((t.route_ids?.length ?? 0) > (existing.ev.route_ids?.length ?? 0)) existing.ev = t;
+      return;
+    }
+    const timer = setTimeout(() => {
+      const entry = buf.get(key);
+      buf.delete(key);
+      if (!entry) return;
+      if (tracePairMatches(entry.ev)) {
+        // Catch It Live: the open pair's traceroute lands the moment it's
+        // heard. The refetch trails the debounce so the DB write has landed;
+        // one shared timer coalesces request+reply bursts.
+        traceRefetchTimerRef.current ??= setTimeout(() => {
+          traceRefetchTimerRef.current = null;
+          if (activeToolRef.current === "traceroute") invalidateTraceroutes();
+        }, 2_000);
+        if (Date.now() - traceCatchToastAtRef.current > 8_000) {
+          traceCatchToastAtRef.current = Date.now();
+          toast("New traceroute observed for this pair.");
+        }
+        if (!prefersReducedMotion() && !flyoverFlyingRef.current) animateTraceroute(entry.ev);
+      } else if (livePacketsRef.current && !prefersReducedMotion() && !flyoverFlyingRef.current) {
+        animateTraceroute(entry.ev);
+      }
+    }, TRACEROUTE_DEBOUNCE_MS);
+    buf.set(key, { ev: t, timer });
   });
 
   useEffect(
@@ -3575,7 +3692,9 @@ export function Map() {
           message={
             activeTool === "los"
               ? "LOS: pick the second node (or click anywhere on the map)"
-              : "Traceroute: pick the second node"
+              : traceCandidates.length > 0
+                ? `Traceroute: pick the second node — ${traceCandidates.length} ringed ${traceCandidates.length === 1 ? "node has" : "nodes have"} observed routes`
+                : "Traceroute: pick the second node (no routes in the recent window touch this origin)"
           }
           hint="Press Esc to cancel"
           onCancel={resetTool}
@@ -3772,6 +3891,7 @@ export function Map() {
           fromColor="#06b6d4"
           toColor="#d946ef"
           paths={tracePaths}
+          runs={traceRuns}
           selectedSig={traceSelectedPath ? traceSelectedPath.hops.join(">") : null}
           onSelectPath={(sig) => {
             traceFlyover.cancelFlyover(); // a tour follows one path only
