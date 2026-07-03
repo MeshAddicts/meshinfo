@@ -159,12 +159,10 @@ export function MapToolsDrawer({
                 aria-disabled={hardDisabled}
                 onClick={() => {
                   if (hardDisabled) return;
-                  if (terrainGated) {
-                    onRequestTerrainSetup?.();
-                    setOpen(false);
-                    return;
-                  }
+                  // Terrain-gated tools still arm: their panels prompt to
+                  // enable 3D terrain, so the user's intent isn't dropped.
                   onSelect(tool.id);
+                  if (terrainGated) onRequestTerrainSetup?.();
                   setOpen(false);
                 }}
                 className={`w-full px-3 py-2 text-left transition-colors flex items-start gap-2.5 ${
@@ -197,7 +195,7 @@ export function MapToolsDrawer({
                     {hardDisabled
                       ? "Temporarily disabled — being polished."
                       : terrainGated
-                        ? "Click to enable 3D terrain."
+                        ? "Needs 3D terrain — click to set up."
                         : tool.description}
                   </div>
                 </div>

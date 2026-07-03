@@ -1,6 +1,7 @@
 /**
  * Coverage slice worker: runs ITM per pixel over a row range of a shared DEM.
- * Each worker keeps its own ITM WASM context warm across requests.
+ * Keeps its ITM WASM context warm across requests and caches the raster set
+ * by generation id, so same-generation slices carry no buffers.
  */
 import type { BuildingRaster } from "./buildingTiles";
 import type { CanopyRaster } from "./canopyTiles";
@@ -27,21 +28,13 @@ export interface SliceOrigin {
   antennaHeightAboveGroundM: number;
 }
 
-export interface CoverageSliceRequest {
-  requestId: number;
-  /** Transferable DEM buffer (main thread ships a copy per worker). */
+/** Raster buffers shipped once per generation (pool attaches them lazily,
+ *  only for workers that haven't seen the generation yet). */
+export interface CoverageRasterPayload {
   demBuffer: ArrayBuffer;
   demWidth: number;
   demHeight: number;
   bounds: DEMBounds;
-  /** Primary + optional merge origins. */
-  origins: SliceOrigin[];
-  params: RasterParams;
-  /** rowStart/rowEnd are OUTPUT-grid indices (decoupled from DEM). */
-  outputWidth: number;
-  outputHeight: number;
-  rowStart: number;
-  rowEnd: number;
   /** Optional class-ID raster aligned to DEM bounds. Absent → default class everywhere. */
   clutterBuffer?: ArrayBuffer;
   clutterWidth?: number;
@@ -59,6 +52,30 @@ export interface CoverageSliceRequest {
   buildingHeight?: number;
 }
 
+export interface CoverageSliceRequest {
+  requestId: number;
+  /** Raster generation this slice targets; the worker's cache must match. */
+  rasterGen: number;
+  /** Present only when the pool decides this worker needs the buffers. */
+  rasters?: CoverageRasterPayload;
+  /** Primary + optional merge origins. */
+  origins: SliceOrigin[];
+  params: RasterParams;
+  /** rowStart/rowEnd are OUTPUT-grid indices (decoupled from DEM). */
+  outputWidth: number;
+  outputHeight: number;
+  rowStart: number;
+  rowEnd: number;
+}
+
+/** Control messages: free cached rasters (tool exit — they hold ~100 MB at
+ *  full tiers) or pre-compile the ITM WASM ahead of the first compute. */
+export interface ControlMessage {
+  kind: "clearRasters" | "warmup";
+}
+
+export type CoverageWorkerMessage = CoverageSliceRequest | ControlMessage;
+
 export interface CoverageSliceResponse {
   requestId: number;
   rgba: Uint8ClampedArray;
@@ -71,6 +88,8 @@ export interface CoverageSliceResponse {
   blockedCount: number;
   maxMarginDb: number;
   itmUnavailable?: boolean;
+  /** Worker lacks rasters for `rasterGen` — the pool re-sends the slice with buffers attached. */
+  cacheMiss?: boolean;
 }
 
 // One ITM WASM context per worker, kept warm across requests.
@@ -85,92 +104,130 @@ function getItmContext(): Promise<ItmContext> {
   return itmContextPromise;
 }
 
+// Raster cache, valid while cachedGen matches incoming requests.
+let cachedGen = -1;
+let cachedDem: DEM | null = null;
+let cachedClutter: ClutterRaster | null = null;
+let cachedCanopy: CanopyRaster | null = null;
+let cachedBuildings: BuildingRaster | null = null;
+
+function clearRasterCache(): void {
+  cachedGen = -1;
+  cachedDem = null;
+  cachedClutter = null;
+  cachedCanopy = null;
+  cachedBuildings = null;
+}
+
+function adoptRasters(gen: number, r: CoverageRasterPayload): void {
+  cachedDem = {
+    data: new Float32Array(r.demBuffer),
+    width: r.demWidth,
+    height: r.demHeight,
+    bounds: r.bounds,
+  };
+  cachedClutter =
+    r.clutterBuffer && r.clutterWidth && r.clutterHeight
+      ? {
+          data: new Uint8Array(r.clutterBuffer),
+          width: r.clutterWidth,
+          height: r.clutterHeight,
+          bounds: r.bounds,
+          tilesPresent: 0,
+          tilesTotal: 0,
+        }
+      : null;
+  cachedCanopy =
+    r.canopyHeightBuffer && r.canopyStdBuffer && r.canopyMaskBuffer && r.canopyWidth && r.canopyHeight
+      ? {
+          heightM: new Float32Array(r.canopyHeightBuffer),
+          stdM: new Float32Array(r.canopyStdBuffer),
+          mask: new Float32Array(r.canopyMaskBuffer),
+          width: r.canopyWidth,
+          height: r.canopyHeight,
+          bounds: r.bounds,
+          tilesPresent: 0,
+          tilesTotal: 0,
+        }
+      : null;
+  cachedBuildings =
+    r.buildingHeightBuffer && r.buildingMaskBuffer && r.buildingWidth && r.buildingHeight
+      ? {
+          heightM: new Float32Array(r.buildingHeightBuffer),
+          mask: new Float32Array(r.buildingMaskBuffer),
+          width: r.buildingWidth,
+          height: r.buildingHeight,
+          bounds: r.bounds,
+          tilesPresent: 0,
+          tilesTotal: 0,
+        }
+      : null;
+  cachedGen = gen;
+}
+
 const post = (msg: CoverageSliceResponse, transfer: Transferable[] = []) => {
   (self as unknown as {
     postMessage: (m: CoverageSliceResponse, t: Transferable[]) => void;
   }).postMessage(msg, transfer);
 };
 
-self.onmessage = async (evt: MessageEvent<CoverageSliceRequest>) => {
+/** Empty slice payload for error/miss responses. */
+function emptySlice(
+  msg: CoverageSliceRequest,
+  extra: Partial<CoverageSliceResponse>,
+): void {
+  const sliceN = msg.outputWidth * (msg.rowEnd - msg.rowStart);
+  const empty = new Uint8ClampedArray(sliceN * 4);
+  const emptyMargin = new Float32Array(sliceN);
+  emptyMargin.fill(Number.NaN);
+  post({
+    requestId: msg.requestId,
+    rgba: empty,
+    marginDb: emptyMargin,
+    rowStart: msg.rowStart,
+    rowEnd: msg.rowEnd,
+    clearCount: 0,
+    fresnelCount: 0,
+    blockedCount: 0,
+    maxMarginDb: 0,
+    ...extra,
+  }, [empty.buffer, emptyMargin.buffer]);
+}
+
+self.onmessage = async (evt: MessageEvent<CoverageWorkerMessage>) => {
   const msg = evt.data;
+  if ("kind" in msg) {
+    if (msg.kind === "clearRasters") clearRasterCache();
+    else if (msg.kind === "warmup") void getItmContext().catch(() => {});
+    return;
+  }
 
   let itm: ItmContext;
   try {
     itm = await getItmContext();
   } catch (err) {
     console.warn("[coverageSliceWorker] ITM WASM not available:", err);
-    const sliceN = msg.outputWidth * (msg.rowEnd - msg.rowStart);
-    const empty = new Uint8ClampedArray(sliceN * 4);
-    const emptyMargin = new Float32Array(sliceN);
-    emptyMargin.fill(Number.NaN);
-    post({
-      requestId: msg.requestId,
-      rgba: empty,
-      marginDb: emptyMargin,
-      rowStart: msg.rowStart,
-      rowEnd: msg.rowEnd,
-      clearCount: 0,
-      fresnelCount: 0,
-      blockedCount: 0,
-      maxMarginDb: 0,
-      itmUnavailable: true,
-    }, [empty.buffer, emptyMargin.buffer]);
+    emptySlice(msg, { itmUnavailable: true });
     return;
   }
 
   try {
-    const dem: DEM = {
-      data: new Float32Array(msg.demBuffer),
-      width: msg.demWidth,
-      height: msg.demHeight,
-      bounds: msg.bounds,
-    };
-    const clutter: ClutterRaster | null =
-      msg.clutterBuffer && msg.clutterWidth && msg.clutterHeight
-        ? {
-            data: new Uint8Array(msg.clutterBuffer),
-            width: msg.clutterWidth,
-            height: msg.clutterHeight,
-            bounds: msg.bounds,
-            tilesPresent: 0,
-            tilesTotal: 0,
-          }
-        : null;
-    const canopy: CanopyRaster | null =
-      msg.canopyHeightBuffer && msg.canopyStdBuffer && msg.canopyMaskBuffer && msg.canopyWidth && msg.canopyHeight
-        ? {
-            heightM: new Float32Array(msg.canopyHeightBuffer),
-            stdM: new Float32Array(msg.canopyStdBuffer),
-            mask: new Float32Array(msg.canopyMaskBuffer),
-            width: msg.canopyWidth,
-            height: msg.canopyHeight,
-            bounds: msg.bounds,
-            tilesPresent: 0,
-            tilesTotal: 0,
-          }
-        : null;
-    const buildings: BuildingRaster | null =
-      msg.buildingHeightBuffer && msg.buildingMaskBuffer && msg.buildingWidth && msg.buildingHeight
-        ? {
-            heightM: new Float32Array(msg.buildingHeightBuffer),
-            mask: new Float32Array(msg.buildingMaskBuffer),
-            width: msg.buildingWidth,
-            height: msg.buildingHeight,
-            bounds: msg.bounds,
-            tilesPresent: 0,
-            tilesTotal: 0,
-          }
-        : null;
+    if (msg.rasters) adoptRasters(msg.rasterGen, msg.rasters);
+    if (cachedGen !== msg.rasterGen || !cachedDem) {
+      // Worker-recreation race; the pool re-sends with buffers attached
+      emptySlice(msg, { cacheMiss: true });
+      return;
+    }
     const rendered = renderCoverageRaster(
-      dem,
+      cachedDem,
       msg.params,
       itm,
       msg.origins,
       { rowStart: msg.rowStart, rowEnd: msg.rowEnd },
       { width: msg.outputWidth, height: msg.outputHeight },
-      clutter,
-      canopy,
-      buildings,
+      cachedClutter,
+      cachedCanopy,
+      cachedBuildings,
     );
     post({
       requestId: msg.requestId,
@@ -185,21 +242,7 @@ self.onmessage = async (evt: MessageEvent<CoverageSliceRequest>) => {
     }, [rendered.rgba.buffer, rendered.marginDb.buffer]);
   } catch (err) {
     console.warn("[coverageSliceWorker] compute failed:", err);
-    const sliceN = msg.outputWidth * (msg.rowEnd - msg.rowStart);
-    const empty = new Uint8ClampedArray(sliceN * 4);
-    const emptyMargin = new Float32Array(sliceN);
-    emptyMargin.fill(Number.NaN);
-    post({
-      requestId: msg.requestId,
-      rgba: empty,
-      marginDb: emptyMargin,
-      rowStart: msg.rowStart,
-      rowEnd: msg.rowEnd,
-      clearCount: 0,
-      fresnelCount: 0,
-      blockedCount: 0,
-      maxMarginDb: 0,
-    }, [empty.buffer, emptyMargin.buffer]);
+    emptySlice(msg, {});
   }
 };
 

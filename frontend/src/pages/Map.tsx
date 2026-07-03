@@ -5,6 +5,7 @@ import maplibregl, {
   Map as MlMap,
 } from "maplibre-gl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
 
 import { toast } from "../components/toastStore";
 import { env } from "../env";
@@ -20,7 +21,7 @@ import { ActivityLayer } from "./map/activityLayer";
 import { ClusterDonutLayer } from "./map/clusterDonutLayer";
 import { type ClusterHover,ClusterHoverCard } from "./map/ClusterHoverCard";
 import { FiltersResetPill } from "./map/FiltersResetPill";
-import { circularMeanLng } from "./map/geo";
+import { circularMeanLng, normalizeLng } from "./map/geo";
 import { bestSnr, computeMaxRange, formatLatLng, geodesicCircleCoords, mbRoleColorExpr, queryTerrainElevationMSL, relativeTime, signalBarsHtml, TRANSPARENT_1PX_PNG } from "./map/helpers";
 import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
 import { LosTubeLayer } from "./map/losTubeLayer";
@@ -37,6 +38,7 @@ import { MapTraceroutePanel } from "./map/MapTraceroutePanel";
 import { type PacketArc, PacketCoalescer, type RawPacket } from "./map/packetCoalescer";
 import { packetColor } from "./map/packetColors";
 import { findPathsBetween } from "./map/pathAnalysis";
+import type { ScanClass } from "./map/scanAnalysis";
 import {
   anyIdsFanned,
   autoSpiderfyOverlappingPlainNodes,
@@ -111,6 +113,8 @@ export function Map() {
   const focusedNodeIdRef = useRef<string | null>(null);
   // Sticky after first style.load — `isStyleLoaded()` momentarily lies post-removeSource.
   const styleEverLoadedRef = useRef(false);
+  // Bumped per style.load so effects can re-push data into recreated sources/layers.
+  const [styleEpoch, setStyleEpoch] = useState(0);
   const mbSelectedIdRef = useRef<string | null>(null);
   // Last node-source signature; skips redundant setData. -1 = never set.
   const lastNodesSigRef = useRef<number>(-1);
@@ -131,7 +135,7 @@ export function Map() {
   const handleLinkHoverRef = useRef<(otherId: string | null) => void>(() => {});
   const selectedNodeIdRef = useRef<string | null>(null);
 
-  const { data: rawNodes = {} } = useGetNodesQuery();
+  const { data: rawNodes = {}, isError: nodesQueryFailed } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
   const { data: rawTraceroutes = [], isLoading: rawTraceroutesLoading } = useGetTraceroutesQuery();
 
@@ -365,6 +369,13 @@ export function Map() {
   const activeToolRef = useRef(activeTool);
   const toolStepRef = useRef(toolStep);
   const toolFromIdRef = useRef(toolFromId);
+  // Merge-origin pick mode, read by the bind-once node/cluster click handlers
+  const pickingMergeOriginRef = useRef(mergeOrigins.pickingMergeOrigin);
+  const addMergeOriginByIdRef = useRef(mergeOrigins.addCoverageMergeOriginById);
+  // Coverage double-Esc guard: timestamp of the first (arming) Esc press
+  const coverageEscArmedAtRef = useRef(0);
+  // Scan-from-here overlay state, read by the bind-once Escape handler
+  const keepCoveragePaintRef = useRef(coverage.keepCoveragePaint);
 
   const isPickingNode = activeTool != null && toolStep !== "result";
   const terrain3DRef = useRef(terrain3D);
@@ -387,6 +398,9 @@ export function Map() {
   useEffect(() => { linkModeRef.current = linkMode; }, [linkMode]);
   useEffect(() => { roleFilterRef.current = roleFilter; }, [roleFilter]);
   useEffect(() => { activeToolRef.current = activeTool; }, [activeTool]);
+  useEffect(() => { pickingMergeOriginRef.current = mergeOrigins.pickingMergeOrigin; }, [mergeOrigins.pickingMergeOrigin]);
+  useEffect(() => { addMergeOriginByIdRef.current = mergeOrigins.addCoverageMergeOriginById; }, [mergeOrigins.addCoverageMergeOriginById]);
+  useEffect(() => { keepCoveragePaintRef.current = coverage.keepCoveragePaint; }, [coverage.keepCoveragePaint]);
   useEffect(() => { toolStepRef.current = toolStep; }, [toolStep]);
   useEffect(() => { toolFromIdRef.current = toolFromId; }, [toolFromId]);
   useEffect(() => { terrain3DRef.current = terrain3D; }, [terrain3D]);
@@ -401,6 +415,18 @@ export function Map() {
     }
   }, [isPickingNode]);
 
+  // Dragging an endpoint marker detaches any node anchor into a virtual pin
+  const { setLosVirtualFrom, setLosVirtualTo } = losState;
+  const onLosEndpointDragged = useCallback((which: "from" | "to", pos: [number, number]) => {
+    if (which === "from") {
+      setToolFromId(null);
+      setLosVirtualFrom(pos);
+    } else {
+      setToolToId(null);
+      setLosVirtualTo(pos);
+    }
+  }, [setToolFromId, setToolToId, setLosVirtualFrom, setLosVirtualTo]);
+
   // LOS compute + tube layer effects
   const losCompute = useLosCompute({
     activeTool, toolStep, toolFromId, toolToId,
@@ -408,22 +434,30 @@ export function Map() {
     losVirtualTo: losState.losVirtualTo,
     losFromHeightM: losState.losFromHeightM,
     losToHeightM: losState.losToHeightM,
-    provider, terrain3D, nodes,
+    losFreqMhz: losState.losFreqMhz,
+    terrain3D, styleEpoch, nodes,
+    nodesLoadFailed: nodesQueryFailed,
     losResult: losState.losResult,
     mbMapRef, losTubeLayerRef,
+    isDraggingMarkerRef,
+    onEndpointDragged: onLosEndpointDragged,
     setLosResult: losState.setLosResult,
     setLosDemSource: losState.setLosDemSource,
     setLosError: losState.setLosError,
     setIsComputingLos: losState.setIsComputingLos,
+    setLosTerrainWarning: losState.setLosTerrainWarning,
   });
 
   // Scan compute + per-class visibility + clear-on-tool-change + hover effects
   const scanCompute = useScanCompute({
     activeTool, toolStep, toolFromId, toolVirtualPos,
-    provider, terrain3D, nodes,
+    terrain3D, styleEpoch, nodes,
+    nodesLoadFailed: nodesQueryFailed,
     scanTxDbm: scan.scanTxDbm,
     scanAntennaDbi: scan.scanAntennaDbi,
     scanRxAntennaDbi: scan.scanRxAntennaDbi,
+    scanRxHeightM: scan.scanRxHeightM,
+    scanFreqMhz: scan.scanFreqMhz,
     scanEffectiveSensitivityDbm: scan.scanEffectiveSensitivityDbm,
     scanAggressionIdx: scan.scanAggressionIdx,
     scanClutterEnabled: scan.scanClutterEnabled,
@@ -431,6 +465,7 @@ export function Map() {
     scanBuildingsEnabled: scan.scanBuildingsEnabled,
     scanAntennaHeightM: scan.scanAntennaHeightM,
     scanReliability: scan.scanReliability,
+    scanRetryNonce: scan.scanRetryNonce,
     hiddenScanClasses: scan.hiddenScanClasses,
     scanSummary: scan.scanSummary,
     scanHoverId: scan.scanHoverId,
@@ -438,6 +473,7 @@ export function Map() {
     setScanSummary: scan.setScanSummary,
     setIsScanning: scan.setIsScanning,
     setScanError: scan.setScanError,
+    setScanTerrainWarning: scan.setScanTerrainWarning,
     setScanDemSource: scan.setScanDemSource,
     setScanClutterStatus: scan.setScanClutterStatus,
     setScanCanopyStatus: scan.setScanCanopyStatus,
@@ -468,15 +504,30 @@ export function Map() {
     setToolFromId(null);
     setToolToId(null);
     setToolVirtualPos(null);
+    // Merge origins are contextual to one analysis; closing the tool ends it
+    mergeOrigins.clearCoverageMergeOrigins();
+    // Stale arm must not let a later session close on a single Esc
+    coverageEscArmedAtRef.current = 0;
     losState.setLosVirtualFrom(null);
     losState.setLosVirtualTo(null);
     losCompute.losFitKeyRef.current = null;
     losCompute.losFromPosRef.current = null;
     losCompute.losToPosRef.current = null;
+    // Release the cached rasters (DEM + canopy + buildings — tens of MB on long
+    // links) — they only help within one session
+    losCompute.losDemCacheRef.current = null;
     losCompute.losHoverMarkerRef.current?.remove();
     losCompute.losHoverMarkerRef.current = null;
+    losCompute.losFromMarkerRef.current?.remove();
+    losCompute.losFromMarkerRef.current = null;
+    losCompute.losToMarkerRef.current?.remove();
+    losCompute.losToMarkerRef.current = null;
+    // Removing a marker mid-drag skips its dragend; unstick the shared flag
+    isDraggingMarkerRef.current = false;
     losState.setLosResult(null);
     losState.setLosError(null);
+    losState.setLosTerrainWarning(null);
+    losState.setIsComputingLos(false);
     coverage.setCoverageResult(null);
     coverage.setKeepCoveragePaint(false);
     scan.setScanSummary(null);
@@ -488,6 +539,8 @@ export function Map() {
     losState.setLosDemSource(null);
     scan.setScanDemSource(null);
     scan.setIsScanning(false);
+    scan.setScanError(null);
+    scan.setScanTerrainWarning(null);
 
     const mb = mbMapRef.current;
     if (mb) {
@@ -538,6 +591,172 @@ export function Map() {
       coverageCompute.coverageMarginRef.current = null;
     }
   };
+
+  // Stable ref to resetTool (recreated each render) so memoized panels can close
+  // without a fresh callback identity on every parent render.
+  const resetToolRef = useRef(resetTool);
+  resetToolRef.current = resetTool;
+
+  // Stable scan-panel callbacks. MapScanPanel is memoized and the map re-renders on
+  // every hover (elevation pill), so inline lambdas here would defeat the memo.
+  const handleScanClose = useCallback(() => {
+    // Overlay close returns to the coverage view; standalone close does a full reset.
+    if (keepCoveragePaintRef.current) {
+      coverageCompute.skipNextCoverageComputeRef.current = true;
+      coverage.setKeepCoveragePaint(false);
+      setActiveTool("coverage");
+    } else {
+      resetToolRef.current();
+    }
+    // Setters/refs are stable; deps intentionally empty so hover re-renders don't
+    // recreate the callback (would defeat MapScanPanel's memo).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Ref so the bind-once Escape handler can reuse the panel's exact close behavior.
+  const handleScanCloseRef = useRef(handleScanClose);
+  handleScanCloseRef.current = handleScanClose;
+  const handleScanEnableTerrain = useCallback(() => setTerrain3D(true), []);
+  const handleScanSelectResult = useCallback((id: string) => {
+    // Fly to the target, then open its details panel.
+    const n = nodesRef.current[id] ?? nodesRef.current[`!${id}`];
+    const mb = mbMapRef.current;
+    if (n?.map_position && mb) {
+      mb.easeTo({ center: [n.map_position[0], n.map_position[1]], zoom: Math.max(mb.getZoom(), 13), duration: 800 });
+    }
+    handleNodeSelectRef.current(id);
+  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const handleScanHoverResult = useCallback((id: string | null) => scan.setScanHoverId(id), []);
+  const handleScanReturnToOrigin = useCallback(() => {
+    const mapNow = mbMapRef.current;
+    const view = scanCompute.scanInitialViewRef.current;
+    if (!mapNow || !view) return;
+    mapNow.easeTo({ center: view.center, zoom: view.zoom, pitch: view.pitch, bearing: view.bearing, duration: 800 });
+  }, [scanCompute.scanInitialViewRef]);
+  const handleScanToggleClassVisibility = useCallback((cls: ScanClass) => {
+    scan.setHiddenScanClasses((prev) => {
+      const next = new Set(prev);
+      if (next.has(cls)) next.delete(cls);
+      else next.add(cls);
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const handleScanRetry = useCallback(() => scan.setScanRetryNonce((n) => n + 1), []);
+
+  // Swap LOS endpoints including their per-endpoint configs; the compute
+  // effect picks the change up via its endpoint-scalar deps.
+  const swapLosEndpoints = () => {
+    const fid = toolFromId;
+    setToolFromId(toolToId);
+    setToolToId(fid);
+    const vf = losState.losVirtualFrom;
+    losState.setLosVirtualFrom(losState.losVirtualTo);
+    losState.setLosVirtualTo(vf);
+    const hw = losState.losFromHwIdx;
+    losState.setLosFromHwIdx(losState.losToHwIdx);
+    losState.setLosToHwIdx(hw);
+    const ant = losState.losFromAntIdx;
+    losState.setLosFromAntIdx(losState.losToAntIdx);
+    losState.setLosToAntIdx(ant);
+    const h = losState.losFromHeightM;
+    losState.setLosFromHeightM(losState.losToHeightM);
+    losState.setLosToHeightM(h);
+  };
+
+  // Typed "lat, lng" for a LOS endpoint becomes a virtual pin (detaches any node anchor)
+  const setLosFromPosition = (pos: [number, number]) => {
+    setToolFromId(null);
+    losState.setLosVirtualFrom(pos);
+  };
+  const setLosToPosition = (pos: [number, number]) => {
+    setToolToId(null);
+    losState.setLosVirtualTo(pos);
+  };
+
+  // Shareable LOS deep link: keep ?tool=los&from&to&fh&th&fq in sync with the analysis
+  const [, setSearchParamsLos] = useSearchParams();
+  const setSearchParamsLosRef = useRef(setSearchParamsLos);
+  setSearchParamsLosRef.current = setSearchParamsLos;
+  // Snapshot the URL at first render: the write effect rewrites the real URL
+  // synchronously (loader-less router), so the restore effect must never read
+  // window.location at effect time — it would see its own params stripped.
+  const losUrlSnapshotRef = useRef<URLSearchParams | null>(null);
+  if (losUrlSnapshotRef.current === null) {
+    losUrlSnapshotRef.current = new URLSearchParams(window.location.search);
+  }
+  const losUrlRestoredRef = useRef(false);
+  useEffect(() => {
+    // Hold all writes (including the strip branch) until the mount restore ran
+    if (!losUrlRestoredRef.current) return;
+    const showing =
+      activeTool === "los" && toolStep === "result" &&
+      (toolFromId || losState.losVirtualFrom) && (toolToId || losState.losVirtualTo);
+    // No-op guard: react-router navigates even when the updater returns prev,
+    // so don't call setSearchParams at all when there is nothing to change.
+    const had = new URLSearchParams(window.location.search).get("tool") === "los";
+    if (!showing && !had) return;
+    setSearchParamsLosRef.current((prev) => {
+      const sp = new URLSearchParams(prev);
+      if (showing) {
+        sp.set("tool", "los");
+        sp.set("from", toolFromId ?? `${losState.losVirtualFrom![1].toFixed(5)},${losState.losVirtualFrom![0].toFixed(5)}`);
+        sp.set("to", toolToId ?? `${losState.losVirtualTo![1].toFixed(5)},${losState.losVirtualTo![0].toFixed(5)}`);
+        sp.set("fh", String(losState.losFromHeightM));
+        sp.set("th", String(losState.losToHeightM));
+        sp.set("fq", String(losState.losFreqMhz));
+      } else {
+        for (const k of ["tool", "from", "to", "fh", "th", "fq"]) sp.delete(k);
+      }
+      return sp;
+    }, { replace: true });
+  }, [activeTool, toolStep, toolFromId, toolToId, losState.losVirtualFrom, losState.losVirtualTo, losState.losFromHeightM, losState.losToHeightM, losState.losFreqMhz]);
+
+  // Restore a shared LOS analysis from the URL snapshot (once, on mount)
+  useEffect(() => {
+    if (losUrlRestoredRef.current) return;
+    losUrlRestoredRef.current = true;
+    const sp = losUrlSnapshotRef.current ?? new URLSearchParams();
+    if (sp.get("tool") !== "los") return;
+    const parseEnd = (v: string | null): { id: string } | { pos: [number, number] } | null => {
+      if (!v) return null;
+      const m = v.match(/^(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)$/);
+      if (m) {
+        const lat = Number(m[1]);
+        const lng = Number(m[2]);
+        return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { pos: [lng, lat] } : null;
+      }
+      return /^!?[0-9a-zA-Z_-]{1,32}$/.test(v) ? { id: v.replace(/^!/, "") } : null;
+    };
+    const f = parseEnd(sp.get("from"));
+    const t = parseEnd(sp.get("to"));
+    if (!f || !t) return;
+    const num = (k: string, min: number, max: number): number | null => {
+      const raw = sp.get(k);
+      if (raw == null) return null;
+      const n = Number(raw);
+      return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : null;
+    };
+    const fh = num("fh", 0, 300);
+    const th = num("th", 0, 300);
+    const fq = num("fq", 100, 2500);
+    // The sharer's values drive this session but must not overwrite the
+    // viewer's saved defaults in localStorage.
+    losState.markUrlAppliedSettings(
+      fh ?? losState.losFromHeightM,
+      th ?? losState.losToHeightM,
+      fq ?? losState.losFreqMhz,
+    );
+    if (fh != null) losState.setLosFromHeightM(fh);
+    if (th != null) losState.setLosToHeightM(th);
+    if (fq != null) losState.setLosFreqMhz(fq);
+    if ("id" in f) setToolFromId(f.id); else losState.setLosVirtualFrom(f.pos);
+    if ("id" in t) setToolToId(t.id); else losState.setLosVirtualTo(t.pos);
+    setActiveTool("los");
+    setToolStep("result");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Draw shortest traceroute path on both providers
   useEffect(() => {
@@ -1572,6 +1791,10 @@ export function Map() {
         }
       }
 
+      // Tube altitudes are scaled by exaggeration at upload time; onAdd ran before
+      // terrain was re-applied above, so re-upload against the final exaggeration.
+      losTubeLayerRef.current?.refresh();
+
       // Ensure sources have current data (important after style changes)
       refreshMapboxNodeData();
 
@@ -1814,6 +2037,12 @@ export function Map() {
         const cluster = e.features?.[0];
         if (!cluster) return;
 
+        // A cluster click zooms; while picking a merge origin it must not
+        // also drop a coordinate pin underneath.
+        if (pickingMergeOriginRef.current) {
+          (e.originalEvent as MouseEvent & { _mergePickConsumed?: boolean })._mergePickConsumed = true;
+        }
+
         // Spiral fans put inner leaves inside the donut's hit circle — let the
         // leaf click be handled by onNodeLayerClick instead of re-spiderfying.
         if (hitsSpiderfyNode(e.point)) return;
@@ -1974,6 +2203,21 @@ export function Map() {
         const id = (feature.properties?.id ?? "") as string;
         if (!id) return;
 
+        // Merge-origin pick mode: a node click adds that node (with its GPS
+        // altitude) instead of dropping a coordinate pin or opening selection
+        if (pickingMergeOriginRef.current) {
+          (e.originalEvent as MouseEvent & { _mergePickConsumed?: boolean })._mergePickConsumed = true;
+          const cleanId = id.startsWith("!") ? id.slice(1) : id;
+          const primaryId = (toolFromIdRef.current ?? "").replace(/^!/, "");
+          if (cleanId === primaryId) {
+            toast("That node is already the primary origin.");
+          } else {
+            addMergeOriginByIdRef.current(id);
+          }
+          mergeOrigins.setPickingMergeOrigin(false);
+          return;
+        }
+
         // Tool pick modes intercept node clicks
         const activeToolCur = activeToolRef.current;
         const stepCur = toolStepRef.current;
@@ -2037,23 +2281,26 @@ export function Map() {
       map.on("click", (e) => {
         const t = activeToolRef.current;
         const step = toolStepRef.current;
-        // Ignore if clicking on a node layer (handled by onNodeLayerClick)
+        // Ignore if clicking on a node layer (handled by onNodeLayerClick) — the
+        // label layers count too, or a label click drops a pin beside the node.
         const features = map.queryRenderedFeatures(e.point, {
-          layers: ["unclustered-nodes", "plain-nodes", "clusters", SPIDERFY_LAYER_NODES].filter((id) => map.getLayer(id)),
+          layers: ["unclustered-nodes", "plain-nodes", "unclustered-labels", "plain-labels", "clusters", SPIDERFY_LAYER_NODES, SPIDERFY_LAYER_LABELS].filter((id) => map.getLayer(id)),
         });
         if (features.length > 0) return;
 
         if ((t === "coverage" || t === "scan") && step === "pickFrom") {
-          setToolVirtualPos([e.lngLat.lng, e.lngLat.lat]);
+          // normalizeLng: clicks on a wrapped world copy give lngs outside ±180.
+          setToolVirtualPos([normalizeLng(e.lngLat.lng), e.lngLat.lat]);
           setToolStep("result");
           map.getCanvas().style.cursor = "";
         } else if (t === "los" && step === "pickFrom") {
           setToolFromId(null);
-          losState.setLosVirtualFrom([e.lngLat.lng, e.lngLat.lat]);
+          // normalizeLng: clicks on a wrapped world copy give lngs outside ±180
+          losState.setLosVirtualFrom([normalizeLng(e.lngLat.lng), e.lngLat.lat]);
           setToolStep("pickTo");
         } else if (t === "los" && step === "pickTo") {
           setToolToId(null);
-          losState.setLosVirtualTo([e.lngLat.lng, e.lngLat.lat]);
+          losState.setLosVirtualTo([normalizeLng(e.lngLat.lng), e.lngLat.lat]);
           setToolStep("result");
           map.getCanvas().style.cursor = "";
         }
@@ -2199,6 +2446,32 @@ export function Map() {
         switch (e.key) {
           case "Escape":
             if (activeToolRef.current) {
+              // Merge-origin picking consumes Esc (the pick hook's own
+              // listener cancels it) — don't also arm/close the tool.
+              if (pickingMergeOriginRef.current) break;
+              // Scan opened as a coverage overlay: Esc returns to coverage (paint
+              // preserved), matching the panel's close button — not a teardown of both.
+              // Coverage's own guard then governs the final close.
+              if (keepCoveragePaintRef.current && activeToolRef.current === "scan") {
+                handleScanCloseRef.current();
+                break;
+              }
+              // Coverage and a standalone scan each carry state (paint/pins/settings,
+              // and scan's ~800-tile DEM) — one stray Esc shouldn't destroy it. Require
+              // a confirming Esc, worded for the tool on screen.
+              if (
+                (activeToolRef.current === "coverage" || activeToolRef.current === "scan") &&
+                toolStepRef.current === "result"
+              ) {
+                const now = Date.now();
+                const toolName = activeToolRef.current === "scan" ? "Scan" : "Coverage";
+                if (now - coverageEscArmedAtRef.current > 3000) {
+                  coverageEscArmedAtRef.current = now;
+                  toast(`Press Esc again to close ${toolName}.`);
+                  break;
+                }
+                coverageEscArmedAtRef.current = 0;
+              }
               resetTool();
               break;
             }
@@ -2391,7 +2664,10 @@ export function Map() {
       }
     };
 
-    map.on("style.load", () => { styleEverLoadedRef.current = true; });
+    map.on("style.load", () => {
+      styleEverLoadedRef.current = true;
+      setStyleEpoch((e) => e + 1);
+    });
     map.on("style.load", ensureSourcesAndLayers);
 
     return () => {
@@ -2869,7 +3145,7 @@ export function Map() {
               : activeTool === "scan"
                 ? "Scan: pick an origin (or click anywhere for a virtual location)"
                 : activeTool === "los"
-                  ? "LOS: pick the first node"
+                  ? "LOS: pick the first node (or click anywhere on the map)"
                   : "Traceroute: pick the first node"
           }
           hint="Press Esc to cancel"
@@ -2880,7 +3156,7 @@ export function Map() {
         <MapToolPrompt
           message={
             activeTool === "los"
-              ? "LOS: pick the second node"
+              ? "LOS: pick the second node (or click anywhere on the map)"
               : "Traceroute: pick the second node"
           }
           hint="Press Esc to cancel"
@@ -2894,14 +3170,15 @@ export function Map() {
           result={losState.losResult}
           fromLabel={
             toolFromId
-              ? ((nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.shortname ?? toolFromId.slice(0, 8))
+              // `||` not `??` — some nodes report an empty shortname
+              ? ((nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.shortname?.trim() || toolFromId.slice(0, 8))
               : losState.losVirtualFrom
                 ? `${losState.losVirtualFrom[1].toFixed(5)}, ${losState.losVirtualFrom[0].toFixed(5)}`
                 : ""
           }
           toLabel={
             toolToId
-              ? ((nodes[toolToId] ?? nodes[`!${toolToId}`])?.shortname ?? toolToId.slice(0, 8))
+              ? ((nodes[toolToId] ?? nodes[`!${toolToId}`])?.shortname?.trim() || toolToId.slice(0, 8))
               : losState.losVirtualTo
                 ? `${losState.losVirtualTo[1].toFixed(5)}, ${losState.losVirtualTo[0].toFixed(5)}`
                 : ""
@@ -2911,15 +3188,31 @@ export function Map() {
           terrainNeeded={!terrain3D}
           onEnableTerrain={() => setTerrain3D(true)}
           onClose={resetTool}
-          isComputing={terrain3D && !losState.losResult && !losState.losError}
+          isComputing={losState.isComputingLos}
           isRecomputing={losState.isComputingLos && !!losState.losResult}
           error={losState.losError}
+          terrainWarning={losState.losTerrainWarning}
           fromHwIdx={losState.losFromHwIdx} onFromHwIdxChange={losState.setLosFromHwIdx}
           fromAntIdx={losState.losFromAntIdx} onFromAntIdxChange={losState.setLosFromAntIdx}
           fromHeightM={losState.losFromHeightM} onFromHeightChange={losState.setLosFromHeightM}
           toHwIdx={losState.losToHwIdx} onToHwIdxChange={losState.setLosToHwIdx}
           toAntIdx={losState.losToAntIdx} onToAntIdxChange={losState.setLosToAntIdx}
           toHeightM={losState.losToHeightM} onToHeightChange={losState.setLosToHeightM}
+          freqMhz={losState.losFreqMhz} onFreqMhzChange={losState.setLosFreqMhz}
+          presetIdx={losState.losPresetIdx} onPresetIdxChange={losState.setLosPresetIdx}
+          fromPosition={
+            toolFromId
+              ? (() => { const p = (nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.map_position; return p ? [p[0], p[1]] as [number, number] : null; })()
+              : losState.losVirtualFrom
+          }
+          toPosition={
+            toolToId
+              ? (() => { const p = (nodes[toolToId] ?? nodes[`!${toolToId}`])?.map_position; return p ? [p[0], p[1]] as [number, number] : null; })()
+              : losState.losVirtualTo
+          }
+          onFromPositionChange={setLosFromPosition}
+          onToPositionChange={setLosToPosition}
+          onSwapEndpoints={swapLosEndpoints}
           demSource={losState.losDemSource}
           onProfileHover={losCompute.handleLosProfileHover}
         />
@@ -2959,10 +3252,16 @@ export function Map() {
             coverageCompute.coveragePoolRef.current?.terminate();
             coverageCompute.coveragePoolRef.current = null;
             coverageCompute.coverageRequestIdRef.current += 1;
+            // Flag the never-painted settings so re-selecting them offers Recalculate
+            coverageCompute.markComputeCancelled();
             coverage.setIsComputingCoverage(false);
             coverage.setIsFetchingCoverageTerrain(false);
             coverage.setCoverageProgress({ completed: 0, total: 0 });
           }}
+          autoRecalc={coverage.coverageAutoRecalc}
+          onAutoRecalcChange={coverage.setCoverageAutoRecalc}
+          paramsDirty={coverage.coverageParamsDirty}
+          onRecalculate={() => coverage.setCoverageRecalcNonce((n) => n + 1)}
           rxHardwareIdx={coverage.coverageRxHardwareIdx}
           onRxHardwareIdxChange={coverage.setCoverageRxHardwareIdx}
           rxAntennaIdx={coverage.coverageRxAntennaIdx}
@@ -3018,22 +3317,26 @@ export function Map() {
             mbMapRef.current?.easeTo({ center: lngLat, duration: 600 });
           }}
           onScanFromHere={() => {
-            // Mirror coverage's RF settings so the scan results match the
-            // painted prediction. Origin (toolFromId / toolVirtualPos) is
-            // already shared between the tools.
-            scan.setScanHardwareIdx(coverage.coverageHardwareIdx);
-            scan.setScanAntennaIdx(coverage.coverageAntennaIdx);
-            scan.setScanAntennaHeightM(coverage.coverageAntennaHeightM);
-            scan.setScanCustomTxDbm(coverage.coverageCustomTxDbm);
-            scan.setScanRxHardwareIdx(coverage.coverageRxHardwareIdx);
-            scan.setScanRxAntennaIdx(coverage.coverageRxAntennaIdx);
-            scan.setScanPresetIdx(coverage.coveragePresetIdx);
-            scan.setScanCustomSensDbm(coverage.coverageCustomSensDbm);
-            scan.setScanAggressionIdx(coverage.coverageAggressionIdx);
-            scan.setScanClutterEnabled(coverage.coverageClutterEnabled);
-            scan.setScanCanopyEnabled(coverage.coverageCanopyEnabled);
-            scan.setScanBuildingsEnabled(coverage.coverageBuildingsEnabled);
-            scan.setScanReliability(coverage.coverageReliability);
+            // Mirror coverage's RF settings so the scan results match the painted
+            // prediction. applyMirror updates state WITHOUT persisting, so an overlay
+            // scan never overwrites the user's own saved scan defaults. Origin
+            // (toolFromId / toolVirtualPos) is already shared between the tools.
+            scan.applyMirror({
+              hardwareIdx: coverage.coverageHardwareIdx,
+              antennaIdx: coverage.coverageAntennaIdx,
+              antennaHeightM: coverage.coverageAntennaHeightM,
+              customTxDbm: coverage.coverageCustomTxDbm,
+              rxHardwareIdx: coverage.coverageRxHardwareIdx,
+              rxAntennaIdx: coverage.coverageRxAntennaIdx,
+              rxHeightM: coverage.coverageRxHeightM,
+              presetIdx: coverage.coveragePresetIdx,
+              customSensDbm: coverage.coverageCustomSensDbm,
+              aggressionIdx: coverage.coverageAggressionIdx,
+              clutterEnabled: coverage.coverageClutterEnabled,
+              canopyEnabled: coverage.coverageCanopyEnabled,
+              buildingsEnabled: coverage.coverageBuildingsEnabled,
+              reliability: coverage.coverageReliability,
+            });
             coverageCompute.skipNextCoverageComputeRef.current = true;
             coverage.setKeepCoveragePaint(true);
             setActiveTool("scan");
@@ -3065,66 +3368,34 @@ export function Map() {
           summary={scan.scanSummary}
           originLabel={
             toolFromId
-              ? ((nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.shortname ?? toolFromId.slice(0, 8))
-              : "Virtual location"
+              ? ((nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.shortname?.trim() || toolFromId.slice(0, 8))
+              : toolVirtualPos
+                ? `${toolVirtualPos[1].toFixed(5)}, ${toolVirtualPos[0].toFixed(5)}`
+                : "Virtual location"
           }
           isScanning={scan.isScanning}
           scanError={scan.scanError}
+          terrainWarning={scan.scanTerrainWarning}
+          onRetry={handleScanRetry}
           demSource={scan.scanDemSource}
           terrainNeeded={!terrain3D}
-          onEnableTerrain={() => setTerrain3D(true)}
-          onClose={() => {
-            // Overlay close returns to the coverage view; standalone close
-            // does a full reset.
-            if (coverage.keepCoveragePaint) {
-              coverageCompute.skipNextCoverageComputeRef.current = true;
-              coverage.setKeepCoveragePaint(false);
-              setActiveTool("coverage");
-            } else {
-              resetTool();
-            }
-          }}
-          onSelectResult={(id) => {
-            // Fly to the target, then open its details panel.
-            const n = nodes[id] ?? nodes[`!${id}`];
-            const mb = mbMapRef.current;
-            if (n?.map_position && mb) {
-              mb.easeTo({
-                center: [n.map_position[0], n.map_position[1]],
-                zoom: Math.max(mb.getZoom(), 13),
-                duration: 800,
-              });
-            }
-            handleNodeSelectRef.current(id);
-          }}
-          onHoverResult={(id) => scan.setScanHoverId(id)}
-          onReturnToOrigin={() => {
-            const mapNow = mbMapRef.current;
-            const view = scanCompute.scanInitialViewRef.current;
-            if (!mapNow || !view) return;
-            mapNow.easeTo({
-              center: view.center,
-              zoom: view.zoom,
-              pitch: view.pitch,
-              bearing: view.bearing,
-              duration: 800,
-            });
-          }}
+          onEnableTerrain={handleScanEnableTerrain}
+          onClose={handleScanClose}
+          onSelectResult={handleScanSelectResult}
+          onHoverResult={handleScanHoverResult}
+          onReturnToOrigin={handleScanReturnToOrigin}
           hiddenClasses={scan.hiddenScanClasses}
-          onToggleClassVisibility={(cls) =>
-            scan.setHiddenScanClasses((prev) => {
-              const next = new Set(prev);
-              if (next.has(cls)) next.delete(cls);
-              else next.add(cls);
-              return next;
-            })
-          }
+          onToggleClassVisibility={handleScanToggleClassVisibility}
           antennaIdx={scan.scanAntennaIdx}
           onAntennaIdxChange={scan.setScanAntennaIdx}
           hardwareIdx={scan.scanHardwareIdx}
           onHardwareIdxChange={scan.setScanHardwareIdx}
           antennaHeightM={scan.scanAntennaHeightM}
           onAntennaHeightChange={scan.setScanAntennaHeightM}
+          rxHeightM={scan.scanRxHeightM}
+          onRxHeightChange={scan.setScanRxHeightM}
+          freqMhz={scan.scanFreqMhz}
+          onFreqMhzChange={scan.setScanFreqMhz}
           rxHardwareIdx={scan.scanRxHardwareIdx}
           onRxHardwareIdxChange={scan.setScanRxHardwareIdx}
           rxAntennaIdx={scan.scanRxAntennaIdx}

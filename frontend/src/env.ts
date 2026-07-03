@@ -16,7 +16,8 @@ declare global {
 }
 
 function get(key: keyof RuntimeEnv): string | undefined {
-  const runtime = window.__env__?.[key];
+  // globalThis, not window — this module is also imported by web workers
+  const runtime = (globalThis as { __env__?: RuntimeEnv }).__env__?.[key];
   if (runtime) return runtime;
   const buildTime = import.meta.env[key];
   return buildTime || undefined;

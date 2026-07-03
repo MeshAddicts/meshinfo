@@ -16,16 +16,22 @@ export const LS_KEYS = {
   buildings3D: "meshinfo.map.buildings3D",
   /** AGGRESSION_STOPS index (0/1/2). Default 1 = calibrated baseline. */
   coverageAggressionIdx: "meshinfo.map.coverageAggressionIdx",
-  scanAggressionIdx: "meshinfo.map.scanAggressionIdx",
   /** Clutter model on/off. Off → aggression = 0, ITM-only path loss. */
   coverageClutterEnabled: "meshinfo.map.coverageClutterEnabled",
-  scanClutterEnabled: "meshinfo.map.scanClutterEnabled",
   /** Canopy-height tier on/off. Off → fall back to class-nominal heights. */
   coverageCanopyEnabled: "meshinfo.map.coverageCanopyEnabled",
-  scanCanopyEnabled: "meshinfo.map.scanCanopyEnabled",
   /** Building-height tier on/off. Off → bare-earth DEM + class-nominal endpoint h_a. */
   coverageBuildingsEnabled: "meshinfo.map.coverageBuildingsEnabled",
-  scanBuildingsEnabled: "meshinfo.map.scanBuildingsEnabled",
+  /** Last-used scan settings (frequency, modem preset, TX/RX hw/antenna/height, env, reliability). */
+  scanSettings: "meshinfo.map.scanSettings",
+  /** Named coverage-settings presets (CoveragePreset[]). */
+  coveragePresets: "meshinfo.map.coveragePresets",
+  /** Coverage auto-recompute on setting changes (default true). */
+  coverageAutoRecalc: "meshinfo.map.coverageAutoRecalc",
+  /** Last-used coverage settings (semantic CoveragePreset payload). */
+  coverageLastSettings: "meshinfo.map.coverageLastSettings",
+  /** Last-used LOS settings (frequency, modem preset, per-endpoint hw/antenna/height). */
+  losSettings: "meshinfo.map.losSettings",
 } as const;
 
 export function readJson<T>(key: string, fallback: T): T {

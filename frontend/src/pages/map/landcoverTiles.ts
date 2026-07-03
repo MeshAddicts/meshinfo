@@ -16,7 +16,8 @@ const MAX_ZOOM = 12;
 const DEFAULT_MAX_TILES_PER_REQUEST = 256;
 
 function tileBaseUrl(): string {
-  const apiBase = env.API_BASE_URL ?? window.location.origin;
+  // globalThis, not window — also runs inside the raster-build worker
+  const apiBase = env.API_BASE_URL ?? globalThis.location.origin;
   return `${apiBase}/tiles/landcover`;
 }
 
@@ -266,7 +267,9 @@ export function sampleClutterClassAt(
   lat: number,
 ): number {
   const { width, height, bounds, data } = raster;
-  const fx = ((lng - bounds.west) / (bounds.east - bounds.west)) * (width - 1);
+  // Seam unwrap, matching sampleDEMAt: a [179,181] bbox must accept lng -179
+  const sLng = lng < bounds.west ? lng + 360 : lng > bounds.east ? lng - 360 : lng;
+  const fx = ((sLng - bounds.west) / (bounds.east - bounds.west)) * (width - 1);
   const fy = ((bounds.north - lat) / (bounds.north - bounds.south)) * (height - 1);
   if (!Number.isFinite(fx) || !Number.isFinite(fy) || fx < 0 || fx > width - 1 || fy < 0 || fy > height - 1) return NLCD_DEFAULT_CLASS_ID;
   const x = Math.round(fx);

@@ -1,13 +1,38 @@
-/** Scan-results panel: ranked LoS from origin to every node in view. */
-import { useEffect, useMemo, useRef, useState } from "react";
+/** Scan-results panel: ranked LoS from origin to every node within the scan radius. */
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { AggressionSlider, BuildingStatusChip, CanopyStatusChip, ClassLegend, ClutterStatusChip } from "./ClutterUI";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
+import { commitNumericDraft } from "./helpers";
 import { NumericDraftInput } from "./NumericDraftInput";
-import { type ScanClass, type ScanResult, scanSortKey, type ScanSummary } from "./scanAnalysis";
+import { type ScanClass, type ScanResult, type ScanSummary } from "./scanAnalysis";
 import { Segmented } from "./Segmented";
 import type { DemSource } from "./terrainRgb";
 import { useBottomSheetGesture } from "./useBottomSheet";
+
+/** Distance cutoff shown in copy; must track SCAN_RADIUS_KM in useScanCompute. */
+const SCAN_RADIUS_KM = 200;
+
+/** Common LoRa region frequencies (distinct MHz values; several regions share one). */
+const LORA_FREQS: { mhz: number; label: string }[] = [
+  { mhz: 915, label: "915 · US/ANZ" },
+  { mhz: 868, label: "868 · EU/RU" },
+  { mhz: 433, label: "433 · EU433" },
+  { mhz: 470, label: "470 · CN" },
+  { mhz: 865, label: "865 · IN" },
+  { mhz: 920, label: "920 · JP/KR/TH" },
+  { mhz: 923, label: "923 · TW/MY/SG" },
+];
+
+/** Normalize −0 → 0 after rounding so sub-half-dB negatives don't show a bare "0". */
+function roundSigned(v: number): number {
+  return Math.round(v) || 0;
+}
+
+// Resolve the stock-handheld defaults by label so a catalog reorder can't point
+// them at the wrong hardware (COMMON_HARDWARE is actively curated).
+const HANDHELD_HW_IDX = Math.max(0, COMMON_HARDWARE.findIndex((h) => h.label === "Heltec V3"));
+const HANDHELD_ANT_IDX = Math.max(0, COMMON_ANTENNAS.findIndex((a) => a.label.startsWith("Stock")));
 
 /** Collapsible settings row: header summarizes current state, body holds inline editors. */
 function SettingsRow({
@@ -58,7 +83,7 @@ const CLASS_STYLES: Record<ScanClass, { bg: string; text: string; border: string
   blocked:    { bg: "bg-red-500/15",     text: "text-red-300",     border: "border-red-500/30",     label: "Blocked" },
 };
 
-export function MapScanPanel({
+function MapScanPanelInner({
   summary,
   originLabel,
   isScanning,
@@ -81,6 +106,10 @@ export function MapScanPanel({
   onRxHardwareIdxChange,
   rxAntennaIdx,
   onRxAntennaIdxChange,
+  rxHeightM,
+  onRxHeightChange,
+  freqMhz,
+  onFreqMhzChange,
   customTxDbm,
   onCustomTxDbmChange,
   aggressionIdx,
@@ -101,12 +130,18 @@ export function MapScanPanel({
   reliability,
   onReliabilityChange,
   scanError,
+  terrainWarning,
+  onRetry,
 }: {
   summary: ScanSummary | null;
   originLabel: string;
   isScanning: boolean;
-  /** Last scan error; shows an error row instead of a blank panel. */
+  /** Last scan error; shown as a banner (results, if any, stay visible). */
   scanError?: string | null;
+  /** Non-fatal terrain-quality warning (failed tiles), or null. */
+  terrainWarning?: string | null;
+  /** Force a refetch + recompute after a failure. */
+  onRetry?: () => void;
   /** null = scan hasn't run yet; otherwise the bulk DEM source actually used. */
   demSource: DemSource | null;
   terrainNeeded?: boolean;
@@ -130,6 +165,12 @@ export function MapScanPanel({
   onRxHardwareIdxChange: (idx: number) => void;
   rxAntennaIdx: number;
   onRxAntennaIdxChange: (idx: number) => void;
+  /** RX antenna height AGL (m). */
+  rxHeightM: number;
+  onRxHeightChange: (m: number) => void;
+  /** Link frequency (MHz) — drives Fresnel geometry and ITM. */
+  freqMhz: number;
+  onFreqMhzChange: (mhz: number) => void;
   customTxDbm: number;
   onCustomTxDbmChange: (dbm: number) => void;
   /** Index into AGGRESSION_STOPS (0/1/2) for the per-pixel ITU clutter model. */
@@ -208,6 +249,10 @@ export function MapScanPanel({
     // handler closes the whole tool; refocus the summary on close.
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      // Let a field's own Escape (revert-and-blur) run first — don't slam the whole
+      // popover shut on the first Escape while the user is editing a value.
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       const root = sheet.sheetRef.current;
       const open = root?.querySelectorAll<HTMLDetailsElement>("details[open]");
       if (!open || open.length === 0) return;
@@ -225,21 +270,25 @@ export function MapScanPanel({
     };
   }, [sheet.sheetRef]);
 
-  // Text-mode input; commit on blur/Enter, blank → 2 m default.
+  // Text-mode inputs; commit on blur/Enter, blank/garbage → revert to current value.
   const [heightInput, setHeightInput] = useState(String(antennaHeightM));
   useEffect(() => { setHeightInput(String(antennaHeightM)); }, [antennaHeightM]);
+  const [rxHeightInput, setRxHeightInput] = useState(String(rxHeightM));
+  useEffect(() => { setRxHeightInput(String(rxHeightM)); }, [rxHeightM]);
 
+  // summary.results is already ranked by scanSortKey (runScan sorts once); filter
+  // preserves order, so no re-sort here.
   const displayResults: ScanResult[] = useMemo(() => {
     if (!summary) return [];
-    const filtered = filter
-      ? summary.results.filter((r) => r.cls === filter)
-      : summary.results;
-    // Rank by scanSortKey (matches map order), not raw margin.
-    return [...filtered].sort((a, b) => scanSortKey(b) - scanSortKey(a));
+    return filter ? summary.results.filter((r) => r.cls === filter) : summary.results;
   }, [summary, filter]);
 
-  // Clear a stale map highlight if the row under the cursor re-sorts/filters away.
-  useEffect(() => { onHoverResult?.(null); }, [filter, displayResults, onHoverResult]);
+  // Clear a stale map highlight when the filter changes (a row may vanish under the
+  // cursor). onHoverResult is intentionally excluded — Map passes an inline lambda,
+  // so including it would refire on every parent render and cancel a live hover.
+  const onHoverResultRef = useRef(onHoverResult);
+  onHoverResultRef.current = onHoverResult;
+  useEffect(() => { onHoverResultRef.current?.(null); }, [filter]);
 
   if (terrainNeeded && onEnableTerrain) {
     return (
@@ -284,13 +333,16 @@ export function MapScanPanel({
   const isCustomPreset = MESHTASTIC_PRESETS[presetIdx]?.isCustom ?? false;
 
   const commitHeight = () => {
-    const trimmed = heightInput.trim();
-    if (trimmed === "") { onAntennaHeightChange(2); setHeightInput("2"); return; }
-    const n = Number(trimmed);
-    if (!Number.isFinite(n)) { onAntennaHeightChange(2); setHeightInput("2"); return; }
-    const clamped = Math.max(0, Math.min(300, n));
+    // Blank/garbage (incl. a decimal comma) reverts to the current height — never
+    // silently resets a rooftop analysis to the 2 m default (matches NumericDraftInput).
+    const clamped = commitNumericDraft(heightInput.replace(",", "."), 0, 300, antennaHeightM);
     onAntennaHeightChange(clamped);
     setHeightInput(String(clamped));
+  };
+  const commitRxHeight = () => {
+    const clamped = commitNumericDraft(rxHeightInput.replace(",", "."), 0, 300, rxHeightM);
+    onRxHeightChange(clamped);
+    setRxHeightInput(String(clamped));
   };
 
   const total = summary ? summary.results.length : 0;
@@ -306,8 +358,8 @@ export function MapScanPanel({
   const rxHardware = COMMON_HARDWARE[rxHardwareIdx]?.label ?? "Custom";
   const rxAntDbi = COMMON_ANTENNAS[rxAntennaIdx]?.dbi ?? 0;
 
-  const txSummaryStr = `${txHardware} · ${txAntDbi} dBi · ${antennaHeightM}m · ${txPreset}`;
-  const rxSummaryStr = rxMatchesTx ? "Same as TX" : `${rxHardware} · ${rxAntDbi} dBi`;
+  const txSummaryStr = `${txHardware} · ${txAntDbi} dBi · ${antennaHeightM}m · ${txPreset} · ${freqMhz} MHz`;
+  const rxSummaryStr = rxMatchesTx ? `Same as TX · ${rxHeightM}m` : `${rxHardware} · ${rxAntDbi} dBi · ${rxHeightM}m`;
   const envParts: string[] = [];
   if (clutterEnabled) envParts.push("clutter");
   if (canopyEnabled) envParts.push("canopy");
@@ -363,6 +415,13 @@ export function MapScanPanel({
             </svg>
             Scan
           </span>
+          {/* Minimized: the body is hidden, so surface scan/error state in the header. */}
+          {minimized && isScanning && (
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse shrink-0" title="Scanning…" />
+          )}
+          {minimized && !isScanning && scanError && (
+            <span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" title={scanError} />
+          )}
           <div
             className="text-[11px] text-gray-300 truncate"
             title={summary ? `From ${originLabel} · ${reachable} reachable / ${total}` : `From ${originLabel}`}
@@ -409,7 +468,7 @@ export function MapScanPanel({
             {/* Fixed so it escapes the side-panel's overflow. */}
             <div className="fixed z-1060 overflow-y-auto p-2 rounded-lg bg-gray-900/95 border border-white/10 shadow-2xl space-y-2
               inset-x-3 top-4 bottom-4 w-auto max-w-none
-              sm:inset-auto sm:top-16 sm:left-[calc(var(--map-pad)+22.5rem)] sm:w-90 sm:max-h-[calc(100vh-8rem)]">
+              sm:inset-auto sm:top-16 sm:left-[calc(var(--map-pad)+22.5rem)] sm:w-90 sm:max-w-[calc(100vw-var(--map-pad)-23.5rem)] sm:max-h-[calc(100vh-8rem)]">
               <div className="flex items-center justify-between px-0.5 pb-0.5">
                 <span className="text-[10px] uppercase tracking-wider text-gray-500 font-medium">
                   Scan settings
@@ -550,6 +609,27 @@ export function MapScanPanel({
                     </div>
                   </div>
                 </div>
+                <div>
+                  <label htmlFor="scan-freq" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
+                    Frequency (region)
+                  </label>
+                  <select
+                    id="scan-freq"
+                    value={freqMhz}
+                    onChange={(e) => onFreqMhzChange(Number(e.target.value))}
+                    aria-label="Link frequency (LoRa region)"
+                    className="w-full rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-gray-200
+                      focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50
+                      [&>option]:bg-gray-800 [&>option]:text-gray-200"
+                  >
+                    {!LORA_FREQS.some((f) => f.mhz === freqMhz) && (
+                      <option value={freqMhz}>{freqMhz} MHz</option>
+                    )}
+                    {LORA_FREQS.map((f) => (
+                      <option key={f.mhz} value={f.mhz}>{f.label}</option>
+                    ))}
+                  </select>
+                </div>
               </SettingsRow>
 
               <SettingsRow
@@ -576,8 +656,8 @@ export function MapScanPanel({
                             onRxHardwareIdxChange(snap.hw);
                             onRxAntennaIdxChange(snap.ant);
                           } else {
-                            onRxHardwareIdxChange(4); // Heltec V3
-                            onRxAntennaIdxChange(0);  // rubber duck
+                            onRxHardwareIdxChange(HANDHELD_HW_IDX);
+                            onRxAntennaIdxChange(HANDHELD_ANT_IDX);
                           }
                         }
                       }}
@@ -588,14 +668,42 @@ export function MapScanPanel({
                   <button
                     type="button"
                     onClick={() => {
-                      onRxHardwareIdxChange(4); // Heltec V3
-                      onRxAntennaIdxChange(0);  // rubber duck
+                      onRxHardwareIdxChange(HANDHELD_HW_IDX);
+                      onRxAntennaIdxChange(HANDHELD_ANT_IDX);
                     }}
                     className="text-[10px] text-cyan-400/70 hover:text-cyan-300 transition-colors"
                     title="Set RX to a stock handheld (Heltec V3, rubber duck) — typical 'who can hear me?' setup"
                   >
                     Use handheld
                   </button>
+                </div>
+                <div>
+                  <label htmlFor="scan-rx-height" className="text-[10px] font-medium uppercase tracking-wider text-gray-500 mb-1 block">
+                    Antenna Height
+                  </label>
+                  <div className="inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1 w-20">
+                    <input
+                      id="scan-rx-height"
+                      type="text"
+                      inputMode="decimal"
+                      value={rxHeightInput}
+                      onChange={(e) => setRxHeightInput(e.target.value)}
+                      onBlur={commitRxHeight}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          (e.currentTarget as HTMLInputElement).blur();
+                        } else if (e.key === "Escape") {
+                          setRxHeightInput(String(rxHeightM));
+                          (e.currentTarget as HTMLInputElement).blur();
+                        }
+                      }}
+                      aria-label="RX antenna height above ground at each target (meters)"
+                      title="RX antenna height AGL at each target node (m). Blank = current value."
+                      className="min-w-0 flex-1 bg-transparent text-xs text-gray-200 text-center focus:outline-hidden"
+                    />
+                    <span className="text-[10px] text-gray-500 shrink-0">m</span>
+                  </div>
                 </div>
                 {!rxMatchesTx && (
                   <div className="grid grid-cols-2 gap-2">
@@ -749,28 +857,54 @@ export function MapScanPanel({
       </div>
 
       <div className={`overflow-y-auto overscroll-contain flex-1 ${minimized ? "hidden" : ""}`}>
-        {isScanning && (
+        {/* Recompute indicator — results stay visible underneath so a config tweak
+            keeps the ranked list and scroll position instead of blanking to a spinner. */}
+        {isScanning && summary && (
+          <div role="status" className="px-3 py-1.5 flex items-center justify-center gap-2 text-[10px] text-cyan-300/80 border-b border-white/5 bg-cyan-500/5">
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+            Recomputing…
+          </div>
+        )}
+
+        {scanError && (
+          <div role="alert" className="px-3 py-2 flex items-center gap-2 text-[11px] text-red-300 border-b border-red-500/20 bg-red-500/5">
+            <span className="flex-1 min-w-0">
+              {scanError}{summary && summary.results.length > 0 ? " Showing previous results." : ""}
+            </span>
+            {onRetry && (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="shrink-0 px-2 py-0.5 rounded border border-red-400/40 text-red-200 hover:bg-red-500/15 transition-colors"
+              >
+                Retry
+              </button>
+            )}
+          </div>
+        )}
+
+        {terrainWarning && !scanError && (
+          <div role="status" className="px-3 py-2 text-[10px] text-amber-300/90 border-b border-amber-500/20 bg-amber-500/5">
+            {terrainWarning}
+          </div>
+        )}
+
+        {isScanning && !summary && (
           <div role="status" className="px-3 py-6 text-center text-[11px] text-gray-400">
             <div className="inline-flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-              Scanning targets in view…
+              Scanning nodes within {SCAN_RADIUS_KM} km…
             </div>
           </div>
         )}
 
-        {!isScanning && !summary && scanError && (
-          <div role="alert" className="px-3 py-6 text-center text-[11px] text-red-300">
-            {scanError}
-          </div>
-        )}
-
-        {!isScanning && summary && summary.results.length === 0 && (
+        {!isScanning && summary && summary.results.length === 0 && !scanError && (
           <div className="px-3 py-6 text-center text-[11px] text-gray-400">
-            No target nodes within 200 km of the origin. Try a different location.
+            No nodes within {SCAN_RADIUS_KM} km of the origin. Try a different location.
           </div>
         )}
 
-        {!isScanning && summary && summary.results.length > 0 && (
+        {summary && summary.results.length > 0 && (
           <>
             {/* Left-click filters list; right-click hides class on map. */}
             <div className="grid grid-cols-4 gap-1.5 px-3 py-2 text-[10px] text-gray-400 border-b border-white/5">
@@ -814,46 +948,53 @@ export function MapScanPanel({
             <ul className="divide-y divide-white/5">
               {displayResults.map((r) => {
                 const s = CLASS_STYLES[r.cls];
+                const label = r.shortname ?? r.id.slice(0, 8);
+                // roundSigned kills the −0 that Math.round yields for (−0.5,0); show one
+                // decimal for a blocked node whose shortfall would otherwise read "0 dB".
+                const m = roundSigned(r.marginDb);
+                const marginStr = r.cls === "blocked"
+                  ? (m === 0 ? `${r.marginDb.toFixed(1)} dB` : `${m} dB`)
+                  : `+${m} dB`;
                 return (
-                  <li
-                    key={r.id}
-                    role="button"
-                    tabIndex={0}
-                    className="px-3 py-1.5 hover:bg-white/5 focus:bg-white/10 focus:outline-none cursor-pointer transition-colors"
-                    onClick={() => onSelectResult(r.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelectResult(r.id); }
-                    }}
-                    onMouseEnter={() => onHoverResult?.(r.id)}
-                    onMouseLeave={() => onHoverResult?.(null)}
-                    onFocus={() => onHoverResult?.(r.id)}
-                    onBlur={() => onHoverResult?.(null)}
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className={`shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium border ${s.bg} ${s.text} ${s.border}`}>
-                        {s.label}
-                      </span>
-                      <span className="text-[11px] text-gray-100 font-medium truncate flex-1">
-                        {r.shortname ?? r.id.slice(0, 8)}
-                      </span>
-                      <span className="shrink-0 text-[10px] text-gray-400 tabular-nums">
-                        {r.distanceKm.toFixed(1)} km
-                      </span>
-                      <span className={`shrink-0 text-[10px] tabular-nums ${r.cls === "blocked" ? "text-red-400" : "text-emerald-400"}`}>
-                        {r.cls === "blocked"
-                          ? `${Math.round(r.marginDb)} dB`
-                          : `+${Math.round(r.marginDb)} dB`}
-                      </span>
-                    </div>
-                    {r.cls !== "clear" && (
-                      <div className="pl-[3.1rem] text-[9px] text-gray-500 mt-0.5">
-                        {r.losBlocked && `LoS blocked · `}
-                        {r.fresnelIntruded && !r.losBlocked && `Fresnel intrusion · `}
-                        {r.diffractionLossDb > 0.5 &&
-                          `diffraction ${r.diffractionLossDb.toFixed(1)} dB · `}
-                        RSSI {Math.round(r.rssiDbm)} dBm
+                  <li key={r.id}>
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`${label}, ${s.label}, ${r.distanceKm.toFixed(1)} km, margin ${marginStr}`}
+                      className="px-3 py-1.5 hover:bg-white/5 focus:bg-white/10 focus:outline-none cursor-pointer transition-colors"
+                      onClick={() => onSelectResult(r.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelectResult(r.id); }
+                      }}
+                      onMouseEnter={() => onHoverResult?.(r.id)}
+                      onMouseLeave={() => onHoverResult?.(null)}
+                      onFocus={() => onHoverResult?.(r.id)}
+                      onBlur={() => onHoverResult?.(null)}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium border ${s.bg} ${s.text} ${s.border}`}>
+                          {s.label}
+                        </span>
+                        <span className="text-[11px] text-gray-100 font-medium truncate flex-1">
+                          {label}
+                        </span>
+                        <span className="shrink-0 text-[10px] text-gray-400 tabular-nums">
+                          {r.distanceKm.toFixed(1)} km
+                        </span>
+                        <span className={`shrink-0 text-[10px] tabular-nums ${r.cls === "blocked" ? "text-red-400" : "text-emerald-400"}`}>
+                          {marginStr}
+                        </span>
                       </div>
-                    )}
+                      {r.cls !== "clear" && (
+                        <div className="pl-[3.1rem] text-[9px] text-gray-500 mt-0.5">
+                          {r.losBlocked && `LoS blocked · `}
+                          {r.fresnelIntruded && !r.losBlocked && `Fresnel intrusion · `}
+                          {r.diffractionLossDb > 0.5 &&
+                            `diffraction ${r.diffractionLossDb.toFixed(1)} dB · `}
+                          RSSI {Math.round(r.rssiDbm)} dBm
+                        </div>
+                      )}
+                    </div>
                   </li>
                 );
               })}
@@ -864,6 +1005,8 @@ export function MapScanPanel({
     </div>
   );
 }
+
+export const MapScanPanel = memo(MapScanPanelInner);
 
 function StatPill({
   label,
@@ -887,10 +1030,13 @@ function StatPill({
   // hide-on-map action so it isn't pointer-and-desktop-only.
   const lpTimer = useRef<number | null>(null);
   const didLongPress = useRef(false);
-  const startLongPress = () => {
+  const startLongPress = (e: React.PointerEvent) => {
+    // Only touch long-press arms the timer — a held LEFT mouse button must not hide
+    // the class (that's the right-click / contextmenu path).
+    if (e.pointerType !== "touch") return;
     didLongPress.current = false;
     lpTimer.current = window.setTimeout(() => {
-      didLongPress.current = true;
+      didLongPress.current = true; // swallow the synthetic click that follows a touch
       onContextMenu?.();
     }, 500);
   };
@@ -901,17 +1047,24 @@ function StatPill({
     <button
       type="button"
       aria-pressed={active}
+      aria-label={hidden ? `${label} — hidden on map` : label}
       onClick={() => {
         if (didLongPress.current) { didLongPress.current = false; return; }
         onClick?.();
       }}
       onContextMenu={(e) => {
         e.preventDefault();
+        // Android also fires contextmenu on long-press; if our touch timer already
+        // toggled, ignore this duplicate. Otherwise (desktop right-click, or an early
+        // Android contextmenu) cancel the timer and toggle exactly once.
+        if (didLongPress.current) return;
+        cancelLongPress();
         onContextMenu?.();
       }}
       onPointerDown={startLongPress}
       onPointerUp={cancelLongPress}
       onPointerLeave={cancelLongPress}
+      onPointerCancel={cancelLongPress}
       onKeyDown={(e) => {
         if (e.key === "h" || e.key === "H") { e.preventDefault(); onContextMenu?.(); }
       }}

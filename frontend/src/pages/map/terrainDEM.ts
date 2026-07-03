@@ -117,6 +117,19 @@ export function unionDemBoundsAround(
   return out;
 }
 
+/** True if `inner` fits inside `outer`, tolerating a ±360° longitude-frame
+ *  difference (both bboxes may be unwrapped around different antimeridian sides). */
+export function demBoundsContain(outer: DEMBounds, inner: DEMBounds): boolean {
+  const dMid = (inner.west + inner.east) / 2 - (outer.west + outer.east) / 2;
+  const shift = dMid > 180 ? -360 : dMid < -180 ? 360 : 0;
+  return (
+    inner.west + shift >= outer.west &&
+    inner.east + shift <= outer.east &&
+    inner.south >= outer.south &&
+    inner.north <= outer.north
+  );
+}
+
 /** Lng/lat for DEM pixel (x, y). */
 export function demPixelToLngLat(dem: DEM, x: number, y: number): [number, number] {
   const { bounds, width, height } = dem;
