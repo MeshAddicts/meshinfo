@@ -123,6 +123,20 @@ function makeNodeGeoJSON(node: INode) {
   };
 }
 
+// Signature of everything that affects the rendered feature.
+// JSON.stringify (not join) so free-text names can't collide across field boundaries.
+function nodeFeatureSig(node: INode, lonLat: [number, number]): string {
+  const n = node as NodeWithLocationData;
+  return JSON.stringify([
+    lonLat[0],
+    lonLat[1],
+    n.id ?? "",
+    n.shortname ?? "",
+    n.longname ?? "",
+    isNodeOnline(node),
+  ]);
+}
+
 function bumpMb(map: MlMap): () => void {
   const safe = () => {
     try {
@@ -148,6 +162,8 @@ export const NodeMap = ({ node }: { node: INode }) => {
   const mapRef = useRef<HTMLDivElement>(null);
   const mbMapRef = useRef<MlMap | null>(null);
   const cancelBumpRef = useRef<(() => void) | null>(null);
+  const prevLonLatRef = useRef<[number, number] | null>(null);
+  const prevSigRef = useRef<string | null>(null);
 
   const mapboxToken = env.MAPBOX_TOKEN;
   const hasMapbox = Boolean(mapboxToken);
@@ -270,12 +286,22 @@ export const NodeMap = ({ node }: { node: INode }) => {
         cancelBumpRef.current = bumpMb(map);
       });
 
+      prevLonLatRef.current = lonLat;
+      prevSigRef.current = nodeFeatureSig(node, lonLat);
       cancelBumpRef.current = bumpMb(map);
     } else {
+      // Gate updates so SSE node churn doesn't repaint or snap the user's pan
+      const sig = nodeFeatureSig(node, lonLat);
       const src = existing.getSource("node") as MlGeoJSONSource | undefined;
-      if (src) src.setData(makeNodeGeoJSON(node) as any);
-      existing.jumpTo({ center: lonLat });
-      cancelBumpRef.current = bumpMb(existing);
+      if (src && sig !== prevSigRef.current) {
+        prevSigRef.current = sig;
+        src.setData(makeNodeGeoJSON(node) as any);
+      }
+      const prev = prevLonLatRef.current;
+      if (!prev || prev[0] !== lonLat[0] || prev[1] !== lonLat[1]) {
+        prevLonLatRef.current = lonLat;
+        existing.jumpTo({ center: lonLat });
+      }
     }
 
     return () => {

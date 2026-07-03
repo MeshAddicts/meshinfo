@@ -1,4 +1,5 @@
 import {
+  memo,
   ReactNode,
   useCallback,
   useDeferredValue,
@@ -35,6 +36,14 @@ interface NeighborEntry {
   distance?: number;
 }
 
+// Shared formatter: per-row toLocaleString allocates an Intl.DateTimeFormat each call
+const lastSeenFormat = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
 /** One row in the virtualized list */
 export interface NeighborListItem {
   id: string;
@@ -42,6 +51,7 @@ export interface NeighborListItem {
   node: any;
   online: boolean;
   lastSeenMs: number | null;
+  lastSeenText: string | null;
   neighborsHeard: { id: string; shortname: string; snr: number; distanceKm: number | null }[];
   heardBy: { id: string; shortname: string; snr: number; distanceKm: number | null }[];
   broadcastIntervalSecs: number | null;
@@ -474,7 +484,8 @@ function NeighborsOverviewPanel({
 /*  Row component for the Virtuoso list                                */
 /* ------------------------------------------------------------------ */
 
-function NeighborRow({
+// Memoized so nodes-cache flushes only re-render rows whose item identity changed.
+const NeighborRow = memo(function NeighborRow({
   item,
   selected,
   onSelect,
@@ -568,21 +579,16 @@ function NeighborRow({
 
         {/* Right: last seen */}
         <div className="shrink-0 text-right">
-          {item.lastSeenMs != null && (
+          {item.lastSeenText != null && (
             <div className="text-[11px] text-gray-400 dark:text-gray-500 tabular-nums whitespace-nowrap">
-              {new Date(item.lastSeenMs).toLocaleString(undefined, {
-                month: "short",
-                day: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
+              {item.lastSeenText}
             </div>
           )}
         </div>
       </div>
     </button>
   );
-}
+});
 
 /* ------------------------------------------------------------------ */
 /*  Main Neighbors page                                                */
@@ -622,6 +628,32 @@ export const Neighbors = () => {
     const out: NeighborListItem[] = [];
     const entries = Object.entries(nodes as any);
 
+    // Reverse index (heard hex id -> reporters), one O(N+L) pass instead of O(K×L) rescans
+    const heardByIndex = new Map<string, NeighborListItem["heardBy"]>();
+    for (const [, otherNode] of entries) {
+      const other = otherNode as any;
+      if (!other?.neighborinfo?.neighbors) continue;
+      const othClean = cleanNodeId(String(other.id ?? ""));
+      for (const nb of other.neighborinfo.neighbors) {
+        const heardHex = convertNodeIdFromIntToHex(nb.node_id);
+        const dist = calculateDistanceBetweenNodes(
+          nodes[othClean],
+          nodes[heardHex],
+        );
+        let list = heardByIndex.get(heardHex);
+        if (!list) {
+          list = [];
+          heardByIndex.set(heardHex, list);
+        }
+        list.push({
+          id: othClean,
+          shortname: other.shortname ?? "UNK",
+          snr: nb.snr,
+          distanceKm: dist ?? null,
+        });
+      }
+    }
+
     for (const [, n] of entries) {
       const raw = n as any;
       if (!raw?.active) continue;
@@ -648,36 +680,15 @@ export const Neighbors = () => {
         };
       });
 
-      // Build "heard by" — other nodes whose neighborinfo includes this node
-      const heardBy: NeighborListItem["heardBy"] = [];
-      for (const [, otherNode] of entries) {
-        const other = otherNode as any;
-        if (!other?.neighborinfo?.neighbors) continue;
-        for (const nb of other.neighborinfo.neighbors) {
-          if (convertNodeIdFromIntToHex(nb.node_id) === id) {
-            const othClean = cleanNodeId(String(other.id ?? ""));
-            const dist = calculateDistanceBetweenNodes(
-              nodes[othClean],
-              nodes[id],
-            );
-            heardBy.push({
-              id: othClean,
-              shortname: other.shortname ?? "UNK",
-              snr: nb.snr,
-              distanceKm: dist ?? null,
-            });
-          }
-        }
-      }
-
       out.push({
         id,
         rawId,
         node: raw,
         online,
         lastSeenMs,
+        lastSeenText: lastSeenMs != null ? lastSeenFormat.format(lastSeenMs) : null,
         neighborsHeard,
-        heardBy,
+        heardBy: heardByIndex.get(id) ?? [],
         broadcastIntervalSecs:
           raw.neighborinfo.node_broadcast_interval_secs ?? null,
       });
@@ -732,6 +743,17 @@ export const Neighbors = () => {
 
   const onSelect = useCallback((id: string) => setSelectedId(id), []);
   const clearSelection = useCallback(() => setSelectedId(""), []);
+
+  const itemContent = useCallback(
+    (_index: number, item: NeighborListItem) => (
+      <NeighborRow
+        item={item}
+        selected={item.id === selectedId}
+        onSelect={onSelect}
+      />
+    ),
+    [selectedId, onSelect],
+  );
 
   // Mobile sheets
   const [mobileSheet, setMobileSheet] = useState<MobileSheetKey | null>(null);
@@ -1104,14 +1126,9 @@ export const Neighbors = () => {
                       }}
                       style={{ flex: 1, minHeight: 0, height: "100%" }}
                       data={filteredItems}
+                      computeItemKey={(_index, item) => item.id}
                       overscan={600}
-                      itemContent={(_index, item) => (
-                        <NeighborRow
-                          item={item}
-                          selected={item.id === selectedId}
-                          onSelect={onSelect}
-                        />
-                      )}
+                      itemContent={itemContent}
                     />
                   </div>
                 </div>

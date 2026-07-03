@@ -381,26 +381,30 @@ export const Traceroutes = () => {
     return (traceroutesRaw as any[]).map((t, idx) => coerceEvent(t, idx));
   }, [traceroutesRaw]);
 
-  // ---- Range filter threshold
-  const nowMs = Date.now();
+  // ---- Range filter threshold (30s-quantized clock so the memo chain doesn't rebuild every render)
+  const nowQuantMs = Math.floor(Date.now() / 30_000) * 30_000;
   const minTsMs = useMemo(() => {
     if (range === "all") return -Infinity;
-    return nowMs - RANGE_MS[range];
-  }, [range, nowMs]);
+    return nowQuantMs - RANGE_MS[range];
+  }, [range, nowQuantMs]);
 
   // ---- Filter (q across endpoints + hop ids + short/long names)
+  // Node names only matter while searching; null gate keeps 400ms nodes-cache flushes out of the memo chain
+  const hasNodes = !!nodes;
+  const nodesForSearch = urlQ.trim() ? nodes : null;
+
   const filteredEvents: TracerouteEvent[] = useMemo(() => {
-    if (!nodes) return [];
+    if (!hasNodes) return [];
     const q = (urlQ ?? "").trim().toLowerCase();
 
     return eventsAll.filter((e) => {
       const ts = safeTsMs(e.timestamp);
       if (ts < minTsMs) return false;
 
-      if (!q) return true;
+      if (!q || !nodesForSearch) return true;
 
-      const fromNode = nodes[e.from];
-      const toNode = nodes[e.to];
+      const fromNode = nodesForSearch[e.from];
+      const toNode = nodesForSearch[e.to];
       const rids = routeIdsOf(e);
 
       const hay = [
@@ -413,7 +417,7 @@ export const Traceroutes = () => {
         String(e.hops_away ?? ""),
         String(routeHopsOf(e) ?? ""),
         ...rids,
-        ...rids.map((id) => nodes[id]?.shortname || ""),
+        ...rids.map((id) => nodesForSearch[id]?.shortname || ""),
       ]
         .filter(Boolean)
         .join(" ")
@@ -421,7 +425,7 @@ export const Traceroutes = () => {
 
       return hay.includes(q);
     });
-  }, [eventsAll, nodes, urlQ, minTsMs]);
+  }, [eventsAll, hasNodes, nodesForSearch, urlQ, minTsMs]);
 
   // Keep events newest-first (details + summaries feel best this way)
   const filteredEventsSorted: TracerouteEvent[] = useMemo(() => {

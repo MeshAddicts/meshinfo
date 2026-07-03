@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 
 import { formatTimestamp } from "../../utils/formatTimestamp";
@@ -579,7 +579,8 @@ function bucketCounts(events: TelemetryEvent[], bucketMs: number) {
 
 // ---------------------- component ----------------------
 
-export function TelemetryDetailsPanel({
+// Memoized so parent renders with unchanged props (nodes flushes, keystrokes) skip this heavy tree.
+export const TelemetryDetailsPanel = memo(function TelemetryDetailsPanel({
   nodes,
   selectedKey: _selectedKey,
   selectedNodeId,
@@ -1339,4 +1340,4 @@ export function TelemetryDetailsPanel({
       </div>
     </div>
   );
-}
+});

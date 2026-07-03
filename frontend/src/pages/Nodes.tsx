@@ -270,15 +270,39 @@ export const Nodes = () => {
     }
   }, [rangeNowMs, urlRange]);
 
+  // Wrapper cache: Immer keeps unpatched node objects reference-stable across
+  // SSE flushes, so reuse item identities to keep NodeRow memos effective.
+  const itemCacheRef = useRef(new Map<string, NodeListItem>());
+  const serverPosKeyRef = useRef("");
+
   // Build list items (computed fields)
   const allItems: NodeListItem[] = useMemo(() => {
+    const cache = itemCacheRef.current;
+
+    const sPos = serverNode ? getLatLon(serverNode as any) : null;
+    const sPosKey = sPos ? `${sPos[0]},${sPos[1]}` : "";
+    if (serverPosKeyRef.current !== sPosKey) {
+      serverPosKeyRef.current = sPosKey;
+      cache.clear(); // dxKm baked into every wrapper depends on server coords
+    }
+
     const out: NodeListItem[] = [];
+    const liveIds = new Set<string>();
+
     for (const [, n] of Object.entries(nodes as any)) {
       const rawId = String((n as any)?.id ?? "");
       const id = cleanNodeId(rawId);
       if (!id) continue;
 
+      liveIds.add(id);
+
       const online = isNodeOnline(n as any);
+      const prev = cache.get(id);
+      if (prev && prev.node === n && prev.online === online) {
+        out.push(prev);
+        continue;
+      }
+
       const lastSeenMs = safeLastSeenMs((n as any)?.last_seen);
 
       const pos = getLatLon(n as any);
@@ -286,27 +310,24 @@ export const Nodes = () => {
 
       // DX distance (km) if both have coords
       let dxKm: number | null = null;
-      if (serverNode && pos) {
-        const sPos = getLatLon(serverNode as any);
-        if (sPos) {
-          // cheap haversine (no dependency)
-          const [lon1, lat1] = sPos;
-          const [lon2, lat2] = pos;
-          const R = 6371;
-          const toRad = (d: number) => (d * Math.PI) / 180;
-          const dLat = toRad(lat2 - lat1);
-          const dLon = toRad(lon2 - lon1);
-          const a =
-            Math.sin(dLat / 2) ** 2 +
-            Math.cos(toRad(lat1)) *
-              Math.cos(toRad(lat2)) *
-              Math.sin(dLon / 2) ** 2;
-          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-          dxKm = Number.isFinite(R * c) ? R * c : null;
-        }
+      if (sPos && pos) {
+        // cheap haversine (no dependency)
+        const [lon1, lat1] = sPos;
+        const [lon2, lat2] = pos;
+        const R = 6371;
+        const toRad = (d: number) => (d * Math.PI) / 180;
+        const dLat = toRad(lat2 - lat1);
+        const dLon = toRad(lon2 - lon1);
+        const a =
+          Math.sin(dLat / 2) ** 2 +
+          Math.cos(toRad(lat1)) *
+            Math.cos(toRad(lat2)) *
+            Math.sin(dLon / 2) ** 2;
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        dxKm = Number.isFinite(R * c) ? R * c : null;
       }
 
-      out.push({
+      const item: NodeListItem = {
         id,
         rawId,
         node: n as any,
@@ -320,8 +341,16 @@ export const Nodes = () => {
         chanUtil: telem.chanUtil,
         role: (n as any)?.role ?? null,
         hardware: (n as any)?.hardware ?? null,
-      });
+      };
+      cache.set(id, item);
+      out.push(item);
     }
+
+    // Evict entries for ids no longer present
+    for (const id of cache.keys()) {
+      if (!liveIds.has(id)) cache.delete(id);
+    }
+
     return out;
   }, [nodes, serverNode]);
 
@@ -529,8 +558,9 @@ export const Nodes = () => {
     return "Live mode is on. Auto-refresh polls every 5 seconds (paused when tab is unfocused). Click to disable.";
   }, [liveEnabled, selectedId, listAtTop]);
 
-  // Export rows
-  const exportRows = useMemo(() => {
+  // Export rows: built lazily at export click (1:1 with filteredItems, so
+  // count-only UI reads filteredItems.length)
+  const buildExportRows = () => {
     return filteredItems.map((x) => {
       const n: any = x.node;
       const telem = getTelemetrySnapshot(n);
@@ -556,7 +586,7 @@ export const Nodes = () => {
         dx_km: x.dxKm != null ? x.dxKm.toFixed(2) : "",
       };
     });
-  }, [filteredItems]);
+  };
 
   const exportFilenameBase = useMemo(() => {
     const ts = new Date().toISOString().replace(/[:.]/g, "-");
@@ -564,11 +594,12 @@ export const Nodes = () => {
   }, [urlRange, urlStatus]);
 
   const doExportJson = () => {
+    const rows = buildExportRows();
     const payload = {
       exportedAt: new Date().toISOString(),
       params: Object.fromEntries(searchParams.entries()),
-      count: exportRows.length,
-      rows: exportRows,
+      count: rows.length,
+      rows,
     };
 
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
@@ -580,9 +611,10 @@ export const Nodes = () => {
   };
 
   const doExportCsv = () => {
-    const cols = Object.keys(exportRows[0] ?? { id: "" });
+    const rows = buildExportRows();
+    const cols = Object.keys(rows[0] ?? { id: "" });
     const header = cols.join(",");
-    const lines = exportRows.map((r: any) =>
+    const lines = rows.map((r: any) =>
       cols.map((c) => csvEscape(r[c])).join(","),
     );
     const csv = "\ufeff" + [header, ...lines].join("\r\n");
@@ -755,7 +787,7 @@ export const Nodes = () => {
               <ExportMenu
                 open={exportOpen}
                 setOpen={setExportOpen}
-                exportRowsCount={exportRows.length}
+                exportRowsCount={filteredItems.length}
                 doExportCsv={doExportCsv}
                 doExportJson={doExportJson}
                 exportMenuRef={exportMenuRef}
@@ -1183,7 +1215,7 @@ export const Nodes = () => {
               className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
               onClick={() => doExportCsv()}
             >
-              Export CSV ({exportRows.length})
+              Export CSV ({filteredItems.length})
             </button>
 
             <button
@@ -1191,7 +1223,7 @@ export const Nodes = () => {
               className="rounded-md px-3 py-2 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
               onClick={() => doExportJson()}
             >
-              Export JSON ({exportRows.length})
+              Export JSON ({filteredItems.length})
             </button>
 
             {hasFilters ? (

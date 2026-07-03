@@ -49,6 +49,9 @@ const DEFAULT_SORT: SortKey = "last_desc";
 const LIVE_TELEMETRY_CAP = 3000; // cap on the live buffer kept ahead of the poll
 const LIVE_TELEMETRY_FLUSH_MS = 400; // coalesce a burst into one state update
 
+// Stable "no filtering" identity so nodes-cache flushes don't churn downstream memos.
+const EMPTY_NODE_ID_SET: ReadonlySet<string> = new Set();
+
 function clampRange(v: any): RangeKey {
   // legacy share links: telemetry used to allow 30d
   if (v === "30d") return "7d";
@@ -366,23 +369,21 @@ export const Telemetry = () => {
     return out;
   }, [telemetryRaw, liveTelemetry]);
 
-  // Range filter
-  const nowMs = Date.now();
+  // Range filter — read the clock only when data or range changes, so
+  // unrelated renders (keystrokes) don't mint a new cutoff and re-filter.
   const minTsMs = useMemo(() => {
     if (range === "all") return -Infinity;
-    return nowMs - (RANGE_MS as any)[range];
-  }, [range, nowMs]);
+    return Date.now() - (RANGE_MS as any)[range];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range, telemetryRaw, liveTelemetry]);
 
   // Search node-id allowlist (so overview charts can reflect search)
-  const allowedNodeIds: Set<string> = useMemo(() => {
+  const allowedNodeIds: ReadonlySet<string> = useMemo(() => {
     const q = urlQ.trim().toLowerCase();
-    const set = new Set<string>();
-    if (!nodes) return set;
-    if (!q) {
-      // empty set means "no filtering"
-      return set;
-    }
+    // empty set means "no filtering"
+    if (!nodes || !q) return EMPTY_NODE_ID_SET;
 
+    const set = new Set<string>();
     for (const [id, n] of Object.entries(nodes)) {
       const hay = [id, n?.shortname, n?.longname, (n as any)?.id]
         .filter(Boolean)
@@ -614,6 +615,15 @@ export const Telemetry = () => {
   const clearSelection = useCallback(() => {
     setParam("sel", DEFAULT_SEL, "push"); // deletes
   }, [setParam]);
+
+  // Stable identity so the memoized details panel doesn't re-render per parent render.
+  const onQuickSearch = useCallback(
+    (text: string) => {
+      setQInput(text);
+      setParam("q", text, "push");
+    },
+    [setParam],
+  );
 
   // Release the freeze: deselect, scroll the list to top, resume live ordering.
   const resumeLive = useCallback(() => {
@@ -981,10 +991,7 @@ export const Telemetry = () => {
                   nodeSummaries={nodeSummaries}
                   range={range}
                   onClearSelection={clearSelection}
-                  onQuickSearch={(text) => {
-                    setQInput(text);
-                    setParam("q", text, "push");
-                  }}
+                  onQuickSearch={onQuickSearch}
                 />
               </div>
             </div>

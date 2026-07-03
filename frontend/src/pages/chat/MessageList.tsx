@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
@@ -8,6 +8,251 @@ import { isBroadcast, renderHighlightedText } from "./chatUtils";
 import { NodeChip } from "./NodeChip";
 
 type FollowEdge = "top" | "bottom";
+
+const buildMessagePermalink = (msgId: string) => {
+  const mid = String(msgId ?? "").trim();
+  if (!mid) return window.location.href;
+
+  try {
+    const u = new URL(window.location.href);
+    u.searchParams.set("msg", mid);
+    return u.toString();
+  } catch {
+    return window.location.href;
+  }
+};
+
+const copyTextToClipboard = async (text: string) => {
+  try {
+    if (navigator.clipboard && (window as any).isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // fall through
+  }
+
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "0";
+    ta.style.left = "0";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+};
+
+type MessageRowProps = {
+  m: any;
+  msgId: string;
+  fromId: string;
+  toId: string;
+  fromNode: any;
+  toNode: any;
+  viaNodes: any[];
+  isSelected: boolean;
+  isFlashing: boolean;
+  isCopied: boolean;
+  thisInFocus: boolean;
+  urlQ: string;
+  onSelect: (msgId: string) => void;
+  onCopyLink: (msgId: string) => void;
+  onFocusNode: (id: string) => void;
+};
+
+// viaNodes gets a fresh array identity per dispatch, so compare it element-wise
+function areRowPropsEqual(prev: MessageRowProps, next: MessageRowProps) {
+  if (
+    prev.m !== next.m ||
+    prev.msgId !== next.msgId ||
+    prev.fromId !== next.fromId ||
+    prev.toId !== next.toId ||
+    prev.fromNode !== next.fromNode ||
+    prev.toNode !== next.toNode ||
+    prev.isSelected !== next.isSelected ||
+    prev.isFlashing !== next.isFlashing ||
+    prev.isCopied !== next.isCopied ||
+    prev.thisInFocus !== next.thisInFocus ||
+    prev.urlQ !== next.urlQ ||
+    prev.onSelect !== next.onSelect ||
+    prev.onCopyLink !== next.onCopyLink ||
+    prev.onFocusNode !== next.onFocusNode
+  ) {
+    return false;
+  }
+  if (prev.viaNodes.length !== next.viaNodes.length) return false;
+  for (let i = 0; i < prev.viaNodes.length; i++) {
+    if (prev.viaNodes[i] !== next.viaNodes[i]) return false;
+  }
+  return true;
+}
+
+const MessageRow = memo(function MessageRow({
+  m,
+  msgId,
+  fromId,
+  toId,
+  fromNode,
+  toNode,
+  viaNodes,
+  isSelected,
+  isFlashing,
+  isCopied,
+  thisInFocus,
+  urlQ,
+  onSelect,
+  onCopyLink,
+  onFocusNode,
+}: MessageRowProps) {
+  const distanceFromSender =
+    fromNode?.position && viaNodes.length
+      ? viaNodes
+          .filter((s: any) => s?.position)
+          .map((s: any) => calculateDistanceBetweenNodes(fromNode, s))
+          .filter(Boolean)
+      : [];
+
+  const dxStr = distanceFromSender?.length
+    ? distanceFromSender.map((d: any) => `${d} km`).join(", ")
+    : "";
+
+  return (
+    <div
+      id={`msg-${msgId}`}
+      className={[
+        "group px-4 py-3 cursor-pointer transition outline-hidden border-b border-gray-200 dark:border-gray-800",
+        isSelected
+          ? "bg-indigo-50/70 dark:bg-indigo-900/20 ring-1 ring-indigo-400/30"
+          : "hover:bg-gray-50 dark:hover:bg-gray-900/30",
+        thisInFocus ? "ring-1 ring-indigo-400/15" : "",
+        isFlashing
+          ? "animate-pulse ring-2 ring-amber-400/40 bg-amber-50/60 dark:bg-amber-900/10"
+          : "",
+      ].join(" ")}
+      onClick={() => onSelect(msgId)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(msgId);
+        }
+      }}
+      role="button"
+      tabIndex={0}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <NodeChip
+            nodeId={fromId}
+            nodes={{ [fromId]: fromNode }}
+            fallback="UNK"
+            titlePrefix="From"
+            compact
+            stopPropagation
+            onFocus={onFocusNode}
+          />
+          <span className="text-gray-400">→</span>
+
+          {isBroadcast(toId) ? (
+            <span className="rounded-md px-2 py-0.5 text-[11px] font-medium bg-gray-200/60 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300">
+              ALL
+            </span>
+          ) : (
+            <NodeChip
+              nodeId={toId}
+              nodes={{ [toId]: toNode }}
+              fallback="UNK"
+              titlePrefix="To"
+              compact
+              stopPropagation
+              onFocus={onFocusNode}
+            />
+          )}
+
+          <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
+            hops {m.hops_away ?? 0}
+          </span>
+
+          {!isBroadcast(toId) ? (
+            <span className="rounded-full px-2 py-0.5 text-[11px] bg-indigo-100/70 dark:bg-indigo-800/30 text-indigo-900 dark:text-indigo-100">
+              DM
+            </span>
+          ) : (
+            <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
+              BC
+            </span>
+          )}
+
+          {dxStr ? (
+            <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
+              dx {dxStr}
+            </span>
+          ) : null}
+        </div>
+
+        <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
+          {isCopied ? (
+            <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+              Copied
+            </span>
+          ) : null}
+
+          <button
+            type="button"
+            className="opacity-0 group-hover:opacity-100 transition rounded-md px-2 py-1 border border-gray-300/50 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40"
+            title="Copy permalink to this message"
+            aria-label="Copy message permalink"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect(msgId);
+              onCopyLink(msgId);
+            }}
+          >
+            🔗
+          </button>
+
+          <span>{formatTimestamp(m.timestamp) || "Unknown"}</span>
+        </div>
+      </div>
+
+      <div className="mt-2 text-sm text-gray-900 dark:text-gray-100 whitespace-pre-wrap wrap-break-word">
+        {renderHighlightedText(String(m.text ?? ""), urlQ)}
+      </div>
+
+      <div className="mt-2 text-xs text-gray-600 dark:text-gray-400">
+        via:{" "}
+        {viaNodes.length ? (
+          viaNodes.map((s: any, i: number) => (
+            <span key={`via-${msgId}-${s.id}-${i}`}>
+              <Link
+                to={`/nodes/${s.id}`}
+                className="underline hover:no-underline"
+                title={`${s.id} / ${s.longname}`}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {s.shortname ?? "UNK"}
+              </Link>
+              {i < viaNodes.length - 1 ? ", " : ""}
+            </span>
+          ))
+        ) : (
+          <span className="text-gray-500">UNK</span>
+        )}
+      </div>
+    </div>
+  );
+}, areRowPropsEqual);
 
 export function MessageList({
   selectedChannel,
@@ -197,52 +442,21 @@ export function MessageList({
 
   const [copiedMsgId, setCopiedMsgId] = useState<string>("");
 
-  const buildMessagePermalink = (msgId: string) => {
-    const mid = String(msgId ?? "").trim();
-    if (!mid) return window.location.href;
+  // Stable row callbacks: read latest handlers via refs so memoized rows survive URL churn
+  const setParamRef = useRef(setParam);
+  setParamRef.current = setParam;
+  const applyFocusRef = useRef(applyFocus);
+  applyFocusRef.current = applyFocus;
 
-    try {
-      const u = new URL(window.location.href);
-      u.searchParams.set("msg", mid);
-      return u.toString();
-    } catch {
-      return window.location.href;
-    }
-  };
+  const selectMessage = useCallback((msgId: string) => {
+    setParamRef.current("msg", msgId, "push");
+  }, []);
 
-  const copyTextToClipboard = async (text: string) => {
-    try {
-      if (navigator.clipboard && (window as any).isSecureContext) {
-        await navigator.clipboard.writeText(text);
-        return true;
-      }
-    } catch {
-      // fall through
-    }
+  const focusNode = useCallback((id: string) => {
+    applyFocusRef.current(id);
+  }, []);
 
-    try {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.setAttribute("readonly", "");
-      ta.style.position = "fixed";
-      ta.style.top = "0";
-      ta.style.left = "0";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-
-      ta.focus();
-      ta.select();
-      ta.setSelectionRange(0, text.length);
-
-      const ok = document.execCommand("copy");
-      document.body.removeChild(ta);
-      return ok;
-    } catch {
-      return false;
-    }
-  };
-
-  const copyMessageLink = async (msgId: string) => {
+  const copyMessageLink = useCallback(async (msgId: string) => {
     const mid = String(msgId ?? "").trim();
     if (!mid) return;
 
@@ -257,7 +471,7 @@ export function MessageList({
 
     // last resort: manual copy prompt
     window.prompt("Copy message link:", href);
-  };
+  }, []);
 
   const jumpToLive = () => {
     if (selectionPinned) setParam("msg", undefined, "push");
@@ -274,6 +488,65 @@ export function MessageList({
       behavior: "smooth",
     });
   };
+
+  // Dispatcher resolves memo-friendly props; MessageRow bails unless its data changed
+  const itemContent = useCallback(
+    (index: number) => {
+      const m: any = (messages as any[])[index];
+
+      const fromId = String(m.from ?? "");
+      const toId = String(m.to ?? "");
+      const msgId = String(m.id ?? `${index}`);
+
+      const viaIds: string[] = Array.isArray(m.sender)
+        ? m.sender.map((x: any) => String(x))
+        : [];
+      const viaNodes = viaIds
+        .map((sid: string) => nodes?.[sid])
+        .filter(Boolean);
+
+      const focusId = urlNode.trim();
+      const thisInFocus = !!(
+        focusId &&
+        (fromId === focusId ||
+          toId === focusId ||
+          (urlFocus === "any" && viaIds.includes(focusId)))
+      );
+
+      return (
+        <MessageRow
+          m={m}
+          msgId={msgId}
+          fromId={fromId}
+          toId={toId}
+          fromNode={nodes?.[fromId] ?? null}
+          toNode={nodes?.[toId] ?? null}
+          viaNodes={viaNodes}
+          isSelected={!!urlMsg && msgId === String(urlMsg)}
+          isFlashing={!!flashMsgId && flashMsgId === msgId}
+          isCopied={copiedMsgId === msgId}
+          thisInFocus={thisInFocus}
+          urlQ={urlQ}
+          onSelect={selectMessage}
+          onCopyLink={copyMessageLink}
+          onFocusNode={focusNode}
+        />
+      );
+    },
+    [
+      messages,
+      nodes,
+      urlMsg,
+      urlQ,
+      urlNode,
+      urlFocus,
+      flashMsgId,
+      copiedMsgId,
+      selectMessage,
+      copyMessageLink,
+      focusNode,
+    ]
+  );
 
   const showPausedOverlay =
     (liveEnabled && !isAtEdge && messages.length > 0) ||
@@ -440,170 +713,7 @@ export function MessageList({
                 const m: any = (messages as any[])[index];
                 return `${selectedChannel ?? "ch"}-${String(m?.id ?? index)}`;
               }}
-              itemContent={(index) => {
-                const m: any = (messages as any[])[index];
-
-                const fromId = String(m.from ?? "");
-                const toId = String(m.to ?? "");
-                const msgId = String(m.id ?? `${index}`);
-                const isSelected = urlMsg && msgId === String(urlMsg);
-                const isFlashing = flashMsgId && flashMsgId === msgId;
-
-                const fromNode = nodes?.[fromId] || null;
-
-                const viaIds = Array.isArray(m.sender)
-                  ? m.sender.map((x: any) => String(x))
-                  : [];
-                const viaNodes = viaIds
-                  .map((sid: string) => nodes?.[sid])
-                  .filter(Boolean);
-
-                const distanceFromSender =
-                  fromNode?.position && viaNodes.length
-                    ? viaNodes
-                        .filter((s: any) => s?.position)
-                        .map((s: any) =>
-                          calculateDistanceBetweenNodes(fromNode, s)
-                        )
-                        .filter(Boolean)
-                    : [];
-
-                const dxStr = distanceFromSender?.length
-                  ? distanceFromSender.map((d: any) => `${d} km`).join(", ")
-                  : "";
-
-                const focusId = urlNode.trim();
-                const thisInFocus =
-                  focusId &&
-                  (fromId === focusId ||
-                    toId === focusId ||
-                    (urlFocus === "any" && viaIds.includes(focusId)));
-
-                return (
-                  <div
-                    id={`msg-${msgId}`}
-                    className={[
-                      "group px-4 py-3 cursor-pointer transition outline-hidden border-b border-gray-200 dark:border-gray-800",
-                      isSelected
-                        ? "bg-indigo-50/70 dark:bg-indigo-900/20 ring-1 ring-indigo-400/30"
-                        : "hover:bg-gray-50 dark:hover:bg-gray-900/30",
-                      thisInFocus ? "ring-1 ring-indigo-400/15" : "",
-                      isFlashing
-                        ? "animate-pulse ring-2 ring-amber-400/40 bg-amber-50/60 dark:bg-amber-900/10"
-                        : "",
-                    ].join(" ")}
-                    onClick={() => setParam("msg", msgId, "push")}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        setParam("msg", msgId, "push");
-                      }
-                    }}
-                    role="button"
-                    tabIndex={0}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <NodeChip
-                          nodeId={fromId}
-                          nodes={nodes}
-                          fallback="UNK"
-                          titlePrefix="From"
-                          compact
-                          stopPropagation
-                          onFocus={(id) => applyFocus(id)}
-                        />
-                        <span className="text-gray-400">→</span>
-
-                        {isBroadcast(toId) ? (
-                          <span className="rounded-md px-2 py-0.5 text-[11px] font-medium bg-gray-200/60 dark:bg-gray-700/50 text-gray-700 dark:text-gray-300">
-                            ALL
-                          </span>
-                        ) : (
-                          <NodeChip
-                            nodeId={toId}
-                            nodes={nodes}
-                            fallback="UNK"
-                            titlePrefix="To"
-                            compact
-                            stopPropagation
-                            onFocus={(id) => applyFocus(id)}
-                          />
-                        )}
-
-                        <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
-                          hops {m.hops_away ?? 0}
-                        </span>
-
-                        {!isBroadcast(toId) ? (
-                          <span className="rounded-full px-2 py-0.5 text-[11px] bg-indigo-100/70 dark:bg-indigo-800/30 text-indigo-900 dark:text-indigo-100">
-                            DM
-                          </span>
-                        ) : (
-                          <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
-                            BC
-                          </span>
-                        )}
-
-                        {dxStr ? (
-                          <span className="rounded-full px-2 py-0.5 text-[11px] bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
-                            dx {dxStr}
-                          </span>
-                        ) : null}
-                      </div>
-
-                      <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
-                        {copiedMsgId === msgId ? (
-                          <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                            Copied
-                          </span>
-                        ) : null}
-
-                        <button
-                          type="button"
-                          className="opacity-0 group-hover:opacity-100 transition rounded-md px-2 py-1 border border-gray-300/50 dark:border-gray-700 hover:bg-gray-100/60 dark:hover:bg-gray-800/40"
-                          title="Copy permalink to this message"
-                          aria-label="Copy message permalink"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setParam("msg", msgId, "push");
-                            copyMessageLink(msgId);
-                          }}
-                        >
-                          🔗
-                        </button>
-
-                        <span>{formatTimestamp(m.timestamp) || "Unknown"}</span>
-                      </div>
-                    </div>
-
-                    <div className="mt-2 text-sm text-gray-900 dark:text-gray-100 whitespace-pre-wrap wrap-break-word">
-                      {renderHighlightedText(String(m.text ?? ""), urlQ)}
-                    </div>
-
-                    <div className="mt-2 text-xs text-gray-600 dark:text-gray-400">
-                      via:{" "}
-                      {viaNodes.length ? (
-                        viaNodes.map((s: any, i: number) => (
-                          <span key={`via-${msgId}-${s.id}-${i}`}>
-                            <Link
-                              to={`/nodes/${s.id}`}
-                              className="underline hover:no-underline"
-                              title={`${s.id} / ${s.longname}`}
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              {s.shortname ?? "UNK"}
-                            </Link>
-                            {i < viaNodes.length - 1 ? ", " : ""}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="text-gray-500">UNK</span>
-                      )}
-                    </div>
-                  </div>
-                );
-              }}
+              itemContent={itemContent}
             />
           </div>
         )}

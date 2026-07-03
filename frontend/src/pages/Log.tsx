@@ -103,16 +103,38 @@ const fromLocalInput = (val: string): number | undefined => {
   return Number.isFinite(ms) ? Math.floor(ms / 1000) : undefined;
 };
 
+const escapeHtml = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 function JsonBlock({ code }: { code: string }) {
-  const html = useMemo(() => {
-    try {
-      return hljs.highlight(code, { language: "json" }).value;
-    } catch {
-      return code
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;");
+  // Render escaped plain text on mount; highlight later off the render path
+  // so row mounts don't jank flick-scroll.
+  const [html, setHtml] = useState(() => escapeHtml(code));
+
+  useEffect(() => {
+    setHtml(escapeHtml(code));
+    let cancelled = false;
+    const run = () => {
+      if (cancelled) return;
+      try {
+        const value = hljs.highlight(code, { language: "json" }).value;
+        if (!cancelled) setHtml(value);
+      } catch {
+        // keep the escaped plain text
+      }
+    };
+    let idleId: number | null = null;
+    let timerId: number | null = null;
+    if (typeof window.requestIdleCallback === "function") {
+      idleId = window.requestIdleCallback(run);
+    } else {
+      timerId = window.setTimeout(run, 0);
     }
+    return () => {
+      cancelled = true;
+      if (idleId != null) window.cancelIdleCallback(idleId);
+      if (timerId != null) window.clearTimeout(timerId);
+    };
   }, [code]);
 
   return (

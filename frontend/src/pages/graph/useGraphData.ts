@@ -1,7 +1,9 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 
 import { buildNeighborEdges, buildTracerouteEdges, mergeEdges } from "./graphEdges";
-import { getBestNodeLabel, type GraphNode,normNodeId, toNumberLoose } from "./graphUtils";
+import { getBestNodeLabel, type GraphEdge,type GraphNode, normNodeId, toNumberLoose } from "./graphUtils";
+
+type GraphData = { nodes: GraphNode[]; edges: GraphEdge[]; nodeById: Map<string, GraphNode> };
 
 /**
  * Process raw API data into graph nodes and edges.
@@ -12,15 +14,56 @@ export function useGraphData(
   tracerouteData: any,
   opts: { includeIsolates?: boolean; edgeFilter?: "all" | "neighbor" | "traceroute" } = {}
 ) {
-  return useMemo(() => {
-    if (!nodesData) return { nodes: [], edges: [], nodeById: new Map<string, GraphNode>() };
+  // Latest payload, read inside the heavy memo without keying it on identity
+  // (SSE flushes churn nodesData ~2.5 Hz; only graph-relevant VALUE changes rebuild).
+  const nodesDataRef = useRef(nodesData);
+  nodesDataRef.current = nodesData;
+
+  // Cheap value signature over graph-relevant fields only (id, role, label,
+  // GPS presence, neighbor ids + snr); recomputed per identity flush.
+  const nodesSig = useMemo(() => {
+    if (!nodesData || typeof nodesData !== "object" || Array.isArray(nodesData)) return "";
+    let sig = "";
+    for (const rawId in nodesData) {
+      const n = nodesData[rawId];
+      const gps = toNumberLoose(n?.position?.latitude ?? n?.latitude) != null ? "g" : "";
+      sig += `${rawId}:${n?.role ?? ""}:${getBestNodeLabel(n, rawId)}:${gps}`;
+      const ni = n?.neighborinfo ?? n?.neighborInfo ?? n?.neighbor_info;
+      const neighbors = ni?.neighbors ?? ni?.neighborList ?? ni?.neighbor_list;
+      if (Array.isArray(neighbors)) {
+        for (const nb of neighbors) sig += `|${nb?.node_id ?? nb?.nodeId ?? nb?.id}:${nb?.snr}`;
+      }
+      sig += ";";
+    }
+    return sig;
+  }, [nodesData]);
+
+  // Previous build, returned by reference while the signature + inputs match so
+  // downstream canvas views skip re-layout/repaint on identity-only churn.
+  const prevRef = useRef<{ sig: string; tr: any; iso: boolean; filter: string; value: GraphData } | null>(null);
+
+  return useMemo<GraphData>(() => {
+    const iso = !!opts.includeIsolates;
+    // `||`, not `??`: an empty ?edges= URL param must mean "all", not filter-to-nothing
+    const filter = opts.edgeFilter || "all";
+    const prev = prevRef.current;
+    if (prev && prev.sig === nodesSig && prev.tr === tracerouteData && prev.iso === iso && prev.filter === filter) {
+      return prev.value;
+    }
+
+    const raw = nodesDataRef.current;
+    if (!raw) {
+      const empty: GraphData = { nodes: [], edges: [], nodeById: new Map<string, GraphNode>() };
+      prevRef.current = { sig: nodesSig, tr: tracerouteData, iso, filter, value: empty };
+      return empty;
+    }
 
     // Normalize nodes
     const nodesById: Record<string, any> = {};
-    if (typeof nodesData === "object" && !Array.isArray(nodesData)) {
-      for (const k of Object.keys(nodesData)) {
+    if (typeof raw === "object" && !Array.isArray(raw)) {
+      for (const k of Object.keys(raw)) {
         const normed = normNodeId(k);
-        if (normed) nodesById[normed] = nodesData[k];
+        if (normed) nodesById[normed] = raw[k];
       }
     }
 
@@ -32,8 +75,8 @@ export function useGraphData(
     const tracerouteEdges = tracerouteData ? buildTracerouteEdges(tracerouteData as any[], idSet) : [];
     let allEdges = mergeEdges(neighborEdges, tracerouteEdges);
 
-    if (opts.edgeFilter && opts.edgeFilter !== "all") {
-      allEdges = allEdges.filter((e) => e.kind === opts.edgeFilter);
+    if (filter !== "all") {
+      allEdges = allEdges.filter((e) => e.kind === filter);
     }
 
     // Compute degrees
@@ -49,7 +92,7 @@ export function useGraphData(
     for (const id of allIds) {
       const n = nodesById[id];
       const deg = degreeById.get(id) ?? 0;
-      if (!opts.includeIsolates && deg === 0) continue;
+      if (!iso && deg === 0) continue;
 
       nodes.push({
         id,
@@ -71,6 +114,8 @@ export function useGraphData(
 
     const nodeById = new Map(nodes.map((n) => [n.id, n]));
 
-    return { nodes, edges, nodeById };
-  }, [nodesData, tracerouteData, opts.includeIsolates, opts.edgeFilter]);
+    const value: GraphData = { nodes, edges, nodeById };
+    prevRef.current = { sig: nodesSig, tr: tracerouteData, iso, filter, value };
+    return value;
+  }, [nodesSig, tracerouteData, opts.includeIsolates, opts.edgeFilter]);
 }
