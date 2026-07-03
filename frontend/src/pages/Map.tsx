@@ -38,6 +38,7 @@ import { MapTraceroutePanel } from "./map/MapTraceroutePanel";
 import { type PacketArc, PacketCoalescer, type RawPacket } from "./map/packetCoalescer";
 import { packetColor } from "./map/packetColors";
 import { findPathsBetween } from "./map/pathAnalysis";
+import type { ScanClass } from "./map/scanAnalysis";
 import {
   anyIdsFanned,
   autoSpiderfyOverlappingPlainNodes,
@@ -450,10 +451,13 @@ export function Map() {
   // Scan compute + per-class visibility + clear-on-tool-change + hover effects
   const scanCompute = useScanCompute({
     activeTool, toolStep, toolFromId, toolVirtualPos,
-    provider, terrain3D, nodes,
+    terrain3D, styleEpoch, nodes,
+    nodesLoadFailed: nodesQueryFailed,
     scanTxDbm: scan.scanTxDbm,
     scanAntennaDbi: scan.scanAntennaDbi,
     scanRxAntennaDbi: scan.scanRxAntennaDbi,
+    scanRxHeightM: scan.scanRxHeightM,
+    scanFreqMhz: scan.scanFreqMhz,
     scanEffectiveSensitivityDbm: scan.scanEffectiveSensitivityDbm,
     scanAggressionIdx: scan.scanAggressionIdx,
     scanClutterEnabled: scan.scanClutterEnabled,
@@ -461,6 +465,7 @@ export function Map() {
     scanBuildingsEnabled: scan.scanBuildingsEnabled,
     scanAntennaHeightM: scan.scanAntennaHeightM,
     scanReliability: scan.scanReliability,
+    scanRetryNonce: scan.scanRetryNonce,
     hiddenScanClasses: scan.hiddenScanClasses,
     scanSummary: scan.scanSummary,
     scanHoverId: scan.scanHoverId,
@@ -468,6 +473,7 @@ export function Map() {
     setScanSummary: scan.setScanSummary,
     setIsScanning: scan.setIsScanning,
     setScanError: scan.setScanError,
+    setScanTerrainWarning: scan.setScanTerrainWarning,
     setScanDemSource: scan.setScanDemSource,
     setScanClutterStatus: scan.setScanClutterStatus,
     setScanCanopyStatus: scan.setScanCanopyStatus,
@@ -533,6 +539,8 @@ export function Map() {
     losState.setLosDemSource(null);
     scan.setScanDemSource(null);
     scan.setIsScanning(false);
+    scan.setScanError(null);
+    scan.setScanTerrainWarning(null);
 
     const mb = mbMapRef.current;
     if (mb) {
@@ -583,6 +591,56 @@ export function Map() {
       coverageCompute.coverageMarginRef.current = null;
     }
   };
+
+  // Stable ref to resetTool (recreated each render) so memoized panels can close
+  // without a fresh callback identity on every parent render.
+  const resetToolRef = useRef(resetTool);
+  resetToolRef.current = resetTool;
+
+  // Stable scan-panel callbacks. MapScanPanel is memoized and the map re-renders on
+  // every hover (elevation pill), so inline lambdas here would defeat the memo.
+  const handleScanClose = useCallback(() => {
+    // Overlay close returns to the coverage view; standalone close does a full reset.
+    if (keepCoveragePaintRef.current) {
+      coverageCompute.skipNextCoverageComputeRef.current = true;
+      coverage.setKeepCoveragePaint(false);
+      setActiveTool("coverage");
+    } else {
+      resetToolRef.current();
+    }
+    // Setters/refs are stable; deps intentionally empty so hover re-renders don't
+    // recreate the callback (would defeat MapScanPanel's memo).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const handleScanEnableTerrain = useCallback(() => setTerrain3D(true), []);
+  const handleScanSelectResult = useCallback((id: string) => {
+    // Fly to the target, then open its details panel.
+    const n = nodesRef.current[id] ?? nodesRef.current[`!${id}`];
+    const mb = mbMapRef.current;
+    if (n?.map_position && mb) {
+      mb.easeTo({ center: [n.map_position[0], n.map_position[1]], zoom: Math.max(mb.getZoom(), 13), duration: 800 });
+    }
+    handleNodeSelectRef.current(id);
+  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const handleScanHoverResult = useCallback((id: string | null) => scan.setScanHoverId(id), []);
+  const handleScanReturnToOrigin = useCallback(() => {
+    const mapNow = mbMapRef.current;
+    const view = scanCompute.scanInitialViewRef.current;
+    if (!mapNow || !view) return;
+    mapNow.easeTo({ center: view.center, zoom: view.zoom, pitch: view.pitch, bearing: view.bearing, duration: 800 });
+  }, [scanCompute.scanInitialViewRef]);
+  const handleScanToggleClassVisibility = useCallback((cls: ScanClass) => {
+    scan.setHiddenScanClasses((prev) => {
+      const next = new Set(prev);
+      if (next.has(cls)) next.delete(cls);
+      else next.add(cls);
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const handleScanRetry = useCallback(() => scan.setScanRetryNonce((n) => n + 1), []);
 
   // Swap LOS endpoints including their per-endpoint configs; the compute
   // effect picks the change up via its endpoint-scalar deps.
@@ -2223,12 +2281,13 @@ export function Map() {
         // Ignore if clicking on a node layer (handled by onNodeLayerClick) — the
         // label layers count too, or a label click drops a pin beside the node.
         const features = map.queryRenderedFeatures(e.point, {
-          layers: ["unclustered-nodes", "plain-nodes", "unclustered-labels", "plain-labels", "clusters", SPIDERFY_LAYER_NODES].filter((id) => map.getLayer(id)),
+          layers: ["unclustered-nodes", "plain-nodes", "unclustered-labels", "plain-labels", "clusters", SPIDERFY_LAYER_NODES, SPIDERFY_LAYER_LABELS].filter((id) => map.getLayer(id)),
         });
         if (features.length > 0) return;
 
         if ((t === "coverage" || t === "scan") && step === "pickFrom") {
-          setToolVirtualPos([e.lngLat.lng, e.lngLat.lat]);
+          // normalizeLng: clicks on a wrapped world copy give lngs outside ±180.
+          setToolVirtualPos([normalizeLng(e.lngLat.lng), e.lngLat.lat]);
           setToolStep("result");
           map.getCanvas().style.cursor = "";
         } else if (t === "los" && step === "pickFrom") {
@@ -2387,17 +2446,20 @@ export function Map() {
               // Merge-origin picking consumes Esc (the pick hook's own
               // listener cancels it) — don't also arm/close the tool.
               if (pickingMergeOriginRef.current) break;
-              // A coverage session carries state (paint, pins, settings) — one
-              // stray Esc shouldn't destroy it. Require a confirming Esc.
-              // keepCoveragePaint covers the Scan-from-here overlay too.
+              // Coverage, a standalone scan, and a Scan-from-here overlay each carry
+              // state (paint/pins/settings, and scan's ~800-tile DEM) — one stray Esc
+              // shouldn't destroy it. Require a confirming Esc, worded for the tool on screen.
               if (
-                (activeToolRef.current === "coverage" || keepCoveragePaintRef.current) &&
+                (activeToolRef.current === "coverage" ||
+                  activeToolRef.current === "scan" ||
+                  keepCoveragePaintRef.current) &&
                 toolStepRef.current === "result"
               ) {
                 const now = Date.now();
+                const toolName = activeToolRef.current === "scan" ? "Scan" : "Coverage";
                 if (now - coverageEscArmedAtRef.current > 3000) {
                   coverageEscArmedAtRef.current = now;
-                  toast("Press Esc again to close Coverage.");
+                  toast(`Press Esc again to close ${toolName}.`);
                   break;
                 }
                 coverageEscArmedAtRef.current = 0;
@@ -3247,22 +3309,26 @@ export function Map() {
             mbMapRef.current?.easeTo({ center: lngLat, duration: 600 });
           }}
           onScanFromHere={() => {
-            // Mirror coverage's RF settings so the scan results match the
-            // painted prediction. Origin (toolFromId / toolVirtualPos) is
-            // already shared between the tools.
-            scan.setScanHardwareIdx(coverage.coverageHardwareIdx);
-            scan.setScanAntennaIdx(coverage.coverageAntennaIdx);
-            scan.setScanAntennaHeightM(coverage.coverageAntennaHeightM);
-            scan.setScanCustomTxDbm(coverage.coverageCustomTxDbm);
-            scan.setScanRxHardwareIdx(coverage.coverageRxHardwareIdx);
-            scan.setScanRxAntennaIdx(coverage.coverageRxAntennaIdx);
-            scan.setScanPresetIdx(coverage.coveragePresetIdx);
-            scan.setScanCustomSensDbm(coverage.coverageCustomSensDbm);
-            scan.setScanAggressionIdx(coverage.coverageAggressionIdx);
-            scan.setScanClutterEnabled(coverage.coverageClutterEnabled);
-            scan.setScanCanopyEnabled(coverage.coverageCanopyEnabled);
-            scan.setScanBuildingsEnabled(coverage.coverageBuildingsEnabled);
-            scan.setScanReliability(coverage.coverageReliability);
+            // Mirror coverage's RF settings so the scan results match the painted
+            // prediction. applyMirror updates state WITHOUT persisting, so an overlay
+            // scan never overwrites the user's own saved scan defaults. Origin
+            // (toolFromId / toolVirtualPos) is already shared between the tools.
+            scan.applyMirror({
+              hardwareIdx: coverage.coverageHardwareIdx,
+              antennaIdx: coverage.coverageAntennaIdx,
+              antennaHeightM: coverage.coverageAntennaHeightM,
+              customTxDbm: coverage.coverageCustomTxDbm,
+              rxHardwareIdx: coverage.coverageRxHardwareIdx,
+              rxAntennaIdx: coverage.coverageRxAntennaIdx,
+              rxHeightM: coverage.coverageRxHeightM,
+              presetIdx: coverage.coveragePresetIdx,
+              customSensDbm: coverage.coverageCustomSensDbm,
+              aggressionIdx: coverage.coverageAggressionIdx,
+              clutterEnabled: coverage.coverageClutterEnabled,
+              canopyEnabled: coverage.coverageCanopyEnabled,
+              buildingsEnabled: coverage.coverageBuildingsEnabled,
+              reliability: coverage.coverageReliability,
+            });
             coverageCompute.skipNextCoverageComputeRef.current = true;
             coverage.setKeepCoveragePaint(true);
             setActiveTool("scan");
@@ -3294,66 +3360,34 @@ export function Map() {
           summary={scan.scanSummary}
           originLabel={
             toolFromId
-              ? ((nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.shortname ?? toolFromId.slice(0, 8))
-              : "Virtual location"
+              ? ((nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.shortname?.trim() || toolFromId.slice(0, 8))
+              : toolVirtualPos
+                ? `${toolVirtualPos[1].toFixed(5)}, ${toolVirtualPos[0].toFixed(5)}`
+                : "Virtual location"
           }
           isScanning={scan.isScanning}
           scanError={scan.scanError}
+          terrainWarning={scan.scanTerrainWarning}
+          onRetry={handleScanRetry}
           demSource={scan.scanDemSource}
           terrainNeeded={!terrain3D}
-          onEnableTerrain={() => setTerrain3D(true)}
-          onClose={() => {
-            // Overlay close returns to the coverage view; standalone close
-            // does a full reset.
-            if (coverage.keepCoveragePaint) {
-              coverageCompute.skipNextCoverageComputeRef.current = true;
-              coverage.setKeepCoveragePaint(false);
-              setActiveTool("coverage");
-            } else {
-              resetTool();
-            }
-          }}
-          onSelectResult={(id) => {
-            // Fly to the target, then open its details panel.
-            const n = nodes[id] ?? nodes[`!${id}`];
-            const mb = mbMapRef.current;
-            if (n?.map_position && mb) {
-              mb.easeTo({
-                center: [n.map_position[0], n.map_position[1]],
-                zoom: Math.max(mb.getZoom(), 13),
-                duration: 800,
-              });
-            }
-            handleNodeSelectRef.current(id);
-          }}
-          onHoverResult={(id) => scan.setScanHoverId(id)}
-          onReturnToOrigin={() => {
-            const mapNow = mbMapRef.current;
-            const view = scanCompute.scanInitialViewRef.current;
-            if (!mapNow || !view) return;
-            mapNow.easeTo({
-              center: view.center,
-              zoom: view.zoom,
-              pitch: view.pitch,
-              bearing: view.bearing,
-              duration: 800,
-            });
-          }}
+          onEnableTerrain={handleScanEnableTerrain}
+          onClose={handleScanClose}
+          onSelectResult={handleScanSelectResult}
+          onHoverResult={handleScanHoverResult}
+          onReturnToOrigin={handleScanReturnToOrigin}
           hiddenClasses={scan.hiddenScanClasses}
-          onToggleClassVisibility={(cls) =>
-            scan.setHiddenScanClasses((prev) => {
-              const next = new Set(prev);
-              if (next.has(cls)) next.delete(cls);
-              else next.add(cls);
-              return next;
-            })
-          }
+          onToggleClassVisibility={handleScanToggleClassVisibility}
           antennaIdx={scan.scanAntennaIdx}
           onAntennaIdxChange={scan.setScanAntennaIdx}
           hardwareIdx={scan.scanHardwareIdx}
           onHardwareIdxChange={scan.setScanHardwareIdx}
           antennaHeightM={scan.scanAntennaHeightM}
           onAntennaHeightChange={scan.setScanAntennaHeightM}
+          rxHeightM={scan.scanRxHeightM}
+          onRxHeightChange={scan.setScanRxHeightM}
+          freqMhz={scan.scanFreqMhz}
+          onFreqMhzChange={scan.setScanFreqMhz}
           rxHardwareIdx={scan.scanRxHardwareIdx}
           onRxHardwareIdxChange={scan.setScanRxHardwareIdx}
           rxAntennaIdx={scan.scanRxAntennaIdx}
