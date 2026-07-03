@@ -341,12 +341,24 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
   }
 
   /** One comet leg + landing ripple; returns the leg's duration (ms) so a
-   *  caller can choreograph a camera chase against it. */
-  spawnLeg(from: LngLat, to: LngLat, color: RGB, weight: number, now: number): number {
+   *  caller can choreograph a camera chase against it. `speedScale` slows the
+   *  comet below ambient speed (0.5 = half speed) with its own clamps — a
+   *  guided tour reads better slower than background traffic. */
+  spawnLeg(
+    from: LngLat,
+    to: LngLat,
+    color: RGB,
+    weight: number,
+    now: number,
+    opts?: { speedScale?: number; minMs?: number; maxMs?: number; landingRing?: boolean },
+  ): number {
     if (!this.gl || !this.buffer) return 0;
-    const dur = this.arcDur(from, to);
+    const base = this.arcDur(from, to) / (opts?.speedScale ?? 1);
+    const dur = Math.min(opts?.maxMs ?? MAX_ARC_MS, Math.max(opts?.minMs ?? MIN_ARC_MS, base));
     this.writeArc(from, to, color, weight, now, dur);
-    this.spawnRing(to, color, now + dur * 0.9, RIPPLE_MS, 0.8);
+    // landingRing: false lets a caller that fires its own arrival pulse skip
+    // the built-in one (two concurrent rings read as a doubled ping)
+    if (opts?.landingRing !== false) this.spawnRing(to, color, now + dur * 0.9, RIPPLE_MS, 0.8);
     this.scheduleNextFrame();
     return dur;
   }

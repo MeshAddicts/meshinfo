@@ -1094,21 +1094,39 @@ export function Map() {
           geometry: { type: "LineString", coordinates: [[aLng, A.pos[1]], [bLng, B.pos[1]]] },
         });
         if (isGap) {
-          // Ghost markers evenly spread along the estimated connector
+          // Ghost markers evenly spread along the estimated connector:
+          // shortname chip over a dashed '?' ring, so you can tell WHICH
+          // node's placement is estimated, not just that one is.
           for (let g = A.i + 1; g < B.i; g++) {
             const t = (g - A.i) / (B.i - A.i);
             const lng = normalizeLng(aLng + (bLng - aLng) * t);
             const lat = A.pos[1] + (B.pos[1] - A.pos[1]) * t;
+            const hopId = primary.hops[g];
+            const ghostNode = nodesRef.current[hopId] ?? nodesRef.current[`!${hopId}`];
+            const label =
+              ghostNode?.shortname?.trim() ||
+              (hopId.startsWith("?") ? hopId.slice(1, 11) : hopId.slice(0, 8));
             const el = document.createElement("div");
             el.setAttribute("aria-hidden", "true");
-            el.title = `${primary.hops[g]} — position unknown, placement estimated`;
+            el.title = `${label} — position unknown, placement estimated`;
             el.style.cssText =
+              "display:flex;flex-direction:column;align-items:center;gap:2px;pointer-events:auto;";
+            const chip = document.createElement("div");
+            chip.textContent = label;
+            chip.style.cssText =
+              "padding:1px 6px;border-radius:9999px;background:rgba(17,24,39,0.88);" +
+              "border:1px dashed rgba(156,163,175,0.6);color:#d1d5db;font-size:10px;" +
+              "font-weight:600;white-space:nowrap;";
+            const ring = document.createElement("div");
+            ring.textContent = "?";
+            ring.style.cssText =
               "width:18px;height:18px;border-radius:50%;border:2px dashed #9ca3af;" +
               "background:rgba(17,24,39,0.85);color:#d1d5db;font-size:11px;" +
-              "line-height:14px;text-align:center;font-weight:600;pointer-events:auto;";
-            el.textContent = "?";
+              "line-height:14px;text-align:center;font-weight:600;";
+            el.append(chip, ring);
             traceGhostMarkersRef.current.push(
-              new maplibregl.Marker({ element: el }).setLngLat([lng, lat]).addTo(mb),
+              // Offset keeps the '?' ring (not the stack's center) on the point
+              new maplibregl.Marker({ element: el, offset: [0, -10] }).setLngLat([lng, lat]).addTo(mb),
             );
           }
         }
@@ -2982,8 +3000,10 @@ export function Map() {
           if (!navOk) return;
           // Keyboard pan/zoom is user camera input — it takes the wheel back
           // from a running flyover (panBy/zoomIn carry no originalEvent, so
-          // the hook's own movestart gate can't see them).
-          if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "=", "+", "-", "_"].includes(e.key)) {
+          // the hook's own movestart gate can't see them). Gated on flying so
+          // camera nudges match pointer input during the label linger: they
+          // leave the breadcrumbs alone (Esc dismisses, the timer tidies).
+          if (flyoverFlyingRef.current && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "=", "+", "-", "_"].includes(e.key)) {
             flyoverCancelRef.current();
           }
         }
