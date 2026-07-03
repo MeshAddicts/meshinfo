@@ -19,6 +19,11 @@ export function unwrapLngTo(fromLng: number, toLng: number): number {
   return fromLng + shortestLngDelta(fromLng, toLng);
 }
 
+/** True when two [lng, lat] points are exactly equal. */
+export function samePoint(a: [number, number], b: [number, number]): boolean {
+  return a[0] === b[0] && a[1] === b[1];
+}
+
 /** Circular mean of longitudes, in [-180, 180). */
 export function circularMeanLng(lngs: number[]): number {
   let x = 0;
