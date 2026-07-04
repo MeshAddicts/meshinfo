@@ -9,18 +9,18 @@ import {
 import { useSearchParams } from "react-router";
 import { VirtuosoHandle } from "react-virtuoso";
 
+import { ExportMenu } from "../components/ExportMenu";
 import { HeardBy } from "../components/HeardBy";
 import { LivePill } from "../components/LivePill";
 import { useLiveEvent } from "../hooks/useLiveEvent";
 import { useGetNodesQuery, useGetTelemetryQuery } from "../slices/apiSlice";
-import { ExportMenu } from "./chat/ExportMenu";
+import { copyTextToClipboard } from "../utils/clipboard";
+import { csvEscape, downloadBlob } from "../utils/export";
 import { TelemetryDetailsPanel } from "./telemetry/TelemetryDetailsPanel";
 import { TelemetryList } from "./telemetry/TelemetryList";
 import {
   clampSort,
   coerceTelemetryEvent,
-  csvEscape,
-  downloadBlob,
   getNodeLabel,
   type NodesById,
   RANGE_MS,
@@ -49,44 +49,15 @@ const DEFAULT_SORT: SortKey = "last_desc";
 const LIVE_TELEMETRY_CAP = 3000; // cap on the live buffer kept ahead of the poll
 const LIVE_TELEMETRY_FLUSH_MS = 400; // coalesce a burst into one state update
 
+// Stable "no filtering" identity so nodes-cache flushes don't churn downstream memos.
+const EMPTY_NODE_ID_SET: ReadonlySet<string> = new Set();
+
 function clampRange(v: any): RangeKey {
   // legacy share links: telemetry used to allow 30d
   if (v === "30d") return "7d";
   return (["all", "1h", "24h", "7d"] as const).includes(v)
     ? (v as RangeKey)
     : DEFAULT_RANGE;
-}
-
-async function copyTextToClipboard(text: string) {
-  try {
-    if (navigator.clipboard && (window as any).isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // fall through
-  }
-
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.top = "0";
-    ta.style.left = "0";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-
-    ta.focus();
-    ta.select();
-    ta.setSelectionRange(0, text.length);
-
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    return ok;
-  } catch {
-    return false;
-  }
 }
 
 function StatusChip({
@@ -366,23 +337,21 @@ export const Telemetry = () => {
     return out;
   }, [telemetryRaw, liveTelemetry]);
 
-  // Range filter
-  const nowMs = Date.now();
+  // Range filter — read the clock only when data or range changes, so
+  // unrelated renders (keystrokes) don't mint a new cutoff and re-filter.
   const minTsMs = useMemo(() => {
     if (range === "all") return -Infinity;
-    return nowMs - (RANGE_MS as any)[range];
-  }, [range, nowMs]);
+    return Date.now() - (RANGE_MS as any)[range];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [range, telemetryRaw, liveTelemetry]);
 
   // Search node-id allowlist (so overview charts can reflect search)
-  const allowedNodeIds: Set<string> = useMemo(() => {
+  const allowedNodeIds: ReadonlySet<string> = useMemo(() => {
     const q = urlQ.trim().toLowerCase();
-    const set = new Set<string>();
-    if (!nodes) return set;
-    if (!q) {
-      // empty set means "no filtering"
-      return set;
-    }
+    // empty set means "no filtering"
+    if (!nodes || !q) return EMPTY_NODE_ID_SET;
 
+    const set = new Set<string>();
     for (const [id, n] of Object.entries(nodes)) {
       const hay = [id, n?.shortname, n?.longname, (n as any)?.id]
         .filter(Boolean)
@@ -615,6 +584,15 @@ export const Telemetry = () => {
     setParam("sel", DEFAULT_SEL, "push"); // deletes
   }, [setParam]);
 
+  // Stable identity so the memoized details panel doesn't re-render per parent render.
+  const onQuickSearch = useCallback(
+    (text: string) => {
+      setQInput(text);
+      setParam("q", text, "push");
+    },
+    [setParam],
+  );
+
   // Release the freeze: deselect, scroll the list to top, resume live ordering.
   const resumeLive = useCallback(() => {
     setParam("sel", DEFAULT_SEL, "push");
@@ -669,11 +647,10 @@ export const Telemetry = () => {
       }),
     };
 
-    downloadBlob(
-      `${exportFilenameBase}.json`,
-      "application/json;charset=utf-8",
-      JSON.stringify(payload, null, 2),
-    );
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json;charset=utf-8",
+    });
+    downloadBlob(blob, `${exportFilenameBase}.json`);
     setExportOpen(false);
   };
 
@@ -725,7 +702,8 @@ export const Telemetry = () => {
     }
 
     const csv = "\ufeff" + lines.join("\r\n");
-    downloadBlob(`${exportFilenameBase}.csv`, "text/csv;charset=utf-8", csv);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    downloadBlob(blob, `${exportFilenameBase}.csv`);
     setExportOpen(false);
   };
 
@@ -981,10 +959,7 @@ export const Telemetry = () => {
                   nodeSummaries={nodeSummaries}
                   range={range}
                   onClearSelection={clearSelection}
-                  onQuickSearch={(text) => {
-                    setQInput(text);
-                    setParam("q", text, "push");
-                  }}
+                  onQuickSearch={onQuickSearch}
                 />
               </div>
             </div>

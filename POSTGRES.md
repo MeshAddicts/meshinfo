@@ -149,18 +149,12 @@ SELECT COUNT(*) FROM traceroutes;
 
 ### Migrating from JSON Storage
 
-If you are upgrading from an older version that used JSON file storage, a one-time migration script is available. **This script must be run against your legacy deployment before upgrading** — it requires:
-
-- The JSON data files still present on disk (`nodes.json`, `chat.json`, `telemetry.json`, `traceroutes.json`)
-- The old `[paths]` section in your config (with `paths.data` pointing to those files)
-
-From that legacy environment, run:
-
-```bash
-docker exec -it meshinfo-meshinfo-1 python3 scripts/migrate_json_to_postgres.py
-```
-
-This reads your existing JSON data files and imports them into PostgreSQL. Once complete, update your config to the new PostgreSQL-only format (see `config.toml.sample`) and restart.
+Very old deployments used JSON file storage. The one-time migration script
+(`scripts/migrate_json_to_postgres.py`) was removed after the JSON store was
+retired — it required the legacy `[paths]` config section that no longer
+exists. If you still need it, run the copy from a pre-removal release
+(check out a tag from before July 2026) against your legacy deployment,
+then upgrade.
 
 ## Upgrading PostgreSQL major versions
 

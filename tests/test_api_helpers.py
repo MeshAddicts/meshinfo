@@ -2,10 +2,6 @@
 Tests for the small pure helpers in api.api — node-id coercion + range parsing.
 """
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from api.api import API
 

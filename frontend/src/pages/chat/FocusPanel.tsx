@@ -1,11 +1,9 @@
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 
 export function FocusPanel({
   urlNode,
   nodes,
-  focusPicker,
-  setFocusPicker,
-  focusMatches,
   frequentNodes,
   applyFocus,
   clearFocus,
@@ -13,14 +11,35 @@ export function FocusPanel({
 }: {
   urlNode: string;
   nodes: any;
-  focusPicker: string;
-  setFocusPicker: (v: string) => void;
-  focusMatches: Array<{ id: string; short: string; long: string }>;
   frequentNodes: Array<{ nodeId: string; count: number }>;
   applyFocus: (id: string) => void;
   clearFocus: () => void;
   focusStats: any;
 }) {
+  // Picker state lives here so keystrokes don't re-render the whole Chat tree
+  const [focusPicker, setFocusPicker] = useState("");
+  const focusPickerDeferred = useDeferredValue(focusPicker);
+
+  // Clear the picker whenever a focus gets applied (parity with old root-level state)
+  useEffect(() => {
+    if (urlNode.trim()) setFocusPicker("");
+  }, [urlNode]);
+
+  const focusMatches = useMemo(() => {
+    const q = focusPickerDeferred.trim().toLowerCase();
+    if (q.length < 2) return [];
+    const all = Object.entries(nodes as any).map(([id, n]: any) => ({
+      id: String(id),
+      short: String(n?.shortname ?? ""),
+      long: String(n?.longname ?? ""),
+    }));
+    return all
+      .filter((x) =>
+        (`${x.id} ${x.short} ${x.long}`).toLowerCase().includes(q)
+      )
+      .slice(0, 12);
+  }, [nodes, focusPickerDeferred]);
+
   const focusNodeObj = urlNode ? nodes?.[urlNode] : null;
 
   return (

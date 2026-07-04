@@ -19,7 +19,10 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
     ta.style.position = "fixed";
     ta.style.opacity = "0";
     document.body.appendChild(ta);
+    ta.focus();
     ta.select();
+    // iOS Safari needs an explicit range — select() alone selects nothing
+    ta.setSelectionRange(0, ta.value.length);
     const ok = document.execCommand("copy");
     document.body.removeChild(ta);
     return ok;

@@ -3,10 +3,6 @@ Tests for utils.normalize_node_id — node-id coercion. A wrong normalization
 here silently forks node identity across decoder paths (int vs string vs case).
 """
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from utils import normalize_node_id as _normalize_node_id
 

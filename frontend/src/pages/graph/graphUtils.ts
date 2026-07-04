@@ -4,21 +4,8 @@
 
 import { ROLE_COLORS } from "../../palette";
 
-export function normNodeId(raw: any): string {
-  if (raw == null) return "";
-  if (typeof raw === "number") {
-    if (!Number.isFinite(raw) || raw <= 0) return "";
-    return (raw >>> 0).toString(16).toLowerCase();
-  }
-  let s = String(raw).trim();
-  if (/^\d+$/.test(s) && s.length > 6) {
-    const n = parseInt(s, 10);
-    if (Number.isFinite(n) && n > 0) return (n >>> 0).toString(16).toLowerCase();
-  }
-  if (s.startsWith("!")) s = s.slice(1);
-  if (s.startsWith("0x") || s.startsWith("0X")) s = s.slice(2);
-  return s.toLowerCase();
-}
+// Re-exported so graph-internal importers keep resolving it from here.
+export { normNodeId } from "../../utils/normalizeNodeId8";
 
 export function getBestNodeLabel(n: any, idFallback: string) {
   const short = n?.shortname ?? n?.shortName ?? n?.short_name ?? n?.user?.shortName ?? n?.user?.short_name;

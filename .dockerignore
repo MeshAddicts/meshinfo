@@ -9,6 +9,7 @@
 **/*.pyc
 
 # Local-only state.
+backups
 caddy
 output
 postgres

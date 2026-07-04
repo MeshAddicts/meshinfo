@@ -68,24 +68,6 @@ export const renderHighlightedText = (text: string, query: string) => {
   });
 };
 
-// ---- Export helpers (Commit 6)
-export const downloadBlob = (blob: Blob, filename: string) => {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-};
-
-export const csvEscape = (v: any) => {
-  const s = String(v ?? "");
-  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-};
-
 export const routeLabel = (nodes: any, id: string) => {
   if (!id || id === "ffffffff") return "ALL";
   return nodes?.[id]?.shortname ?? id;

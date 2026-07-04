@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 
+import { copyTextToClipboard } from "../../utils/clipboard";
 import { formatTimestamp } from "../../utils/formatTimestamp";
-import { type RangeKey } from "../Traceroutes"; // NOTE: if this import path causes a cycle in your setup, replace with: type RangeKey = "all" | "24h" | "7d" | "30d";
-import { type TraceroutesListItem } from "./traceroutesTypes";
+import {
+  type RangeKey,
+  type TraceroutesListItem,
+} from "./traceroutesTypes";
 import {
   groupTracerouteEvents,
   type NodesById,
@@ -12,36 +15,6 @@ import {
   type TracerouteEvent,
   type TracerouteGroup,
 } from "./traceroutesUtils";
-
-async function copyTextToClipboard(text: string) {
-  try {
-    if (navigator.clipboard && (window as any).isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // fall through
-  }
-
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.top = "0";
-    ta.style.left = "0";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-
-    ta.focus();
-    ta.select();
-    document.execCommand("copy");
-    ta.remove();
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function Card({
   title,

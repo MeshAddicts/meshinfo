@@ -4,10 +4,7 @@ Tests for encoders._JSONDecoder — `!` stripping limited to id-style keys
 """
 
 import json
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from encoders import _JSONDecoder
 

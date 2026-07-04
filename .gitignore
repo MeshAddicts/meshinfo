@@ -12,14 +12,18 @@ node_modules/
 
 backups/*
 caddy
-Caddyfile
+# Root only — frontend/Caddyfile (the SPA image's server config) IS tracked.
+/Caddyfile
 
 # Maintenance-mode toggle flag — runtime state, never commit it enabled.
 public/maintenance/ON
 output/*
 mosquitto/data/*
 mosquitto/config/mosquitto.conf
+# Per-deployment credentials — create from mosquitto.passwd.sample, never commit.
+mosquitto/config/mosquitto.passwd
 postgres/data/*
+# Legacy local file (nothing loads it) — may hold real broker creds; keep ignored.
 config.json
 config.toml
 

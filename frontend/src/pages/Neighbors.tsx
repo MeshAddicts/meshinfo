@@ -1,5 +1,5 @@
 import {
-  ReactNode,
+  memo,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -12,13 +12,15 @@ import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
 import { Avatar } from "../components/Avatar";
 import { DateToSince } from "../components/DateSince";
+import { ExportMenu } from "../components/ExportMenu";
 import { HeardBy } from "../components/HeardBy";
 import { LivePill } from "../components/LivePill";
+import { MobileSheet } from "../components/MobileSheet";
 import { useGetNodesQuery } from "../slices/apiSlice";
+import { copyTextToClipboard } from "../utils/clipboard";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
+import { csvEscape, downloadBlob } from "../utils/export";
 import { calculateDistanceBetweenNodes } from "../utils/getDistanceBetweenTwoNodes";
-import { csvEscape, downloadBlob } from "./chat/chatUtils";
-import { ExportMenu } from "./chat/ExportMenu";
 import {
   cleanNodeId,
   isNodeOnline,
@@ -35,6 +37,14 @@ interface NeighborEntry {
   distance?: number;
 }
 
+// Shared formatter: per-row toLocaleString allocates an Intl.DateTimeFormat each call
+const lastSeenFormat = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
 /** One row in the virtualized list */
 export interface NeighborListItem {
   id: string;
@@ -42,6 +52,7 @@ export interface NeighborListItem {
   node: any;
   online: boolean;
   lastSeenMs: number | null;
+  lastSeenText: string | null;
   neighborsHeard: { id: string; shortname: string; snr: number; distanceKm: number | null }[];
   heardBy: { id: string; shortname: string; snr: number; distanceKm: number | null }[];
   broadcastIntervalSecs: number | null;
@@ -59,61 +70,6 @@ type SortDir = "asc" | "desc";
 /* ------------------------------------------------------------------ */
 
 type MobileSheetKey = "controls" | "details";
-
-function MobileSheet({
-  open,
-  title,
-  onClose,
-  children,
-}: {
-  open: boolean;
-  title: string;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
-
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 lg:hidden">
-      <button
-        type="button"
-        className="absolute inset-0 bg-black/40"
-        aria-label="Close"
-        onClick={onClose}
-      />
-      <div className="absolute inset-x-0 bottom-0">
-        <div className="mx-auto max-w-400 px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
-          <div className="rounded-t-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-              <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                {title}
-              </div>
-              <button
-                type="button"
-                className="rounded-md px-2 py-1 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                onClick={onClose}
-              >
-                Close
-              </button>
-            </div>
-            <div className="max-h-[82dvh] overflow-y-auto">
-              <div className="p-4">{children}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function StatusChip({
   label,
@@ -148,35 +104,6 @@ function StatusChip({
       {label}
     </button>
   );
-}
-
-async function copyTextToClipboard(text: string) {
-  try {
-    if (navigator.clipboard && (window as any).isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // fall through
-  }
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.top = "0";
-    ta.style.left = "0";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    ta.setSelectionRange(0, text.length);
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    return ok;
-  } catch {
-    return false;
-  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -474,7 +401,8 @@ function NeighborsOverviewPanel({
 /*  Row component for the Virtuoso list                                */
 /* ------------------------------------------------------------------ */
 
-function NeighborRow({
+// Memoized so nodes-cache flushes only re-render rows whose item identity changed.
+const NeighborRow = memo(function NeighborRow({
   item,
   selected,
   onSelect,
@@ -568,21 +496,16 @@ function NeighborRow({
 
         {/* Right: last seen */}
         <div className="shrink-0 text-right">
-          {item.lastSeenMs != null && (
+          {item.lastSeenText != null && (
             <div className="text-[11px] text-gray-400 dark:text-gray-500 tabular-nums whitespace-nowrap">
-              {new Date(item.lastSeenMs).toLocaleString(undefined, {
-                month: "short",
-                day: "numeric",
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
+              {item.lastSeenText}
             </div>
           )}
         </div>
       </div>
     </button>
   );
-}
+});
 
 /* ------------------------------------------------------------------ */
 /*  Main Neighbors page                                                */
@@ -622,6 +545,32 @@ export const Neighbors = () => {
     const out: NeighborListItem[] = [];
     const entries = Object.entries(nodes as any);
 
+    // Reverse index (heard hex id -> reporters), one O(N+L) pass instead of O(K×L) rescans
+    const heardByIndex = new Map<string, NeighborListItem["heardBy"]>();
+    for (const [, otherNode] of entries) {
+      const other = otherNode as any;
+      if (!other?.neighborinfo?.neighbors) continue;
+      const othClean = cleanNodeId(String(other.id ?? ""));
+      for (const nb of other.neighborinfo.neighbors) {
+        const heardHex = convertNodeIdFromIntToHex(nb.node_id);
+        const dist = calculateDistanceBetweenNodes(
+          nodes[othClean],
+          nodes[heardHex],
+        );
+        let list = heardByIndex.get(heardHex);
+        if (!list) {
+          list = [];
+          heardByIndex.set(heardHex, list);
+        }
+        list.push({
+          id: othClean,
+          shortname: other.shortname ?? "UNK",
+          snr: nb.snr,
+          distanceKm: dist ?? null,
+        });
+      }
+    }
+
     for (const [, n] of entries) {
       const raw = n as any;
       if (!raw?.active) continue;
@@ -648,36 +597,15 @@ export const Neighbors = () => {
         };
       });
 
-      // Build "heard by" — other nodes whose neighborinfo includes this node
-      const heardBy: NeighborListItem["heardBy"] = [];
-      for (const [, otherNode] of entries) {
-        const other = otherNode as any;
-        if (!other?.neighborinfo?.neighbors) continue;
-        for (const nb of other.neighborinfo.neighbors) {
-          if (convertNodeIdFromIntToHex(nb.node_id) === id) {
-            const othClean = cleanNodeId(String(other.id ?? ""));
-            const dist = calculateDistanceBetweenNodes(
-              nodes[othClean],
-              nodes[id],
-            );
-            heardBy.push({
-              id: othClean,
-              shortname: other.shortname ?? "UNK",
-              snr: nb.snr,
-              distanceKm: dist ?? null,
-            });
-          }
-        }
-      }
-
       out.push({
         id,
         rawId,
         node: raw,
         online,
         lastSeenMs,
+        lastSeenText: lastSeenMs != null ? lastSeenFormat.format(lastSeenMs) : null,
         neighborsHeard,
-        heardBy,
+        heardBy: heardByIndex.get(id) ?? [],
         broadcastIntervalSecs:
           raw.neighborinfo.node_broadcast_interval_secs ?? null,
       });
@@ -732,6 +660,17 @@ export const Neighbors = () => {
 
   const onSelect = useCallback((id: string) => setSelectedId(id), []);
   const clearSelection = useCallback(() => setSelectedId(""), []);
+
+  const itemContent = useCallback(
+    (_index: number, item: NeighborListItem) => (
+      <NeighborRow
+        item={item}
+        selected={item.id === selectedId}
+        onSelect={onSelect}
+      />
+    ),
+    [selectedId, onSelect],
+  );
 
   // Mobile sheets
   const [mobileSheet, setMobileSheet] = useState<MobileSheetKey | null>(null);
@@ -1104,14 +1043,9 @@ export const Neighbors = () => {
                       }}
                       style={{ flex: 1, minHeight: 0, height: "100%" }}
                       data={filteredItems}
+                      computeItemKey={(_index, item) => item.id}
                       overscan={600}
-                      itemContent={(_index, item) => (
-                        <NeighborRow
-                          item={item}
-                          selected={item.id === selectedId}
-                          onSelect={onSelect}
-                        />
-                      )}
+                      itemContent={itemContent}
                     />
                   </div>
                 </div>

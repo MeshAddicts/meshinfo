@@ -3,7 +3,6 @@ import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 import { env } from "../env";
 import {
   IChatResponse,
-  IMessagesResponse,
   IMqttMessagesResponse,
   INodesResponse,
   IStatsResponse,
@@ -48,7 +47,6 @@ export const apiSlice = createApi({
     "Stats",
     "Telemetry",
     "Traceroutes",
-    "Messages",
     "MqttMessages",
   ],
   baseQuery: fetchBaseQuery({
@@ -147,32 +145,6 @@ export const apiSlice = createApi({
       },
       providesTags: [{ type: "Traceroutes", id: "LIST" }],
     }),
-    getMessages: builder.query<
-      IMessagesResponse[],
-      { range?: string } | void
-    >({
-      query: (params) => {
-        const sp = new URLSearchParams();
-        if (params && params.range && params.range !== "all")
-          sp.set("range", params.range);
-        const qs = sp.toString();
-        return qs ? `messages?${qs}` : "messages";
-      },
-      providesTags: [{ type: "Messages", id: "LIST" }],
-    }),
-    getMqttMessages: builder.query<
-      IMqttMessagesResponse[],
-      { range?: string } | void
-    >({
-      query: (params) => {
-        const sp = new URLSearchParams();
-        if (params && params.range && params.range !== "all")
-          sp.set("range", params.range);
-        const qs = sp.toString();
-        return qs ? `mqtt_messages?${qs}` : "mqtt_messages";
-      },
-      providesTags: [{ type: "MqttMessages", id: "LIST" }],
-    }),
     getNodePackets: builder.query<
       { packets: IMqttMessagesResponse[] },
       { nodeId: string; limit?: number }
@@ -216,8 +188,6 @@ export const {
   useGetTelemetryQuery,
   useGetNodeTelemetryQuery,
   useGetTraceroutesQuery,
-  useGetMessagesQuery,
-  useGetMqttMessagesQuery,
   useGetNodePacketsQuery,
   useGetPacketsInfiniteQuery,
   useGetPacketQuery,
