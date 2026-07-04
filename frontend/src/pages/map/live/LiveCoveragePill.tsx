@@ -151,7 +151,8 @@ export function LiveCoveragePill({
           </label>
 
           <p className="text-[10px] text-gray-600 leading-snug">
-            Predicted reach of every positioned node heard recently (ITM model). Router-class TX
+            Coverage assumes a stock handheld at chest height. 
+            Every positioned node heard recently contributes (ITM model). Router-class TX
             33 dBm, others 22 dBm; antenna height from reported altitude (min 6 m). Estimate only.
           </p>
         </div>
