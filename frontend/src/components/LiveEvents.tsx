@@ -1,7 +1,7 @@
 import { ReactNode, useEffect, useState } from "react";
 
 import { env } from "../env";
-import { useAppDispatch } from "../hooks";
+import { useAppDispatch } from "../hooks/redux";
 import { LiveEventsContext } from "../hooks/useLiveEvent";
 import { apiSlice } from "../slices/apiSlice";
 import { chatPinged } from "../slices/appSlice";

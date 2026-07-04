@@ -1,0 +1,19 @@
+:80 {
+	encode gzip
+
+	root * /srv
+
+	# Real assets 404 cleanly instead of falling through to index.html.
+	# Without this the SPA fallback returns HTML with 200, which CDNs (CF)
+	# then cache as a "successful" text/html response for the asset URL.
+	@assets path *.js *.css *.wasm *.map *.json *.png *.jpg *.jpeg *.svg *.webp *.ico *.woff *.woff2 *.ttf *.otf
+	handle @assets {
+		file_server
+	}
+
+	# SPA routes — fall back to index.html for client-side routing.
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}

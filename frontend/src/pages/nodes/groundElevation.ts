@@ -1,6 +1,6 @@
 import { env } from "../../env";
-import { fetchElevationAt } from "../map/terrainRgb";
-import type { GroundSample } from "./altitudeAssessment";
+import type { GroundSample } from "../map/rf/altitudeAssessment";
+import { fetchElevationAt } from "../map/terrain/terrainRgb";
 
 const cache = new Map<string, GroundSample | null>();
 const inflight = new Map<string, Promise<GroundSample | null>>();

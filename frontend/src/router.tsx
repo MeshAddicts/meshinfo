@@ -11,6 +11,7 @@ import { Log } from "./pages/Log";
 import { Map } from "./pages/Map";
 import { Neighbors } from "./pages/Neighbors";
 import { Nodes } from "./pages/Nodes";
+import { RouteError } from "./pages/RouteError";
 import { Stats } from "./pages/Stats";
 import { Telemetry } from "./pages/Telemetry";
 import { Traceroutes } from "./pages/Traceroutes";
@@ -44,6 +45,7 @@ export const router = createBrowserRouter([
         <Outlet />
       </Layout>
     ),
+    errorElement: <RouteError />,
     children: [
       { index: true, element: <Navigate to="/map" replace /> },
       { path: "/chat", element: <Chat /> },

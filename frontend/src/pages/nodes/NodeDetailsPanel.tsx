@@ -13,14 +13,14 @@ import {
 import { getElsewhereLinks, resolveElsewhereUrl } from "../../utils/elsewhereLinks";
 import { formatTimestamp } from "../../utils/formatTimestamp";
 import { calculateDistanceBetweenNodes } from "../../utils/getDistanceBetweenTwoNodes";
-import { NodeMap } from "../NodeMap";
 import {
   classifyAltitude,
   type GroundSample,
   MAX_VALIDATABLE_UNCERTAINTY_M,
   positionUncertaintyM,
-} from "./altitudeAssessment";
+} from "../map/rf/altitudeAssessment";
 import { getGroundElevation } from "./groundElevation";
+import { NodeMap } from "./NodeMap";
 import {
   cleanNodeId,
   getLatLon,

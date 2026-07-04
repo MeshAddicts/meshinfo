@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 
+import { copyTextToClipboard } from "../../utils/clipboard";
 import { formatTimestamp } from "../../utils/formatTimestamp";
 import { MiniBarChart } from "./MiniCharts";
 import {
@@ -13,38 +14,6 @@ import {
   type TelemetryNodeSummary,
   toNumberLoose,
 } from "./telemetryUtils";
-
-// ---------------------- clipboard helper ----------------------
-
-async function copyTextToClipboard(text: string) {
-  try {
-    if (navigator.clipboard && (window as any).isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // fall through
-  }
-
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.top = "0";
-    ta.style.left = "0";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-
-    ta.focus();
-    ta.select();
-    document.execCommand("copy");
-    ta.remove();
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 // ---------------------- small UI bits ----------------------
 

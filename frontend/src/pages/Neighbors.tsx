@@ -1,6 +1,5 @@
 import {
   memo,
-  ReactNode,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -13,13 +12,15 @@ import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
 import { Avatar } from "../components/Avatar";
 import { DateToSince } from "../components/DateSince";
+import { ExportMenu } from "../components/ExportMenu";
 import { HeardBy } from "../components/HeardBy";
 import { LivePill } from "../components/LivePill";
+import { MobileSheet } from "../components/MobileSheet";
 import { useGetNodesQuery } from "../slices/apiSlice";
+import { copyTextToClipboard } from "../utils/clipboard";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
+import { csvEscape, downloadBlob } from "../utils/export";
 import { calculateDistanceBetweenNodes } from "../utils/getDistanceBetweenTwoNodes";
-import { csvEscape, downloadBlob } from "./chat/chatUtils";
-import { ExportMenu } from "./chat/ExportMenu";
 import {
   cleanNodeId,
   isNodeOnline,
@@ -70,61 +71,6 @@ type SortDir = "asc" | "desc";
 
 type MobileSheetKey = "controls" | "details";
 
-function MobileSheet({
-  open,
-  title,
-  onClose,
-  children,
-}: {
-  open: boolean;
-  title: string;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
-
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 lg:hidden">
-      <button
-        type="button"
-        className="absolute inset-0 bg-black/40"
-        aria-label="Close"
-        onClick={onClose}
-      />
-      <div className="absolute inset-x-0 bottom-0">
-        <div className="mx-auto max-w-400 px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
-          <div className="rounded-t-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-              <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                {title}
-              </div>
-              <button
-                type="button"
-                className="rounded-md px-2 py-1 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                onClick={onClose}
-              >
-                Close
-              </button>
-            </div>
-            <div className="max-h-[82dvh] overflow-y-auto">
-              <div className="p-4">{children}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function StatusChip({
   label,
   active,
@@ -158,35 +104,6 @@ function StatusChip({
       {label}
     </button>
   );
-}
-
-async function copyTextToClipboard(text: string) {
-  try {
-    if (navigator.clipboard && (window as any).isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // fall through
-  }
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.top = "0";
-    ta.style.left = "0";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    ta.setSelectionRange(0, text.length);
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    return ok;
-  } catch {
-    return false;
-  }
 }
 
 /* ------------------------------------------------------------------ */

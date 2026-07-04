@@ -72,38 +72,6 @@ export interface ITraceroutesResponse {
   sender?: string;
 }
 
-export interface IMessagesResponse {
-  channel: number;
-  from: string;
-  hop_limit: number;
-  hop_start: number;
-  id: number;
-  rx_rssi?: number;
-  rx_snr?: number;
-  rx_time: number;
-  to: string;
-  rssi: number;
-  snr: number;
-  timestamp: number;
-  topic: string;
-  type: string;
-  payload: Payload;
-  priority?: number;
-}
-
-export interface Payload {
-  hw_model?: number;
-  id?: string;
-  long_name?: string;
-  macaddr?: string;
-  short_name?: string;
-  air_util_tx?: number;
-  battery_level?: number;
-  channel_utilization?: number;
-  uptime_seconds?: number;
-  voltage?: number;
-}
-
 export interface IChannel {
   messages: IMessage[];
   totalMessages: number;

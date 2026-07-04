@@ -14,30 +14,39 @@ import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../
 import { type ITraceroutesResponse } from "../types";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { prefersReducedMotion } from "../utils/reducedMotion";
-import type { ActivityLayer } from "./map/activityLayer";
-import type { ClusterDonutLayer } from "./map/clusterDonutLayer";
-import { type ClusterHover,ClusterHoverCard } from "./map/ClusterHoverCard";
-import { FiltersResetPill } from "./map/FiltersResetPill";
-import { circularMeanLng, normalizeLng } from "./map/geo";
-import { computeMaxRange, formatLatLng, geodesicCircleCoords, TRANSPARENT_1PX_PNG } from "./map/helpers";
-import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
-import { haversineKm } from "./map/losAnalysis";
-import type { LosTubeLayer } from "./map/losTubeLayer";
-import { type CoordPillSink, MapCoordinatePill } from "./map/MapCoordinatePill";
-import { MapCoveragePanel } from "./map/MapCoveragePanel";
-import { MapDetailsPanel } from "./map/MapDetailsPanel";
-import { MapHealthWidget } from "./map/MapHealthWidget";
-import { bindMapHoverUi } from "./map/mapHoverUi";
-import { ensureMapSourcesAndLayers } from "./map/mapLayers";
-import { MapLosPanel } from "./map/MapLosPanel";
-import { MapScanPanel } from "./map/MapScanPanel";
-import { MapSearchBar } from "./map/MapSearchBar";
-import { MapSettingsPanel } from "./map/MapSettingsPanel";
-import { MapToolPrompt, MapToolsDrawer } from "./map/MapToolsDrawer";
-import { type CorridorSort, MapTraceCorridorsPanel, type TraceCorridor } from "./map/MapTraceCorridorsPanel";
-import { MapTraceroutePanel } from "./map/MapTraceroutePanel";
-import { computeTraceEdgeStats, findPathsBetween, findRunsBetween } from "./map/pathAnalysis";
-import type { ScanClass } from "./map/scanAnalysis";
+import { type ClusterHover,ClusterHoverCard } from "./map/components/ClusterHoverCard";
+import { FiltersResetPill } from "./map/components/FiltersResetPill";
+import { type CoordPillSink, MapCoordinatePill } from "./map/components/MapCoordinatePill";
+import { MapCoveragePanel } from "./map/components/MapCoveragePanel";
+import { MapDetailsPanel } from "./map/components/MapDetailsPanel";
+import { MapHealthWidget } from "./map/components/MapHealthWidget";
+import { MapLosPanel } from "./map/components/MapLosPanel";
+import { MapScanPanel } from "./map/components/MapScanPanel";
+import { MapSearchBar } from "./map/components/MapSearchBar";
+import { MapSettingsPanel } from "./map/components/MapSettingsPanel";
+import { MapToolPrompt, MapToolsDrawer } from "./map/components/MapToolsDrawer";
+import { type CorridorSort, MapTraceCorridorsPanel, type TraceCorridor } from "./map/components/MapTraceCorridorsPanel";
+import { MapTraceroutePanel } from "./map/components/MapTraceroutePanel";
+import { useCoverageCompute } from "./map/hooks/useCoverageCompute";
+import { useCoverageMergeOrigins } from "./map/hooks/useCoverageMergeOrigins";
+import { useCoverageState } from "./map/hooks/useCoverageState";
+import { useLivePacketArcs } from "./map/hooks/useLivePacketArcs";
+import { useLosCompute } from "./map/hooks/useLosCompute";
+import { useLosState } from "./map/hooks/useLosState";
+import { useMapKeyboardNav } from "./map/hooks/useMapKeyboardNav";
+import { useScanCompute } from "./map/hooks/useScanCompute";
+import { useScanState } from "./map/hooks/useScanState";
+import { useToolUrlSync } from "./map/hooks/useToolUrlSync";
+import { useTraceCompute } from "./map/hooks/useTraceCompute";
+import { useTraceDraw } from "./map/hooks/useTraceDraw";
+import { useTraceFlyover } from "./map/hooks/useTraceFlyover";
+import { useTraceLiveEvents } from "./map/hooks/useTraceLiveEvents";
+import { useUrlMapSync } from "./map/hooks/useUrlMapSync";
+import type { ActivityLayer } from "./map/layers/activityLayer";
+import type { ClusterDonutLayer } from "./map/layers/clusterDonutLayer";
+import type { LosTubeLayer } from "./map/layers/losTubeLayer";
+import { bindMapHoverUi } from "./map/layers/mapHoverUi";
+import { ensureMapSourcesAndLayers } from "./map/layers/mapLayers";
 import {
   anyIdsFanned,
   autoSpiderfyOverlappingPlainNodes,
@@ -55,24 +64,13 @@ import {
   SPIDERFY_SOURCE_NODES,
   spiderfyFeatures,
   updateSpiderfyPositions,
-} from "./map/spiderfy";
-import { LS_KEYS, readJson, writeJson } from "./map/storage";
-import type { IMapNode, LinkMode, MapProvider, NodeDetailsData, NodeLike } from "./map/types";
-import { useCoverageCompute } from "./map/useCoverageCompute";
-import { useCoverageMergeOrigins } from "./map/useCoverageMergeOrigins";
-import { useCoverageState } from "./map/useCoverageState";
-import { useLivePacketArcs } from "./map/useLivePacketArcs";
-import { useLosCompute } from "./map/useLosCompute";
-import { useLosState } from "./map/useLosState";
-import { useMapKeyboardNav } from "./map/useMapKeyboardNav";
-import { useScanCompute } from "./map/useScanCompute";
-import { useScanState } from "./map/useScanState";
-import { useToolUrlSync } from "./map/useToolUrlSync";
-import { useTraceCompute } from "./map/useTraceCompute";
-import { useTraceDraw } from "./map/useTraceDraw";
-import { useTraceFlyover } from "./map/useTraceFlyover";
-import { useTraceLiveEvents } from "./map/useTraceLiveEvents";
-import { useUrlMapSync } from "./map/useUrlMapSync";
+} from "./map/layers/spiderfy";
+import { circularMeanLng, normalizeLng } from "./map/lib/geo";
+import { computeMaxRange, formatLatLng, geodesicCircleCoords, TRANSPARENT_1PX_PNG } from "./map/lib/helpers";
+import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/lib/linkFeatures";
+import { computeTraceEdgeStats, findPathsBetween, findRunsBetween } from "./map/lib/pathAnalysis";
+import { LS_KEYS, readJson, writeJson } from "./map/lib/storage";
+import type { IMapNode, LinkMode, MapProvider, NodeDetailsData, NodeLike } from "./map/lib/types";
 import {
   applyClusterVisibility,
   buildNodesGeoJSON,
@@ -80,7 +78,9 @@ import {
   emptyLineFeatureCollection,
   nodesDataSignature,
   ROLE_COLORS,
-} from "./map/utils";
+} from "./map/lib/utils";
+import { haversineKm } from "./map/rf/losAnalysis";
+import type { ScanClass } from "./map/rf/scanAnalysis";
 
 export function Map() {
   const mapRef = useRef<HTMLDivElement>(null);

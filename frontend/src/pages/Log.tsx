@@ -14,6 +14,7 @@ import { useSearchParams } from "react-router";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
 import { LivePill } from "../components/LivePill";
+import { MobileSheet } from "../components/MobileSheet";
 import { useLiveEvent } from "../hooks/useLiveEvent";
 import {
   IPacketMessage,
@@ -22,6 +23,8 @@ import {
   useGetPacketQuery,
   useGetPacketsInfiniteQuery,
 } from "../slices/apiSlice";
+import { copyTextToClipboard } from "../utils/clipboard";
+import { csvEscape, downloadBlob } from "../utils/export";
 import { formatTimestamp } from "../utils/formatTimestamp";
 
 // Quick rolling-range presets. Absolute start/end (the date pickers) override
@@ -46,47 +49,6 @@ const toUnixSeconds = (ts: unknown): number => {
   if (!Number.isFinite(n)) return 0;
   return n > 1_000_000_000_000 ? Math.floor(n / 1000) : Math.floor(n);
 };
-
-const csvEscape = (v: unknown) => {
-  const s = String(v ?? "");
-  return /[,"\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
-
-const downloadBlob = (blob: Blob, filename: string) => {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-};
-
-async function copyTextToClipboard(text: string) {
-  try {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // fall through to the textarea fallback
-  }
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    return ok;
-  } catch {
-    return false;
-  }
-}
 
 // epoch seconds <-> the value format an <input type="datetime-local"> expects.
 const toLocalInput = (epoch?: number): string => {
@@ -145,61 +107,6 @@ function JsonBlock({ code }: { code: string }) {
         dangerouslySetInnerHTML={{ __html: html }}
       />
     </pre>
-  );
-}
-
-function MobileSheet({
-  open,
-  title,
-  onClose,
-  children,
-}: {
-  open: boolean;
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-}) {
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
-
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 lg:hidden">
-      <button
-        type="button"
-        className="absolute inset-0 bg-black/40"
-        aria-label="Close"
-        onClick={onClose}
-      />
-      <div className="absolute inset-x-0 bottom-0">
-        <div className="mx-auto max-w-400 px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
-          <div className="rounded-t-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-              <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                {title}
-              </div>
-              <button
-                type="button"
-                className="rounded-md px-2 py-1 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                onClick={onClose}
-              >
-                Close
-              </button>
-            </div>
-            <div className="max-h-[82dvh] overflow-y-auto">
-              <div className="p-4">{children}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }
 

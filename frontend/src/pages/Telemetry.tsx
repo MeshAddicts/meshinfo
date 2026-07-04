@@ -9,18 +9,18 @@ import {
 import { useSearchParams } from "react-router";
 import { VirtuosoHandle } from "react-virtuoso";
 
+import { ExportMenu } from "../components/ExportMenu";
 import { HeardBy } from "../components/HeardBy";
 import { LivePill } from "../components/LivePill";
 import { useLiveEvent } from "../hooks/useLiveEvent";
 import { useGetNodesQuery, useGetTelemetryQuery } from "../slices/apiSlice";
-import { ExportMenu } from "./chat/ExportMenu";
+import { copyTextToClipboard } from "../utils/clipboard";
+import { csvEscape, downloadBlob } from "../utils/export";
 import { TelemetryDetailsPanel } from "./telemetry/TelemetryDetailsPanel";
 import { TelemetryList } from "./telemetry/TelemetryList";
 import {
   clampSort,
   coerceTelemetryEvent,
-  csvEscape,
-  downloadBlob,
   getNodeLabel,
   type NodesById,
   RANGE_MS,
@@ -58,38 +58,6 @@ function clampRange(v: any): RangeKey {
   return (["all", "1h", "24h", "7d"] as const).includes(v)
     ? (v as RangeKey)
     : DEFAULT_RANGE;
-}
-
-async function copyTextToClipboard(text: string) {
-  try {
-    if (navigator.clipboard && (window as any).isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // fall through
-  }
-
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.top = "0";
-    ta.style.left = "0";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-
-    ta.focus();
-    ta.select();
-    ta.setSelectionRange(0, text.length);
-
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    return ok;
-  } catch {
-    return false;
-  }
 }
 
 function StatusChip({
@@ -679,11 +647,10 @@ export const Telemetry = () => {
       }),
     };
 
-    downloadBlob(
-      `${exportFilenameBase}.json`,
-      "application/json;charset=utf-8",
-      JSON.stringify(payload, null, 2),
-    );
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json;charset=utf-8",
+    });
+    downloadBlob(blob, `${exportFilenameBase}.json`);
     setExportOpen(false);
   };
 
@@ -735,7 +702,8 @@ export const Telemetry = () => {
     }
 
     const csv = "\ufeff" + lines.join("\r\n");
-    downloadBlob(`${exportFilenameBase}.csv`, "text/csv;charset=utf-8", csv);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    downloadBlob(blob, `${exportFilenameBase}.csv`);
     setExportOpen(false);
   };
 

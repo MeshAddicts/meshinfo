@@ -1,3 +1,5 @@
+export type RangeKey = "all" | "1h" | "24h" | "7d";
+
 export type TraceroutePairSummary = {
   pairKey: string; // `${from}|${to}`
   from: string;

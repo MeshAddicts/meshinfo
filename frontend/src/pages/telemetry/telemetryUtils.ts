@@ -183,25 +183,3 @@ export function formatMetricValue(
       return String(v);
   }
 }
-
-// ---------- small export helpers ----------
-
-export function csvEscape(v: any): string {
-  const s = String(v ?? "");
-  if (s.includes('"') || s.includes(",") || s.includes("\n") || s.includes("\r")) {
-    return `"${s.replaceAll('"', '""')}"`;
-  }
-  return s;
-}
-
-export function downloadBlob(filename: string, mime: string, text: string) {
-  const blob = new Blob([text], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}

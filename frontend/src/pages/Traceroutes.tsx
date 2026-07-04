@@ -8,20 +8,21 @@ import {
 } from "react";
 import { useSearchParams } from "react-router";
 
+import { ExportMenu } from "../components/ExportMenu";
 import { HeardBy } from "../components/HeardBy";
 import { LivePill } from "../components/LivePill";
 import { useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
-import { ExportMenu } from "./chat/ExportMenu";
+import { copyTextToClipboard } from "../utils/clipboard";
+import { csvEscape, downloadBlob } from "../utils/export";
 import { TracerouteDetailsPanel } from "./traceroutes/TracerouteDetailsPanel";
 import { TraceroutesList } from "./traceroutes/TraceroutesList";
 import {
+  type RangeKey,
   type TraceroutePairSummary,
   type TraceroutesListItem,
 } from "./traceroutes/traceroutesTypes";
 import {
   coerceEvent,
-  csvEscape,
-  downloadBlob,
   groupTracerouteEvents,
   type NodesById,
   routeHopsOf,
@@ -30,7 +31,6 @@ import {
   type TracerouteEvent,
 } from "./traceroutes/traceroutesUtils";
 
-export type RangeKey = "all" | "1h" | "24h" | "7d";
 type SortKey =
   | "last_desc"
   | "last_asc"
@@ -68,38 +68,6 @@ function clampSort(v: any): SortKey {
   ] as const).includes(v)
     ? (v as SortKey)
     : DEFAULT_SORT;
-}
-
-async function copyTextToClipboard(text: string) {
-  try {
-    if (navigator.clipboard && (window as any).isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // fall through
-  }
-
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.top = "0";
-    ta.style.left = "0";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-
-    ta.focus();
-    ta.select();
-    ta.setSelectionRange(0, text.length);
-
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    return ok;
-  } catch {
-    return false;
-  }
 }
 
 function StatusChip({
@@ -669,11 +637,10 @@ export const Traceroutes = () => {
       }),
     };
 
-    downloadBlob(
-      `${exportFilenameBase}.json`,
-      "application/json;charset=utf-8",
-      JSON.stringify(payload, null, 2),
-    );
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json;charset=utf-8",
+    });
+    downloadBlob(blob, `${exportFilenameBase}.json`);
     setExportOpen(false);
   };
 
@@ -719,7 +686,8 @@ export const Traceroutes = () => {
     }
 
     const csv = "\ufeff" + lines.join("\r\n");
-    downloadBlob(`${exportFilenameBase}.csv`, "text/csv;charset=utf-8", csv);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    downloadBlob(blob, `${exportFilenameBase}.csv`);
     setExportOpen(false);
   };
 
