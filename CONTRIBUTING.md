@@ -62,33 +62,50 @@ The frontend dev server proxies API requests to `http://localhost:9000` by defau
 
 ```
 meshinfo/
-├── api/                   # FastAPI REST endpoints
-│   ├── api.py             # Main API application
-│   └── static_map.py      # Static map image generation
-├── bot/                   # Discord bot integration
-├── frontend/              # React / TypeScript SPA
+├── api/                     # FastAPI REST endpoints
+│   ├── api.py               # Main API application
+│   └── static_map.py        # Static map image generation
+├── bot/                     # Discord bot integration
+├── frontend/                # React / TypeScript SPA
 │   ├── src/
-│   │   ├── pages/         # Page components (Chat, Map, Nodes, Graph, etc.)
-│   │   ├── components/    # Reusable UI components
-│   │   ├── slices/        # Redux state management
-│   │   ├── maps/          # Map layers and geocoding
-│   │   ├── hooks/         # Custom React hooks
-│   │   ├── utils/         # Helper utilities
-│   │   └── types/         # TypeScript type definitions
+│   │   ├── pages/           # One file/folder per routed page
+│   │   │   ├── map/         # Map page internals, by purpose:
+│   │   │   │   ├── components/  #   panels, pills, widgets
+│   │   │   │   ├── hooks/       #   tool state + compute/orchestration hooks
+│   │   │   │   ├── layers/      #   custom GL layers + map plumbing
+│   │   │   │   ├── rf/          #   RF/physics engines, coverage workers
+│   │   │   │   ├── terrain/     #   DEM/clutter tile fetchers + raster workers
+│   │   │   │   └── lib/         #   shared geometry/data/format utilities
+│   │   │   ├── chat/        # Chat page components + page-local hooks/utils
+│   │   │   ├── nodes/       # Nodes page components (+ NodeMap mini-map)
+│   │   │   ├── telemetry/   # …same pattern per page
+│   │   │   ├── traceroutes/
+│   │   │   ├── graph/
+│   │   │   └── stats/
+│   │   ├── components/      # App-wide UI (nav, toasts, MobileSheet, ExportMenu…)
+│   │   ├── hooks/           # App-wide hooks (redux, live events)
+│   │   ├── slices/          # RTK Query API + app state
+│   │   ├── maps/            # Basemap style builder + geocoding
+│   │   ├── utils/           # App-wide helpers (ids, clipboard, export…)
+│   │   ├── types/           # API response types + enums
+│   │   └── generated/       # Built artifacts (ITM WASM glue) — do not edit
 │   ├── package.json
 │   └── vite.config.ts
-├── models/                # Data models
-├── postgres/              # Database schema definitions
-├── scripts/               # Build and migration scripts
-├── config.py              # Configuration loading and validation
-├── main.py                # Application entry point
-├── mqtt.py                # MQTT broker connection and message handling
-├── data_store.py          # Runtime coordinator: Postgres handle, MQTT→Discord queue, enrichment loop
-├── Dockerfile             # Backend container image
-├── Dockerfile.spa         # Frontend container image
-├── Dockerfile.caddy       # Caddy reverse proxy image
-├── docker-compose.yml     # Production stack
-└── docker-compose-dev.yml # Development stack
+├── models/                  # Data models
+├── postgres/                # Database schema definitions
+├── scripts/                 # Bake scripts + host ops (maintenance, migrations)
+├── tests/                   # Backend pytest suite
+├── config.py                # Configuration loading and validation
+├── main.py                  # Application entry point
+├── mqtt.py                  # MQTT broker connection and message handling
+├── data_store.py            # Runtime coordinator: Postgres handle, MQTT→Discord queue, enrichment loop
+├── broadcaster.py           # In-process SSE pub/sub hub
+├── storage/db/postgres.py   # asyncpg storage layer
+├── Dockerfile               # Backend container image
+├── Dockerfile.spa           # Frontend container image (Caddyfile + entrypoint live in frontend/)
+├── Dockerfile.caddy         # Caddy reverse proxy image
+├── docker-compose.yml       # Production stack
+└── docker-compose-dev.yml   # Development stack
 ```
 
 ## Making Changes

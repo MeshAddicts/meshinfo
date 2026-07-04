@@ -5,12 +5,9 @@ every event, a slow subscriber drops its OLDEST item (never blocks the
 producer), and the node producer's snapshot is isolated from later mutations.
 """
 
-import sys
-from pathlib import Path
 
 from fastapi.encoders import jsonable_encoder
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from broadcaster import Broadcaster
 

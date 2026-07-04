@@ -22,7 +22,10 @@ persistence_location /mosquitto/data/
 
 allow_anonymous true
 
-# Set the location of the password file
+# Set the location of the password file. Start from the sample
+# (cp mosquitto.passwd.sample mosquitto.passwd), then set your own password:
+#   docker exec -it mqtt mosquitto_passwd /mosquitto/config/mosquitto.passwd meshinfo
+# Pair with allow_anonymous false above.
 #password_file /mosquitto/config/mosquitto.passwd
 
 # Set the location of the ACL file

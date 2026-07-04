@@ -1,10 +1,6 @@
 """Tests for data_store._resolve_providers: URL templates, Meshview dicts,
 and dead-legacy handling."""
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from data_store import _DEAD_LEGACY_PROVIDERS, _PROVIDER_PRESETS, _resolve_providers
 

@@ -4,15 +4,6 @@ import datetime
 import json
 
 
-class _JSONEncoder(json.JSONEncoder):
-  def default(self, obj):
-    if isinstance(obj, datetime.datetime):
-      return obj.astimezone().isoformat()
-    if isinstance(obj, datetime.timedelta):
-      return None
-    return obj
-
-
 # Node-id keys may carry a leading '!'; stripping is only correct on these,
 # not on free-form text payloads that legitimately contain '!'.
 _ID_KEYS = frozenset({"id", "sender", "from", "to", "gateway"})

@@ -5,10 +5,7 @@ loop (which would drop other in-flight messages including corrective NODEINFOs).
 """
 
 import asyncio
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from broadcaster import Broadcaster
 from mqtt import MQTT, normalize_node_id  # noqa: F401  (re-exported via from utils)

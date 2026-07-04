@@ -1,7 +1,6 @@
 # Pinned to current-major ranges; refresh after testing a major bump.
 aiomqtt>=2.5,<3
 aiohttp>=3.13,<4
-scipy>=1.17,<2
 python-dotenv>=1.2,<2
 fastapi>=0.136,<1
 discord.py>=2.7,<3
