@@ -1,12 +1,13 @@
 import { ReactNode, useEffect, useState } from "react";
 
 import { env } from "../env";
-import { useAppDispatch } from "../hooks";
+import { useAppDispatch } from "../hooks/redux";
 import { LiveEventsContext } from "../hooks/useLiveEvent";
 import { apiSlice } from "../slices/apiSlice";
 import { chatPinged } from "../slices/appSlice";
 import { transformNode } from "../slices/nodeTransform";
 import { INode } from "../types";
+import { liveNodeFlushGate } from "../utils/liveGate";
 
 // Same base as RTK Query, so the stream uses the same proxy route as REST.
 const EVENTS_URL = `${env.API_BASE_URL ?? window.location.origin}/v1/events`;
@@ -28,6 +29,11 @@ export function LiveEventsProvider({ children }: { children: ReactNode }) {
     const flush = () => {
       flushTimer = null;
       if (pending.size === 0) return;
+      if (liveNodeFlushGate.suspended) {
+        // Camera tour in progress — keep coalescing, retry shortly
+        flushTimer = setTimeout(flush, 500);
+        return;
+      }
       const batch = Array.from(pending.values());
       pending.clear();
       // Patch both known getNodes args (no-op if uncached).

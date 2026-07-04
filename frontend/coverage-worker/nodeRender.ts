@@ -1,11 +1,11 @@
 /** Per-node ITM rendering + per-tile compositing, shared by inline and worker paths. */
-import type { BuildingRaster } from "../src/pages/map/buildingTiles";
-import type { CanopyRaster } from "../src/pages/map/canopyTiles";
-import { renderCoverageRaster } from "../src/pages/map/coverageRaster";
-import type { ItmContext } from "../src/pages/map/itm";
-import type { ClutterRaster } from "../src/pages/map/landcoverTiles";
 import { buildLiveCoverageParams, LIVE_ANTENNA_AGL_M } from "../src/pages/map/live/liveCoverageParams";
-import { type DEM, type DEMBounds, demBoundsAround, sampleDEMAt } from "../src/pages/map/terrainDEM";
+import { renderCoverageRaster } from "../src/pages/map/rf/coverageRaster";
+import type { ItmContext } from "../src/pages/map/rf/itm";
+import type { BuildingRaster } from "../src/pages/map/terrain/buildingTiles";
+import type { CanopyRaster } from "../src/pages/map/terrain/canopyTiles";
+import type { ClutterRaster } from "../src/pages/map/terrain/landcoverTiles";
+import { type DEM, type DEMBounds, demBoundsAround, sampleDEMAt } from "../src/pages/map/terrain/terrainDEM";
 import { type MarginGridQ8, marginQ8At, quantizeMargin } from "./cache";
 import * as cfg from "./config";
 import { latToPx, lngToPx, pxToLat, pxToLng, TILE_SIZE } from "./mercator";

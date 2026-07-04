@@ -1,5 +1,5 @@
 # Compile NTIA ITM to WASM (see Dockerfile.spa for details).
-FROM --platform=linux/amd64 emscripten/emsdk:6.0.0 AS wasm-build
+FROM --platform=linux/amd64 emscripten/emsdk:6.0.2 AS wasm-build
 
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*

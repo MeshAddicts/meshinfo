@@ -1,5 +1,5 @@
 /** Cursor tooltip listing the nodes covering the hovered point, strongest first. */
-import type { IMapNode } from "../types";
+import type { IMapNode } from "../lib/types";
 import type { CoverageLookupHover } from "./useCoverageLookup";
 
 /** Mirrors the coverage gradient bands (see colorize/coverageRaster gradient). */

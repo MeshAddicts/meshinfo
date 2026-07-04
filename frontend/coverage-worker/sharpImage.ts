@@ -1,7 +1,7 @@
 /** sharp-backed tile decode (for the engine's tile builders) + RGBA→PNG encode. */
 import sharp from "sharp";
 
-import { setTilePixelDecoder } from "../src/pages/map/tileDecode";
+import { setTilePixelDecoder } from "../src/pages/map/terrain/tileDecode";
 
 /** Point the engine's tile decoder at sharp. Call once at startup. */
 export function installSharpDecoder(): void {

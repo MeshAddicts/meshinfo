@@ -1,5 +1,4 @@
 import {
-  ReactNode,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -10,29 +9,30 @@ import {
 import { Link, useSearchParams } from "react-router";
 import { VirtuosoHandle } from "react-virtuoso";
 
+import { ExportMenu } from "../components/ExportMenu";
 import { HeardBy } from "../components/HeardBy";
 import { LivePill } from "../components/LivePill";
-import { useAppSelector } from "../hooks";
-import { useChatSearchParams } from "../hooks/useChatSearchParams";
+import { MobileSheet } from "../components/MobileSheet";
+import { useAppSelector } from "../hooks/redux";
 import {
   useGetChatsQuery,
   useGetConfigQuery,
   useGetNodesQuery,
 } from "../slices/apiSlice";
+import { copyTextToClipboard } from "../utils/clipboard";
+import { csvEscape, downloadBlob } from "../utils/export";
 import {
-  csvEscape,
   DirKey,
-  downloadBlob,
   FocusMode,
   isBroadcast,
   RangeKey,
   SortKey,
 } from "./chat/chatUtils";
 import { DetailsPanel } from "./chat/DetailsPanel";
-import { ExportMenu } from "./chat/ExportMenu";
 import { FiltersDrawer } from "./chat/FiltersDrawer";
 import { FocusPanel } from "./chat/FocusPanel";
 import { MessageList } from "./chat/MessageList";
+import { useChatSearchParams } from "./chat/useChatSearchParams";
 
 type ViewDef = {
   key: string; // canonical URL key: "mediumfast"
@@ -53,62 +53,6 @@ const normalizeKey = (s: string) => {
 };
 
 type MobileSheetKey = "controls" | "focus" | "details";
-
-function MobileSheet({
-  open,
-  title,
-  onClose,
-  children,
-}: {
-  open: boolean;
-  title: string;
-  onClose: () => void;
-  children: ReactNode;
-}) {
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, [open]);
-
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 lg:hidden">
-      <button
-        type="button"
-        className="absolute inset-0 bg-black/40"
-        aria-label="Close"
-        onClick={onClose}
-      />
-      <div className="absolute inset-x-0 bottom-0">
-        <div className="mx-auto max-w-400 px-3 sm:px-5 pb-[env(safe-area-inset-bottom)]">
-          <div className="rounded-t-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
-              <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                {title}
-              </div>
-              <button
-                type="button"
-                className="rounded-md px-2 py-1 text-sm border border-gray-300/60 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
-                onClick={onClose}
-              >
-                Close
-              </button>
-            </div>
-
-            <div className="max-h-[82dvh] overflow-y-auto">
-              <div className="p-4">{children}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function StatusChip({
   label,
@@ -140,6 +84,42 @@ function StatusChip({
     >
       {label}
     </button>
+  );
+}
+
+// Owns keystroke state so typing doesn't re-render the whole Chat tree
+function ChatSearchInput({
+  urlQ,
+  setParam,
+  inputRef,
+}: {
+  urlQ: string;
+  setParam: (key: string, value?: string, mode?: "replace" | "push") => void;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+}) {
+  const [qInput, setQInput] = useState(urlQ);
+  const qDeferred = useDeferredValue(qInput);
+
+  // Keep local search input synced on back/forward
+  useEffect(() => {
+    setQInput(urlQ);
+  }, [urlQ]);
+
+  // Update URL q from deferred input (replace)
+  useEffect(() => {
+    if (urlQ === qDeferred) return;
+    setParam("q", qDeferred, "replace");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qDeferred]);
+
+  return (
+    <input
+      ref={inputRef}
+      value={qInput}
+      onChange={(e) => setQInput(e.target.value)}
+      placeholder="Search messages… (press / to focus)"
+      className="w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/60"
+    />
   );
 }
 
@@ -517,27 +497,8 @@ export const Chat = () => {
     return () => window.removeEventListener("mousedown", onMouseDown);
   }, [urlMsg, setParam]);
 
-  // Search input
-  const [qInput, setQInput] = useState(urlQ);
-  const qDeferred = useDeferredValue(qInput);
+  // Search input state lives in ChatSearchInput; only the ref stays here for the '/' shortcut
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-
-  // Focus picker input
-  const [focusPicker, setFocusPicker] = useState("");
-  const focusPickerDeferred = useDeferredValue(focusPicker);
-
-  // Keep local search input synced on back/forward
-  useEffect(() => {
-    setQInput(urlQ);
-     
-  }, [urlQ]);
-
-  // Update URL q from deferred input (replace)
-  useEffect(() => {
-    if ((searchParams.get("q") ?? "") === qDeferred) return;
-    setParam("q", qDeferred, "replace");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qDeferred]);
 
   // Range threshold
   const rangeThreshold = useMemo(() => {
@@ -551,8 +512,8 @@ export const Chat = () => {
     }
   }, [urlRange]);
 
-  // Messages (filtered + sorted)
-  const messages = useMemo(() => {
+  // Messages stage 1 (filters + sort, no `nodes` dep so live node churn can't rebuild the list)
+  const baseMessages = useMemo(() => {
     if (!selectedChannel) return [];
     const channelObj = (effectiveChat?.channels as any)?.[selectedChannel];
     if (!channelObj?.messages) return [];
@@ -590,16 +551,6 @@ export const Chat = () => {
       msgs = msgs.filter((m: any) =>
         Array.isArray(m.sender) ? m.sender.map(String).includes(viaId) : false
       );
-    }
-
-    if (onlyUnknownEndpoints) {
-      msgs = msgs.filter((m: any) => {
-        const from = String(m.from ?? "");
-        const to = String(m.to ?? "");
-        const fromKnown = from in (nodes as any);
-        const toKnown = isBroadcast(to) ? true : to in (nodes as any);
-        return !fromKnown || !toKnown;
-      });
     }
 
     const q = (urlQ ?? "").trim().toLowerCase();
@@ -652,15 +603,31 @@ export const Chat = () => {
     urlFocus,
     urlDir,
     urlSort,
-    nodes,
     urlFrom,
     urlTo,
     urlVia,
     urlHopsMin,
     urlHopsMax,
-    onlyUnknownEndpoints,
     requireVia,
   ]);
+
+  // Known-node ids, only materialized for the off-by-default unknown-endpoints filter
+  const knownNodeIds = useMemo(
+    () => (onlyUnknownEndpoints ? new Set(Object.keys(nodes as any)) : null),
+    [onlyUnknownEndpoints, nodes]
+  );
+
+  // Messages stage 2: unknown-endpoints filter; keeps stage-1 identity when the flag is off
+  const messages = useMemo(() => {
+    if (!knownNodeIds) return baseMessages;
+    return (baseMessages as any[]).filter((m: any) => {
+      const from = String(m.from ?? "");
+      const to = String(m.to ?? "");
+      const fromKnown = knownNodeIds.has(from);
+      const toKnown = isBroadcast(to) ? true : knownNodeIds.has(to);
+      return !fromKnown || !toKnown;
+    });
+  }, [baseMessages, knownNodeIds]);
 
   const selectedMessage = useMemo(() => {
     if (!urlMsg) return undefined;
@@ -794,40 +761,6 @@ export const Chat = () => {
     nodes,
   ]);
 
-  const copyTextToClipboard = async (text: string) => {
-    // Modern clipboard works best on secure contexts (https)
-    try {
-      if (navigator.clipboard && (window as any).isSecureContext) {
-        await navigator.clipboard.writeText(text);
-        return true;
-      }
-    } catch {
-      // fall through
-    }
-
-    // Fallback: textarea + execCommand("copy")
-    try {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.setAttribute("readonly", "");
-      ta.style.position = "fixed";
-      ta.style.top = "0";
-      ta.style.left = "0";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-
-      ta.focus();
-      ta.select();
-      ta.setSelectionRange(0, text.length);
-
-      const ok = document.execCommand("copy");
-      document.body.removeChild(ta);
-      return ok;
-    } catch {
-      return false;
-    }
-  };
-
   const copyLink = async () => {
     const url = window.location.href;
     const ok = await copyTextToClipboard(url);
@@ -851,7 +784,6 @@ export const Chat = () => {
       ],
       "push"
     );
-    setFocusPicker("");
   };
 
   const clearFocus = () => {
@@ -887,22 +819,6 @@ export const Chat = () => {
       .slice(0, 10)
       .map(([nodeId, count]) => ({ nodeId, count }));
   }, [messages]);
-
-  // Focus picker matches
-  const focusMatches = useMemo(() => {
-    const q = focusPickerDeferred.trim().toLowerCase();
-    if (q.length < 2) return [];
-    const all = Object.entries(nodes as any).map(([id, n]: any) => ({
-      id: String(id),
-      short: String(n?.shortname ?? ""),
-      long: String(n?.longname ?? ""),
-    }));
-    return all
-      .filter((x) =>
-        (`${x.id} ${x.short} ${x.long}`).toLowerCase().includes(q)
-      )
-      .slice(0, 12);
-  }, [nodes, focusPickerDeferred]);
 
   // Focus stats
   const focusStats = useMemo(() => {
@@ -971,23 +887,30 @@ export const Chat = () => {
 
   // Virtualized list ref
   const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
 
-  // Scroll selected message into view
+  // Scroll selected message into view: once per urlMsg+channel; msgFound flips when a
+  // late-arriving deep-linked message shows up, so the ladder can still run then.
   const pendingScrollRef = useRef<string | null>(null);
+  const lastScrolledKeyRef = useRef<string>("");
+  const msgFound = !!selectedMessage;
   useEffect(() => {
     if (!urlMsg) {
       pendingScrollRef.current = null;
+      lastScrolledKeyRef.current = "";
       return;
     }
 
-    const idx = (messages as any[]).findIndex(
-      (m: any) => String(m.id) === String(urlMsg)
-    );
-    if (idx < 0) {
+    if (!msgFound) {
+      // Not in the list — clear the key so a later reveal (filter/range change) re-scrolls
       pendingScrollRef.current = null;
+      lastScrolledKeyRef.current = "";
       return;
     }
 
+    const key = `${selectedChannel ?? ""}|${urlMsg}`;
+    if (lastScrolledKeyRef.current === key) return;
     pendingScrollRef.current = urlMsg;
 
     const attempts = [50, 150, 400, 800];
@@ -998,11 +921,14 @@ export const Chat = () => {
         setTimeout(() => {
           if (pendingScrollRef.current !== urlMsg) return;
 
-          const currentIdx = (messages as any[]).findIndex(
+          const currentIdx = (messagesRef.current as any[]).findIndex(
             (m: any) => String(m.id) === String(urlMsg)
           );
           if (currentIdx < 0) return;
 
+          // Recorded at fire time (not schedule time): a StrictMode remount
+          // clears the timers before they fire and must not swallow the scroll
+          lastScrolledKeyRef.current = key;
           virtuosoRef.current?.scrollToIndex({
             index: currentIdx,
             align: "center",
@@ -1015,8 +941,7 @@ export const Chat = () => {
     return () => {
       timers.forEach(clearTimeout);
     };
-     
-  }, [urlMsg, messages, selectedChannel]);
+  }, [urlMsg, selectedChannel, msgFound]);
 
   // Export menu click-outside (desktop only)
   useEffect(() => {
@@ -1074,8 +999,8 @@ export const Chat = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtersOpen, exportOpen, urlMsg, mobileSheet]);
 
-  // ---- Export rows + handlers ----
-  const exportRows = useMemo(() => {
+  // ---- Export rows + handlers (rows built at click time; render only needs counts) ----
+  const buildExportRows = () => {
     const ch = selectedChannel ?? "";
     return (messages as any[]).map((m) => {
       const fromId = String(m.from ?? "");
@@ -1101,7 +1026,7 @@ export const Chat = () => {
         text: String(m.text ?? ""),
       };
     });
-  }, [messages, nodes, selectedChannel]);
+  };
 
   const exportFilenameBase = useMemo(() => {
     const base = selectedView?.key || (selectedChannel ?? "ch");
@@ -1110,13 +1035,14 @@ export const Chat = () => {
   }, [selectedView, selectedChannel]);
 
   const doExportJson = () => {
+    const rows = buildExportRows();
     const payload = {
       exportedAt: new Date().toISOString(),
       channel: selectedChannel ?? "",
       channelLabel: selectedChannel ? channelLabel(selectedChannel) : "",
       params: Object.fromEntries(searchParams.entries()),
-      count: exportRows.length,
-      rows: exportRows,
+      count: rows.length,
+      rows,
     };
 
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
@@ -1128,6 +1054,7 @@ export const Chat = () => {
   };
 
   const doExportCsv = () => {
+    const rows = buildExportRows();
     const cols = [
       "channel",
       "message_id",
@@ -1144,7 +1071,7 @@ export const Chat = () => {
     ] as const;
 
     const header = cols.join(",");
-    const lines = exportRows.map((r) =>
+    const lines = rows.map((r) =>
       cols.map((c) => csvEscape((r as any)[c])).join(",")
     );
 
@@ -1410,7 +1337,7 @@ export const Chat = () => {
               <ExportMenu
                 open={exportOpen}
                 setOpen={setExportOpen}
-                exportRowsCount={exportRows.length}
+                exportRowsCount={messages.length}
                 doExportCsv={doExportCsv}
                 doExportJson={doExportJson}
                 exportMenuRef={exportMenuRef}
@@ -1474,12 +1401,10 @@ export const Chat = () => {
           {/* Toolbar row: mobile keeps ONLY search; desktop keeps full controls */}
           <div className="mt-3 flex flex-col lg:flex-row gap-2 lg:items-center lg:justify-between">
             <div className="flex-1 min-w-0 lg:min-w-65">
-              <input
-                ref={searchInputRef}
-                value={qInput}
-                onChange={(e) => setQInput(e.target.value)}
-                placeholder="Search messages… (press / to focus)"
-                className="w-full rounded-md border border-gray-300/70 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 placeholder:text-gray-400 focus:outline-hidden focus:ring-2 focus:ring-indigo-500/60"
+              <ChatSearchInput
+                urlQ={urlQ}
+                setParam={setParam}
+                inputRef={searchInputRef}
               />
             </div>
 
@@ -1741,9 +1666,6 @@ export const Chat = () => {
               <FocusPanel
                 urlNode={urlNode}
                 nodes={nodes}
-                focusPicker={focusPicker}
-                setFocusPicker={setFocusPicker}
-                focusMatches={focusMatches}
                 frequentNodes={frequentNodes}
                 applyFocus={applyFocus}
                 clearFocus={clearFocus}
@@ -2032,7 +1954,7 @@ export const Chat = () => {
                   setMobileSheet(null);
                 }}
               >
-                Export CSV ({exportRows.length})
+                Export CSV ({messages.length})
               </button>
 
               <button
@@ -2043,7 +1965,7 @@ export const Chat = () => {
                   setMobileSheet(null);
                 }}
               >
-                Export JSON ({exportRows.length})
+                Export JSON ({messages.length})
               </button>
             </div>
           </div>
@@ -2058,9 +1980,6 @@ export const Chat = () => {
         <FocusPanel
           urlNode={urlNode}
           nodes={nodes}
-          focusPicker={focusPicker}
-          setFocusPicker={setFocusPicker}
-          focusMatches={focusMatches}
           frequentNodes={frequentNodes}
           applyFocus={applyFocus}
           clearFocus={clearFocus}

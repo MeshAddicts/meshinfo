@@ -8,88 +8,83 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { toast } from "../components/toastStore";
 import { env } from "../env";
-import { useLiveEvent } from "../hooks/useLiveEvent";
 import { reverseGeocode } from "../maps/geocoder";
 import { buildMapStyle, ensureBuildings3D, ensureTerrain, isDarkBasemap, type OsmBasemap, removeBuildings3D, removeTerrain } from "../maps/mapStyle";
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
-import { NodeRole, roleTitles } from "../types";
+import { type ITraceroutesResponse } from "../types";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
-import { normalizeNodeId8 } from "../utils/normalizeNodeId8";
 import { prefersReducedMotion } from "../utils/reducedMotion";
-import { ActivityLayer } from "./map/activityLayer";
-import { ClusterDonutLayer } from "./map/clusterDonutLayer";
-import { type ClusterHover,ClusterHoverCard } from "./map/ClusterHoverCard";
-import { FiltersResetPill } from "./map/FiltersResetPill";
-import { circularMeanLng } from "./map/geo";
-import { bestSnr, computeMaxRange, geodesicCircleCoords, mbRoleColorExpr, queryTerrainElevationMSL, relativeTime, signalBarsHtml, TRANSPARENT_1PX_PNG } from "./map/helpers";
-import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/linkFeatures";
-import { CoverageLookupCard } from "./map/live/CoverageLookupCard";
-import { LiveCoveragePill } from "./map/live/LiveCoveragePill";
-import { useCoverageLookup } from "./map/live/useCoverageLookup";
-import { useServerCoverageTiles } from "./map/live/useServerCoverageTiles";
-import { LosTubeLayer } from "./map/losTubeLayer";
-import { MapCoveragePanel } from "./map/MapCoveragePanel";
-import { MapDetailsPanel } from "./map/MapDetailsPanel";
-import { MapHealthWidget } from "./map/MapHealthWidget";
-import { MapLosPanel } from "./map/MapLosPanel";
-import { MapScanPanel } from "./map/MapScanPanel";
-import { MapSearchBar } from "./map/MapSearchBar";
-import { MapSettingsPanel } from "./map/MapSettingsPanel";
-import { MapToolPrompt, MapToolsDrawer } from "./map/MapToolsDrawer";
-import { MapTraceroutePanel } from "./map/MapTraceroutePanel";
-import { type PacketArc, PacketCoalescer, type RawPacket } from "./map/packetCoalescer";
-import { packetColor } from "./map/packetColors";
-import { findPathsBetween } from "./map/pathAnalysis";
+import { type ClusterHover,ClusterHoverCard } from "./map/components/ClusterHoverCard";
+import { FiltersResetPill } from "./map/components/FiltersResetPill";
+import { type CoordPillSink, MapCoordinatePill } from "./map/components/MapCoordinatePill";
+import { MapCoveragePanel } from "./map/components/MapCoveragePanel";
+import { MapDetailsPanel } from "./map/components/MapDetailsPanel";
+import { MapHealthWidget } from "./map/components/MapHealthWidget";
+import { MapLosPanel } from "./map/components/MapLosPanel";
+import { MapScanPanel } from "./map/components/MapScanPanel";
+import { MapSearchBar } from "./map/components/MapSearchBar";
+import { MapSettingsPanel } from "./map/components/MapSettingsPanel";
+import { MapToolPrompt, MapToolsDrawer } from "./map/components/MapToolsDrawer";
+import { type CorridorSort, MapTraceCorridorsPanel, type TraceCorridor } from "./map/components/MapTraceCorridorsPanel";
+import { MapTraceroutePanel } from "./map/components/MapTraceroutePanel";
+import { useCoverageCompute } from "./map/hooks/useCoverageCompute";
+import { useCoverageMergeOrigins } from "./map/hooks/useCoverageMergeOrigins";
+import { useCoverageState } from "./map/hooks/useCoverageState";
+import { useLivePacketArcs } from "./map/hooks/useLivePacketArcs";
+import { useLosCompute } from "./map/hooks/useLosCompute";
+import { useLosState } from "./map/hooks/useLosState";
+import { useMapKeyboardNav } from "./map/hooks/useMapKeyboardNav";
+import { useScanCompute } from "./map/hooks/useScanCompute";
+import { useScanState } from "./map/hooks/useScanState";
+import { useToolUrlSync } from "./map/hooks/useToolUrlSync";
+import { useTraceCompute } from "./map/hooks/useTraceCompute";
+import { useTraceDraw } from "./map/hooks/useTraceDraw";
+import { useTraceFlyover } from "./map/hooks/useTraceFlyover";
+import { useTraceLiveEvents } from "./map/hooks/useTraceLiveEvents";
+import { useUrlMapSync } from "./map/hooks/useUrlMapSync";
+import type { ActivityLayer } from "./map/layers/activityLayer";
+import type { ClusterDonutLayer } from "./map/layers/clusterDonutLayer";
+import type { LosTubeLayer } from "./map/layers/losTubeLayer";
+import { bindMapHoverUi } from "./map/layers/mapHoverUi";
+import { ensureMapSourcesAndLayers } from "./map/layers/mapLayers";
 import {
+  anyIdsFanned,
   autoSpiderfyOverlappingPlainNodes,
   autoSpiderfyVisibleClusters,
+  dismissClusterSpiderfy,
   dismissPlainSpiderfy,
+  getActiveFanCenters,
   isSpiderfied,
   removeSpiderfyLayers,
   spiderfy,
   SPIDERFY_LAYER_LABELS,
+  SPIDERFY_LAYER_LEGS,
+  SPIDERFY_LAYER_LEGS_SHADOW,
   SPIDERFY_LAYER_NODES,
   SPIDERFY_SOURCE_NODES,
   spiderfyFeatures,
-  unspiderfy,
   updateSpiderfyPositions,
-} from "./map/spiderfy";
-import { LS_KEYS, readJson, writeJson } from "./map/storage";
-import type { IMapNode, LinkMode, MapProvider, NodeDetailsData, NodeLike } from "./map/types";
-import { useCoverageCompute } from "./map/useCoverageCompute";
-import { useCoverageMergeOrigins } from "./map/useCoverageMergeOrigins";
-import { useCoverageState } from "./map/useCoverageState";
-import { useLosCompute } from "./map/useLosCompute";
-import { useLosState } from "./map/useLosState";
-import { useScanCompute } from "./map/useScanCompute";
-import { useScanState } from "./map/useScanState";
-import { useUrlMapSync } from "./map/useUrlMapSync";
+} from "./map/layers/spiderfy";
+import { circularMeanLng, normalizeLng } from "./map/lib/geo";
+import { computeMaxRange, formatLatLng, geodesicCircleCoords, TRANSPARENT_1PX_PNG } from "./map/lib/helpers";
+import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/lib/linkFeatures";
+import { computeTraceEdgeStats, findPathsBetween, findRunsBetween } from "./map/lib/pathAnalysis";
+import { LS_KEYS, readJson, writeJson } from "./map/lib/storage";
+import type { IMapNode, LinkMode, MapProvider, NodeDetailsData, NodeLike } from "./map/lib/types";
 import {
   applyClusterVisibility,
   buildNodesGeoJSON,
   DEFAULT_NODE_COLOR,
   emptyLineFeatureCollection,
-  escapeHtml,
   nodesDataSignature,
   ROLE_COLORS,
-} from "./map/utils";
-
-// Cap arcs spawned per flush so a burst can't stall a frame (drop oldest excess).
-const MAX_ARCS_PER_FLUSH = 40;
-
-const samePoint = (a: [number, number], b: [number, number]) => a[0] === b[0] && a[1] === b[1];
-
-type TraceEv = { from?: number | string; to?: number | string; route_ids?: (number | string)[]; id?: number | string };
-// Wait this long for other gateways' copies of one traceroute before drawing the best.
-const TRACEROUTE_DEBOUNCE_MS = 1200;
-
-/** Map a reported signal to a 0..1 arc intensity — prefer SNR, fall back to RSSI. */
-function packetWeight(rssi?: number, snr?: number): number {
-  const clamp = (v: number) => Math.max(0.15, Math.min(1, v));
-  if (typeof snr === "number") return clamp((snr + 20) / 30);
-  if (typeof rssi === "number") return clamp((rssi + 120) / 90);
-  return 0.5;
-}
+} from "./map/lib/utils";
+import { CoverageLookupCard } from "./map/live/CoverageLookupCard";
+import { LiveCoveragePill } from "./map/live/LiveCoveragePill";
+import { useCoverageLookup } from "./map/live/useCoverageLookup";
+import { useServerCoverageTiles } from "./map/live/useServerCoverageTiles";
+import { haversineKm } from "./map/rf/losAnalysis";
+import type { ScanClass } from "./map/rf/scanAnalysis";
 
 export function Map() {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -110,19 +105,19 @@ export function Map() {
   const focusedNodeIdRef = useRef<string | null>(null);
   // Sticky after first style.load — `isStyleLoaded()` momentarily lies post-removeSource.
   const styleEverLoadedRef = useRef(false);
+  // Bumped per style.load so effects can re-push data into recreated sources/layers.
+  const [styleEpoch, setStyleEpoch] = useState(0);
   const mbSelectedIdRef = useRef<string | null>(null);
   // Last node-source signature; skips redundant setData. -1 = never set.
   const lastNodesSigRef = useRef<number>(-1);
   // Live packet-arc animation plumbing.
   const activityLayerRef = useRef<ActivityLayer | null>(null);
-  const coalescerRef = useRef<PacketCoalescer | null>(null);
-  const pendingArcsRef = useRef<PacketArc[]>([]);
-  const flushRafRef = useRef<number | null>(null);
-  // Per-mesh-id debounce of multi-gateway traceroute copies → one comet, longest route.
-  const tracerouteBufRef = useRef<Map<string, { ev: TraceEv; timer: ReturnType<typeof setTimeout> }> | null>(null);
+  /** 3D graded tube for the analyzed route; created once per map. */
+  const traceTubeLayerRef = useRef<LosTubeLayer | null>(null);
+  /** One-shot play=1 tour request from a shared deep link. */
+  const tracePendingPlayRef = useRef(false);
   const mbHandlersBoundRef = useRef(false);
   const mbCurrentStyleUrlRef = useRef<string | null>(null);
-  const mbKeydownHandlerRef = useRef<((e: KeyboardEvent) => void) | null>(null);
   const mbTouchCleanupRef = useRef<(() => void) | null>(null);
 
   // Set by whichever provider is active
@@ -130,7 +125,7 @@ export function Map() {
   const handleLinkHoverRef = useRef<(otherId: string | null) => void>(() => {});
   const selectedNodeIdRef = useRef<string | null>(null);
 
-  const { data: rawNodes = {} } = useGetNodesQuery();
+  const { data: rawNodes = {}, isError: nodesQueryFailed } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
   const { data: rawTraceroutes = [], isLoading: rawTraceroutesLoading } = useGetTraceroutesQuery();
 
@@ -194,7 +189,49 @@ export function Map() {
   const [toolFromId, setToolFromId] = useState<string | null>(null);
   const [toolToId, setToolToId] = useState<string | null>(null);
   const [toolVirtualPos, setToolVirtualPos] = useState<[number, number] | null>(null);
+  // Traceroute tool: which observed path is analyzed/bold (null = most recent),
+  // and whether the direct-path counterfactual overlay is drawn.
+  const [traceSelectedSig, setTraceSelectedSig] = useState<string | null>(null);
+  const [traceShowDirect, setTraceShowDirect] = useState(true);
+  // Busiest-links column: viewport filter + a moveend tick to recompute on pan
+  const [traceCorridorsInView, setTraceCorridorsInView] = useState(true);
+  const [traceCorridorSort, setTraceCorridorSort] = useState<CorridorSort>("busiest");
+  const [mapMoveEpoch, setMapMoveEpoch] = useState(0);
 
+  // Pair-scoped traceroute history for the tool — escapes the 1000-row global
+  // window that makes most pairs come back empty. Merged with the global cache
+  // so routes crossing the pair as intermediate hops still count.
+  const tracePairActive = activeTool === "traceroute" && !!toolFromId && !!toolToId;
+  // isLoading (not isFetching): true only on a pair's first fetch, so throttled
+  // background refetches neither flicker the panel nor re-gate the fitBounds.
+  const { data: pairTraceroutes = [], isLoading: pairTraceroutesLoading } = useGetTraceroutesQuery(
+    { from: toolFromId ?? "", to: toolToId ?? "", limit: 500 },
+    { skip: !tracePairActive },
+  );
+  const traceData = useMemo(() => {
+    if (pairTraceroutes.length === 0) return rawTraceroutes;
+    // globalThis: the component name shadows the Map constructor
+    const byKey = new globalThis.Map<string, ITraceroutesResponse>();
+    for (const tr of [...rawTraceroutes, ...pairTraceroutes]) byKey.set(`${tr.id}:${tr.from}`, tr);
+    return [...byKey.values()];
+  }, [rawTraceroutes, pairTraceroutes]);
+  const tracePaths = useMemo(
+    () => (activeTool === "traceroute" && toolFromId && toolToId
+      ? findPathsBetween(toolFromId, toolToId, traceData)
+      : []),
+    [activeTool, toolFromId, toolToId, traceData],
+  );
+  const traceSelectedPath = useMemo(
+    () => tracePaths.find((p) => p.hops.join(">") === traceSelectedSig) ?? tracePaths[0] ?? null,
+    [tracePaths, traceSelectedSig],
+  );
+  // Chronological run history for the time-machine strip (oldest first)
+  const traceRuns = useMemo(
+    () => (activeTool === "traceroute" && toolFromId && toolToId
+      ? findRunsBetween(toolFromId, toolToId, traceData)
+      : []),
+    [activeTool, toolFromId, toolToId, traceData],
+  );
   // 3D terrain
   const [terrain3D, setTerrain3D] = useState<boolean>(() => readJson<boolean>(LS_KEYS.terrain3D, true));
   const terrainExaggeration = 1.5;
@@ -221,8 +258,13 @@ export function Map() {
   const losTubeLayerRef = useRef<LosTubeLayer | null>(null);
   /** Suppresses the cursor-elevation mousemove handler so marker drag doesn't stutter. */
   const isDraggingMarkerRef = useRef(false);
-  /** Terrain elevation (MSL m) under the cursor. */
-  const [hoverElevationM, setHoverElevationM] = useState<number | null>(null);
+  /** Hover/center feed for the coordinate pill (per-frame state lives there). */
+  const coordPillSinkRef = useRef<CoordPillSink | null>(null);
+  /** Whether the jump-to-coordinate pin is currently dropped. */
+  const [hasCoordPin, setHasCoordPin] = useState(false);
+  /** Draggable jump-to pin; independent of tool state. */
+  const coordPinMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const coordPinPopupRef = useRef<maplibregl.Popup | null>(null);
 
   const [settingsPanelOpen, setSettingsPanelOpen] = useState<boolean>(() => {
     const stored = readJson<boolean | null>(LS_KEYS.settingsPanelOpen, null);
@@ -290,7 +332,11 @@ export function Map() {
     if (!settingsPanelOpen) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setSettingsPanelOpen(false);
+      if (e.key !== "Escape") return;
+      // Leave Escape for an editable field (e.g. the coordinate pill's input).
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      setSettingsPanelOpen(false);
     };
 
     document.addEventListener("keydown", onKeyDown);
@@ -366,6 +412,14 @@ export function Map() {
   const activeToolRef = useRef(activeTool);
   const toolStepRef = useRef(toolStep);
   const toolFromIdRef = useRef(toolFromId);
+  const toolToIdRef = useRef(toolToId);
+  // Merge-origin pick mode, read by the bind-once node/cluster click handlers
+  const pickingMergeOriginRef = useRef(mergeOrigins.pickingMergeOrigin);
+  const addMergeOriginByIdRef = useRef(mergeOrigins.addCoverageMergeOriginById);
+  // Coverage double-Esc guard: timestamp of the first (arming) Esc press
+  const coverageEscArmedAtRef = useRef(0);
+  // Scan-from-here overlay state, read by the bind-once Escape handler
+  const keepCoveragePaintRef = useRef(coverage.keepCoveragePaint);
 
   const isPickingNode = activeTool != null && toolStep !== "result";
   const terrain3DRef = useRef(terrain3D);
@@ -389,8 +443,12 @@ export function Map() {
   useEffect(() => { linkModeRef.current = linkMode; }, [linkMode]);
   useEffect(() => { roleFilterRef.current = roleFilter; }, [roleFilter]);
   useEffect(() => { activeToolRef.current = activeTool; }, [activeTool]);
+  useEffect(() => { pickingMergeOriginRef.current = mergeOrigins.pickingMergeOrigin; }, [mergeOrigins.pickingMergeOrigin]);
+  useEffect(() => { addMergeOriginByIdRef.current = mergeOrigins.addCoverageMergeOriginById; }, [mergeOrigins.addCoverageMergeOriginById]);
+  useEffect(() => { keepCoveragePaintRef.current = coverage.keepCoveragePaint; }, [coverage.keepCoveragePaint]);
   useEffect(() => { toolStepRef.current = toolStep; }, [toolStep]);
   useEffect(() => { toolFromIdRef.current = toolFromId; }, [toolFromId]);
+  useEffect(() => { toolToIdRef.current = toolToId; }, [toolToId]);
   useEffect(() => { terrain3DRef.current = terrain3D; }, [terrain3D]);
   useEffect(() => { buildings3DRef.current = buildings3D; }, [buildings3D]);
   useEffect(() => { channelFilterRef.current = channelFilter; }, [channelFilter]);
@@ -403,6 +461,18 @@ export function Map() {
     }
   }, [isPickingNode]);
 
+  // Dragging an endpoint marker detaches any node anchor into a virtual pin
+  const { setLosVirtualFrom, setLosVirtualTo } = losState;
+  const onLosEndpointDragged = useCallback((which: "from" | "to", pos: [number, number]) => {
+    if (which === "from") {
+      setToolFromId(null);
+      setLosVirtualFrom(pos);
+    } else {
+      setToolToId(null);
+      setLosVirtualTo(pos);
+    }
+  }, [setToolFromId, setToolToId, setLosVirtualFrom, setLosVirtualTo]);
+
   // LOS compute + tube layer effects
   const losCompute = useLosCompute({
     activeTool, toolStep, toolFromId, toolToId,
@@ -410,22 +480,199 @@ export function Map() {
     losVirtualTo: losState.losVirtualTo,
     losFromHeightM: losState.losFromHeightM,
     losToHeightM: losState.losToHeightM,
-    provider, terrain3D, nodes,
+    losFreqMhz: losState.losFreqMhz,
+    terrain3D, styleEpoch, nodes,
+    nodesLoadFailed: nodesQueryFailed,
     losResult: losState.losResult,
     mbMapRef, losTubeLayerRef,
+    isDraggingMarkerRef,
+    onEndpointDragged: onLosEndpointDragged,
     setLosResult: losState.setLosResult,
     setLosDemSource: losState.setLosDemSource,
     setLosError: losState.setLosError,
     setIsComputingLos: losState.setIsComputingLos,
+    setLosTerrainWarning: losState.setLosTerrainWarning,
   });
+
+  // Lit-up picking: nodes sharing any observed route with the picked origin
+  const traceCandidates = useMemo(() => {
+    if (activeTool !== "traceroute" || toolStep !== "pickTo" || !toolFromId) return [];
+    const a = normNodeId(toolFromId);
+    if (!a) return [];
+    const set = new Set<string>();
+    for (const tr of traceData) {
+      const tFrom = normNodeId(tr?.from);
+      const tTo = normNodeId(tr?.to);
+      if (!tFrom || !tTo) continue;
+      const path = [
+        tFrom,
+        ...((tr.route_ids ?? tr.route ?? []) as (string | number)[]).map((r) => normNodeId(r)).filter(Boolean),
+        tTo,
+      ];
+      if (!path.includes(a)) continue;
+      // Positioned candidates only — the rings and the prompt count must agree
+      for (const h of path) {
+        if (!h || h === a) continue;
+        const n = nodes[h] ?? nodes[`!${h}`];
+        if (n?.map_position) set.add(h);
+      }
+    }
+    return [...set];
+  }, [activeTool, toolStep, toolFromId, traceData, nodes]);
+
+  // Position signature of the analyzed hops: a value-stable string, so SSE
+  // identity churn doesn't retrigger grading but a hop actually moving does.
+  const tracePosKey = useMemo(() => {
+    if (!traceSelectedPath) return "";
+    return traceSelectedPath.hops
+      .map((id) => {
+        const p = (nodes[id] ?? nodes[`!${id}`])?.map_position;
+        return p ? `${p[0].toFixed(5)},${p[1].toFixed(5)}` : "?";
+      })
+      .join("|");
+  }, [traceSelectedPath, nodes]);
+
+  // Busiest observed links, ranked by traversal count — the tool's browse mode.
+  // Counted over rawTraceroutes (the uniform global window), NOT traceData:
+  // merging the open pair's deep history would self-inflate whichever corridor
+  // was clicked. Stats are split out so pan/zoom only re-runs the cheap filter.
+  const traceEdgeStats = useMemo(
+    () => (activeTool === "traceroute" ? computeTraceEdgeStats(rawTraceroutes) : []),
+    [activeTool, rawTraceroutes],
+  );
+  const traceCorridors = useMemo((): TraceCorridor[] => {
+    if (traceEdgeStats.length === 0) return [];
+    const bounds = traceCorridorsInView ? mbMapRef.current?.getBounds() : null;
+    // Seam-tolerant: wrapped node lngs must also match against ±360 aliases,
+    // since a viewport straddling the antimeridian has unwrapped bounds.
+    const inBounds = (p: [number, number]): boolean =>
+      !bounds ||
+      bounds.contains(p) ||
+      bounds.contains([p[0] + 360, p[1]]) ||
+      bounds.contains([p[0] - 360, p[1]]);
+    const out: TraceCorridor[] = [];
+    for (const e of traceEdgeStats) {
+      const na = nodes[e.aId] ?? nodes[`!${e.aId}`];
+      const nb = nodes[e.bId] ?? nodes[`!${e.bId}`];
+      if (!na?.map_position || !nb?.map_position) continue;
+      if (!(inBounds(na.map_position) && inBounds(nb.map_position))) continue;
+      out.push({
+        aId: e.aId,
+        bId: e.bId,
+        aLabel: na.shortname?.trim() || e.aId.slice(0, 8),
+        bLabel: nb.shortname?.trim() || e.bId.slice(0, 8),
+        aPos: na.map_position,
+        bPos: nb.map_position,
+        count: e.count,
+        distanceKm: haversineKm(na.map_position, nb.map_position),
+        lastTimestamp: e.lastTimestamp,
+      });
+    }
+    out.sort((x, y) =>
+      traceCorridorSort === "longest"
+        ? y.distanceKm - x.distanceKm || y.count - x.count
+        : y.count - x.count || y.lastTimestamp - x.lastTimestamp,
+    );
+    return out.slice(0, 15);
+    // mapMoveEpoch: pan/zoom re-runs the viewport filter
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [traceEdgeStats, nodes, traceCorridorsInView, traceCorridorSort, mapMoveEpoch]);
+
+  // Traceroute per-hop RF analysis ("Why This Path") + graded tube / pylons / direct overlay
+  const traceCompute = useTraceCompute({
+    activeTool, toolStep,
+    path: traceSelectedPath,
+    posKey: tracePosKey,
+    terrain3D, styleEpoch,
+    showDirect: traceShowDirect,
+    nodesRef, mbMapRef, traceTubeLayerRef,
+  });
+
+  // "Ride the Packet": camera chase along the analyzed route
+  const traceFlyover = useTraceFlyover({ mbMapRef, activityLayerRef, nodesRef });
+  /** View persistence (localStorage/URL/pill), set by the bind-once moveend block. */
+  const saveViewRef = useRef<() => void>(() => {});
+  // The tour's final moveend races the flying flag — sync once on tour end
+  useEffect(() => {
+    if (!traceFlyover.isFlying) saveViewRef.current();
+  }, [traceFlyover.isFlying]);
+  // Ref twins for the bind-once map handlers (Esc, ambient-spawn gate)
+  const flyoverCancelRef = useRef(traceFlyover.cancelFlyover);
+  flyoverCancelRef.current = traceFlyover.cancelFlyover;
+  const flyoverFlyingRef = traceFlyover.flyingRef;
+
+  // Ambient packet arcs + live traceroute plumbing (SSE → comets + refetch)
+  useLivePacketArcs({
+    activityLayerRef, clusterDonutLayerRef, mbMapRef, nodesRef,
+    clusterEnabledRef, livePacketsRef, flyoverFlyingRef,
+  });
+  const { clearTraceRefetchTimer } = useTraceLiveEvents({
+    activeTool, activeToolRef, toolStepRef, toolFromIdRef, toolToIdRef,
+    livePacketsRef, flyoverFlyingRef, clusterEnabledRef,
+    nodesRef, mbMapRef, clusterDonutLayerRef, activityLayerRef,
+  });
+
+  // Shareable tool deep links (?tool=los|traceroute&from&to…)
+  useToolUrlSync({
+    activeTool, toolStep, toolFromId, toolToId,
+    setActiveTool, setToolStep, setToolFromId, setToolToId,
+    losState, tracePendingPlayRef, traceSelectedPath, tracePosKey, styleEpoch,
+    startFlyover: traceFlyover.startFlyover,
+  });
+
+  // Observed paths + candidate rings on the map (owns endpoint/ghost markers)
+  const { traceFromMarkerRef, traceToMarkerRef, traceFitKeyRef, traceGhostMarkersRef } = useTraceDraw({
+    mbMapRef, nodesRef,
+    activeTool, toolStep, toolFromId, toolToId,
+    tracePaths, traceSelectedPath, traceCandidates,
+    pairTraceroutesLoading, styleEpoch,
+  });
+
+  // Stable callbacks for the memoized trace panels (same pattern as scan's)
+  const handleToolPanelClose = useCallback(() => resetToolRef.current(), []);
+  const handlePanelNodeSelect = useCallback((id: string) => handleNodeSelectRef.current(id), []);
+  const handleTraceSelectPath = useCallback((sig: string) => {
+    traceFlyover.cancelFlyover(); // a tour follows one path only
+    tracePendingPlayRef.current = false;
+    setTraceSelectedSig(sig);
+    // cancelFlyover is identity-stable
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const handleToggleFlyover = useCallback(() => {
+    if (traceFlyover.isFlying) traceFlyover.cancelFlyover();
+    else if (traceSelectedPath) traceFlyover.startFlyover(traceSelectedPath);
+    // start/cancel are identity-stable; only the data deps matter
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [traceFlyover.isFlying, traceSelectedPath]);
+  const traceActivePair = useMemo(
+    () => (toolFromId && toolToId ? ([normNodeId(toolFromId), normNodeId(toolToId)] as [string, string]) : null),
+    [toolFromId, toolToId],
+  );
+
+  // Corridor row click → jump straight to the analysis for that pair
+  const handleCorridorPick = useCallback((aId: string, bId: string) => {
+    traceFlyover.cancelFlyover();
+    tracePendingPlayRef.current = false;
+    setTraceSelectedSig(null);
+    setToolFromId(aId);
+    setToolToId(bId);
+    setToolStep("result");
+    // The pick flow's crosshair must not survive a jump past pickTo
+    const canvas = mbMapRef.current?.getCanvas();
+    if (canvas) canvas.style.cursor = "";
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Scan compute + per-class visibility + clear-on-tool-change + hover effects
   const scanCompute = useScanCompute({
     activeTool, toolStep, toolFromId, toolVirtualPos,
-    provider, terrain3D, nodes,
+    terrain3D, styleEpoch, nodes,
+    nodesLoadFailed: nodesQueryFailed,
     scanTxDbm: scan.scanTxDbm,
     scanAntennaDbi: scan.scanAntennaDbi,
     scanRxAntennaDbi: scan.scanRxAntennaDbi,
+    scanRxHeightM: scan.scanRxHeightM,
+    scanFreqMhz: scan.scanFreqMhz,
     scanEffectiveSensitivityDbm: scan.scanEffectiveSensitivityDbm,
     scanAggressionIdx: scan.scanAggressionIdx,
     scanClutterEnabled: scan.scanClutterEnabled,
@@ -433,6 +680,7 @@ export function Map() {
     scanBuildingsEnabled: scan.scanBuildingsEnabled,
     scanAntennaHeightM: scan.scanAntennaHeightM,
     scanReliability: scan.scanReliability,
+    scanRetryNonce: scan.scanRetryNonce,
     hiddenScanClasses: scan.hiddenScanClasses,
     scanSummary: scan.scanSummary,
     scanHoverId: scan.scanHoverId,
@@ -440,6 +688,7 @@ export function Map() {
     setScanSummary: scan.setScanSummary,
     setIsScanning: scan.setIsScanning,
     setScanError: scan.setScanError,
+    setScanTerrainWarning: scan.setScanTerrainWarning,
     setScanDemSource: scan.setScanDemSource,
     setScanClutterStatus: scan.setScanClutterStatus,
     setScanCanopyStatus: scan.setScanCanopyStatus,
@@ -485,15 +734,44 @@ export function Map() {
     setToolFromId(null);
     setToolToId(null);
     setToolVirtualPos(null);
+    // Merge origins are contextual to one analysis; closing the tool ends it
+    mergeOrigins.clearCoverageMergeOrigins();
+    // Stale arm must not let a later session close on a single Esc
+    coverageEscArmedAtRef.current = 0;
     losState.setLosVirtualFrom(null);
     losState.setLosVirtualTo(null);
     losCompute.losFitKeyRef.current = null;
     losCompute.losFromPosRef.current = null;
     losCompute.losToPosRef.current = null;
+    // Release the cached rasters (DEM + canopy + buildings — tens of MB on long
+    // links) — they only help within one session
+    losCompute.losDemCacheRef.current = null;
     losCompute.losHoverMarkerRef.current?.remove();
     losCompute.losHoverMarkerRef.current = null;
+    losCompute.losFromMarkerRef.current?.remove();
+    losCompute.losFromMarkerRef.current = null;
+    losCompute.losToMarkerRef.current?.remove();
+    losCompute.losToMarkerRef.current = null;
+    traceFromMarkerRef.current?.remove();
+    traceFromMarkerRef.current = null;
+    traceToMarkerRef.current?.remove();
+    traceToMarkerRef.current = null;
+    traceFitKeyRef.current = null;
+    clearTraceRefetchTimer();
+    setTraceSelectedSig(null);
+    traceFlyover.cancelFlyover();
+    tracePendingPlayRef.current = false;
+    for (const m of traceGhostMarkersRef.current) m.remove();
+    traceGhostMarkersRef.current = [];
+    // Release the route's cached rasters (tens of MB on long routes)
+    traceCompute.traceDemCacheRef.current = null;
+    try { traceTubeLayerRef.current?.setData(null); } catch {}
+    // Removing a marker mid-drag skips its dragend; unstick the shared flag
+    isDraggingMarkerRef.current = false;
     losState.setLosResult(null);
     losState.setLosError(null);
+    losState.setLosTerrainWarning(null);
+    losState.setIsComputingLos(false);
     coverage.setCoverageResult(null);
     coverage.setKeepCoveragePaint(false);
     scan.setScanSummary(null);
@@ -505,6 +783,8 @@ export function Map() {
     losState.setLosDemSource(null);
     scan.setScanDemSource(null);
     scan.setIsScanning(false);
+    scan.setScanError(null);
+    scan.setScanTerrainWarning(null);
 
     const mb = mbMapRef.current;
     if (mb) {
@@ -517,6 +797,19 @@ export function Map() {
       } catch {}
       try {
         (mb.getSource("path-analysis") as MlGeoJSONSource | undefined)?.setData(empty);
+      } catch {}
+      // A hop/path spotlight from the traceroute panel must not outlive the tool
+      try {
+        (mb.getSource("link-highlight") as MlGeoJSONSource | undefined)?.setData(empty);
+      } catch {}
+      try {
+        (mb.getSource("trace-obstructions") as MlGeoJSONSource | undefined)?.setData(empty);
+      } catch {}
+      try {
+        (mb.getSource("trace-direct") as MlGeoJSONSource | undefined)?.setData(empty);
+      } catch {}
+      try {
+        (mb.getSource("trace-candidates") as MlGeoJSONSource | undefined)?.setData(empty);
       } catch {}
       if (coverageCompute.coverageOriginMarkerRef.current) {
         coverageCompute.coverageOriginMarkerRef.current.remove();
@@ -556,36 +849,122 @@ export function Map() {
     }
   };
 
-  // Draw shortest traceroute path on both providers
-  useEffect(() => {
-    const computePathCoords = (): [number, number][] | null => {
-      if (activeTool !== "traceroute" || toolStep !== "result") return null;
-      if (!toolFromId || !toolToId) return null;
-      const paths = findPathsBetween(toolFromId, toolToId, rawTraceroutes);
-      if (paths.length === 0) return null;
-      const shortest = paths[0];
-      const coords: [number, number][] = [];
-      for (const hop of shortest.hops) {
-        const n = nodes[hop] ?? nodes[`!${hop}`];
-        if (n?.map_position) coords.push([n.map_position[0], n.map_position[1]]);
-      }
-      return coords.length >= 2 ? coords : null;
-    };
+  // Stable ref to resetTool (recreated each render) so memoized panels can close
+  // without a fresh callback identity on every parent render.
+  const resetToolRef = useRef(resetTool);
+  resetToolRef.current = resetTool;
 
-    const mb = mbMapRef.current;
-    if (mb) {
-      const src = mb.getSource("path-analysis") as MlGeoJSONSource | undefined;
-      if (src) {
-        const coords = computePathCoords();
-        src.setData(
-          coords
-            ? { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: coords } }] }
-            : { type: "FeatureCollection", features: [] },
-        );
-      }
+  // Stable scan-panel callbacks. MapScanPanel is memoized and the map re-renders on
+  // every hover (elevation pill), so inline lambdas here would defeat the memo.
+  const handleScanClose = useCallback(() => {
+    // Overlay close returns to the coverage view; standalone close does a full reset.
+    if (keepCoveragePaintRef.current) {
+      coverageCompute.skipNextCoverageComputeRef.current = true;
+      coverage.setKeepCoveragePaint(false);
+      setActiveTool("coverage");
+    } else {
+      resetToolRef.current();
     }
+    // Setters/refs are stable; deps intentionally empty so hover re-renders don't
+    // recreate the callback (would defeat MapScanPanel's memo).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Ref so the bind-once Escape handler can reuse the panel's exact close behavior.
+  const handleScanCloseRef = useRef(handleScanClose);
+  handleScanCloseRef.current = handleScanClose;
 
-  }, [activeTool, toolStep, toolFromId, toolToId, rawTraceroutes, nodes]);
+  // Freshest-closure ref for the keyboard hook (the function declaration hoists).
+  const clearSelectionRef = useRef(() => {});
+  clearSelectionRef.current = clearMapboxSelectionAndOverlays;
+
+  // Arrows pan, +/- zoom, Esc walks the dismiss chain (flyover → tool → selection)
+  useMapKeyboardNav({
+    mbMapRef, mapContainerRef: mapRef,
+    flyoverCancelRef, flyoverFlyingRef,
+    activeToolRef, toolStepRef, pickingMergeOriginRef, keepCoveragePaintRef,
+    coverageEscArmedAtRef, clusterEnabledRef,
+    handleScanCloseRef, resetToolRef, clearSelectionRef,
+  });
+  const handleScanEnableTerrain = useCallback(() => setTerrain3D(true), []);
+  const handleScanSelectResult = useCallback((id: string) => {
+    // Fly to the target, then open its details panel.
+    const n = nodesRef.current[id] ?? nodesRef.current[`!${id}`];
+    const mb = mbMapRef.current;
+    if (n?.map_position && mb) {
+      mb.easeTo({ center: [n.map_position[0], n.map_position[1]], zoom: Math.max(mb.getZoom(), 13), duration: 800 });
+    }
+    handleNodeSelectRef.current(id);
+  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const handleScanHoverResult = useCallback((id: string | null) => scan.setScanHoverId(id), []);
+  const handleScanReturnToOrigin = useCallback(() => {
+    const mapNow = mbMapRef.current;
+    const view = scanCompute.scanInitialViewRef.current;
+    if (!mapNow || !view) return;
+    mapNow.easeTo({ center: view.center, zoom: view.zoom, pitch: view.pitch, bearing: view.bearing, duration: 800 });
+  }, [scanCompute.scanInitialViewRef]);
+  const handleScanToggleClassVisibility = useCallback((cls: ScanClass) => {
+    scan.setHiddenScanClasses((prev) => {
+      const next = new Set(prev);
+      if (next.has(cls)) next.delete(cls);
+      else next.add(cls);
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const handleScanRetry = useCallback(() => scan.setScanRetryNonce((n) => n + 1), []);
+
+  // Swap LOS endpoints including their per-endpoint configs; the compute
+  // effect picks the change up via its endpoint-scalar deps.
+  const swapLosEndpoints = () => {
+    const fid = toolFromId;
+    setToolFromId(toolToId);
+    setToolToId(fid);
+    const vf = losState.losVirtualFrom;
+    losState.setLosVirtualFrom(losState.losVirtualTo);
+    losState.setLosVirtualTo(vf);
+    const hw = losState.losFromHwIdx;
+    losState.setLosFromHwIdx(losState.losToHwIdx);
+    losState.setLosToHwIdx(hw);
+    const ant = losState.losFromAntIdx;
+    losState.setLosFromAntIdx(losState.losToAntIdx);
+    losState.setLosToAntIdx(ant);
+    const h = losState.losFromHeightM;
+    losState.setLosFromHeightM(losState.losToHeightM);
+    losState.setLosToHeightM(h);
+  };
+
+  // Typed "lat, lng" for a LOS endpoint becomes a virtual pin (detaches any node anchor)
+  const setLosFromPosition = (pos: [number, number]) => {
+    setToolFromId(null);
+    losState.setLosVirtualFrom(pos);
+  };
+  const setLosToPosition = (pos: [number, number]) => {
+    setToolToId(null);
+    losState.setLosVirtualTo(pos);
+  };
+
+  // Opens the settings panel at the terrain section (drawer + trace panel share it).
+  const openTerrainSetup = useCallback(() => {
+    setSettingsOpenSections((prev) => {
+      const next = new Set(prev);
+      next.add("terrain");
+      return next;
+    });
+    setSettingsPanelOpen(true);
+  }, []);
+
+  // Traceroute panel hover → spotlight the hovered leg / alternate path.
+  const handleTraceHighlight = useCallback((coords: [number, number][] | null) => {
+    const src = mbMapRef.current?.getSource("link-highlight") as MlGeoJSONSource | undefined;
+    if (!src) return;
+    src.setData(
+      coords && coords.length >= 2
+        ? { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: coords } }] }
+        : { type: "FeatureCollection", features: [] },
+    );
+  }, []);
 
   /** Cluster donut + count text dim. Combines the tool-active dim (when an RF
    *  tool is in result step, so the raster reads clearly) with focus-on-hover
@@ -767,21 +1146,84 @@ export function Map() {
         const coverageSrc = map.getSource("coverage") as MlGeoJSONSource | undefined;
         coverageSrc?.setData({ type: "FeatureCollection", features: [] });
       } catch {}
-      // Clear link highlight
-      try {
-        const hlSrc = map.getSource("link-highlight") as MlGeoJSONSource | undefined;
-        hlSrc?.setData({ type: "FeatureCollection", features: [] });
-      } catch {}
-      // Clear path analysis
-      try {
-        const paSrc = map.getSource("path-analysis") as MlGeoJSONSource | undefined;
-        paSrc?.setData({ type: "FeatureCollection", features: [] });
-      } catch {}
+      // The traceroute tool owns link-highlight + path-analysis while showing
+      // results (empty-map clicks and panel closes must not wipe its routes —
+      // nothing would redraw them).
+      const traceResultActive = activeToolRef.current === "traceroute" && toolStepRef.current === "result";
+      if (!traceResultActive) {
+        // Clear link highlight
+        try {
+          const hlSrc = map.getSource("link-highlight") as MlGeoJSONSource | undefined;
+          hlSrc?.setData({ type: "FeatureCollection", features: [] });
+        } catch {}
+        // Clear path analysis
+        try {
+          const paSrc = map.getSource("path-analysis") as MlGeoJSONSource | undefined;
+          paSrc?.setData({ type: "FeatureCollection", features: [] });
+        } catch {}
+      }
     }
 
     // Hide the panel
     setDetailsData(null);
   }
+
+  /** Center the map on a coordinate and drop (or move) the jump-to pin. Camera +
+   *  DOM marker only, so it doesn't touch tool state. */
+  const jumpToCoord = useCallback((lngLat: [number, number]) => {
+    const map = mbMapRef.current;
+    if (!map) return;
+    const [lng, lat] = lngLat;
+
+    // Center on the point; zoom in to a useful level but never zoom out.
+    map.easeTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 14), duration: 800 });
+
+    const popupHtml = () => {
+      const ll = coordPinMarkerRef.current?.getLngLat() ?? { lng, lat };
+      return `<div style="font-size:11px;font-weight:600;white-space:nowrap">📍 ${formatLatLng(ll.lng, ll.lat)}</div>`;
+    };
+
+    if (coordPinMarkerRef.current) {
+      coordPinMarkerRef.current.setLngLat([lng, lat]);
+      coordPinPopupRef.current?.setHTML(popupHtml());
+      if (coordPinPopupRef.current && !coordPinPopupRef.current.isOpen()) {
+        coordPinMarkerRef.current.togglePopup();
+      }
+    } else {
+      const popup = new maplibregl.Popup({ offset: 28, closeButton: true, className: "map-coord-pin-popup" }).setHTML(popupHtml());
+      const marker = new maplibregl.Marker({ color: "#ec4899", draggable: true })
+        .setLngLat([lng, lat])
+        .setPopup(popup)
+        .addTo(map);
+      // Pause the cursor-elevation handler while dragging; refresh coords on drop.
+      marker.on("dragstart", () => { isDraggingMarkerRef.current = true; });
+      marker.on("dragend", () => {
+        isDraggingMarkerRef.current = false;
+        popup.setHTML(popupHtml());
+      });
+      coordPinMarkerRef.current = marker;
+      coordPinPopupRef.current = popup;
+      marker.togglePopup(); // open initially
+    }
+    setHasCoordPin(true);
+  }, []);
+
+  /** Remove the jump-to pin (and its popup). */
+  const clearCoordPin = useCallback(() => {
+    coordPinPopupRef.current?.remove();
+    coordPinPopupRef.current = null;
+    coordPinMarkerRef.current?.remove();
+    coordPinMarkerRef.current = null;
+    setHasCoordPin(false);
+  }, []);
+
+  // Tear down the jump-to pin when the map page unmounts.
+  useEffect(() => {
+    return () => {
+      coordPinPopupRef.current?.remove();
+      coordPinMarkerRef.current?.remove();
+    };
+  }, []);
 
   // ----------------------------
   // MapLibre: init + layers
@@ -897,6 +1339,8 @@ export function Map() {
     }
 
     mbMapRef.current = map;
+    // Seed the pill before the first moveend (child effects registered the sink first)
+    coordPillSinkRef.current?.setCenter(initialCenter);
 
     // Surface style/source/tile load failures instead of a silent blank map.
     map.on("error", (e) => {
@@ -962,555 +1406,34 @@ export function Map() {
       plain?.setData(data);
     };
 
-    map.on("moveend", () => {
+    const saveView = () => {
       const c = map.getCenter();
       localStorage.setItem("savedCenter", JSON.stringify([c.lng, c.lat]));
       localStorage.setItem("savedZoom", map.getZoom().toString());
       localStorage.setItem("savedPitch", map.getPitch().toString());
       localStorage.setItem("savedBearing", map.getBearing().toString());
+      // Keep the coordinate pill's not-hovering fallback in sync with the view.
+      coordPillSinkRef.current?.setCenter([c.lng, c.lat]);
       // Mirror view into ?lat/lng/z (debounced); here so it follows recreation.
       pushViewToUrlRef.current();
+    };
+    saveViewRef.current = saveView;
+    map.on("moveend", () => {
+      // Tours fire one moveend per leg — save only when the camera is the user's
+      if (flyoverFlyingRef.current) return;
+      saveView();
     });
 
     const ensureSourcesAndLayers = () => {
-      if (!map.getSource("nodes_clustered")) {
-        map.addSource("nodes_clustered", {
-          type: "geojson",
-          data: buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()),
-          cluster: true,
-          // 80 (vs default 50) spaces large donut centroids enough to avoid overlap
-          clusterRadius: 80,
-          // Align zoom range with map's (default 22); source defaults (18/17) break auto-spiderfy for stacked nodes
-          maxzoom: 22,
-          clusterMaxZoom: 21,
-          clusterProperties: {
-            onlineCount: ["+", ["case", ["get", "online"], 1, 0]],
-          },
-        });
-      }
-
-      if (!map.getSource("nodes_plain")) {
-        map.addSource("nodes_plain", {
-          type: "geojson",
-          data: buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()),
-        });
-      }
-
-      if (!map.getSource("links")) {
-        map.addSource("links", {
-          type: "geojson",
-          data: emptyLineFeatureCollection(),
-        });
-      }
-
-      // Link highlight source + layer (for hover-highlight from details panel)
-      if (!map.getSource("link-highlight")) {
-        map.addSource("link-highlight", {
-          type: "geojson",
-          data: { type: "FeatureCollection", features: [] },
-        });
-      }
-      if (!map.getLayer("link-highlight-line")) {
-        map.addLayer({
-          id: "link-highlight-line",
-          type: "line",
-          source: "link-highlight",
-          layout: { "line-join": "round", "line-cap": "round" },
-          paint: {
-            "line-color": "#ffffff",
-            "line-width": 5,
-            "line-opacity": 0.9,
-            "line-blur": 1,
-          },
-        });
-      }
-
-      // Path analysis source + layer
-      if (!map.getSource("path-analysis")) {
-        map.addSource("path-analysis", {
-          type: "geojson",
-          data: { type: "FeatureCollection", features: [] },
-        });
-      }
-      if (!map.getLayer("path-analysis-line")) {
-        map.addLayer({
-          id: "path-analysis-line",
-          type: "line",
-          source: "path-analysis",
-          layout: { "line-join": "round", "line-cap": "round" },
-          paint: {
-            "line-color": "#06b6d4",
-            "line-width": 4,
-            "line-opacity": 0.95,
-          },
-        });
-      }
-
-      // Coverage radius source + layers
-      if (!map.getSource("coverage")) {
-        map.addSource("coverage", {
-          type: "geojson",
-          data: { type: "FeatureCollection", features: [] },
-        });
-      }
-      if (!map.getLayer("coverage-fill")) {
-        map.addLayer({
-          id: "coverage-fill",
-          type: "fill",
-          source: "coverage",
-          paint: {
-            "fill-color": ["coalesce", ["get", "color"], "#32f032"],
-            "fill-opacity": 0.08,
-          },
-        });
-      }
-      if (!map.getLayer("coverage-outline")) {
-        map.addLayer({
-          id: "coverage-outline",
-          type: "line",
-          source: "coverage",
-          paint: {
-            "line-color": ["coalesce", ["get", "color"], "#32f032"],
-            "line-width": 1.5,
-            "line-opacity": 0.5,
-            "line-dasharray": [4, 4],
-          },
-        });
-      }
-
-      // Coverage-prediction raster (Phase 9.5 — raster+viewshed tool).
-      // The worker posts back an RGBA buffer; we upload it as an image source
-      // anchored to the DEM's lng/lat bounds, so it drapes on 3D terrain.
-      // Initial placeholder: a 1×1 transparent PNG at a degenerate quad near 0,0.
-      if (!map.getSource("coverage-raster")) {
-        map.addSource("coverage-raster", {
-          type: "image",
-          url: TRANSPARENT_1PX_PNG,
-          coordinates: [
-            [0, 0.0001],
-            [0.0001, 0.0001],
-            [0.0001, 0],
-            [0, 0],
-          ],
-        });
-      }
-      if (!map.getLayer("coverage-raster")) {
-        map.addLayer({
-          id: "coverage-raster",
-          type: "raster",
-          source: "coverage-raster",
-          layout: { visibility: "none" },
-          paint: {
-            "raster-opacity": 0.7,
-            "raster-fade-duration": 300,
-            "raster-resampling": "linear",
-          },
-        });
-      }
-
-      // The live network-coverage layer (server-baked raster tiles) is added
-      // dynamically by useServerCoverageTiles once /v1/coverage/metadata is known.
-
-      // Iso-margin contour lines
-      if (!map.getSource("coverage-contours")) {
-        map.addSource("coverage-contours", {
-          type: "geojson",
-          data: { type: "FeatureCollection", features: [] },
-        });
-      }
-      if (!map.getLayer("coverage-contours-line")) {
-        map.addLayer({
-          id: "coverage-contours-line",
-          type: "line",
-          source: "coverage-contours",
-          layout: {
-            "line-join": "round",
-            "line-cap": "round",
-            visibility: "none",
-          },
-          paint: {
-            // 0 dB = magenta (edge), 10 = cyan, 20 = deep cyan
-            "line-color": [
-              "match", ["get", "thresholdDb"],
-              0,  "#d946ef",
-              10, "#06b6d4",
-              20, "#0891b2",
-              "#a1a1aa",
-            ],
-            "line-width": [
-              "match", ["get", "thresholdDb"],
-              0,  2.2,
-              10, 1.6,
-              20, 1.2,
-              1,
-            ],
-            "line-opacity": 0.92,
-          },
-        });
-      }
-
-      // Visibility rays; rendered under contours for layer order
-      if (!map.getSource("coverage-rays")) {
-        map.addSource("coverage-rays", {
-          type: "geojson",
-          data: { type: "FeatureCollection", features: [] },
-        });
-      }
-      if (!map.getLayer("coverage-rays-line")) {
-        map.addLayer(
-          {
-            id: "coverage-rays-line",
-            type: "line",
-            source: "coverage-rays",
-            layout: {
-              "line-cap": "butt",
-              visibility: "none",
-            },
-            paint: {
-              // Interpolated on segment peak marginDb, matching raster gradient
-              "line-color": [
-                "interpolate",
-                ["linear"],
-                ["get", "marginDb"],
-                0,  "#d946ef",
-                5,  "#f97316",
-                15, "#06b6d4",
-                25, "#0891b2",
-              ],
-              "line-width": 1,
-              "line-opacity": [
-                "interpolate",
-                ["linear"],
-                ["get", "marginDb"],
-                0,  0.2,
-                5,  0.35,
-                15, 0.55,
-                25, 0.65,
-              ],
-            },
-          },
-          "coverage-contours-line",
-        );
-      }
-
-      // 3D LoS tube (WebGL) + obstruction fill-extrusion pylons
-      if (!map.getSource("los-obstructions")) {
-        map.addSource("los-obstructions", {
-          type: "geojson",
-          data: { type: "FeatureCollection", features: [] },
-        });
-      }
-      if (!map.getLayer("los-obstructions-fill")) {
-        map.addLayer({
-          id: "los-obstructions-fill",
-          type: "fill-extrusion",
-          source: "los-obstructions",
-          paint: {
-            "fill-extrusion-color": [
-              "interpolate", ["linear"], ["get", "severity"],
-              0, "#f87171",
-              1, "#b91c1c",
-            ],
-            "fill-extrusion-base": ["get", "baseM"],
-            "fill-extrusion-height": ["get", "topM"],
-            "fill-extrusion-opacity": 0.75,
-            "fill-extrusion-vertical-gradient": true,
-          },
-        });
-      }
-      if (!map.getLayer("los-tube")) {
-        try {
-          if (!losTubeLayerRef.current) losTubeLayerRef.current = new LosTubeLayer();
-          map.addLayer(losTubeLayerRef.current);
-        } catch (err) {
-          console.warn("[Map] Failed to add LoS tube layer:", err);
-        }
-      }
-
-      if (!map.getSource("scan-links")) {
-        map.addSource("scan-links", {
-          type: "geojson",
-          data: { type: "FeatureCollection", features: [] },
-        });
-      }
-      if (!map.getLayer("scan-links-line")) {
-        map.addLayer({
-          id: "scan-links-line",
-          type: "line",
-          source: "scan-links",
-          layout: { "line-join": "round", "line-cap": "round" },
-          paint: {
-            "line-color": [
-              "match", ["get", "cls"],
-              "clear",      "#06b6d4",
-              "fresnel",    "#f97316",
-              "diffracted", "#d946ef",
-              "blocked",    "#ef4444",
-              "#9ca3af",
-            ],
-            "line-width": [
-              "case",
-              ["boolean", ["feature-state", "hover"], false], 4,
-              2,
-            ],
-            "line-opacity": [
-              "match", ["get", "cls"],
-              "blocked", 0.4,
-              0.85,
-            ],
-          },
-        });
-      }
-
-      const linkWidth = [
-        "case",
-        ["==", ["get", "snr"], null], 3,
-        ["interpolate", ["linear"], ["get", "snr"],
-          -10, 1.5, 0, 3, 5, 5, 10, 7, 20, 9,
-        ],
-      ] as any;
-      // Color = SNR (link quality); kind is conveyed by line style. Traceroute
-      // keeps its orange — per-hop SNR isn't meaningful on an inferred path.
-      const linkColor = [
-        "case",
-        ["==", ["get", "kind"], "traceroute"], "#F59E0B",
-        ["==", ["get", "snr"], null], "#9ca3af",
-        ["interpolate", ["linear"], ["get", "snr"],
-          -10, "#FF4444", -5, "#FF6644", 0, "#FFAA00",
-          2.5, "#FFDD00", 5, "#88DD00", 10, "#44CC44",
-        ],
-      ] as any;
-
-      // Initial line-opacity bakes recencyOpacity from the feature; focus-on-hover
-      // swaps these expressions in to dim non-connected links.
-      const linkOpacityInitial = (base: number) =>
-        // 0.6 = unknown-recency default (see recencyOpacityFromAgeMs).
-        ["*", base, ["coalesce", ["get", "recencyOpacity"], 0.6]] as any;
-
-      // Neighbor + both links (solid; "both" uses curved arcs)
-      if (!map.getLayer("links-solid")) {
-        map.addLayer({
-          id: "links-solid",
-          type: "line",
-          source: "links",
-          filter: ["in", ["get", "kind"], ["literal", ["neighbor", "both"]]],
-          layout: { "line-join": "round", "line-cap": "round" },
-          paint: {
-            "line-opacity": linkOpacityInitial(0.9),
-            "line-width": linkWidth,
-            "line-color": linkColor,
-          },
-        });
-      }
-
-      if (!map.getLayer("links-dashed")) {
-        map.addLayer({
-          id: "links-dashed",
-          type: "line",
-          source: "links",
-          filter: ["==", ["get", "kind"], "heard_by"],
-          layout: { "line-join": "round", "line-cap": "round" },
-          paint: {
-            "line-opacity": linkOpacityInitial(0.7),
-            "line-width": linkWidth,
-            "line-color": linkColor,
-            "line-dasharray": [4, 3],
-          },
-        });
-      }
-
-      if (!map.getLayer("links-dotted")) {
-        map.addLayer({
-          id: "links-dotted",
-          type: "line",
-          source: "links",
-          filter: ["==", ["get", "kind"], "traceroute"],
-          layout: { "line-join": "round", "line-cap": "round" },
-          paint: {
-            "line-opacity": linkOpacityInitial(0.7),
-            "line-width": linkWidth,
-            "line-color": linkColor,
-            "line-dasharray": [1, 3],
-          },
-        });
-      }
-
-      // Invisible hit-test layer for cluster clicks (donut layer is visual-only)
-      if (!map.getLayer("clusters")) {
-        map.addLayer({
-          id: "clusters",
-          type: "circle",
-          source: "nodes_clustered",
-          filter: ["has", "point_count"],
-          paint: {
-            // ~2 px larger than donut for forgiving click target
-            "circle-radius": ["interpolate", ["linear"], ["get", "point_count"],
-              2, 20, 10, 26, 25, 34, 100, 48, 200, 56],
-            "circle-color": "#000000",
-            "circle-opacity": 0.005,
-            "circle-stroke-width": 0,
-            "circle-pitch-alignment": "viewport",
-          },
-        });
-      }
-
-      if (!map.getLayer("clusters-donuts")) {
-        const donutLayer = new ClusterDonutLayer();
-        map.addLayer(donutLayer);
-        clusterDonutLayerRef.current = donutLayer;
-        donutLayer.setAnimationsEnabled(livePacketsRef.current);
-        if (activeToolRef.current != null && toolStepRef.current === "result") donutLayer.setAlpha(0.25);
-      }
-
-      if (!map.getLayer("clusters-count")) {
-        map.addLayer({
-          id: "clusters-count",
-          type: "symbol",
-          source: "nodes_clustered",
-          filter: ["has", "point_count"],
-          layout: {
-            "text-field": ["get", "point_count_abbreviated"],
-            "text-size": ["interpolate", ["linear"], ["get", "point_count"],
-              2, 12, 10, 15, 25, 18, 100, 21, 200, 24],
-            "text-font": ["DIN Pro Medium", "Arial Unicode MS Bold"],
-            "text-allow-overlap": true,
-            "text-ignore-placement": true,
-          },
-          paint: {
-            "text-color": "#ffffff",
-            "text-opacity": activeToolRef.current != null && toolStepRef.current === "result" ? 0.25 : 1,
-          },
-        });
-      }
-
-      // Online node pulse behind unclustered nodes
-      if (!map.getLayer("unclustered-pulse")) {
-        map.addLayer({
-          id: "unclustered-pulse",
-          type: "circle",
-          source: "nodes_clustered",
-          filter: ["all", ["!", ["has", "point_count"]], ["==", ["get", "online"], true]],
-          paint: {
-            "circle-radius": 16,
-            "circle-color": mbRoleColorExpr,
-            "circle-opacity": 0.28,
-            "circle-stroke-width": 0,
-          },
-        });
-      }
-
-      // clustered unclustered nodes
-      if (!map.getLayer("unclustered-nodes")) {
-        map.addLayer({
-          id: "unclustered-nodes",
-          type: "circle",
-          source: "nodes_clustered",
-          filter: ["!", ["has", "point_count"]],
-          paint: {
-            "circle-radius": ["case", ["boolean", ["feature-state", "selected"], false], 12, 8],
-            "circle-color": mbRoleColorExpr,
-            // Recency brightness via `dim`; selected stays full-bright.
-            "circle-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 1, ["coalesce", ["get", "dim"], 1]],
-            "circle-stroke-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 1, ["coalesce", ["get", "dim"], 1]],
-            "circle-stroke-width": 2.5,
-            "circle-stroke-color": [
-              "case",
-              ["boolean", ["feature-state", "selected"], false],
-              "orange",
-              "white",
-            ],
-          },
-        });
-      }
-
-      if (!map.getLayer("unclustered-labels")) {
-        map.addLayer({
-          id: "unclustered-labels",
-          type: "symbol",
-          source: "nodes_clustered",
-          filter: ["!", ["has", "point_count"]],
-          minzoom: 9,
-          layout: {
-            "text-field": ["get", "shortname"],
-            "text-size": ["interpolate", ["linear"], ["zoom"], 9, 10, 13, 14, 16, 16],
-            "text-offset": [0, 1.2],
-            "text-anchor": "top",
-            "text-optional": true,
-          },
-          paint: {
-            "text-halo-color": "#000000",
-            "text-halo-width": 1.25,
-            "text-color": "#ffffff",
-          },
-        });
-      }
-
-      // online node pulse (behind plain nodes)
-      if (!map.getLayer("plain-pulse")) {
-        map.addLayer({
-          id: "plain-pulse",
-          type: "circle",
-          source: "nodes_plain",
-          filter: ["==", ["get", "online"], true],
-          paint: {
-            "circle-radius": 16,
-            "circle-color": mbRoleColorExpr,
-            "circle-opacity": 0.28,
-            "circle-stroke-width": 0,
-          },
-        });
-      }
-
-      // plain nodes layer
-      if (!map.getLayer("plain-nodes")) {
-        map.addLayer({
-          id: "plain-nodes",
-          type: "circle",
-          source: "nodes_plain",
-          paint: {
-            "circle-radius": ["case", ["boolean", ["feature-state", "selected"], false], 12, 8],
-            "circle-color": mbRoleColorExpr,
-            // Recency brightness via `dim`; selected stays full-bright.
-            "circle-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 1, ["coalesce", ["get", "dim"], 1]],
-            "circle-stroke-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 1, ["coalesce", ["get", "dim"], 1]],
-            "circle-stroke-width": 2.5,
-            "circle-stroke-color": [
-              "case",
-              ["boolean", ["feature-state", "selected"], false],
-              "orange",
-              "white",
-            ],
-          },
-        });
-      }
-
-      if (!map.getLayer("plain-labels")) {
-        map.addLayer({
-          id: "plain-labels",
-          type: "symbol",
-          source: "nodes_plain",
-          minzoom: 9,
-          layout: {
-            "text-field": ["get", "shortname"],
-            "text-size": ["interpolate", ["linear"], ["zoom"], 9, 10, 13, 14, 16, 16],
-            "text-offset": [0, 1.2],
-            "text-anchor": "top",
-            "text-optional": true,
-          },
-          paint: {
-            "text-halo-color": "#000000",
-            "text-halo-width": 1.25,
-            "text-color": "#ffffff",
-          },
-        });
-      }
-
-      // Live packet activity (custom WebGL layer; drawn above nodes)
-      if (!map.getLayer("activity")) {
-        const al = new ActivityLayer();
-        map.addLayer(al);
-        activityLayerRef.current = al;
-      }
+      ensureMapSourcesAndLayers(map, {
+        getNodesData: () => buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()),
+        losTubeLayerRef,
+        traceTubeLayerRef,
+        clusterDonutLayerRef,
+        activityLayerRef,
+        animationsEnabled: livePacketsRef.current,
+        dimForTool: activeToolRef.current != null && toolStepRef.current === "result",
+      });
 
       // Apply current cluster visibility (use refs to avoid stale closure)
       applyClusterVisibility(map, clusterEnabledRef.current, nodesHiddenRef.current);
@@ -1530,6 +1453,11 @@ export function Map() {
           console.warn("[Map] 3D buildings re-apply failed after style load:", err);
         }
       }
+
+      // Tube altitudes are scaled by exaggeration at upload time; onAdd ran before
+      // terrain was re-applied above, so re-upload against the final exaggeration.
+      losTubeLayerRef.current?.refresh();
+      traceTubeLayerRef.current?.refresh();
 
       // Ensure sources have current data (important after style changes)
       refreshMapboxNodeData();
@@ -1683,6 +1611,13 @@ export function Map() {
       bindHover("unclustered-nodes");
       bindHover("plain-nodes");
 
+      // Viewport refilter for the top-links panel — not per tour leg
+      map.on("moveend", () => {
+        if (activeToolRef.current === "traceroute" && !flyoverFlyingRef.current) {
+          setMapMoveEpoch((v) => v + 1);
+        }
+      });
+
       // Focus-on-hover: hovering a node highlights its ego-network (the node +
       // its neighbors + nodes that heard it) and dims everything else.
       const LINK_LAYER_BASE_OPACITY: Record<string, number> = {
@@ -1760,6 +1695,12 @@ export function Map() {
       bindFocusHover("unclustered-nodes");
       bindFocusHover("plain-nodes");
 
+      // True when the click point lands on a fanned spiderfy marker — those
+      // clicks must win over the layers still rendered underneath the fan.
+      const hitsSpiderfyNode = (point: maplibregl.Point): boolean =>
+        !!map.getLayer(SPIDERFY_LAYER_NODES) &&
+        map.queryRenderedFeatures(point, { layers: [SPIDERFY_LAYER_NODES] }).length > 0;
+
       // Cluster click — handler is on the invisible circle hit-test layer
       // ("clusters"), NOT the symbol donut layer. Circle hit-testing is reliable
       // geometry; symbol hit-testing is flaky with dynamic icon-size expressions.
@@ -1767,11 +1708,36 @@ export function Map() {
         const cluster = e.features?.[0];
         if (!cluster) return;
 
+        // A cluster click zooms; while picking a merge origin it must not
+        // also drop a coordinate pin underneath.
+        if (pickingMergeOriginRef.current) {
+          (e.originalEvent as MouseEvent & { _mergePickConsumed?: boolean })._mergePickConsumed = true;
+        }
+
+        // Spiral fans put inner leaves inside the donut's hit circle — let the
+        // leaf click be handled by onNodeLayerClick instead of re-spiderfying.
+        if (hitsSpiderfyNode(e.point)) return;
+
         const clusterId = cluster.properties?.cluster_id;
         const source = map.getSource("nodes_clustered") as MlGeoJSONSource;
         if (!source || clusterId == null) return;
 
         const [lng, lat] = (cluster.geometry as any).coordinates as [number, number];
+
+        // Re-clicking the fanned cluster's own donut toggles the fan closed
+        // instead of wiping the selection and re-animating it.
+        if (isSpiderfied(map)) {
+          const b = map.project([lng, lat]);
+          const isActiveFan = getActiveFanCenters().some((c) => {
+            const a = map.project(c);
+            return Math.hypot(a.x - b.x, a.y - b.y) < 10;
+          });
+          if (isActiveFan) {
+            dismissClusterSpiderfy(map);
+            return;
+          }
+        }
+
         const currentZoom = map.getZoom();
         const maxZoom = map.getMaxZoom();
 
@@ -1782,7 +1748,8 @@ export function Map() {
           removeSpiderfyLayers(map);
           map.easeTo({ center: [lng, lat], zoom: Math.min(currentZoom + 2, maxZoom) });
         };
-        // getClusterExpansionZoom can be slow on first call; don't discard a slightly-late answer.
+        // getClusterExpansionZoom can be slow (or hang on a stale cluster_id
+        // after setData); fall back to a plain zoom-in if no answer in time.
         const timer = setTimeout(zoomFallback, 600);
 
         source.getClusterExpansionZoom(clusterId).then((zoom) => {
@@ -1800,7 +1767,7 @@ export function Map() {
             const pool = buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()).features
               .filter((f) => f.geometry?.type === "Point") as any;
             const count = (cluster.properties?.point_count as number) ?? 0;
-            void spiderfy(map, clusterId, [lng, lat], currentZoom, true, pool, count);
+            void spiderfy(map, clusterId, [lng, lat], true, pool, count);
           } else {
             // Ensure the zoom change is always perceptible. getClusterExpansionZoom
             // can return values only a tiny delta above current zoom, making the
@@ -1907,6 +1874,21 @@ export function Map() {
         const id = (feature.properties?.id ?? "") as string;
         if (!id) return;
 
+        // Merge-origin pick mode: a node click adds that node (with its GPS
+        // altitude) instead of dropping a coordinate pin or opening selection
+        if (pickingMergeOriginRef.current) {
+          (e.originalEvent as MouseEvent & { _mergePickConsumed?: boolean })._mergePickConsumed = true;
+          const cleanId = id.startsWith("!") ? id.slice(1) : id;
+          const primaryId = (toolFromIdRef.current ?? "").replace(/^!/, "");
+          if (cleanId === primaryId) {
+            toast("That node is already the primary origin.");
+          } else {
+            addMergeOriginByIdRef.current(id);
+          }
+          mergeOrigins.setPickingMergeOrigin(false);
+          return;
+        }
+
         // Tool pick modes intercept node clicks
         const activeToolCur = activeToolRef.current;
         const stepCur = toolStepRef.current;
@@ -1932,23 +1914,37 @@ export function Map() {
         // Clustering OFF: co-located nodes stack so only the top one is
         // clickable. If several overlap at the click, fan them out instead of
         // selecting whichever rendered on top. (#475)
-        if (!clusterEnabledRef.current && !isSpiderfied(map)) {
+        if (!clusterEnabledRef.current) {
           const overlap = findOverlappingPlainNodes(e.point);
           if (overlap.length >= 2) {
+            const ids = overlap.map((f) => (f.properties?.id ?? "") as string);
+            // Clicking the stacked originals under an open fan: keep the fan
+            // and let the user pick a leaf instead of re-fanning.
+            if (anyIdsFanned(ids)) return;
             const center: [number, number] = [
               circularMeanLng(overlap.map((f) => f.geometry.coordinates[0])),
               overlap.reduce((s, f) => s + f.geometry.coordinates[1], 0) / overlap.length,
             ];
-            void spiderfyFeatures(map, center, overlap as any, map.getZoom(), true);
+            void spiderfyFeatures(map, center, overlap as any, true);
             return;
           }
         }
 
         void handleNodeClick(id);
       };
-      map.on("click", "unclustered-nodes", onNodeLayerClick);
-      map.on("click", "plain-nodes", onNodeLayerClick);
+      // The base layers keep rendering under an open fan; when a click lands on
+      // a fanned marker, only the spiderfy binding may handle it (else one click
+      // selects two different nodes or double-consumes a tool pick).
+      map.on("click", "unclustered-nodes", (e) => {
+        if (!hitsSpiderfyNode(e.point)) onNodeLayerClick(e);
+      });
+      map.on("click", "plain-nodes", (e) => {
+        if (!hitsSpiderfyNode(e.point)) onNodeLayerClick(e);
+      });
       map.on("click", SPIDERFY_LAYER_NODES, onNodeLayerClick);
+      map.on("click", SPIDERFY_LAYER_LABELS, (e) => {
+        if (!hitsSpiderfyNode(e.point)) onNodeLayerClick(e);
+      });
 
       // Virtual-origin click (coverage, scan, LOS tools). Fires when the
       // user clicks empty map during pick mode — drops a synthetic pin at
@@ -1956,23 +1952,26 @@ export function Map() {
       map.on("click", (e) => {
         const t = activeToolRef.current;
         const step = toolStepRef.current;
-        // Ignore if clicking on a node layer (handled by onNodeLayerClick)
+        // Ignore if clicking on a node layer (handled by onNodeLayerClick) — the
+        // label layers count too, or a label click drops a pin beside the node.
         const features = map.queryRenderedFeatures(e.point, {
-          layers: ["unclustered-nodes", "plain-nodes", "clusters", SPIDERFY_LAYER_NODES].filter((id) => map.getLayer(id)),
+          layers: ["unclustered-nodes", "plain-nodes", "unclustered-labels", "plain-labels", "clusters", SPIDERFY_LAYER_NODES, SPIDERFY_LAYER_LABELS].filter((id) => map.getLayer(id)),
         });
         if (features.length > 0) return;
 
         if ((t === "coverage" || t === "scan") && step === "pickFrom") {
-          setToolVirtualPos([e.lngLat.lng, e.lngLat.lat]);
+          // normalizeLng: clicks on a wrapped world copy give lngs outside ±180.
+          setToolVirtualPos([normalizeLng(e.lngLat.lng), e.lngLat.lat]);
           setToolStep("result");
           map.getCanvas().style.cursor = "";
         } else if (t === "los" && step === "pickFrom") {
           setToolFromId(null);
-          losState.setLosVirtualFrom([e.lngLat.lng, e.lngLat.lat]);
+          // normalizeLng: clicks on a wrapped world copy give lngs outside ±180
+          losState.setLosVirtualFrom([normalizeLng(e.lngLat.lng), e.lngLat.lat]);
           setToolStep("pickTo");
         } else if (t === "los" && step === "pickTo") {
           setToolToId(null);
-          losState.setLosVirtualTo([e.lngLat.lng, e.lngLat.lat]);
+          losState.setLosVirtualTo([normalizeLng(e.lngLat.lng), e.lngLat.lat]);
           setToolStep("result");
           map.getCanvas().style.cursor = "";
         }
@@ -1990,16 +1989,23 @@ export function Map() {
         const nodeLayers = ["unclustered-nodes", "plain-nodes", "unclustered-labels", "plain-labels"];
         if (map.getLayer(SPIDERFY_LAYER_NODES)) nodeLayers.push(SPIDERFY_LAYER_NODES);
         if (map.getLayer(SPIDERFY_LAYER_LABELS)) nodeLayers.push(SPIDERFY_LAYER_LABELS);
+        if (map.getLayer(SPIDERFY_LAYER_LEGS)) nodeLayers.push(SPIDERFY_LAYER_LEGS, SPIDERFY_LAYER_LEGS_SHADOW);
 
-        const hitNode = map.queryRenderedFeatures(e.point, { layers: nodeLayers }).length > 0;
+        // Small pad so a near-miss while aiming at a fan marker doesn't count
+        // as "empty space" and nuke the whole fan.
+        const PAD = 4;
+        const bbox: [maplibregl.PointLike, maplibregl.PointLike] = [
+          [e.point.x - PAD, e.point.y - PAD],
+          [e.point.x + PAD, e.point.y + PAD],
+        ];
+        const hitNode = map.queryRenderedFeatures(bbox, { layers: nodeLayers }).length > 0;
         const hitCluster =
-          map.queryRenderedFeatures(e.point, { layers: ["clusters"] }).length > 0;
+          map.queryRenderedFeatures(bbox, { layers: ["clusters"] }).length > 0;
         if (hitNode || hitCluster) return;
 
-        // Clustering off: fans are automatic, so dismiss-and-remember (the auto
-        // pass won't immediately re-open the same set). Clustering on: a cluster
-        // donut stays put, so a plain collapse is fine.
-        if (clusterEnabledRef.current) void unspiderfy(map);
+        // Dismiss-and-remember in both modes so the auto pass won't immediately
+        // re-open the set the user just closed.
+        if (clusterEnabledRef.current) dismissClusterSpiderfy(map);
         else dismissPlainSpiderfy(map);
         clearMapboxSelectionAndOverlays();
       });
@@ -2020,6 +2026,8 @@ export function Map() {
         if (spiderfyDebounce != null) window.clearTimeout(spiderfyDebounce);
         spiderfyDebounce = window.setTimeout(() => {
           spiderfyDebounce = null;
+          // Chase zoom is below the spiderfy threshold — skip the O(N) pool per leg
+          if (flyoverFlyingRef.current) return;
           if (nodesHiddenRef.current) return;
           if (clusterEnabledRef.current) {
             const pool = buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()).features
@@ -2090,216 +2098,26 @@ export function Map() {
         if (longPressTimer) clearTimeout(longPressTimer);
       };
 
-      // Keyboard navigation
-      const handleKeydown = (e: KeyboardEvent) => {
-        const tag = (e.target as HTMLElement)?.tagName;
-        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-
-        // Escape works from anywhere; pan/zoom only when focus is on the map
-        // itself (or nothing), so arrowing a focused panel control isn't hijacked.
-        if (e.key !== "Escape") {
-          const ae = document.activeElement as HTMLElement | null;
-          const navOk =
-            !ae ||
-            ae === document.body ||
-            ae === map.getCanvas() ||
-            ae === mapRef.current ||
-            ae.classList?.contains("maplibregl-canvas");
-          if (!navOk) return;
-        }
-
-        const PAN_PX = 100;
-        switch (e.key) {
-          case "Escape":
-            if (activeToolRef.current) {
-              resetTool();
-              break;
-            }
-            void unspiderfy(map);
-            clearMapboxSelectionAndOverlays();
-            break;
-          case "ArrowLeft":
-            e.preventDefault();
-            map.panBy([-PAN_PX, 0], { duration: 200 });
-            break;
-          case "ArrowRight":
-            e.preventDefault();
-            map.panBy([PAN_PX, 0], { duration: 200 });
-            break;
-          case "ArrowUp":
-            e.preventDefault();
-            map.panBy([0, -PAN_PX], { duration: 200 });
-            break;
-          case "ArrowDown":
-            e.preventDefault();
-            map.panBy([0, PAN_PX], { duration: 200 });
-            break;
-          case "=":
-          case "+":
-            e.preventDefault();
-            map.zoomIn({ duration: 200 });
-            break;
-          case "-":
-            e.preventDefault();
-            map.zoomOut({ duration: 200 });
-            break;
-        }
-      };
-      mbKeydownHandlerRef.current = handleKeydown;
-      document.addEventListener("keydown", handleKeydown);
-
-      // Live terrain elevation under the cursor (when 3D terrain is on).
-      // Throttled via rAF so we don't call queryTerrainElevation on every pixel.
-      let elevRafQueued = false;
-      let pendingElevE: { lng: number; lat: number } | null = null;
-      const onMapMouseMove = (e: maplibregl.MapMouseEvent) => {
-        // Skip during marker drag — setHoverElevationM re-renders Map.tsx each
-        // frame and stutters the marker behind the cursor.
-        if (isDraggingMarkerRef.current) return;
-        pendingElevE = { lng: e.lngLat.lng, lat: e.lngLat.lat };
-        if (elevRafQueued) return;
-        elevRafQueued = true;
-        requestAnimationFrame(() => {
-          elevRafQueued = false;
-          if (!pendingElevE || !mbMapRef.current) return;
-          try {
-            // Real MSL meters — users expect the elevation pill to match a topo map,
-            // not the rendered terrain's exaggerated value. See queryTerrainElevationMSL.
-            const elev = queryTerrainElevationMSL(mbMapRef.current, [pendingElevE.lng, pendingElevE.lat]);
-            setHoverElevationM(elev);
-          } catch {
-            setHoverElevationM(null);
-          }
-        });
-      };
-      const onMapMouseOut = () => setHoverElevationM(null);
-      map.on("mousemove", onMapMouseMove);
-      map.on("mouseout", onMapMouseOut);
-
-      // --- Hover tooltips (desktop only) ---
-      const hoverPopup = new maplibregl.Popup({
-        closeButton: false,
-        closeOnClick: false,
-        offset: 12,
-        className: "map-hover-tooltip",
-      });
-
-      const showTooltip = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
-        const feature = e.features?.[0];
-        if (!feature) return;
-        const p = feature.properties!;
-        const nodeId = p.id as string;
-        const role = p.role != null ? roleTitles[p.role as NodeRole]?.title ?? "" : "";
-        const snr = bestSnr(nodeId, nodesRef.current);
-        hoverPopup
-          .setLngLat((feature.geometry as any).coordinates)
-          .setHTML(
-            `<div style="display:flex;align-items:center;gap:4px">` +
-            signalBarsHtml(snr) +
-            `<strong>${escapeHtml(p.shortname || nodeId)}</strong>` +
-            `</div>` +
-            (role ? `<span style="opacity:0.6">${role}</span><br/>` : "") +
-            `<span style="opacity:0.6">${relativeTime(p.last_seen)}</span>`
-          )
-          .addTo(map);
-      };
-      const hideTooltip = () => hoverPopup.remove();
-
-      for (const layerId of ["unclustered-nodes", "plain-nodes", SPIDERFY_LAYER_NODES]) {
-        map.on("mouseenter", layerId, showTooltip);
-        map.on("mouseleave", layerId, hideTooltip);
-      }
-
-      // --- Link hover card ---
-      const linkPopup = new maplibregl.Popup({
-        closeButton: false,
-        closeOnClick: false,
-        offset: 12,
-        className: "map-link-tooltip",
-      });
-
-      const KIND_LABEL: Record<string, string> = {
-        neighbor: "Neighbor",
-        heard_by: "Heard by",
-        both: "Mutual",
-        traceroute: "Traceroute",
-      };
-
-      const buildLinkPopupHtml = (p: Record<string, unknown>): string => {
-        const liveNodes = nodesRef.current;
-        const aId = String(p.aId ?? "");
-        const bId = String(p.bId ?? "");
-        const aShort = liveNodes[aId]?.shortname ?? aId.slice(0, 8);
-        const bShort = liveNodes[bId]?.shortname ?? bId.slice(0, 8);
-        const kind = String(p.kind ?? "");
-        const kindLabel = KIND_LABEL[kind] ?? kind;
-        const snrRaw = p.snr;
-        const snrStr = typeof snrRaw === "number" && Number.isFinite(snrRaw)
-          ? `${snrRaw.toFixed(1)} dB`
-          : "—";
-        const lastHeardMs = p.lastHeardMs;
-        const heardStr = typeof lastHeardMs === "number" && Number.isFinite(lastHeardMs)
-          ? relativeTime(new Date(lastHeardMs).toISOString())
-          : "—";
-
-        return (
-          `<div style="display:flex;align-items:center;gap:6px;font-size:11px">` +
-            `<strong>${escapeHtml(aShort)}</strong>` +
-            `<span style="opacity:0.6">↔</span>` +
-            `<strong>${escapeHtml(bShort)}</strong>` +
-          `</div>` +
-          `<div style="display:flex;justify-content:space-between;gap:12px;margin-top:4px;font-size:10px;opacity:0.85">` +
-            `<span>${escapeHtml(kindLabel)}</span>` +
-            `<span>SNR <strong>${snrStr}</strong></span>` +
-          `</div>` +
-          `<div style="font-size:10px;opacity:0.6;margin-top:2px">${escapeHtml(heardStr)}</div>`
-        );
-      };
-
-      // Only rebuild the popup HTML when the hovered link changes; otherwise just
-      // move it (setLngLat) as the cursor travels along the same link.
-      let lastLinkKey: string | null = null;
-      const showLinkPopup = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
-        const f = e.features?.[0];
-        if (!f) return;
-        const props = f.properties ?? {};
-        lastLinkKey = `${props.aId}|${props.bId}`;
-        linkPopup.setLngLat(e.lngLat).setHTML(buildLinkPopupHtml(props)).addTo(map);
-      };
-      const moveLinkPopup = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
-        const f = e.features?.[0];
-        if (!f) return;
-        const props = f.properties ?? {};
-        const key = `${props.aId}|${props.bId}`;
-        if (key !== lastLinkKey) {
-          lastLinkKey = key;
-          linkPopup.setHTML(buildLinkPopupHtml(props));
-        }
-        linkPopup.setLngLat(e.lngLat);
-      };
-      const hideLinkPopup = () => { lastLinkKey = null; linkPopup.remove(); };
-
-      for (const layerId of ["links-solid", "links-dashed", "links-dotted"]) {
-        map.on("mouseenter", layerId, showLinkPopup);
-        map.on("mousemove", layerId, moveLinkPopup);
-        map.on("mouseleave", layerId, hideLinkPopup);
-      }
+      // Hover UI: cursor elevation feed, node tooltips, link hover cards
+      bindMapHoverUi(map, { mbMapRef, nodesRef, coordPillSinkRef, isDraggingMarkerRef, terrain3DRef });
     };
 
-    map.on("style.load", () => { styleEverLoadedRef.current = true; });
+    map.on("style.load", () => {
+      styleEverLoadedRef.current = true;
+      setStyleEpoch((e) => e + 1);
+    });
     map.on("style.load", ensureSourcesAndLayers);
 
     return () => {
       if (mapLoadFallbackRef.current) clearTimeout(mapLoadFallbackRef.current);
-      if (mbKeydownHandlerRef.current) {
-        document.removeEventListener("keydown", mbKeydownHandlerRef.current);
-        mbKeydownHandlerRef.current = null;
-      }
       if (mbTouchCleanupRef.current) {
         mbTouchCleanupRef.current();
         mbTouchCleanupRef.current = null;
       }
       if (mbMapRef.current) {
+        // Reset the spiderfy module state before the map dies — it's module-
+        // global and would otherwise leak a phantom fan into the next mount.
+        removeSpiderfyLayers(mbMapRef.current);
         mbMapRef.current.remove();
         mbMapRef.current = null;
         mbSelectedIdRef.current = null;
@@ -2338,6 +2156,9 @@ export function Map() {
       setDetailsData(null);
       const linksSource = map.getSource("links") as MlGeoJSONSource | undefined;
       linksSource?.setData(emptyLineFeatureCollection());
+      // setStyle wipes the fan layers; reset the module state with them or the
+      // auto passes stay blocked on a fan that no longer exists.
+      removeSpiderfyLayers(map);
 
       map.setStyle(buildMapStyle({ provider, osmBasemap, mapboxToken, mapboxStyle }));
     } catch {}
@@ -2417,139 +2238,6 @@ export function Map() {
       }
     }
   }, [nodes, recentDays, roleFilter, channelFilter]);
-
-  // Live packet arcs: resolve from→sender positions and spawn into the layer.
-  const flushPacketArcs = useCallback(() => {
-    flushRafRef.current = null;
-    const layer = activityLayerRef.current;
-    const all = pendingArcsRef.current;
-    pendingArcsRef.current = [];
-    if (!layer || all.length === 0) return;
-    // Drop oldest excess on a burst; keep the most recent so the feed stays live.
-    const arcs = all.length > MAX_ARCS_PER_FLUSH ? all.slice(-MAX_ARCS_PER_FLUSH) : all;
-    const liveNodes = nodesRef.current;
-    const now = performance.now();
-
-    // With clustering on, snap endpoints to the donut that visually covers them so
-    // arcs line up with the clusters on screen. Project cluster centroids once.
-    const map = mbMapRef.current;
-    const projected =
-      clusterEnabledRef.current && map && clusterDonutLayerRef.current
-        ? clusterDonutLayerRef.current.visibleClusters().map((c) => {
-            const p = map.project([c.lng, c.lat]);
-            return { x: p.x, y: p.y, r: c.r, lngLat: [c.lng, c.lat] as [number, number] };
-          })
-        : null;
-    const anchor = (pos: [number, number]): [number, number] => {
-      if (!projected || !map) return pos;
-      const p = map.project(pos);
-      let best: [number, number] | null = null;
-      let bestD = Infinity;
-      for (const c of projected) {
-        const d = Math.hypot(c.x - p.x, c.y - p.y);
-        if (d <= c.r && d < bestD) {
-          bestD = d;
-          best = c.lngLat;
-        }
-      }
-      return best ?? pos;
-    };
-
-    layer.beginBatch(); // coalesce this flush into one GPU upload
-    for (const a of arcs) {
-      const fromRaw = liveNodes[a.fromId]?.map_position;
-      const senderRaw = liveNodes[a.senderId]?.map_position;
-      const fromPos = fromRaw ? anchor(fromRaw) : undefined;
-      const senderPos = senderRaw ? anchor(senderRaw) : undefined;
-      const color = packetColor(a.type);
-      if (a.isNewTransmission && fromPos) layer.spawnPulse(fromPos, color, now);
-      if (fromPos && senderPos && !samePoint(fromPos, senderPos)) {
-        layer.spawnArc(fromPos, senderPos, color, packetWeight(a.rssi, a.snr), now);
-      } else if (!fromPos && senderPos) {
-        layer.spawnRipple(senderPos, color, now); // heard, origin position unknown
-      }
-    }
-    layer.endBatch();
-  }, []);
-
-  useLiveEvent<RawPacket>("packet", (p) => {
-    if (!livePacketsRef.current || prefersReducedMotion()) return;
-    if (p.type === "traceroute") return; // handled by the dedicated multi-hop tracer
-    const coalescer = (coalescerRef.current ??= new PacketCoalescer());
-    const arc = coalescer.ingest(p, Date.now());
-    if (!arc) return;
-    pendingArcsRef.current.push(arc);
-    if (flushRafRef.current == null) flushRafRef.current = requestAnimationFrame(flushPacketArcs);
-  });
-
-  // Resolve a traceroute's hops to positions and draw one sequential comet along
-  // [from, ...route, to], snapping each hop to its cluster and skipping hops with
-  // no known position.
-  const animateTraceroute = useCallback((t: TraceEv) => {
-    const layer = activityLayerRef.current;
-    if (!layer) return;
-    const liveNodes = nodesRef.current;
-    const map = mbMapRef.current;
-    const donut = clusterDonutLayerRef.current;
-    const clusters = clusterEnabledRef.current && map && donut ? donut.visibleClusters() : null;
-    const snap = (pos: [number, number]): [number, number] => {
-      if (!clusters || !map) return pos;
-      const p = map.project(pos);
-      let best: [number, number] | null = null;
-      let bestD = Infinity;
-      for (const c of clusters) {
-        const cp = map.project([c.lng, c.lat]);
-        const d = Math.hypot(cp.x - p.x, cp.y - p.y);
-        if (d <= c.r && d < bestD) {
-          bestD = d;
-          best = [c.lng, c.lat];
-        }
-      }
-      return best ?? pos;
-    };
-    const pts: [number, number][] = [];
-    for (const raw of [t.from, ...(t.route_ids ?? []), t.to]) {
-      const id = normalizeNodeId8(raw);
-      const pos = id ? liveNodes[id]?.map_position : undefined;
-      if (!pos) continue; // hop with unknown position — skip (honest gap)
-      const a = snap(pos);
-      const last = pts[pts.length - 1];
-      if (!last || !samePoint(last, a)) pts.push(a); // collapse same-cluster hops
-    }
-    if (pts.length === 0) return;
-    layer.spawnPath(pts, packetColor("traceroute"), 0.9, performance.now());
-  }, []);
-
-  // The same traceroute is uploaded by many gateways with divergent recorded
-  // routes; debounce by mesh id and draw only the single most complete path.
-  useLiveEvent<TraceEv>("traceroute", (t) => {
-    if (!livePacketsRef.current || prefersReducedMotion()) return;
-    const buf = (tracerouteBufRef.current ??= new globalThis.Map());
-    const key = t.id != null ? `id:${t.id}` : `ft:${t.from}:${t.to}`;
-    const existing = buf.get(key);
-    if (existing) {
-      if ((t.route_ids?.length ?? 0) > (existing.ev.route_ids?.length ?? 0)) existing.ev = t;
-      return;
-    }
-    const timer = setTimeout(() => {
-      const entry = buf.get(key);
-      buf.delete(key);
-      if (entry) animateTraceroute(entry.ev);
-    }, TRACEROUTE_DEBOUNCE_MS);
-    buf.set(key, { ev: t, timer });
-  });
-
-  useEffect(
-    () => () => {
-      if (flushRafRef.current != null) cancelAnimationFrame(flushRafRef.current);
-      const buf = tracerouteBufRef.current;
-      if (buf) {
-        for (const { timer } of buf.values()) clearTimeout(timer);
-        buf.clear();
-      }
-    },
-    [],
-  );
 
   // React to linkMode / myNodeId / nodes changes for persistent links
   useEffect(() => {
@@ -2731,17 +2419,12 @@ export function Map() {
         <span className="text-gray-200">Animations</span>
       </button>
 
-      {/* Live terrain elevation under the cursor — helps sanity-check coverage
-          paints. Only renders when 3D terrain is on and we got a valid sample. */}
-      {terrain3D && hoverElevationM != null && (
-        <div className="fixed top-3 left-[calc(var(--map-pad)+30rem)] sm:left-[calc(var(--map-pad)+33.75rem)] z-30 px-2.5 py-1 rounded-full text-[11px] font-medium border border-white/10 bg-gray-900/80 backdrop-blur-xl text-gray-300 shadow-2xl pointer-events-none select-none flex items-center gap-1.5">
-          <svg className="w-3 h-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21l6-6 4 4 8-8" />
-          </svg>
-          <span className="tabular-nums">{Math.round(hoverElevationM)} m</span>
-          <span className="text-gray-600 text-[9px] uppercase tracking-wider">elev</span>
-        </div>
-      )}
+      <MapCoordinatePill
+        sinkRef={coordPillSinkRef}
+        hasPin={hasCoordPin}
+        onJump={jumpToCoord}
+        onClearPin={clearCoordPin}
+      />
 
       {/* Tools drawer — global, top-left next to search */}
       <MapToolsDrawer
@@ -2754,14 +2437,7 @@ export function Map() {
           }
         }}
         terrainEnabled={terrain3D}
-        onRequestTerrainSetup={() => {
-          setSettingsOpenSections((prev) => {
-            const next = new Set(prev);
-            next.add("terrain");
-            return next;
-          });
-          setSettingsPanelOpen(true);
-        }}
+        onRequestTerrainSetup={openTerrainSetup}
       />
 
       {/* Tool prompts — guide the user through picks */}
@@ -2773,7 +2449,7 @@ export function Map() {
               : activeTool === "scan"
                 ? "Scan: pick an origin (or click anywhere for a virtual location)"
                 : activeTool === "los"
-                  ? "LOS: pick the first node"
+                  ? "LOS: pick the first node (or click anywhere on the map)"
                   : "Traceroute: pick the first node"
           }
           hint="Press Esc to cancel"
@@ -2784,8 +2460,10 @@ export function Map() {
         <MapToolPrompt
           message={
             activeTool === "los"
-              ? "LOS: pick the second node"
-              : "Traceroute: pick the second node"
+              ? "LOS: pick the second node (or click anywhere on the map)"
+              : traceCandidates.length > 0
+                ? `Traceroute: pick the second node — ${traceCandidates.length} ringed ${traceCandidates.length === 1 ? "node has" : "nodes have"} observed routes`
+                : "Traceroute: pick the second node (no routes in the recent window touch this origin)"
           }
           hint="Press Esc to cancel"
           onCancel={resetTool}
@@ -2798,14 +2476,15 @@ export function Map() {
           result={losState.losResult}
           fromLabel={
             toolFromId
-              ? ((nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.shortname ?? toolFromId.slice(0, 8))
+              // `||` not `??` — some nodes report an empty shortname
+              ? ((nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.shortname?.trim() || toolFromId.slice(0, 8))
               : losState.losVirtualFrom
                 ? `${losState.losVirtualFrom[1].toFixed(5)}, ${losState.losVirtualFrom[0].toFixed(5)}`
                 : ""
           }
           toLabel={
             toolToId
-              ? ((nodes[toolToId] ?? nodes[`!${toolToId}`])?.shortname ?? toolToId.slice(0, 8))
+              ? ((nodes[toolToId] ?? nodes[`!${toolToId}`])?.shortname?.trim() || toolToId.slice(0, 8))
               : losState.losVirtualTo
                 ? `${losState.losVirtualTo[1].toFixed(5)}, ${losState.losVirtualTo[0].toFixed(5)}`
                 : ""
@@ -2815,15 +2494,31 @@ export function Map() {
           terrainNeeded={!terrain3D}
           onEnableTerrain={() => setTerrain3D(true)}
           onClose={resetTool}
-          isComputing={terrain3D && !losState.losResult && !losState.losError}
+          isComputing={losState.isComputingLos}
           isRecomputing={losState.isComputingLos && !!losState.losResult}
           error={losState.losError}
+          terrainWarning={losState.losTerrainWarning}
           fromHwIdx={losState.losFromHwIdx} onFromHwIdxChange={losState.setLosFromHwIdx}
           fromAntIdx={losState.losFromAntIdx} onFromAntIdxChange={losState.setLosFromAntIdx}
           fromHeightM={losState.losFromHeightM} onFromHeightChange={losState.setLosFromHeightM}
           toHwIdx={losState.losToHwIdx} onToHwIdxChange={losState.setLosToHwIdx}
           toAntIdx={losState.losToAntIdx} onToAntIdxChange={losState.setLosToAntIdx}
           toHeightM={losState.losToHeightM} onToHeightChange={losState.setLosToHeightM}
+          freqMhz={losState.losFreqMhz} onFreqMhzChange={losState.setLosFreqMhz}
+          presetIdx={losState.losPresetIdx} onPresetIdxChange={losState.setLosPresetIdx}
+          fromPosition={
+            toolFromId
+              ? (() => { const p = (nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.map_position; return p ? [p[0], p[1]] as [number, number] : null; })()
+              : losState.losVirtualFrom
+          }
+          toPosition={
+            toolToId
+              ? (() => { const p = (nodes[toolToId] ?? nodes[`!${toolToId}`])?.map_position; return p ? [p[0], p[1]] as [number, number] : null; })()
+              : losState.losVirtualTo
+          }
+          onFromPositionChange={setLosFromPosition}
+          onToPositionChange={setLosToPosition}
+          onSwapEndpoints={swapLosEndpoints}
           demSource={losState.losDemSource}
           onProfileHover={losCompute.handleLosProfileHover}
         />
@@ -2863,10 +2558,16 @@ export function Map() {
             coverageCompute.coveragePoolRef.current?.terminate();
             coverageCompute.coveragePoolRef.current = null;
             coverageCompute.coverageRequestIdRef.current += 1;
+            // Flag the never-painted settings so re-selecting them offers Recalculate
+            coverageCompute.markComputeCancelled();
             coverage.setIsComputingCoverage(false);
             coverage.setIsFetchingCoverageTerrain(false);
             coverage.setCoverageProgress({ completed: 0, total: 0 });
           }}
+          autoRecalc={coverage.coverageAutoRecalc}
+          onAutoRecalcChange={coverage.setCoverageAutoRecalc}
+          paramsDirty={coverage.coverageParamsDirty}
+          onRecalculate={() => coverage.setCoverageRecalcNonce((n) => n + 1)}
           rxHardwareIdx={coverage.coverageRxHardwareIdx}
           onRxHardwareIdxChange={coverage.setCoverageRxHardwareIdx}
           rxAntennaIdx={coverage.coverageRxAntennaIdx}
@@ -2922,26 +2623,45 @@ export function Map() {
             mbMapRef.current?.easeTo({ center: lngLat, duration: 600 });
           }}
           onScanFromHere={() => {
-            // Mirror coverage's RF settings so the scan results match the
-            // painted prediction. Origin (toolFromId / toolVirtualPos) is
-            // already shared between the tools.
-            scan.setScanHardwareIdx(coverage.coverageHardwareIdx);
-            scan.setScanAntennaIdx(coverage.coverageAntennaIdx);
-            scan.setScanAntennaHeightM(coverage.coverageAntennaHeightM);
-            scan.setScanCustomTxDbm(coverage.coverageCustomTxDbm);
-            scan.setScanRxHardwareIdx(coverage.coverageRxHardwareIdx);
-            scan.setScanRxAntennaIdx(coverage.coverageRxAntennaIdx);
-            scan.setScanPresetIdx(coverage.coveragePresetIdx);
-            scan.setScanCustomSensDbm(coverage.coverageCustomSensDbm);
-            scan.setScanAggressionIdx(coverage.coverageAggressionIdx);
-            scan.setScanClutterEnabled(coverage.coverageClutterEnabled);
-            scan.setScanCanopyEnabled(coverage.coverageCanopyEnabled);
-            scan.setScanBuildingsEnabled(coverage.coverageBuildingsEnabled);
-            scan.setScanReliability(coverage.coverageReliability);
+            // Mirror coverage's RF settings so the scan results match the painted
+            // prediction. applyMirror updates state WITHOUT persisting, so an overlay
+            // scan never overwrites the user's own saved scan defaults. Origin
+            // (toolFromId / toolVirtualPos) is already shared between the tools.
+            scan.applyMirror({
+              hardwareIdx: coverage.coverageHardwareIdx,
+              antennaIdx: coverage.coverageAntennaIdx,
+              antennaHeightM: coverage.coverageAntennaHeightM,
+              customTxDbm: coverage.coverageCustomTxDbm,
+              rxHardwareIdx: coverage.coverageRxHardwareIdx,
+              rxAntennaIdx: coverage.coverageRxAntennaIdx,
+              rxHeightM: coverage.coverageRxHeightM,
+              presetIdx: coverage.coveragePresetIdx,
+              customSensDbm: coverage.coverageCustomSensDbm,
+              aggressionIdx: coverage.coverageAggressionIdx,
+              clutterEnabled: coverage.coverageClutterEnabled,
+              canopyEnabled: coverage.coverageCanopyEnabled,
+              buildingsEnabled: coverage.coverageBuildingsEnabled,
+              reliability: coverage.coverageReliability,
+            });
             coverageCompute.skipNextCoverageComputeRef.current = true;
             coverage.setKeepCoveragePaint(true);
             setActiveTool("scan");
           }}
+        />
+      )}
+
+      {/* Busiest-links column — browse corridors while the traceroute tool is active */}
+      {activeTool === "traceroute" && (
+        <MapTraceCorridorsPanel
+          corridors={traceCorridors}
+          sortMode={traceCorridorSort}
+          onSortModeChange={setTraceCorridorSort}
+          inViewOnly={traceCorridorsInView}
+          onToggleInView={setTraceCorridorsInView}
+          activePair={traceActivePair}
+          hideOnMobile={toolStep === "result"}
+          onHover={handleTraceHighlight}
+          onPick={handleCorridorPick}
         />
       )}
 
@@ -2954,12 +2674,26 @@ export function Map() {
           toLabel={(nodes[toolToId] ?? nodes[`!${toolToId}`])?.shortname ?? toolToId.slice(0, 8)}
           fromColor="#06b6d4"
           toColor="#d946ef"
-          traceroutes={rawTraceroutes}
-          loading={rawTraceroutesLoading}
+          paths={tracePaths}
+          runs={traceRuns}
+          selectedSig={traceSelectedPath ? traceSelectedPath.hops.join(">") : null}
+          onSelectPath={handleTraceSelectPath}
+          analysis={traceCompute.traceAnalysis}
+          isComputing={traceCompute.isComputingTrace}
+          analysisError={traceCompute.traceError}
+          analysisWarning={traceCompute.traceWarning}
+          terrain3D={terrain3D}
+          onEnableTerrain={openTerrainSetup}
+          showDirect={traceShowDirect}
+          onToggleDirect={setTraceShowDirect}
+          isFlying={traceFlyover.isFlying}
+          canFly={!prefersReducedMotion()}
+          onToggleFlyover={handleToggleFlyover}
+          loading={rawTraceroutesLoading || pairTraceroutesLoading}
           liveNodes={nodes}
-          onNodeSelect={(id) => handleNodeSelectRef.current(id)}
-          onHoverLink={(id) => handleLinkHoverRef.current(id)}
-          onClose={resetTool}
+          onNodeSelect={handlePanelNodeSelect}
+          onHighlight={handleTraceHighlight}
+          onClose={handleToolPanelClose}
         />
       )}
 
@@ -2969,66 +2703,34 @@ export function Map() {
           summary={scan.scanSummary}
           originLabel={
             toolFromId
-              ? ((nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.shortname ?? toolFromId.slice(0, 8))
-              : "Virtual location"
+              ? ((nodes[toolFromId] ?? nodes[`!${toolFromId}`])?.shortname?.trim() || toolFromId.slice(0, 8))
+              : toolVirtualPos
+                ? `${toolVirtualPos[1].toFixed(5)}, ${toolVirtualPos[0].toFixed(5)}`
+                : "Virtual location"
           }
           isScanning={scan.isScanning}
           scanError={scan.scanError}
+          terrainWarning={scan.scanTerrainWarning}
+          onRetry={handleScanRetry}
           demSource={scan.scanDemSource}
           terrainNeeded={!terrain3D}
-          onEnableTerrain={() => setTerrain3D(true)}
-          onClose={() => {
-            // Overlay close returns to the coverage view; standalone close
-            // does a full reset.
-            if (coverage.keepCoveragePaint) {
-              coverageCompute.skipNextCoverageComputeRef.current = true;
-              coverage.setKeepCoveragePaint(false);
-              setActiveTool("coverage");
-            } else {
-              resetTool();
-            }
-          }}
-          onSelectResult={(id) => {
-            // Fly to the target, then open its details panel.
-            const n = nodes[id] ?? nodes[`!${id}`];
-            const mb = mbMapRef.current;
-            if (n?.map_position && mb) {
-              mb.easeTo({
-                center: [n.map_position[0], n.map_position[1]],
-                zoom: Math.max(mb.getZoom(), 13),
-                duration: 800,
-              });
-            }
-            handleNodeSelectRef.current(id);
-          }}
-          onHoverResult={(id) => scan.setScanHoverId(id)}
-          onReturnToOrigin={() => {
-            const mapNow = mbMapRef.current;
-            const view = scanCompute.scanInitialViewRef.current;
-            if (!mapNow || !view) return;
-            mapNow.easeTo({
-              center: view.center,
-              zoom: view.zoom,
-              pitch: view.pitch,
-              bearing: view.bearing,
-              duration: 800,
-            });
-          }}
+          onEnableTerrain={handleScanEnableTerrain}
+          onClose={handleScanClose}
+          onSelectResult={handleScanSelectResult}
+          onHoverResult={handleScanHoverResult}
+          onReturnToOrigin={handleScanReturnToOrigin}
           hiddenClasses={scan.hiddenScanClasses}
-          onToggleClassVisibility={(cls) =>
-            scan.setHiddenScanClasses((prev) => {
-              const next = new Set(prev);
-              if (next.has(cls)) next.delete(cls);
-              else next.add(cls);
-              return next;
-            })
-          }
+          onToggleClassVisibility={handleScanToggleClassVisibility}
           antennaIdx={scan.scanAntennaIdx}
           onAntennaIdxChange={scan.setScanAntennaIdx}
           hardwareIdx={scan.scanHardwareIdx}
           onHardwareIdxChange={scan.setScanHardwareIdx}
           antennaHeightM={scan.scanAntennaHeightM}
           onAntennaHeightChange={scan.setScanAntennaHeightM}
+          rxHeightM={scan.scanRxHeightM}
+          onRxHeightChange={scan.setScanRxHeightM}
+          freqMhz={scan.scanFreqMhz}
+          onFreqMhzChange={scan.setScanFreqMhz}
           rxHardwareIdx={scan.scanRxHardwareIdx}
           onRxHardwareIdxChange={scan.setScanRxHardwareIdx}
           rxAntennaIdx={scan.scanRxAntennaIdx}

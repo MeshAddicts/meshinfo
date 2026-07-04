@@ -1,6 +1,6 @@
 *.sh                 text eol=lf
 
-/.yarn/**            linguist-vendored
-/.yarn/releases/*    binary
-/.yarn/plugins/**/*  binary
-/.pnp.*              binary linguist-generated
+/frontend/.yarn/**            linguist-vendored
+/frontend/.yarn/releases/*    binary
+/frontend/.yarn/plugins/**/*  binary
+/frontend/.pnp.*              binary linguist-generated

@@ -1,7 +1,7 @@
 /** worker_threads entry with two modes: ITM-render a node subset, or composite tiles. */
 import { parentPort, workerData } from "node:worker_threads";
 
-import { loadItmContext } from "../src/pages/map/itm";
+import { loadItmContext } from "../src/pages/map/rf/itm";
 import type { MarginGridQ8 } from "./cache";
 import { compositeTileMargin, renderNodeMargin, type RenderSources } from "./nodeRender";
 import type { CoverageOrigin } from "./nodes";

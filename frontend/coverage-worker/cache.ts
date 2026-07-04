@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { DEMBounds } from "../src/pages/map/terrainDEM";
+import type { DEMBounds } from "../src/pages/map/terrain/terrainDEM";
 import type { CoverageOrigin } from "./nodes";
 
 /** dB = (q − 1) / 4 − 20 for q ≥ 1; q = 0 is NaN. The −20..+43.5 dB clamp is

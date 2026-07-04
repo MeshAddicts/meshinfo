@@ -4,14 +4,14 @@ import { copyFile, mkdir, readdir, readFile, rename, rm, writeFile } from "node:
 import { dirname, join } from "node:path";
 import { Worker } from "node:worker_threads";
 
-import { buildBuildingRaster } from "../src/pages/map/buildingTiles";
-import { buildCanopyRaster } from "../src/pages/map/canopyTiles";
-import { loadItmContext } from "../src/pages/map/itm";
-import { buildClutterRaster } from "../src/pages/map/landcoverTiles";
 import { buildLiveCoverageParams, LIVE_ANTENNA_AGL_M } from "../src/pages/map/live/liveCoverageParams";
-import { type DEMBounds, unionDemBoundsAround } from "../src/pages/map/terrainDEM";
-import { buildDem } from "../src/pages/map/terrainRgb";
-import { decodeTilePixels } from "../src/pages/map/tileDecode";
+import { loadItmContext } from "../src/pages/map/rf/itm";
+import { buildBuildingRaster } from "../src/pages/map/terrain/buildingTiles";
+import { buildCanopyRaster } from "../src/pages/map/terrain/canopyTiles";
+import { buildClutterRaster } from "../src/pages/map/terrain/landcoverTiles";
+import { type DEMBounds, unionDemBoundsAround } from "../src/pages/map/terrain/terrainDEM";
+import { buildDem } from "../src/pages/map/terrain/terrainRgb";
+import { decodeTilePixels } from "../src/pages/map/terrain/tileDecode";
 import {
   type CacheState,
   hashKey,

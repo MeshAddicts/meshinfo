@@ -45,8 +45,15 @@ export interface ITraceroutesResponse {
   from: string;
   hop_start?: number;
   id: number;
+  /** Full RouteDiscovery. SNR arrays are firmware-scaled ×4 with -128 = unknown.
+   *  Rows carrying the full snr_towards (length = route + 1) are REPLY packets:
+   *  their towards path reads header `to` → route → header `from` (the route
+   *  stays request-oriented while the reply header swaps the endpoints). */
   payload: {
-    route: string[];
+    route: (string | number)[];
+    route_back?: (string | number)[];
+    snr_towards?: number[];
+    snr_back?: number[];
   };
   route: string[];
   route_ids?: string[];
@@ -63,38 +70,6 @@ export interface ITraceroutesResponse {
   hop_limit?: number;
   hops_away?: number;
   sender?: string;
-}
-
-export interface IMessagesResponse {
-  channel: number;
-  from: string;
-  hop_limit: number;
-  hop_start: number;
-  id: number;
-  rx_rssi?: number;
-  rx_snr?: number;
-  rx_time: number;
-  to: string;
-  rssi: number;
-  snr: number;
-  timestamp: number;
-  topic: string;
-  type: string;
-  payload: Payload;
-  priority?: number;
-}
-
-export interface Payload {
-  hw_model?: number;
-  id?: string;
-  long_name?: string;
-  macaddr?: string;
-  short_name?: string;
-  air_util_tx?: number;
-  battery_level?: number;
-  channel_utilization?: number;
-  uptime_seconds?: number;
-  voltage?: number;
 }
 
 export interface IChannel {
@@ -186,6 +161,14 @@ export interface INeighbor {
 
 export interface INodePosition {
   altitude?: number;
+  /** Height above WGS84 ellipsoid; alternative datum some devices report instead of MSL. */
+  altitude_hae?: number;
+  /** Geoid undulation N, where MSL = HAE − N. */
+  altitude_geoidal_separation?: number;
+  /** Meshtastic LocSource enum: 1=manual, 2=internal GPS, 3=external GPS. */
+  location_source?: number;
+  /** Meshtastic AltSource enum: 1=manual, 2=internal, 3=external, 4=barometric. */
+  altitude_source?: number;
   latitude_i: number;
   latitude: number;
   longitude_i: number;

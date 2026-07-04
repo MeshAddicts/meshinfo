@@ -3,9 +3,9 @@
  * owner config exists; `txDbmForRole` is the override point.
  */
 import { NodeRole } from "../../../types";
-import { effectiveSensitivityDbm, MESHTASTIC_PRESETS, reliabilityPreset } from "../coverageAnalysis";
-import type { RasterParams } from "../coverageRaster";
-import { CABLE_LOSS_DB, clampRxHeightM, DEFAULT_ITM_ENV, FADE_MARGIN_DB, FREQ_MHZ } from "../itmEnv";
+import { effectiveSensitivityDbm, MESHTASTIC_PRESETS, reliabilityPreset } from "../rf/coverageAnalysis";
+import type { RasterParams } from "../rf/coverageRaster";
+import { CABLE_LOSS_DB, clampRxHeightM, DEFAULT_ITM_ENV, FADE_MARGIN_DB, FREQ_MHZ } from "../rf/itmEnv";
 import { ROUTER_CLASS_ROLES } from "./liveCoverageRoles";
 
 /** High-power infrastructure TX (dBm) — Station-G2-class routers/repeaters. */

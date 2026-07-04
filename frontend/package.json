@@ -24,7 +24,7 @@
     "react": "^19.2.4",
     "react-dom": "^19",
     "react-redux": "^9.2.0",
-    "react-router": "^7.13.2",
+    "react-router": "^8.0.0",
     "react-virtuoso": "^4.18.3",
     "tailwindcss": "^4.2.2"
   },
@@ -49,7 +49,7 @@
     "vite": "^8.0.3",
     "vitest": "^4.1.1"
   },
-  "packageManager": "yarn@4.16.0",
+  "packageManager": "yarn@4.17.0",
   "engines": {
     "node": ">=20.19.0"
   }

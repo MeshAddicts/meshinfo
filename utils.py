@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 import datetime
 import logging
+from math import asin, cos, radians, sin, sqrt
 import requests
-from geo import distance_between_two_points
 logger = logging.getLogger(__name__)
+def distance_between_two_points(lat1, lon1, lat2, lon2):
+  # Haversine, R=6371 km
+  lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+  a = sin((lat2 - lat1) / 2) ** 2 + cos(lat1) * cos(lat2) * sin((lon2 - lon1) / 2) ** 2
+  return 6371 * 2 * asin(sqrt(a))
 def calculate_distance_between_nodes(node1, node2):
   if node1 is None or node2 is None:
     return None
