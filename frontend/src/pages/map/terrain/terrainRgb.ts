@@ -9,6 +9,8 @@
 import { fetchWithTimeout } from "./fetchWithTimeout";
 import type { DEM, DEMBounds } from "./terrainDEM";
 import { decodeTilePixels } from "./tileDecode";
+import { fetchTilesPooled } from "./tileFetchPool";
+import { lat2tileY, lng2tileX } from "./webMercator";
 
 /** Nominal output tile size; real size taken from each decoded tile (256 or 512). */
 const DEFAULT_TILE_SIZE = 512;
@@ -29,20 +31,6 @@ const MAX_ZOOM = 14;
 /** Tilezen goes to z=15 (Mapbox v4: z=14). */
 const TILEZEN_MAX_ZOOM = 15;
 const MIN_ZOOM = 0;
-
-// Slippy Map / Web Mercator math
-
-function lng2tileX(lng: number, zoom: number): number {
-  return ((lng + 180) / 360) * Math.pow(2, zoom);
-}
-
-function lat2tileY(lat: number, zoom: number): number {
-  const latRad = (lat * Math.PI) / 180;
-  return (
-    ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) *
-    Math.pow(2, zoom)
-  );
-}
 
 /** m/px at zoom. tileSize = source native (512 Mapbox v4, 256 Tilezen). */
 function tileMetersPerPixel(lat: number, zoom: number, tileSize: number): number {
@@ -293,36 +281,6 @@ export async function buildDem(opts: BuildDemOptions): Promise<BuiltDem & { sour
   }
 }
 
-/** In-flight cap for bulk tile fetches. Browsers cap per-host themselves; Node
- *  (undici) does not, and hundreds of parallel S3 sockets get ECONNRESET. */
-const TILE_FETCH_LANES = 24;
-
-/** Fetch tiles into `out` with bounded concurrency and one retry per tile;
- *  returns the failure count (failed tiles stay null). */
-async function fetchTilesPooled(
-  wanted: Array<{ key: string; x: number; y: number }>,
-  fetchOne: (x: number, y: number) => Promise<CachedTile>,
-  out: Map<string, CachedTile | null>,
-  label: string,
-): Promise<number> {
-  let failureCount = 0;
-  let i = 0;
-  const lanes = Array.from({ length: Math.min(TILE_FETCH_LANES, wanted.length) }, async () => {
-    while (i < wanted.length) {
-      const t = wanted[i++];
-      try {
-        out.set(t.key, await fetchOne(t.x, t.y).catch(() => fetchOne(t.x, t.y)));
-      } catch (err) {
-        failureCount += 1;
-        console.warn(label, err);
-        out.set(t.key, null);
-      }
-    }
-  });
-  await Promise.all(lanes);
-  return failureCount;
-}
-
 /** Stitch terrain tiles for bounds, bilinear-resample to target grid. Per-tile failures → NaN pixels. */
 export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<BuiltDem> {
   const { bounds, targetWidth, targetHeight, token } = opts;
@@ -355,7 +313,7 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<Bui
       wanted.push({ key, x: fetchX, y });
     }
   }
-  const failureCount = await fetchTilesPooled(wanted, (x, y) => fetchTile(zoom, x, y, token), tileMap, "[terrainRgb]");
+  const failureCount = await fetchTilesPooled(wanted, (x, y) => fetchTile(zoom, x, y, token), tileMap, null, "[terrainRgb]");
 
   // Mirror the Tilezen twin: wholesale failure surfaces as an error, not a hollow DEM.
   const totalTiles = tileMap.size;
@@ -456,7 +414,7 @@ export async function buildDemFromTilezen(opts: BuildDemOptions): Promise<BuiltD
       wanted.push({ key, x: fetchX, y });
     }
   }
-  const failureCount = await fetchTilesPooled(wanted, (x, y) => fetchTilezenTile(zoom, x, y), tileMap, "[terrainRgb/tilezen]");
+  const failureCount = await fetchTilesPooled(wanted, (x, y) => fetchTilezenTile(zoom, x, y), tileMap, null, "[terrainRgb/tilezen]");
 
   // Use the dedupe-aware count so the 50% threshold survives antimeridian spans.
   const totalTiles = tileMap.size;

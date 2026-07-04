@@ -13,7 +13,7 @@ are present (it degrades gracefully to terrain-only when they aren't).
 
 ## Quick start
 
-1. `config.toml`:
+1. `config.toml` (meshinfo reads it at startup, so restart meshinfo after):
 
    ```toml
    [coverage]
@@ -28,8 +28,9 @@ are present (it degrades gracefully to terrain-only when they aren't).
 
 That's it. The worker polls `/v1/nodes`, bakes tiles into `output/coverage/`
 (shared volume), and POSTs `/v1/coverage/notify` so open maps refresh live via
-SSE. No meshinfo restart is needed — the tile route is mounted whenever
-`[coverage]` is enabled.
+SSE. Once `[coverage]` is enabled, no further meshinfo restarts are needed —
+the tile route is mounted up front, so the first bake appears as soon as it
+lands.
 
 ## What to expect
 
@@ -93,5 +94,7 @@ model.
   the node set is unchanged; `metadata.json` in `output/coverage/` carries the
   `generatedAt` of the served set.
 - **Coverage looks terrain-only** — the NLCD/canopy/buildings accuracy bakes
-  aren't present. Run them (see the main README) and the next node change
-  triggers a full re-render with the new layers automatically.
+  aren't present (`metadata.json` → `sources` shows what the current output
+  used). Run them (see the main README); the worker re-probes for missing
+  layers about every 30 minutes, and the first bake that renders a node after
+  that picks them up with an automatic full re-render.

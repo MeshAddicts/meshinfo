@@ -1,4 +1,12 @@
-/** Web-mercator (slippy / XYZ) pixel + tile math. Pixel origin top-left, 256 px tiles. */
+/** Web-mercator pixel math (top-left origin, 256 px tiles), thin wrappers over
+ *  the shared projection in src/pages/map/terrain/webMercator.ts. */
+import {
+  latFromMercatorYNorm,
+  lngFromMercatorXNorm,
+  mercatorXNorm,
+  mercatorYNorm,
+} from "../src/pages/map/terrain/webMercator";
+
 export const TILE_SIZE = 256;
 
 export function worldSizePx(z: number): number {
@@ -6,21 +14,17 @@ export function worldSizePx(z: number): number {
 }
 
 export function lngToPx(lng: number, z: number): number {
-  return ((lng + 180) / 360) * worldSizePx(z);
+  return mercatorXNorm(lng) * worldSizePx(z);
 }
 
 export function latToPx(lat: number, z: number): number {
-  const s = Math.sin((lat * Math.PI) / 180);
-  // y = 0.5(1 - atanh(sin)/π); atanh(sin) = 0.5·ln((1+sin)/(1-sin))
-  const y = 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI);
-  return y * worldSizePx(z);
+  return mercatorYNorm(lat) * worldSizePx(z);
 }
 
 export function pxToLng(px: number, z: number): number {
-  return (px / worldSizePx(z)) * 360 - 180;
+  return lngFromMercatorXNorm(px / worldSizePx(z));
 }
 
 export function pxToLat(py: number, z: number): number {
-  const y = 0.5 - py / worldSizePx(z);
-  return (Math.atan(Math.sinh(2 * Math.PI * y)) * 180) / Math.PI;
+  return latFromMercatorYNorm(py / worldSizePx(z));
 }

@@ -79,7 +79,9 @@ export function useCoverageLookup({ mbMapRef, enabled, mapReady, suspended }: Us
       if (debounce != null) window.clearTimeout(debounce);
       debounce = window.setTimeout(() => {
         if (activeRef.current && !m.isMoving()) {
-          void lookup(e.lngLat.lng, e.lngLat.lat, e.point.x, e.point.y, false);
+          // wrap(): over a repeated world copy lng exceeds ±180 and the worker 400s
+          const { lng, lat } = e.lngLat.wrap();
+          void lookup(lng, lat, e.point.x, e.point.y, false);
         }
       }, HOVER_DEBOUNCE_MS);
     };
@@ -92,7 +94,7 @@ export function useCoverageLookup({ mbMapRef, enabled, mapReady, suspended }: Us
       setHover(null);
       if (!activeRef.current || e.points.length !== 1) return;
       pressStart = { x: e.points[0].x, y: e.points[0].y };
-      const { lng, lat } = e.lngLat;
+      const { lng, lat } = e.lngLat.wrap();
       const { x, y } = e.point;
       if (pressTimer != null) window.clearTimeout(pressTimer);
       pressTimer = window.setTimeout(() => void lookup(lng, lat, x, y, true), LONG_PRESS_MS);

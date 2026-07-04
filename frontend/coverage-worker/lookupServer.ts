@@ -1,10 +1,10 @@
 /** HTTP lookup: which nodes cover a point, sorted by margin. Samples the
  *  per-node margin cache directly (4 bytes per candidate), no tile decode. */
-import { open, readFile } from "node:fs/promises";
+import { open, readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
 
-import { hashKey, type NodeCacheHeader } from "./cache";
+import { bilinearMarginQ8, GRID_PREFIX_BYTES, gridFraction, hashKey, type NodeCacheHeader } from "./cache";
 import * as cfg from "./config";
 
 interface ActiveNode {
@@ -12,24 +12,37 @@ interface ActiveNode {
   binPath: string;
 }
 
-let stateRaw = "";
+/** mtime:size of the state.json currently loaded — cheaper change detection
+ *  than re-reading and string-comparing the whole file per hover. */
+let stateStamp = "";
 let active: ActiveNode[] = [];
 let refreshing: Promise<void> | null = null;
 
 /** Reload the active-node headers when state.json (atomic with the tiles) changes. */
 async function refreshActive(): Promise<void> {
+  const statePath = join(cfg.OUTPUT_DIR, "state.json");
   let raw: string;
+  let stamp: string;
   try {
-    raw = await readFile(join(cfg.OUTPUT_DIR, "state.json"), "utf8");
+    const st = await stat(statePath);
+    stamp = `${st.mtimeMs}:${st.size}`;
+    if (stamp === stateStamp) return;
+    raw = await readFile(statePath, "utf8");
   } catch {
-    stateRaw = "";
+    stateStamp = "";
     active = [];
     return;
   }
-  if (raw === stateRaw) return;
-  const state = JSON.parse(raw) as { active: Record<string, string> };
+  let ids: string[];
+  try {
+    ids = Object.keys((JSON.parse(raw) as { active: Record<string, unknown> }).active ?? {});
+  } catch {
+    stateStamp = "";
+    active = [];
+    return;
+  }
   const loaded = await Promise.all(
-    Object.keys(state.active).map(async (id): Promise<ActiveNode | null> => {
+    ids.map(async (id): Promise<ActiveNode | null> => {
       try {
         const base = join(cfg.CACHE_DIR, "nodes", hashKey(id));
         const header = JSON.parse(await readFile(`${base}.json`, "utf8")) as NodeCacheHeader;
@@ -39,7 +52,7 @@ async function refreshActive(): Promise<void> {
       }
     }),
   );
-  stateRaw = raw;
+  stateStamp = stamp;
   active = loaded.filter((n): n is ActiveNode => n != null);
 }
 
@@ -52,39 +65,36 @@ function ensureActive(): Promise<void> {
 }
 
 /** Bilinear margin (dB) at lng/lat from two 2-byte row reads; NaN when outside
- *  bounds or any corner is the NaN sentinel (mirrors cache.marginQ8At). */
+ *  bounds or any corner is the NaN sentinel. Projection + dequantization are
+ *  the same helpers the bake's compositor uses (cache.ts), so hover and tiles
+ *  can't disagree. */
 async function sampleNode(n: ActiveNode, lng: number, lat: number): Promise<number> {
-  const { west, south, east, north } = n.header.bounds;
-  const { width, height } = n.header;
-  const fx = ((lng - west) / (east - west)) * (width - 1);
-  const fy = ((north - lat) / (north - south)) * (height - 1);
-  if (!Number.isFinite(fx) || !Number.isFinite(fy) || fx < 0 || fx > width - 1 || fy < 0 || fy > height - 1) {
-    return Number.NaN;
-  }
-  const x0 = Math.floor(fx);
-  const y0 = Math.floor(fy);
+  const { width, height, stateKey } = n.header;
+  const f = gridFraction(n.header.bounds, width, height, lng, lat);
+  if (!f) return Number.NaN;
+  const x0 = Math.floor(f.fx);
+  const y0 = Math.floor(f.fy);
   const x1 = Math.min(x0 + 1, width - 1);
   const y1 = Math.min(y0 + 1, height - 1);
   const len = x1 - x0 + 1;
+  const prefix = Buffer.alloc(GRID_PREFIX_BYTES);
   const row0 = Buffer.alloc(len);
   const row1 = Buffer.alloc(len);
   const fh = await open(n.binPath, "r");
   try {
-    await fh.read(row0, 0, len, y0 * width + x0);
-    await fh.read(row1, 0, len, y1 * width + x0);
+    // A bake may have atomically swapped this bin since the header was cached —
+    // a moved node keeps its dimensions, so a size check alone can't catch it.
+    // The embedded stateKey pins the bin to the header that describes it.
+    const { size } = await fh.stat();
+    if (size !== GRID_PREFIX_BYTES + width * height) return Number.NaN;
+    await fh.read(prefix, 0, GRID_PREFIX_BYTES, 0);
+    if (prefix.toString("utf8") !== stateKey) return Number.NaN;
+    await fh.read(row0, 0, len, GRID_PREFIX_BYTES + y0 * width + x0);
+    await fh.read(row1, 0, len, GRID_PREFIX_BYTES + y1 * width + x0);
   } finally {
     await fh.close();
   }
-  const q00 = row0[0];
-  const q10 = row0[len - 1];
-  const q01 = row1[0];
-  const q11 = row1[len - 1];
-  if (q00 === 0 || q10 === 0 || q01 === 0 || q11 === 0) return Number.NaN;
-  const tx = fx - x0;
-  const ty = fy - y0;
-  const top = q00 + (q10 - q00) * tx;
-  const bot = q01 + (q11 - q01) * tx;
-  return (top + (bot - top) * ty - 1) / 4 - 20;
+  return bilinearMarginQ8(row0[0], row0[len - 1], row1[0], row1[len - 1], f.fx - x0, f.fy - y0);
 }
 
 const MAX_ENTRIES = 12;
@@ -104,7 +114,12 @@ export function startLookupServer(): void {
         return;
       }
       await ensureActive();
-      const candidates = active.filter(({ header: { bounds: b } }) => lng >= b.west && lng <= b.east && lat >= b.south && lat <= b.north);
+      // Footprint bounds may be unwrapped past ±180 (seam frame) — shift the
+      // query lng into each node's frame before the containment test.
+      const candidates = active.filter(({ header: { bounds: b } }) => {
+        const sLng = lng < b.west ? lng + 360 : lng > b.east ? lng - 360 : lng;
+        return sLng >= b.west && sLng <= b.east && lat >= b.south && lat <= b.north;
+      });
       const sampled = await Promise.all(
         candidates.map(async (n) => {
           try {

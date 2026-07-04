@@ -12,7 +12,7 @@ export interface BakeRequest {
   version: string;
 }
 
-export type BakeResponse = { ok: BakeMetadata } | { err: string };
+export type BakeResponse = { ok: BakeMetadata | null } | { err: string };
 
 installSharpDecoder();
 installEnvShim();

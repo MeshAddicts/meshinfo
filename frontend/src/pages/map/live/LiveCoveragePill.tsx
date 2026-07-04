@@ -1,6 +1,7 @@
 /** Top-right toggle pill (left of the mesh-health pill): show/hide + opacity + freshness. */
 import { useEffect, useId, useRef, useState } from "react";
 
+import { relativeTime } from "../lib/helpers";
 import type { CoverageMeta, ServerCoverageStatus } from "./useServerCoverageTiles";
 
 export interface LiveCoveragePillProps {
@@ -12,17 +13,6 @@ export interface LiveCoveragePillProps {
   onOpacityChange: (opacity: number) => void;
   hideNodes: boolean;
   onHideNodesChange: (hide: boolean) => void;
-}
-
-function agoLabel(iso: string): string {
-  const t = new Date(iso).getTime();
-  if (!Number.isFinite(t)) return "";
-  const mins = Math.max(0, Math.round((Date.now() - t) / 60000));
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins} min ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs} h ago`;
-  return `${Math.round(hrs / 24)} d ago`;
 }
 
 export function LiveCoveragePill({
@@ -65,7 +55,9 @@ export function LiveCoveragePill({
         ? "bg-cyan-400"
         : "bg-emerald-400 animate-pulse";
   const title = unavailable
-    ? "Live coverage not available (not baked yet)"
+    ? enabled
+      ? "Live coverage unavailable (worker offline?) — click to switch off"
+      : "Live coverage not available (not baked yet)"
     : enabled
       ? "Live network coverage on — click to hide"
       : "Live network coverage — click to show";
@@ -76,7 +68,7 @@ export function LiveCoveragePill({
         <button
           type="button"
           onClick={onToggle}
-          disabled={unavailable}
+          disabled={unavailable && !enabled}
           aria-pressed={enabled}
           title={title}
           className="flex items-center gap-2 px-2 sm:px-3 py-1.5 text-xs font-medium text-gray-200
@@ -127,7 +119,7 @@ export function LiveCoveragePill({
           </div>
           {meta && (
             <p className="text-[11px] text-gray-500 -mt-1">
-              Updated {agoLabel(meta.generatedAt)} · heard ≤ {meta.recencyHours} h
+              Updated {relativeTime(meta.generatedAt)} · heard ≤ {meta.recencyHours} h
             </p>
           )}
 

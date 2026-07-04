@@ -247,7 +247,6 @@ export function Map() {
   const [liveCoverageHideNodes, setLiveCoverageHideNodes] = useState<boolean>(
     () => readJson<boolean>(LS_KEYS.liveCoverageHideNodes, true),
   );
-  const nodesHidden = liveCoverage && liveCoverageHideNodes;
 
   // RF tool state hooks (own settings + result state)
   const losState = useLosState();
@@ -403,7 +402,8 @@ export function Map() {
   const configRef = useRef(config);
   const recentDaysRef = useRef(recentDays);
   const clusterEnabledRef = useRef(clusterEnabled);
-  const nodesHiddenRef = useRef(nodesHidden);
+  // Initialized false; nodesHidden is derived below the coverage hook and synced there.
+  const nodesHiddenRef = useRef(false);
   const livePacketsRef = useRef(livePackets);
   const linkModeRef = useRef(linkMode);
   const myNodeIdRef = useRef(myNodeId);
@@ -435,7 +435,6 @@ export function Map() {
   useEffect(() => { setDetailsDataRef.current = setDetailsData; }, [setDetailsData]);
   useEffect(() => { recentDaysRef.current = recentDays; }, [recentDays]);
   useEffect(() => { clusterEnabledRef.current = clusterEnabled; }, [clusterEnabled]);
-  useEffect(() => { nodesHiddenRef.current = nodesHidden; }, [nodesHidden]);
   useEffect(() => {
     livePacketsRef.current = livePackets;
     clusterDonutLayerRef.current?.setAnimationsEnabled(livePackets);
@@ -724,6 +723,10 @@ export function Map() {
     mapReady: mapLoaded,
     suspended: activeTool != null,
   });
+  // Hide markers only while the layer actually paints — if the worker goes away
+  // ("unavailable"), markers come back instead of leaving an empty map.
+  const nodesHidden = liveCoverage && liveCoverageHideNodes && liveCoverageState.status === "ready";
+  useEffect(() => { nodesHiddenRef.current = nodesHidden; }, [nodesHidden]);
 
   // Reset the whole tool state. Also imperatively clears map visual geometry
   // so there's no one-tick flash of stale tubes / rasters / scan lines while

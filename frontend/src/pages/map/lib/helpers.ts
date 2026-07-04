@@ -65,7 +65,8 @@ export function relativeTime(iso: string | null | undefined): string {
   if (!iso) return "Unknown";
   const ms = Date.now() - new Date(iso).getTime();
   if (Number.isNaN(ms)) return "Unknown";
-  const s = Math.floor(ms / 1000);
+  // Clamp: client clocks behind the server would render "-42s ago".
+  const s = Math.max(0, Math.floor(ms / 1000));
   if (s < 60) return `${s}s ago`;
   const m = Math.floor(s / 60);
   if (m < 60) return `${m}m ago`;

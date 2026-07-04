@@ -4,7 +4,6 @@ import { NodeRole } from "../../../types";
 import {
   buildLiveCoverageParams,
   CLIENT_TX_DBM,
-  liveCoverageReachKm,
   ROUTER_TX_DBM,
   txDbmForRole,
 } from "./liveCoverageParams";
@@ -36,18 +35,5 @@ describe("buildLiveCoverageParams", () => {
     expect(p.situationPct).toBe(70);
     // MediumFast SX1262 → -124 dBm, no chipset offset
     expect(p.rxSensitivityDbm).toBe(-124);
-  });
-});
-
-describe("liveCoverageReachKm", () => {
-  it("clamps reach to [5, 200] and rewards higher TX", () => {
-    // Both default classes' free-space reach exceeds the 200 km terrain clamp.
-    for (const tx of [ROUTER_TX_DBM, CLIENT_TX_DBM]) {
-      expect(liveCoverageReachKm(tx)).toBeGreaterThanOrEqual(5);
-      expect(liveCoverageReachKm(tx)).toBeLessThanOrEqual(200);
-    }
-    // A much weaker TX must not reach as far as the router class.
-    expect(liveCoverageReachKm(0)).toBeLessThan(liveCoverageReachKm(ROUTER_TX_DBM));
-    expect(liveCoverageReachKm(0)).toBeGreaterThanOrEqual(5);
   });
 });

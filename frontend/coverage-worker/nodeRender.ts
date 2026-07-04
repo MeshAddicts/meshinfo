@@ -74,9 +74,10 @@ function sliceDEM(shared: DEM, bounds: DEMBounds, width: number, height: number)
 }
 
 /** AGL = reported alt − DEM ground, floored at the 6 m default so bad altitude
- *  data can only raise the antenna, never bury it. Implausible alt → default. */
-function resolveOrigin(o: CoverageOrigin, shared: DEM) {
-  const demGround = sampleDEMAt(shared, o.lng, o.lat);
+ *  data can only raise the antenna, never bury it. Implausible alt → default.
+ *  `lng` is the origin longitude already shifted into the DEM's frame. */
+function resolveOrigin(o: CoverageOrigin, lng: number, shared: DEM) {
+  const demGround = sampleDEMAt(shared, lng, o.lat);
   const demOk = !Number.isNaN(demGround);
   const ground = demOk ? demGround : 0;
   const alt = o.altitudeM;
@@ -87,13 +88,16 @@ function resolveOrigin(o: CoverageOrigin, shared: DEM) {
     alt >= ground &&
     alt <= ground + MAX_HEIGHT_ABOVE_TERRAIN_M;
   const agl = altValid ? Math.max(LIVE_ANTENNA_AGL_M, (alt as number) - ground) : LIVE_ANTENNA_AGL_M;
-  return { position: [o.lng, o.lat] as [number, number], heightM: ground + agl, antennaHeightAboveGroundM: agl };
+  return { position: [lng, o.lat] as [number, number], heightM: ground + agl, antennaHeightAboveGroundM: agl };
 }
 
 /** Render one node's quantized margin grid over its clamped footprint. */
 export function renderNodeMargin(o: CoverageOrigin, src: RenderSources, itm: ItmContext): MarginGridQ8 | null {
   const shared = src.dem;
-  const fp = clampBounds(demBoundsAround([o.lng, o.lat], o.reachKm, 1.0), shared.bounds);
+  // Shift the node into the DEM's longitude frame: a seam-straddling bbox is
+  // unwrapped (e.g. [178, 182]), so a node at -179.5 must render at +180.5.
+  const lng = o.lng < shared.bounds.west ? o.lng + 360 : o.lng > shared.bounds.east ? o.lng - 360 : o.lng;
+  const fp = clampBounds(demBoundsAround([lng, o.lat], o.reachKm, 1.0), shared.bounds);
   if (fp.east <= fp.west || fp.north <= fp.south) {
     console.warn(`[coverage-worker] node ${o.id} footprint outside DEM bounds; skipped`);
     return null;
@@ -119,7 +123,7 @@ export function renderNodeMargin(o: CoverageOrigin, src: RenderSources, itm: Itm
     subDem,
     buildLiveCoverageParams(o.txDbm, src.clutterAggression),
     itm,
-    [resolveOrigin(o, shared)],
+    [resolveOrigin(o, lng, shared)],
     undefined,
     { width: outW, height: outH },
     src.clutter,
@@ -139,6 +143,13 @@ export function compositeTileMargin(tx: number, ty: number, z: number, nodes: Ma
   const tileNorth = pxToLat(py0, z);
   const tileSouth = pxToLat(py0 + TILE_SIZE, z);
 
+  // Column lngs and row lats hoisted out of the per-grid loops (pxToLng/pxToLat
+  // recompute 2^z per call; per-pixel that dominated composite time).
+  const lngs = new Float64Array(TILE_SIZE);
+  for (let i = 0; i < TILE_SIZE; i++) lngs[i] = pxToLng(px0 + i + 0.5, z);
+  const lats = new Float64Array(TILE_SIZE);
+  for (let j = 0; j < TILE_SIZE; j++) lats[j] = pxToLat(py0 + j + 0.5, z);
+
   let margin: Float32Array | null = null;
   for (const g of nodes) {
     const b = g.bounds;
@@ -148,10 +159,10 @@ export function compositeTileMargin(tx: number, ty: number, z: number, nodes: Ma
     const gy0 = Math.max(py0, Math.floor(latToPx(b.north, z)));
     const gy1 = Math.min(py0 + TILE_SIZE, Math.ceil(latToPx(b.south, z)));
     for (let gpy = gy0; gpy < gy1; gpy++) {
-      const lat = pxToLat(gpy + 0.5, z);
+      const lat = lats[gpy - py0];
       const row = (gpy - py0) * TILE_SIZE;
       for (let gpx = gx0; gpx < gx1; gpx++) {
-        const m = marginQ8At(g, pxToLng(gpx + 0.5, z), lat);
+        const m = marginQ8At(g, lngs[gpx - px0], lat);
         if (Number.isNaN(m)) continue;
         if (!margin) {
           margin = new Float32Array(TILE_SIZE * TILE_SIZE).fill(Number.NaN);

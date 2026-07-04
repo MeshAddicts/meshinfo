@@ -1,12 +1,12 @@
 /** Cursor tooltip listing the nodes covering the hovered point, strongest first. */
 import type { IMapNode } from "../lib/types";
+import { gradient } from "../rf/coverageRaster";
 import type { CoverageLookupHover } from "./useCoverageLookup";
 
-/** Mirrors the coverage gradient bands (see colorize/coverageRaster gradient). */
+/** Dot color from the shared coverage gradient, so it matches the raster exactly. */
 function marginColor(db: number): string {
-  if (db < 5) return "#d946ef";
-  if (db < 15) return "#f97316";
-  return "#06b6d4";
+  const [r, g, b] = gradient(db);
+  return `rgb(${r}, ${g}, ${b})`;
 }
 
 export function CoverageLookupCard({

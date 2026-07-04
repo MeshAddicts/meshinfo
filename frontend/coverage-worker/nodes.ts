@@ -1,5 +1,6 @@
 /** Fetch the node set from meshinfo and reduce to coverage origins. */
 import { txDbmForRole } from "../src/pages/map/live/liveCoverageParams";
+import { fetchWithTimeout } from "../src/pages/map/terrain/fetchWithTimeout";
 import type { NodeRole } from "../src/types";
 import { BBOX, MESHINFO_URL, reachKmForRole, RECENCY_HOURS } from "./config";
 
@@ -9,10 +10,8 @@ export interface CoverageOrigin {
   lat: number;
   /** GPS MSL altitude (m) if reported + sane, else null. */
   altitudeM: number | null;
-  role: NodeRole | undefined;
   txDbm: number;
   reachKm: number;
-  lastSeenMs: number;
 }
 
 interface RawNode {
@@ -27,9 +26,13 @@ function validLngLat(lng: number, lat: number): boolean {
   return lng >= -180 && lng <= 180 && lat >= -85 && lat <= 85;
 }
 
-/** GET /v1/nodes → positioned nodes heard within the recency window. All roles. */
+/** GET /v1/nodes → positioned nodes heard within the recency window. All roles.
+ *  Sorted by id: origins[0] anchors the bake's longitude frame (and the sticky
+ *  bbox), so the order must not depend on API response ordering. */
 export async function fetchCoverageOrigins(nowMs: number): Promise<CoverageOrigin[]> {
-  const res = await fetch(`${MESHINFO_URL}/v1/nodes?days=1`);
+  // The API pre-filters by whole days; round up so RECENCY_HOURS > 24 works.
+  const days = Math.max(1, Math.ceil(RECENCY_HOURS / 24));
+  const res = await fetchWithTimeout(`${MESHINFO_URL}/v1/nodes?days=${days}`, { timeoutMs: 30_000 });
   if (!res.ok) throw new Error(`/v1/nodes failed: HTTP ${res.status}`);
   const body = (await res.json()) as { nodes?: Record<string, RawNode> };
   const recencyMs = RECENCY_HOURS * 60 * 60 * 1000;
@@ -54,11 +57,10 @@ export async function fetchCoverageOrigins(nowMs: number): Promise<CoverageOrigi
         typeof pos.altitude === "number" && Number.isFinite(pos.altitude)
           ? Math.round(pos.altitude / 5) * 5
           : null,
-      role,
       txDbm: txDbmForRole(role),
       reachKm: reachKmForRole(role),
-      lastSeenMs: seen,
     });
   }
+  out.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return out;
 }

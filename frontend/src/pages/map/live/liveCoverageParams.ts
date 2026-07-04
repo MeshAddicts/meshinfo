@@ -6,12 +6,19 @@ import { NodeRole } from "../../../types";
 import { effectiveSensitivityDbm, MESHTASTIC_PRESETS, reliabilityPreset } from "../rf/coverageAnalysis";
 import type { RasterParams } from "../rf/coverageRaster";
 import { CABLE_LOSS_DB, clampRxHeightM, DEFAULT_ITM_ENV, FADE_MARGIN_DB, FREQ_MHZ } from "../rf/itmEnv";
-import { ROUTER_CLASS_ROLES } from "./liveCoverageRoles";
 
 /** High-power infrastructure TX (dBm) — Station-G2-class routers/repeaters. */
 export const ROUTER_TX_DBM = 33;
 /** Conservative client/other TX (dBm). */
 export const CLIENT_TX_DBM = 22;
+
+/** Roles on the high-power TX class; everything else gets CLIENT_TX_DBM.
+ *  ROUTER_CLIENT (3) is deprecated upstream and deliberately omitted. */
+export const ROUTER_CLASS_ROLES: ReadonlySet<NodeRole> = new Set([
+  NodeRole.ROUTER,
+  NodeRole.ROUTER_LATE,
+  NodeRole.REPEATER,
+]);
 
 /** Role-default TX power (dBm). Override hook for future per-node owner config. */
 export function txDbmForRole(role: NodeRole | undefined): number {
@@ -49,14 +56,4 @@ export function buildLiveCoverageParams(txDbm: number, clutterAggression = 0): R
     locationPct: LIVE_RELIABILITY.location,
     situationPct: LIVE_RELIABILITY.situation,
   };
-}
-
-/** Free-space link-budget reach (km), clamped [5, 200] like the tool's bbox sizer. */
-export function liveCoverageReachKm(txDbm: number): number {
-  const p = buildLiveCoverageParams(txDbm);
-  const budget =
-    p.txDbm + p.txAntennaDbi + p.rxAntennaDbi - p.rxSensitivityDbm - p.fadeMarginDb - p.cableLossDb;
-  const plConstant = 32.45 + 20 * Math.log10(FREQ_MHZ);
-  const maxKm = Math.pow(10, (budget - plConstant) / 20);
-  return Math.max(5, Math.min(200, Math.round(maxKm)));
 }

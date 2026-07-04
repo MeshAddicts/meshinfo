@@ -1,7 +1,8 @@
 /** Coverage-worker configuration (env-overridable). */
 import { cpus } from "node:os";
 
-import { NodeRole } from "../src/types";
+import { ROUTER_CLASS_ROLES } from "../src/pages/map/live/liveCoverageParams";
+import type { NodeRole } from "../src/types";
 
 /** Parallel render workers. Tile buckets keep per-worker memory sparse, so the
  *  cap is generous. Set 1 to force single-thread. */
@@ -59,9 +60,9 @@ export const BBOX: [number, number, number, number] | null = (() => {
   return p.length === 4 && p.every(Number.isFinite) ? (p as [number, number, number, number]) : null;
 })();
 
-const ROUTER_CLASS = new Set<NodeRole>([NodeRole.ROUTER, NodeRole.ROUTER_LATE, NodeRole.REPEATER]);
+/** Same role split as txDbmForRole, so reach and TX class can't drift apart. */
 export function reachKmForRole(role: NodeRole | undefined): number {
-  return role != null && ROUTER_CLASS.has(role) ? ROUTER_REACH_KM : CLIENT_REACH_KM;
+  return role != null && ROUTER_CLASS_ROLES.has(role) ? ROUTER_REACH_KM : CLIENT_REACH_KM;
 }
 
 /** Live-loop cadence. Rebakes are incremental (only changed nodes re-render),

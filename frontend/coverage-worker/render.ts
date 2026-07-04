@@ -1,18 +1,36 @@
 /** Incremental coverage bake: only changed nodes re-render (margins cached on
  *  disk), only affected tiles recomposite; cold start = everything new, same path. */
-import { copyFile, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, link, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Worker } from "node:worker_threads";
 
+import type { CoverageMeta } from "../src/pages/map/live/coverageMeta";
 import { buildLiveCoverageParams, LIVE_ANTENNA_AGL_M } from "../src/pages/map/live/liveCoverageParams";
-import { loadItmContext } from "../src/pages/map/rf/itm";
-import { buildBuildingRaster } from "../src/pages/map/terrain/buildingTiles";
-import { buildCanopyRaster } from "../src/pages/map/terrain/canopyTiles";
-import { buildClutterRaster } from "../src/pages/map/terrain/landcoverTiles";
-import { type DEMBounds, unionDemBoundsAround } from "../src/pages/map/terrain/terrainDEM";
+import { type ItmContext, loadItmContext } from "../src/pages/map/rf/itm";
+import {
+  buildBuildingRaster,
+  evictMissingBuildingTiles,
+  fetchBuildingTile,
+  selectBuildingZoom,
+} from "../src/pages/map/terrain/buildingTiles";
+import {
+  buildCanopyRaster,
+  evictMissingCanopyTiles,
+  fetchCanopyTile,
+  selectCanopyZoom,
+} from "../src/pages/map/terrain/canopyTiles";
+import {
+  buildClutterRaster,
+  evictMissingLandcoverTiles,
+  fetchLandcoverTile,
+  selectLandcoverZoom,
+} from "../src/pages/map/terrain/landcoverTiles";
+import { type DEMBounds, demBoundsContain, unionDemBoundsAround } from "../src/pages/map/terrain/terrainDEM";
 import { buildDem } from "../src/pages/map/terrain/terrainRgb";
 import { decodeTilePixels } from "../src/pages/map/terrain/tileDecode";
+import { lat2tileY, lng2tileX } from "../src/pages/map/terrain/webMercator";
 import {
+  type ActiveNodeState,
   type CacheState,
   hashKey,
   loadState,
@@ -37,20 +55,11 @@ import {
   tileRectForBounds,
 } from "./nodeRender";
 import type { CoverageOrigin } from "./nodes";
-import type { CompositedTile, CompositeInput, RenderedNode, RenderInput } from "./renderWorker";
+import type { CompositedTile, CompositeInput, RenderedNode, RenderInput, WorkerJob, WorkerReply } from "./renderWorker";
 import { encodePng } from "./sharpImage";
 
-export interface BakeMetadata {
-  version: string;
-  generatedAt: string;
-  bounds: [number, number, number, number]; // [west, south, east, north]
-  minZoom: number;
-  maxZoom: number;
-  nodeCount: number;
-  tileCount: number;
-  recencyHours: number;
-  sources: string[];
-}
+/** metadata.json shape — the shared CoverageMeta contract (see coverageMeta.ts). */
+export type BakeMetadata = CoverageMeta;
 
 /** Copy a source's typed arrays into SharedArrayBuffers so workers share them zero-copy. */
 function shareSources(src: RenderSources): RenderSources {
@@ -76,21 +85,29 @@ function sabGrid(g: MarginGridQ8): MarginGridQ8 {
 }
 
 /** Snap outward to a coarse grid so frontier-node churn doesn't move the bbox
- *  (a bbox change invalidates the whole cache). */
+ *  (a bbox change invalidates the whole cache). Longitude is deliberately NOT
+ *  clamped to ±180: a seam-straddling mesh lives in an unwrapped frame (e.g.
+ *  [178, 182]) end-to-end; only tile file keys and display bounds wrap. */
 function snapBounds(b: DEMBounds, step = 0.25): DEMBounds {
-  return {
-    west: Math.max(-180, Math.floor(b.west / step) * step),
+  const out = {
+    west: Math.floor(b.west / step) * step,
     south: Math.max(-85, Math.floor(b.south / step) * step),
-    east: Math.min(180, Math.ceil(b.east / step) * step),
+    east: Math.ceil(b.east / step) * step,
     north: Math.min(85, Math.ceil(b.north / step) * step),
   };
+  if (out.east - out.west >= 360) {
+    out.west = -180;
+    out.east = 180;
+  }
+  return out;
 }
 
-/** Everything a cached margin depends on besides the node's own state. */
+/** Everything a cached margin depends on besides the node's own state.
+ *  "v2" = ActiveNodeState state.json format (v1 states full-rebake cleanly). */
 function contextKeyFor(bbox: DEMBounds): string {
   const paramsFp = JSON.stringify(buildLiveCoverageParams(0, 1)) + LIVE_ANTENNA_AGL_M;
   return hashKey(
-    "v1",
+    "v2",
     bbox.west.toFixed(4), bbox.south.toFixed(4), bbox.east.toFixed(4), bbox.north.toFixed(4),
     cfg.SHARED_DEM_SIZE, cfg.NODE_DEM_SIZE, cfg.CLUTTER_RASTER_SIZE,
     cfg.NODE_OUTPUT_MAX, cfg.OUTPUT_M_PER_PX, cfg.MAX_ZOOM, cfg.MIN_ZOOM,
@@ -101,7 +118,8 @@ function contextKeyFor(bbox: DEMBounds): string {
 
 /** Interleaved 16-bit Morton code of a position within the bbox. */
 function mortonCode(o: CoverageOrigin, bbox: DEMBounds): number {
-  const nx = Math.max(0, Math.min(0xffff, Math.floor(((o.lng - bbox.west) / (bbox.east - bbox.west)) * 0x10000)));
+  const sLng = o.lng < bbox.west ? o.lng + 360 : o.lng > bbox.east ? o.lng - 360 : o.lng;
+  const nx = Math.max(0, Math.min(0xffff, Math.floor(((sLng - bbox.west) / (bbox.east - bbox.west)) * 0x10000)));
   const ny = Math.max(0, Math.min(0xffff, Math.floor(((o.lat - bbox.south) / (bbox.north - bbox.south)) * 0x10000)));
   let code = 0;
   for (let b = 0; b < 16; b++) code += ((nx >> b) & 1) * 2 ** (2 * b) + ((ny >> b) & 1) * 2 ** (2 * b + 1);
@@ -132,35 +150,79 @@ function partitionOrigins(origins: CoverageOrigin[], bbox: DEMBounds, k: number)
 
 const workerUrl = new URL("./renderWorker.ts", import.meta.url);
 
-/** Run one worker per input; on any failure, terminate the rest (no zombies). */
-async function runWorkers<T>(inputs: Array<RenderInput | CompositeInput>): Promise<T[]> {
-  const workers: Worker[] = [];
-  const jobs = inputs.map(
-    (input) =>
-      new Promise<T>((resolve, reject) => {
-        const w = new Worker(workerUrl, { workerData: input, execArgv: ["--import", "tsx"] });
-        workers.push(w);
-        w.once("message", (msg: T | { error: string }) => {
-          void w.terminate();
-          if (Array.isArray(msg)) resolve(msg as T);
-          else reject(new Error((msg as { error: string }).error));
-        });
-        w.once("error", reject);
-      }),
-  );
-  try {
-    return await Promise.all(jobs);
-  } catch (err) {
-    for (const w of workers) void w.terminate();
-    throw err;
+/** Persistent worker pool: lives across bakes (in the persistent bake thread),
+ *  so tsx bootstrap + module import + ITM WASM load are paid once per worker,
+ *  not per phase per bake. A worker that errors or exits leaves the pool; the
+ *  next bake respawns as needed. */
+const pool: Worker[] = [];
+let nextJobId = 1;
+
+function obtainWorkers(n: number): Worker[] {
+  while (pool.length < n) {
+    const w = new Worker(workerUrl, { execArgv: ["--import", "tsx"] });
+    w.on("exit", () => {
+      const i = pool.indexOf(w);
+      if (i !== -1) pool.splice(i, 1);
+    });
+    pool.push(w);
   }
+  return pool.slice(0, n);
 }
+
+/** Kill idle pool workers so a --once run's event loop can drain. */
+export async function terminateWorkerPool(): Promise<void> {
+  await Promise.all([...pool].map((w) => w.terminate()));
+  pool.length = 0;
+}
+
+function runJob<T extends RenderedNode[] | CompositedTile[]>(
+  w: Worker,
+  input: RenderInput | CompositeInput,
+): Promise<T> {
+  const jobId = nextJobId++;
+  return new Promise<T>((resolve, reject) => {
+    const cleanup = () => {
+      w.off("message", onMessage);
+      w.off("error", onError);
+      w.off("exit", onExit);
+    };
+    const onMessage = (msg: WorkerReply) => {
+      if (msg.jobId !== jobId) return;
+      cleanup();
+      if ("err" in msg) reject(new Error(msg.err));
+      else resolve(msg.ok as T);
+    };
+    const onError = (err: Error) => {
+      cleanup();
+      void w.terminate(); // exit handler removes it from the pool
+      reject(err);
+    };
+    const onExit = () => {
+      cleanup();
+      reject(new Error("render worker exited"));
+    };
+    w.on("message", onMessage);
+    w.once("error", onError);
+    w.once("exit", onExit);
+    w.postMessage({ jobId, input } satisfies WorkerJob);
+  });
+}
+
+/** Inline-path ITM context, loaded once per process. */
+let itmCtx: Promise<ItmContext> | null = null;
 
 /** ITM-render `origins` (workers when available); returns id → quantized grid. */
 async function renderPhase(origins: CoverageOrigin[], src: RenderSources, bbox: DEMBounds): Promise<Map<string, MarginGridQ8>> {
   const out = new Map<string, MarginGridQ8>();
   if (cfg.WORKERS <= 1 || origins.length <= 1) {
-    const itm = await loadItmContext(128);
+    itmCtx ??= loadItmContext(128);
+    let itm: ItmContext;
+    try {
+      itm = await itmCtx;
+    } catch (err) {
+      itmCtx = null; // don't memoize a transient WASM-load failure forever
+      throw err;
+    }
     for (const o of origins) {
       const g = renderNodeMargin(o, src, itm);
       if (g) out.set(o.id, g);
@@ -168,7 +230,10 @@ async function renderPhase(origins: CoverageOrigin[], src: RenderSources, bbox: 
     return out;
   }
   const groups = partitionOrigins(origins, bbox, Math.min(cfg.WORKERS, origins.length));
-  const parts = await runWorkers<RenderedNode[]>(groups.map((group) => ({ mode: "render", src, origins: group })));
+  const workers = obtainWorkers(groups.length);
+  const parts = await Promise.all(
+    groups.map((group, i) => runJob<RenderedNode[]>(workers[i], { mode: "render", src, origins: group })),
+  );
   for (const part of parts) {
     for (const r of part) {
       out.set(r.id, { data: new Uint8Array(r.buf), width: r.width, height: r.height, bounds: r.bounds });
@@ -195,8 +260,9 @@ async function compositePhase(
   const k = Math.min(cfg.WORKERS, Math.ceil(tiles.length / 8));
   const groups: Array<Array<{ tx: number; ty: number }>> = Array.from({ length: k }, () => []);
   tiles.forEach((t, i) => groups[i % k].push(t));
-  const parts = await runWorkers<CompositedTile[]>(
-    groups.map((group) => ({ mode: "composite", z, tiles: group, nodes: shared })),
+  const workers = obtainWorkers(k);
+  const parts = await Promise.all(
+    groups.map((group, i) => runJob<CompositedTile[]>(workers[i], { mode: "composite", z, tiles: group, nodes: shared })),
   );
   for (const part of parts) for (const t of part) out.set(t.key, new Float32Array(t.buf));
   return out;
@@ -231,7 +297,7 @@ function downsampleHalf(src: Uint8ClampedArray): Uint8ClampedArray {
   return out;
 }
 
-/** Assemble a parent from its four z+1 children via the async getter. */
+/** Assemble a parent from its four z+1 children via the async getter (unwrapped coords). */
 async function buildParent(
   getChild: (z: number, x: number, y: number) => Promise<Uint8ClampedArray | null>,
   z: number,
@@ -259,39 +325,142 @@ async function buildParent(
   return parent;
 }
 
-/** Long-lived raster cache: rebuilt only when the context changes, and only
- *  when a bake actually has nodes to render. */
+/** Long-lived raster cache: rebuilt when the context changes; while an enabled
+ *  accuracy layer is missing, a cheap per-layer tile probe runs every 30 min so
+ *  a later NLCD/canopy/buildings bake is picked up without restarting. */
 let rasterKey: string | null = null;
 let rasterSrc: RenderSources | null = null;
 let rasterSources: string[] = ["itm"];
+let rasterLayersMissing = false;
+let rasterBuiltAt = 0;
+
+const RASTER_REPROBE_MS = 30 * 60_000;
+
+/** Probe a handful of tiles (center + quadrant midpoints) for each enabled
+ *  layer that was missing; true when any tile now exists. Uses the same zoom
+ *  selection as the builders so the probe requests tiles a build would. */
+async function anyMissingLayerAppeared(bbox: DEMBounds): Promise<boolean> {
+  const midLat = (bbox.north + bbox.south) / 2;
+  const lngSpan = bbox.east - bbox.west;
+  const latSpan = bbox.north - bbox.south;
+  const points: Array<[number, number]> = (
+    [
+      [bbox.west + lngSpan / 2, midLat],
+      [bbox.west + lngSpan / 4, bbox.south + latSpan / 4],
+      [bbox.west + (3 * lngSpan) / 4, bbox.south + latSpan / 4],
+      [bbox.west + lngSpan / 4, bbox.south + (3 * latSpan) / 4],
+      [bbox.west + (3 * lngSpan) / 4, bbox.south + (3 * latSpan) / 4],
+    ] as Array<[number, number]>
+  ).map(([lng, lat]) => [lng > 180 ? lng - 360 : lng < -180 ? lng + 360 : lng, lat]);
+  const pxSize = Math.max(1, (lngSpan * 111_320 * Math.cos((midLat * Math.PI) / 180)) / cfg.CLUTTER_RASTER_SIZE);
+  const tileXY = (lng: number, lat: number, z: number): [number, number] => {
+    const s = 1 << z;
+    return [((Math.floor(lng2tileX(lng, z)) % s) + s) % s, Math.floor(lat2tileY(lat, z))];
+  };
+
+  const checks: Array<Promise<boolean>> = [];
+  if (cfg.USE_CLUTTER && !rasterSources.includes("nlcd")) {
+    evictMissingLandcoverTiles(); // cached 404s would mask a completed bake
+    const z = selectLandcoverZoom(bbox, pxSize, 1024);
+    for (const [lng, lat] of points) {
+      checks.push(
+        (async () => {
+          const [x, y] = tileXY(lng, lat, z);
+          return (await fetchLandcoverTile(z, x, y)).data.length > 0;
+        })().catch(() => false),
+      );
+    }
+  }
+  if (cfg.USE_CANOPY && !rasterSources.includes("eth-canopy")) {
+    evictMissingCanopyTiles();
+    const z = selectCanopyZoom(bbox, pxSize, 1024);
+    for (const [lng, lat] of points) {
+      checks.push(
+        (async () => {
+          const [x, y] = tileXY(lng, lat, z);
+          return (await fetchCanopyTile(z, x, y)).height.length > 0;
+        })().catch(() => false),
+      );
+    }
+  }
+  if (cfg.USE_BUILDINGS && !rasterSources.includes("jrc-buildings")) {
+    evictMissingBuildingTiles();
+    const z = selectBuildingZoom(bbox, pxSize, 1024);
+    for (const [lng, lat] of points) {
+      checks.push(
+        (async () => {
+          const [x, y] = tileXY(lng, lat, z);
+          return (await fetchBuildingTile(z, x, y)).height.length > 0;
+        })().catch(() => false),
+      );
+    }
+  }
+  if (checks.length === 0) return false;
+  return (await Promise.all(checks)).some(Boolean);
+}
 
 async function ensureRasters(bbox: DEMBounds, contextKey: string): Promise<RenderSources> {
-  if (rasterSrc && rasterKey === contextKey) return rasterSrc;
-  const demTiles = Math.ceil(cfg.SHARED_DEM_SIZE / 256) ** 2 * 2;
-  const clutDim = { bounds: bbox, targetWidth: cfg.CLUTTER_RASTER_SIZE, targetHeight: cfg.CLUTTER_RASTER_SIZE, maxTiles: 1024 };
-  const [{ dem }, clutter, canopy, buildings] = await Promise.all([
-    buildDem({ bounds: bbox, targetWidth: cfg.SHARED_DEM_SIZE, targetHeight: cfg.SHARED_DEM_SIZE, maxTiles: demTiles, token: "" }),
-    cfg.USE_CLUTTER ? buildClutterRaster(clutDim).catch(() => null) : Promise.resolve(null),
-    cfg.USE_CANOPY ? buildCanopyRaster(clutDim).catch(() => null) : Promise.resolve(null),
-    cfg.USE_BUILDINGS ? buildBuildingRaster(clutDim).catch(() => null) : Promise.resolve(null),
-  ]);
-  // A transient layer failure must not poison the cache with clutter-free margins.
-  if ((cfg.USE_CLUTTER && !clutter) || (cfg.USE_CANOPY && !canopy) || (cfg.USE_BUILDINGS && !buildings)) {
-    throw new Error("accuracy raster build failed; retrying next tick");
+  if (rasterSrc != null && rasterKey === contextKey) {
+    if (!rasterLayersMissing || Date.now() - rasterBuiltAt < RASTER_REPROBE_MS) return rasterSrc;
+    rasterBuiltAt = Date.now(); // pace probes even when they fail or find nothing
+    if (!(await anyMissingLayerAppeared(bbox))) return rasterSrc;
+    console.log("[coverage-worker] new accuracy layer detected — rebuilding rasters");
   }
-  rasterSrc = shareSources({
-    dem,
-    clutter,
-    canopy,
-    buildings,
-    clutterAggression: clutter ? cfg.CLUTTER_AGGRESSION : 0,
-  });
-  rasterKey = contextKey;
-  rasterSources = ["itm"];
-  if (clutter?.tilesPresent) rasterSources.push("nlcd");
-  if (canopy?.tilesPresent) rasterSources.push("eth-canopy");
-  if (buildings?.tilesPresent) rasterSources.push("jrc-buildings");
-  return rasterSrc;
+  const prevSrc = rasterSrc;
+  const prevKey = rasterKey;
+  try {
+    // Drop cached 404 sentinels: this rebuild may follow a bake that filled them in.
+    evictMissingLandcoverTiles();
+    evictMissingCanopyTiles();
+    evictMissingBuildingTiles();
+    const demTiles = Math.ceil(cfg.SHARED_DEM_SIZE / 256) ** 2 * 2;
+    const clutDim = { bounds: bbox, targetWidth: cfg.CLUTTER_RASTER_SIZE, targetHeight: cfg.CLUTTER_RASTER_SIZE, maxTiles: 1024 };
+    const [built, clutter, canopy, buildings] = await Promise.all([
+      buildDem({ bounds: bbox, targetWidth: cfg.SHARED_DEM_SIZE, targetHeight: cfg.SHARED_DEM_SIZE, maxTiles: demTiles, token: "" }),
+      cfg.USE_CLUTTER ? buildClutterRaster(clutDim) : Promise.resolve(null),
+      cfg.USE_CANOPY ? buildCanopyRaster(clutDim) : Promise.resolve(null),
+      cfg.USE_BUILDINGS ? buildBuildingRaster(clutDim) : Promise.resolve(null),
+    ]);
+    // Tiles that failed TRANSIENTLY (vs 404 = not baked, or permanently bad)
+    // mean an outage: rendering through it would cache degraded margins under
+    // an unchanged key, poisoning every later delta bake. Abort this build.
+    const failed =
+      built.tilesFailed +
+      (clutter?.tilesFailed ?? 0) +
+      (canopy?.tilesFailed ?? 0) +
+      (buildings?.tilesFailed ?? 0);
+    if (failed > 0) {
+      throw new Error(`raster build had ${failed} failed tile fetches`);
+    }
+    rasterSrc = shareSources({
+      dem: built.dem,
+      clutter,
+      canopy,
+      buildings,
+      // Canopy/building losses scale with the same aggression factor, so it must
+      // stay live even when the NLCD layer itself is absent.
+      clutterAggression: cfg.CLUTTER_AGGRESSION,
+    });
+    rasterKey = contextKey;
+    rasterBuiltAt = Date.now();
+    rasterSources = ["itm"];
+    if (clutter?.tilesPresent) rasterSources.push("nlcd");
+    if (canopy?.tilesPresent) rasterSources.push("eth-canopy");
+    if (buildings?.tilesPresent) rasterSources.push("jrc-buildings");
+    rasterLayersMissing =
+      (cfg.USE_CLUTTER && !clutter?.tilesPresent) ||
+      (cfg.USE_CANOPY && !canopy?.tilesPresent) ||
+      (cfg.USE_BUILDINGS && !buildings?.tilesPresent);
+    return rasterSrc;
+  } catch (err) {
+    if (prevSrc != null && prevKey === contextKey) {
+      // Outage mid-rebuild: keep rendering with the last good rasters — they
+      // match contextKey and state.sources, so nothing gets poisoned.
+      console.warn("[coverage-worker] raster rebuild failed; keeping previous rasters:", err);
+      return prevSrc;
+    }
+    throw err; // no valid rasters yet — abort the bake; the loop retries next tick
+  }
 }
 
 function rectKeys(r: { tx0: number; tx1: number; ty0: number; ty1: number }): string[] {
@@ -300,30 +469,54 @@ function rectKeys(r: { tx0: number; tx1: number; ty0: number; ty1: number }): st
   return keys;
 }
 
-/** Bake to a temp dir then atomically swap into OUTPUT_DIR; returns + writes metadata.json. */
-export async function bakeCoverage(origins: CoverageOrigin[], version: string): Promise<BakeMetadata> {
+/** Wrap an unwrapped tile x to the canonical [0, 2^z) index used in file paths.
+ *  snapBounds caps the bbox under 360°, so the mapping is collision-free. */
+function wrapX(x: number, z: number): number {
+  const s = 1 << z;
+  return ((x % s) + s) % s;
+}
+
+/**
+ * Bake to a temp dir then atomically swap into OUTPUT_DIR; returns + writes
+ * metadata.json. An empty origin set erases the previous output (a mesh gone
+ * quiet must not keep serving stale coverage); returns null when there is
+ * nothing baked and nothing to erase.
+ */
+export async function bakeCoverage(origins: CoverageOrigin[], version: string): Promise<BakeMetadata | null> {
   const z = cfg.MAX_ZOOM;
-  const positions = origins.map((o) => [o.lng, o.lat] as [number, number]);
-  const maxReach = origins.reduce((m, o) => Math.max(m, o.reachKm), cfg.CLIENT_REACH_KM);
   // state.json lives inside the output dir (written pre-swap) so the two stay atomic
   const state = await loadState(cfg.OUTPUT_DIR);
+  const stored: DEMBounds | null = state?.bbox
+    ? { west: state.bbox[0], south: state.bbox[1], east: state.bbox[2], north: state.bbox[3] }
+    : null;
 
   // Sticky bbox — a change moves DEM resolution and invalidates every cached
   // margin, so keep it while nodes fit and grow (never shrink) otherwise.
-  const candidate = snapBounds(unionDemBoundsAround(positions, maxReach, 1.05));
-  let bbox = candidate;
-  if (state?.bbox) {
-    const [w, s, e, n] = state.bbox;
-    if (candidate.west >= w && candidate.east <= e && candidate.south >= s && candidate.north <= n) {
-      bbox = { west: w, south: s, east: e, north: n };
-    } else {
-      bbox = snapBounds({
-        west: Math.min(w, candidate.west),
-        south: Math.min(s, candidate.south),
-        east: Math.max(e, candidate.east),
-        north: Math.max(n, candidate.north),
-      });
-      console.log("[coverage-worker] bbox grew — full rebake");
+  let bbox: DEMBounds;
+  if (origins.length === 0) {
+    if (!stored || !state || Object.keys(state.active).length === 0) return null; // nothing baked, nothing to erase
+    bbox = stored;
+  } else {
+    const positions = origins.map((o) => [o.lng, o.lat] as [number, number]);
+    const maxReach = origins.reduce((m, o) => Math.max(m, o.reachKm), cfg.CLIENT_REACH_KM);
+    const candidate = snapBounds(unionDemBoundsAround(positions, maxReach, 1.05));
+    bbox = candidate;
+    if (stored) {
+      if (demBoundsContain(stored, candidate)) {
+        bbox = stored;
+      } else {
+        // Union in the stored frame — the candidate may sit in a ±360-shifted
+        // frame when the reference node changed sides of the antimeridian.
+        const dMid = (candidate.west + candidate.east) / 2 - (stored.west + stored.east) / 2;
+        const shift = dMid > 180 ? -360 : dMid < -180 ? 360 : 0;
+        bbox = snapBounds({
+          west: Math.min(stored.west, candidate.west + shift),
+          south: Math.min(stored.south, candidate.south),
+          east: Math.max(stored.east, candidate.east + shift),
+          north: Math.max(stored.north, candidate.north),
+        });
+        console.log("[coverage-worker] bbox grew — full rebake");
+      }
     }
   }
   const contextKey = contextKeyFor(bbox);
@@ -331,19 +524,21 @@ export async function bakeCoverage(origins: CoverageOrigin[], version: string): 
   let incremental = state != null && state.contextKey === contextKey;
 
   const wantKey = new Map(origins.map((o) => [o.id, originStateKey(o)]));
+  // A cached margin is only reusable if it was rendered with the sources the
+  // current output uses — a node absent across a sources change must not
+  // re-enter with its stale (e.g. clutter-free) grid.
+  const wantSources = state?.sources != null ? JSON.stringify(state.sources) : null;
   let toRender: CoverageOrigin[] = [];
   const oldHeaders = new Map<string, NodeCacheHeader>();
   const reusableIds: string[] = [];
   for (const o of origins) {
     const h = await readNodeHeader(cfg.CACHE_DIR, o.id);
     if (h) oldHeaders.set(o.id, h);
-    if (h && h.contextKey === contextKey && h.stateKey === wantKey.get(o.id)) reusableIds.push(o.id);
+    const sourcesOk = wantSources == null || JSON.stringify(h?.sources ?? null) === wantSources;
+    if (h && h.contextKey === contextKey && h.stateKey === wantKey.get(o.id) && sourcesOk) reusableIds.push(o.id);
     else toRender.push(o);
   }
   const removedIds = incremental && state ? Object.keys(state.active).filter((id) => !wantKey.has(id)) : [];
-  const removedHeaders = (
-    await Promise.all(removedIds.map((id) => readNodeHeader(cfg.CACHE_DIR, id)))
-  ).filter((h): h is NodeCacheHeader => h != null);
 
   // Render only what changed; a pure-aging delta skips rasters + ITM entirely.
   let rendered = new Map<string, MarginGridQ8>();
@@ -353,34 +548,45 @@ export async function bakeCoverage(origins: CoverageOrigin[], version: string): 
     if (incremental && state?.sources && JSON.stringify(rasterSources) !== JSON.stringify(state.sources)) {
       console.log(`[coverage-worker] accuracy sources changed (${state.sources} → ${rasterSources}) — full rebake`);
       toRender = [...origins];
+      reusableIds.length = 0; // everything re-renders; don't composite stale grids twice
       incremental = false;
     }
     rendered = await renderPhase(toRender, src, bbox);
     for (const [id, g] of rendered) {
       await writeNode(
         cfg.CACHE_DIR,
-        { id, stateKey: wantKey.get(id)!, contextKey, width: g.width, height: g.height, bounds: g.bounds },
+        { id, stateKey: wantKey.get(id)!, contextKey, width: g.width, height: g.height, bounds: g.bounds, sources: rasterSources },
         g.data,
       );
     }
   }
 
-  // Affected tiles: every tile a changed/new/removed footprint touches (old + new).
+  // Affected tiles: every tile a changed/new/removed footprint touches — both
+  // the newly rendered bounds and whatever is currently painted on disk
+  // (state.active carries the painted bounds, so a moved node's old footprint
+  // is erased even if its cache entry was overwritten by a failed bake).
   const affected = new Set<string>();
   const addBounds = (b: DEMBounds) => {
     for (const k of rectKeys(clampRect(tileRectForBounds(b, z), dims))) affected.add(k);
   };
   if (incremental && state) {
-    // Compare against state.active, not just rendered: nodes re-entering the
-    // active set from cache also need their tiles recomposited.
     for (const o of origins) {
-      if (state.active[o.id] === wantKey.get(o.id)) continue;
+      const cur = state.active[o.id] as ActiveNodeState | undefined;
+      // Skip only when the painted state is current AND nothing re-rendered
+      // (a wiped cache re-renders unchanged nodes; their tiles must recomposite).
+      if (cur?.key === wantKey.get(o.id) && !rendered.has(o.id)) continue;
       const g = rendered.get(o.id);
       if (g) addBounds(g.bounds);
-      const old = oldHeaders.get(o.id);
-      if (old) addBounds(old.bounds);
+      else {
+        const h = oldHeaders.get(o.id);
+        if (h) addBounds(h.bounds); // re-entering the active set from cache
+      }
+      if (cur?.bounds) addBounds(cur.bounds);
     }
-    for (const h of removedHeaders) addBounds(h.bounds);
+    for (const id of removedIds) {
+      const cur = state.active[id] as ActiveNodeState | undefined;
+      if (cur?.bounds) addBounds(cur.bounds);
+    }
   } else {
     for (const [, g] of rendered) addBounds(g.bounds);
     for (const id of reusableIds) addBounds(oldHeaders.get(id)!.bounds);
@@ -409,16 +615,19 @@ export async function bakeCoverage(origins: CoverageOrigin[], version: string): 
 
   const margins = await compositePhase(affectedTiles, compositeNodes, z);
 
-  // Fresh RGBA per affected key; null = now empty (erases the old PNG).
+  // Fresh RGBA per affected key; null = now empty (erases the old PNG). Keys
+  // wrap to canonical tile x here — composite ran in the unwrapped frame.
   const fresh = new Map<string, Uint8ClampedArray | null>();
   for (const k of affected) {
+    const [tx, ty] = k.split("/").map(Number);
     const m = margins.get(k);
-    fresh.set(`${z}/${k}`, m ? colorizeMargin(m, TILE_SIZE * TILE_SIZE) : null);
+    margins.delete(k); // free each Float32 tile as soon as it's colorized
+    fresh.set(`${z}/${wrapX(tx, z)}/${ty}`, m ? colorizeMargin(m, TILE_SIZE * TILE_SIZE) : null);
   }
 
   const prevDecoded = new Map<string, Uint8ClampedArray | null>();
   const getChild = async (cz: number, x: number, y: number): Promise<Uint8ClampedArray | null> => {
-    const key = `${cz}/${x}/${y}`;
+    const key = `${cz}/${wrapX(x, cz)}/${y}`;
     if (fresh.has(key)) return fresh.get(key)!;
     if (!incremental) return null;
     if (prevDecoded.has(key)) return prevDecoded.get(key)!;
@@ -436,7 +645,7 @@ export async function bakeCoverage(origins: CoverageOrigin[], version: string): 
 
   // Rebuild the ancestor chain of every affected tile, MAX_ZOOM-1 down to MIN_ZOOM.
   const minZoom = Math.min(cfg.MIN_ZOOM, z);
-  let level = new Set(affected);
+  let level = new Set(affected); // unwrapped "tx/ty"
   for (let pz = z - 1; pz >= minZoom; pz--) {
     const parents = new Set<string>();
     for (const k of level) {
@@ -445,29 +654,45 @@ export async function bakeCoverage(origins: CoverageOrigin[], version: string): 
     }
     for (const k of parents) {
       const [tx, ty] = k.split("/").map(Number);
-      fresh.set(`${pz}/${k}`, await buildParent(getChild, pz, tx, ty));
+      fresh.set(`${pz}/${wrapX(tx, pz)}/${ty}`, await buildParent(getChild, pz, tx, ty));
     }
     level = parents;
   }
 
-  // Assemble output: copy every untouched PNG forward, write the fresh ones.
+  // Assemble output: carry every untouched PNG forward, write the fresh ones.
   const tmpDir = `${cfg.OUTPUT_DIR}.tmp`;
   await rm(tmpDir, { recursive: true, force: true });
   await mkdir(tmpDir, { recursive: true });
+  const BATCH = 16;
   let copied = 0;
   if (incremental) {
     const names = await readdir(cfg.OUTPUT_DIR, { recursive: true });
+    const carried: string[] = [];
     for (const name of names) {
       const key = String(name).replace(/\\/g, "/");
       if (!key.endsWith(".png") || fresh.has(key.slice(0, -4))) continue;
-      const dst = join(tmpDir, key);
-      await mkdir(dirname(dst), { recursive: true });
-      await copyFile(join(cfg.OUTPUT_DIR, key), dst);
-      copied++;
+      carried.push(key);
+    }
+    // Hardlink (copy as fallback) so carry-forward I/O is O(delta), and the
+    // untouched tiles keep their inode + mtime — their ETags stay stable, so
+    // clients revalidating after a bake get 304s instead of re-downloads.
+    for (let i = 0; i < carried.length; i += BATCH * 4) {
+      await Promise.all(
+        carried.slice(i, i + BATCH * 4).map(async (key) => {
+          const src = join(cfg.OUTPUT_DIR, key);
+          const dst = join(tmpDir, key);
+          await mkdir(dirname(dst), { recursive: true });
+          try {
+            await link(src, dst);
+          } catch {
+            await copyFile(src, dst);
+          }
+          copied++;
+        }),
+      );
     }
   }
   const entries = [...fresh].filter((e): e is [string, Uint8ClampedArray] => e[1] != null);
-  const BATCH = 16;
   for (let i = 0; i < entries.length; i += BATCH) {
     await Promise.all(
       entries.slice(i, i + BATCH).map(async ([key, rgba]) => {
@@ -479,21 +704,38 @@ export async function bakeCoverage(origins: CoverageOrigin[], version: string): 
     );
   }
 
+  // Display bounds are clamped for MapLibre source culling; a seam-straddling
+  // bbox falls back to the full longitude band (the true frame stays in state).
+  const displayBounds: [number, number, number, number] =
+    bbox.west < -180 || bbox.east > 180
+      ? [-180, bbox.south, 180, bbox.north]
+      : [bbox.west, bbox.south, bbox.east, bbox.north];
+
+  // Sources bookkeeping: fresh renders use rasterSources; a render-free delta
+  // keeps the output's previous sources; with state lost but caches reused,
+  // the cached headers say what the composited grids were rendered with.
+  const cachedSources = reusableIds.length > 0 ? oldHeaders.get(reusableIds[0])!.sources : undefined;
   const meta: BakeMetadata = {
     version,
     generatedAt: new Date().toISOString(),
-    bounds: [bbox.west, bbox.south, bbox.east, bbox.north],
+    bounds: displayBounds,
     minZoom,
     maxZoom: z,
     nodeCount: origins.length,
     tileCount: copied + entries.length,
     recencyHours: cfg.RECENCY_HOURS,
-    sources: toRender.length > 0 ? rasterSources : state?.sources ?? rasterSources,
+    sources: toRender.length > 0 ? rasterSources : state?.sources ?? cachedSources ?? rasterSources,
   };
   await writeFile(join(tmpDir, "metadata.json"), JSON.stringify(meta, null, 2));
+
+  const activeOut: Record<string, ActiveNodeState> = {};
+  for (const o of origins) {
+    const b = rendered.get(o.id)?.bounds ?? oldHeaders.get(o.id)?.bounds;
+    if (b) activeOut[o.id] = { key: wantKey.get(o.id)!, bounds: b };
+  }
   const newState: CacheState = {
     contextKey,
-    active: Object.fromEntries(wantKey),
+    active: activeOut,
     sources: meta.sources,
     bbox: [bbox.west, bbox.south, bbox.east, bbox.north],
   };
