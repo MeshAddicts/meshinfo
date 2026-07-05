@@ -60,7 +60,7 @@ export function hashKey(...parts: (string | number)[]): string {
 }
 
 export function originStateKey(o: CoverageOrigin): string {
-  return hashKey(o.id, o.lng, o.lat, o.altitudeM ?? "_", o.txDbm, o.reachKm);
+  return hashKey(o.id, o.lng, o.lat, o.altitudeM ?? "_", o.txDbm, o.reachKm, o.preset);
 }
 
 export function quantizeMargin(m: Float32Array): Uint8Array {

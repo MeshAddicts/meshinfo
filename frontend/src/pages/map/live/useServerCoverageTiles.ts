@@ -1,6 +1,6 @@
 /**
- * Drapes the server-baked coverage tiles (/tiles/coverage) as a MapLibre raster
- * source and refreshes on the `coverage` SSE event. No client-side compute.
+ * Drapes the server-baked coverage tiles (/tiles/coverage/{group}) as a MapLibre
+ * raster source and refreshes on the `coverage` SSE event. No client-side compute.
  */
 import type { Map as MlMap, RasterTileSource } from "maplibre-gl";
 import { type RefObject, useCallback, useContext, useEffect, useRef, useState } from "react";
@@ -19,6 +19,8 @@ export interface UseServerCoverageTilesParams {
   enabled: boolean;
   mapReady: boolean;
   opacity: number;
+  /** Pyramid to drape: "all" or a modem-preset id (e.g. "LongFast"). */
+  group: string;
 }
 
 export interface UseServerCoverageTilesResult {
@@ -34,12 +36,14 @@ const BEFORE_ID = "coverage-raster";
  *  clients revalidate per use and unchanged tiles are free 304s (the bake keeps
  *  their ETags stable). A new bake refreshes via setTiles(same URLs), which
  *  expires MapLibre's in-memory tiles and refetches only what changed. */
-const TILE_URLS = [`${API_BASE}/tiles/coverage/{z}/{x}/{y}.png`];
+function tileUrls(group: string): string[] {
+  return [`${API_BASE}/tiles/coverage/${encodeURIComponent(group)}/{z}/{x}/{y}.png`];
+}
 
 export function useServerCoverageTiles(
   params: UseServerCoverageTilesParams,
 ): UseServerCoverageTilesResult {
-  const { mbMapRef, enabled, mapReady, opacity } = params;
+  const { mbMapRef, enabled, mapReady, opacity, group } = params;
   const [status, setStatus] = useState<ServerCoverageStatus>("off");
   const [meta, setMeta] = useState<CoverageMeta | null>(null);
   const metaRef = useRef<CoverageMeta | null>(null);
@@ -49,10 +53,12 @@ export function useServerCoverageTiles(
   const appliedRef = useRef<CoverageMeta | null>(null);
   const enabledRef = useRef(enabled);
   const opacityRef = useRef(opacity);
+  const groupRef = useRef(group);
   enabledRef.current = enabled;
   opacityRef.current = opacity;
+  groupRef.current = group;
 
-  /** Add or refresh the raster source/layer for the current metadata. */
+  /** Add or refresh the raster source/layer for the given metadata. */
   const apply = useCallback(
     (m: CoverageMeta) => {
       const map = mbMapRef.current;
@@ -63,23 +69,24 @@ export function useServerCoverageTiles(
       const applied = appliedRef.current;
       try {
         const existing = map.getSource(LIVE_COVERAGE_SOURCE_ID) as RasterTileSource | undefined;
-        // setTiles only reloads tile data; zoom-range or bounds changes are
-        // baked into the source, so those need a fresh one (a grown bbox would
-        // otherwise keep culling requests to the old bounds forever).
+        // setTiles only reloads tile data; group, zoom-range, or bounds changes
+        // are baked into the source, so those need a fresh one (a grown bbox
+        // would otherwise keep culling requests to the old bounds forever).
         const sourceChanged =
           !applied ||
+          applied.group !== m.group ||
           applied.minZoom !== m.minZoom ||
           applied.maxZoom !== m.maxZoom ||
           applied.bounds.some((v, i) => v !== m.bounds[i]);
         if (existing && existing.type === "raster" && !sourceChanged) {
           // Same bake already applied (e.g. reconnect resync) → nothing to do.
-          if (applied && applied.version !== m.version) existing.setTiles(TILE_URLS);
+          if (applied && applied.version !== m.version) existing.setTiles(tileUrls(m.group));
         } else {
           if (map.getLayer(LIVE_COVERAGE_LAYER_ID)) map.removeLayer(LIVE_COVERAGE_LAYER_ID);
           if (map.getSource(LIVE_COVERAGE_SOURCE_ID)) map.removeSource(LIVE_COVERAGE_SOURCE_ID);
           map.addSource(LIVE_COVERAGE_SOURCE_ID, {
             type: "raster",
-            tiles: TILE_URLS,
+            tiles: tileUrls(m.group),
             tileSize: 256,
             minzoom: m.minZoom,
             maxzoom: m.maxZoom,
@@ -106,31 +113,61 @@ export function useServerCoverageTiles(
   );
 
   const fetchMeta = useCallback(async () => {
+    const wanted = groupRef.current;
     setStatus((s) => (s === "ready" ? s : "loading"));
     try {
-      const res = await fetch(`${API_BASE}/v1/coverage/metadata`);
+      const res = await fetch(`${API_BASE}/v1/coverage/metadata?group=${encodeURIComponent(wanted)}`);
       if (!res.ok) {
-        setStatus("unavailable");
+        if (res.status === 404 && wanted !== "all") {
+          // The selected pyramid vanished (its preset mesh went quiet). Fetch
+          // the "all" metadata for a fresh groups list so the group picker can
+          // fall back — without this, a persisted dead group is a dead end.
+          try {
+            const all = await fetch(`${API_BASE}/v1/coverage/metadata?group=all`);
+            if (all.ok && wanted === groupRef.current) {
+              const am = (await all.json()) as CoverageMeta;
+              metaRef.current = { ...am, group: am.group ?? "all", groups: am.groups ?? ["all"] };
+              setMeta(metaRef.current);
+            }
+          } catch {
+            // fall through — unavailable either way
+          }
+          setStatus("unavailable");
+          return;
+        }
+        // Transient server trouble: tiles already painted are still valid.
+        setStatus((s) => (res.status === 404 || !appliedRef.current ? "unavailable" : s));
         return;
       }
-      apply((await res.json()) as CoverageMeta);
+      const m = (await res.json()) as CoverageMeta;
+      // Drop stale responses from a quick group toggle (each toggle refetches).
+      if ((m.group ?? "all") !== groupRef.current) return;
+      apply({ ...m, group: m.group ?? "all", groups: m.groups ?? ["all"] });
     } catch {
-      setStatus("unavailable");
+      setStatus((s) => (appliedRef.current ? s : "unavailable"));
     }
   }, [apply]);
 
   useEffect(() => {
     if (!mapReady) return;
     void fetchMeta();
-  }, [mapReady, fetchMeta]);
+  }, [mapReady, group, fetchMeta]);
 
-  // A new bake refreshes the tiles in place.
+  // A new bake announces itself with the "all" metadata. Viewers of "all" can
+  // apply the payload directly (no extra fetch — most clients sit on "all");
+  // preset viewers refetch their own group's metadata.
   useLiveEvent<CoverageMeta>("coverage", (m) => {
-    if (m && typeof m.version === "string") apply(m);
+    if (!m || typeof m.version !== "string") return;
+    if (appliedRef.current?.version === m.version && appliedRef.current?.group === groupRef.current) return;
+    if (groupRef.current === "all" && (m.group ?? "all") === "all" && Array.isArray(m.bounds)) {
+      apply({ ...m, group: "all", groups: m.groups ?? ["all"] });
+      return;
+    }
+    void fetchMeta();
   });
 
   // SSE (re)connect: any bake announced while the connection was down was
-  // missed, so resync metadata — apply() no-ops when the version is unchanged.
+  // missed, so resync metadata.
   const liveSource = useContext(LiveEventsContext);
   useEffect(() => {
     if (!liveSource || !mapReady) return;

@@ -15,4 +15,8 @@ export interface CoverageMeta {
   recencyHours: number;
   /** RF model inputs used, e.g. ["itm", "nlcd", "eth-canopy", "jrc-buildings"]. */
   sources: string[];
+  /** This pyramid's group: "all" or a modem-preset id (e.g. "LongFast"). */
+  group: string;
+  /** Every group baked this cycle (same list in each group's metadata). */
+  groups: string[];
 }

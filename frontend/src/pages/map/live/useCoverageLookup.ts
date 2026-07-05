@@ -26,6 +26,8 @@ export interface UseCoverageLookupParams {
   mapReady: boolean;
   /** Pause while an RF tool is mid-flow so the tooltip doesn't fight tool UI. */
   suspended: boolean;
+  /** Pyramid to query: "all" or a modem-preset id — must match the drawn layer. */
+  group: string;
 }
 
 const API_BASE = env.API_BASE_URL ?? "";
@@ -33,9 +35,11 @@ const HOVER_DEBOUNCE_MS = 140;
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_SLOP_PX = 8;
 
-export function useCoverageLookup({ mbMapRef, enabled, mapReady, suspended }: UseCoverageLookupParams): CoverageLookupHover | null {
+export function useCoverageLookup({ mbMapRef, enabled, mapReady, suspended, group }: UseCoverageLookupParams): CoverageLookupHover | null {
   const [hover, setHover] = useState<CoverageLookupHover | null>(null);
   const activeRef = useRef(enabled && !suspended);
+  const groupRef = useRef(group);
+  groupRef.current = group;
   useEffect(() => {
     activeRef.current = enabled && !suspended;
     if (!activeRef.current) setHover(null);
@@ -61,7 +65,7 @@ export function useCoverageLookup({ mbMapRef, enabled, mapReady, suspended }: Us
       abort = new AbortController();
       try {
         const res = await fetch(
-          `${API_BASE}/v1/coverage/lookup?lng=${lng.toFixed(5)}&lat=${lat.toFixed(5)}`,
+          `${API_BASE}/v1/coverage/lookup?lng=${lng.toFixed(5)}&lat=${lat.toFixed(5)}&group=${encodeURIComponent(groupRef.current)}`,
           { signal: abort.signal },
         );
         if (!res.ok) return setHover(null);

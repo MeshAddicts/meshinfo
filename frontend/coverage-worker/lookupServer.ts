@@ -12,33 +12,43 @@ interface ActiveNode {
   binPath: string;
 }
 
-/** mtime:size of the state.json currently loaded — cheaper change detection
- *  than re-reading and string-comparing the whole file per hover. */
-let stateStamp = "";
-let active: ActiveNode[] = [];
-let refreshing: Promise<void> | null = null;
+interface GroupCache {
+  /** mtime:size of the group's state.json — cheaper change detection than
+   *  re-reading and string-comparing the whole file per hover. */
+  stamp: string;
+  active: ActiveNode[];
+  refreshing: Promise<void> | null;
+}
 
-/** Reload the active-node headers when state.json (atomic with the tiles) changes. */
-async function refreshActive(): Promise<void> {
-  const statePath = join(cfg.OUTPUT_DIR, "state.json");
+/** Per-group ("all", "LongFast", …) active-node caches. LRU-capped: the group
+ *  name is client-supplied (regex-valid but arbitrary), so unbounded growth
+ *  would let a scanner inflate memory one probe at a time. */
+const groupCaches = new Map<string, GroupCache>();
+const MAX_GROUP_CACHES = 16;
+const GROUP_NAME_RE = /^[A-Za-z0-9-]{1,32}$/;
+
+/** Reload a group's active-node headers when its state.json (atomic with the
+ *  tiles) changes. */
+async function refreshActive(group: string, cache: GroupCache): Promise<void> {
+  const statePath = join(cfg.OUTPUT_DIR, group, "state.json");
   let raw: string;
   let stamp: string;
   try {
     const st = await stat(statePath);
     stamp = `${st.mtimeMs}:${st.size}`;
-    if (stamp === stateStamp) return;
+    if (stamp === cache.stamp) return;
     raw = await readFile(statePath, "utf8");
   } catch {
-    stateStamp = "";
-    active = [];
+    cache.stamp = "";
+    cache.active = [];
     return;
   }
   let ids: string[];
   try {
     ids = Object.keys((JSON.parse(raw) as { active: Record<string, unknown> }).active ?? {});
   } catch {
-    stateStamp = "";
-    active = [];
+    cache.stamp = "";
+    cache.active = [];
     return;
   }
   const loaded = await Promise.all(
@@ -52,16 +62,29 @@ async function refreshActive(): Promise<void> {
       }
     }),
   );
-  stateStamp = stamp;
-  active = loaded.filter((n): n is ActiveNode => n != null);
+  cache.stamp = stamp;
+  cache.active = loaded.filter((n): n is ActiveNode => n != null);
 }
 
-/** Single-flight wrapper so concurrent requests share one refresh. */
-function ensureActive(): Promise<void> {
-  refreshing ??= refreshActive().finally(() => {
-    refreshing = null;
+/** Single-flight per group so concurrent requests share one refresh. */
+function ensureActive(group: string): Promise<GroupCache> {
+  let cache = groupCaches.get(group);
+  if (cache) {
+    groupCaches.delete(group); // re-insert → mark most-recently-used
+  } else {
+    cache = { stamp: "", active: [], refreshing: null };
+    while (groupCaches.size >= MAX_GROUP_CACHES) {
+      const oldest = groupCaches.keys().next().value;
+      if (oldest === undefined) break;
+      groupCaches.delete(oldest);
+    }
+  }
+  groupCaches.set(group, cache);
+  const c = cache;
+  c.refreshing ??= refreshActive(group, c).finally(() => {
+    c.refreshing = null;
   });
-  return refreshing;
+  return c.refreshing.then(() => c);
 }
 
 /** Bilinear margin (dB) at lng/lat from two 2-byte row reads; NaN when outside
@@ -113,7 +136,12 @@ export function startLookupServer(): void {
         res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "bad lng/lat" }));
         return;
       }
-      await ensureActive();
+      const group = url.searchParams.get("group") ?? "all";
+      if (!GROUP_NAME_RE.test(group)) {
+        res.writeHead(400, { "Content-Type": "application/json" }).end(JSON.stringify({ error: "bad group" }));
+        return;
+      }
+      const { active } = await ensureActive(group);
       // Footprint bounds may be unwrapped past ±180 (seam frame) — shift the
       // query lng into each node's frame before the containment test.
       const candidates = active.filter(({ header: { bounds: b } }) => {
@@ -144,6 +172,6 @@ export function startLookupServer(): void {
   });
   server.listen(cfg.LOOKUP_PORT, () => {
     console.log(`[coverage-worker] lookup server on :${cfg.LOOKUP_PORT}`);
-    void ensureActive(); // warm the header cache so the first query is fast
+    void ensureActive("all"); // warm the header cache so the first query is fast
   });
 }

@@ -2,6 +2,7 @@
 import { cpus } from "node:os";
 
 import { ROUTER_CLASS_ROLES } from "../src/pages/map/live/liveCoverageParams";
+import { DEFAULT_LIVE_PRESET, isKnownPreset } from "../src/pages/map/live/liveCoveragePresets";
 import type { NodeRole } from "../src/types";
 
 /** Parallel render workers. Tile buckets keep per-worker memory sparse, so the
@@ -42,6 +43,21 @@ export const CLIENT_REACH_KM = Number(process.env.COVERAGE_CLIENT_REACH_KM ?? 80
 
 /** A node contributes if heard within this many hours. */
 export const RECENCY_HOURS = Number(process.env.COVERAGE_RECENCY_HOURS ?? 4);
+
+/** Modem preset assumed for nodes whose channel hash has no
+ *  `[broker.channels.meta.<hash>] preset` mapping in meshinfo's config.
+ *  Strictly validated: preset ids double as group directory names, so an
+ *  empty/garbage value must never reach the bake (join(OUTPUT_DIR, "") is
+ *  the output root itself). */
+export const DEFAULT_PRESET = (() => {
+  const raw = process.env.COVERAGE_DEFAULT_PRESET;
+  if (!raw) return DEFAULT_LIVE_PRESET;
+  if (!isKnownPreset(raw)) {
+    console.warn(`[coverage-worker] unknown COVERAGE_DEFAULT_PRESET "${raw}" — using ${DEFAULT_LIVE_PRESET}`);
+    return DEFAULT_LIVE_PRESET;
+  }
+  return raw;
+})();
 
 /** Accuracy layers (NLCD clutter / ETH canopy / JRC buildings), fetched from
  *  meshinfo's baked tiles. Default on; gracefully no-op where a layer isn't baked. */

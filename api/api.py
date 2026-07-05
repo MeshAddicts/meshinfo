@@ -3,6 +3,7 @@ import datetime
 import json
 import logging
 import os
+import re
 from pathlib import Path
 
 import aiohttp
@@ -394,13 +395,21 @@ class API:
         async def server_config(request: Request) -> JSONResponse:
             return jsonable_encoder({'config': Config.cleanse(self.config)})
 
+        # Group = "all" or a modem-preset pyramid (e.g. "LongFast"); doubles as
+        # a directory and URL segment, so validate it strictly.
+        COVERAGE_GROUP_RE = re.compile(r"^[A-Za-z0-9-]{1,32}$")
+
         @app.get("/v1/coverage/metadata")
         async def coverage_metadata(request: Request) -> JSONResponse:
-            """Coverage tile pyramid metadata (bounds, zoom range, version). 404 until first bake."""
+            """Coverage tile pyramid metadata (bounds, zoom range, version, groups).
+            `?group=` selects a modem-preset pyramid (default "all"). 404 until first bake."""
             cov_cfg = self.config.get("coverage", {}) or {}
             if not cov_cfg.get("enabled", False):
                 return JSONResponse({"error": "coverage disabled"}, status_code=404)
-            meta_path = Path(cov_cfg.get("tile_dir", "output/coverage")) / "metadata.json"
+            group = request.query_params.get("group") or "all"
+            if not COVERAGE_GROUP_RE.fullmatch(group):
+                return JSONResponse({"error": "bad group"}, status_code=400)
+            meta_path = Path(cov_cfg.get("tile_dir", "output/coverage")) / group / "metadata.json"
             if not meta_path.is_file():
                 return JSONResponse({"error": "coverage not baked yet"}, status_code=404)
             try:
@@ -438,10 +447,13 @@ class API:
                 lat = float(request.query_params["lat"])
             except (KeyError, ValueError):
                 return JSONResponse({"error": "bad lng/lat"}, status_code=400)
+            group = request.query_params.get("group") or "all"
+            if not COVERAGE_GROUP_RE.fullmatch(group):
+                return JSONResponse({"error": "bad group"}, status_code=400)
             url = cov_cfg.get("lookup_url", "http://coverage-worker:9301")
             try:
                 session = get_lookup_session()
-                async with session.get(f"{url}/lookup", params={"lng": lng, "lat": lat}) as r:
+                async with session.get(f"{url}/lookup", params={"lng": lng, "lat": lat, "group": group}) as r:
                     return JSONResponse(await r.json(), status_code=r.status, headers={"Cache-Control": "no-cache"})
             except Exception:
                 return JSONResponse({"error": "lookup unavailable"}, status_code=503)
@@ -458,7 +470,7 @@ class API:
             cov_cfg = self.config.get("coverage", {}) or {}
             if not cov_cfg.get("enabled", False):
                 return JSONResponse({"error": "coverage disabled"}, status_code=404)
-            meta_path = Path(cov_cfg.get("tile_dir", "output/coverage")) / "metadata.json"
+            meta_path = Path(cov_cfg.get("tile_dir", "output/coverage")) / "all" / "metadata.json"
             try:
                 payload = json.loads(await asyncio.to_thread(meta_path.read_text))
             except Exception:

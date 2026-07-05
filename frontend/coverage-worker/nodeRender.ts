@@ -121,7 +121,7 @@ export function renderNodeMargin(o: CoverageOrigin, src: RenderSources, itm: Itm
   // so the full rasters are passed through unsliced.
   const res = renderCoverageRaster(
     subDem,
-    buildLiveCoverageParams(o.txDbm, src.clutterAggression),
+    buildLiveCoverageParams(o.txDbm, src.clutterAggression, o.preset),
     itm,
     [resolveOrigin(o, lng, shared)],
     undefined,

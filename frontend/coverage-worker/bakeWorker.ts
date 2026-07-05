@@ -4,7 +4,7 @@ import { parentPort } from "node:worker_threads";
 
 import { installEnvShim } from "./envShim";
 import type { CoverageOrigin } from "./nodes";
-import { bakeCoverage, type BakeMetadata } from "./render";
+import { bakeAllGroups, type BakeMetadata } from "./render";
 import { installSharpDecoder } from "./sharpImage";
 
 export interface BakeRequest {
@@ -18,7 +18,7 @@ installSharpDecoder();
 installEnvShim();
 
 parentPort!.on("message", ({ origins, version }: BakeRequest) => {
-  void bakeCoverage(origins, version)
+  void bakeAllGroups(origins, version)
     .then((meta) => parentPort!.postMessage({ ok: meta } satisfies BakeResponse))
     .catch((err) => parentPort!.postMessage({ err: err instanceof Error ? err.message : String(err) } satisfies BakeResponse));
 });

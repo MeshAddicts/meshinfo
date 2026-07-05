@@ -16,7 +16,14 @@ function isTransientFailure(err: unknown): boolean {
  *  and keep-alive races ("other side closed") are routine at that scale, and a
  *  single surviving failure aborts + restarts the whole coverage bake. */
 const TRANSIENT_RETRIES = 3;
-const RETRY_BACKOFF_MS = 500;
+const RETRY_BACKOFF_MS = 250;
+/** Once this many attempts fail in a row across the pool, it's an outage, not
+ *  a blip — skip the backoffs and fail fast; the caller's own retry cadence
+ *  (the worker re-bakes on its poll loop) is the appropriate backoff then.
+ *  Must exceed the lane count comfortably: a single sub-second burst fails up
+ *  to TILE_FETCH_LANES in-flight fetches at once, and those deserve their
+ *  backed-off retries — only sustained failure past that is an outage. */
+const OUTAGE_STREAK = TILE_FETCH_LANES * 2 + 8;
 
 /**
  * Fetch tiles into `out` with bounded concurrency and retries for transient
@@ -32,17 +39,22 @@ export async function fetchTilesPooled<T>(
   label: string,
 ): Promise<number> {
   let failureCount = 0;
+  let failStreak = 0;
   let i = 0;
   const lanes = Array.from({ length: Math.min(TILE_FETCH_LANES, wanted.length) }, async () => {
     while (i < wanted.length) {
       const t = wanted[i++];
       try {
         for (let attempt = 0; ; attempt++) {
-          if (attempt > 0) await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS * attempt));
+          if (attempt > 0 && failStreak < OUTAGE_STREAK) {
+            await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS * attempt));
+          }
           try {
             out.set(t.key, await fetchOne(t.x, t.y));
+            failStreak = 0;
             break;
           } catch (err) {
+            failStreak += 1;
             if (!isTransientFailure(err) || attempt >= TRANSIENT_RETRIES) throw err;
           }
         }

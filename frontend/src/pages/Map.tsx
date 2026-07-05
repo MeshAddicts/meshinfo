@@ -247,6 +247,9 @@ export function Map() {
   const [liveCoverageHideNodes, setLiveCoverageHideNodes] = useState<boolean>(
     () => readJson<boolean>(LS_KEYS.liveCoverageHideNodes, true),
   );
+  const [liveCoverageGroup, setLiveCoverageGroup] = useState<string>(
+    () => readJson<string>(LS_KEYS.liveCoverageGroup, "all"),
+  );
 
   // RF tool state hooks (own settings + result state)
   const losState = useLosState();
@@ -291,6 +294,7 @@ export function Map() {
   useEffect(() => writeJson(LS_KEYS.liveCoverage, liveCoverage), [liveCoverage]);
   useEffect(() => writeJson(LS_KEYS.liveCoverageOpacity, liveCoverageOpacity), [liveCoverageOpacity]);
   useEffect(() => writeJson(LS_KEYS.liveCoverageHideNodes, liveCoverageHideNodes), [liveCoverageHideNodes]);
+  useEffect(() => writeJson(LS_KEYS.liveCoverageGroup, liveCoverageGroup), [liveCoverageGroup]);
 
   // Obsolete key from the prior exaggeration slider; removeItem is idempotent.
   useEffect(() => {
@@ -716,13 +720,22 @@ export function Map() {
     enabled: liveCoverage,
     mapReady: mapLoaded,
     opacity: liveCoverageOpacity,
+    group: liveCoverageGroup,
   });
   const coverageHover = useCoverageLookup({
     mbMapRef,
     enabled: liveCoverage && liveCoverageState.status === "ready",
     mapReady: mapLoaded,
     suspended: activeTool != null,
+    group: liveCoverageGroup,
   });
+  // A persisted group can vanish (preset mesh went quiet) — fall back to "all".
+  const liveGroups = liveCoverageState.meta?.groups;
+  useEffect(() => {
+    if (liveGroups && liveCoverageGroup !== "all" && !liveGroups.includes(liveCoverageGroup)) {
+      setLiveCoverageGroup("all");
+    }
+  }, [liveGroups, liveCoverageGroup]);
   // Hide markers only while the layer actually paints — if the worker goes away
   // ("unavailable"), markers come back instead of leaving an empty map.
   const nodesHidden = liveCoverage && liveCoverageHideNodes && liveCoverageState.status === "ready";
@@ -2319,6 +2332,8 @@ export function Map() {
         onOpacityChange={setLiveCoverageOpacity}
         hideNodes={liveCoverageHideNodes}
         onHideNodesChange={setLiveCoverageHideNodes}
+        group={liveCoverageGroup}
+        onGroupChange={setLiveCoverageGroup}
       />
 
       <MapHealthWidget nodes={nodes} />

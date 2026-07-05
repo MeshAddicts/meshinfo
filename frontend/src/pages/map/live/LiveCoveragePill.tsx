@@ -2,6 +2,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 
 import { relativeTime } from "../lib/helpers";
+import { presetShortLabel } from "./liveCoveragePresets";
 import type { CoverageMeta, ServerCoverageStatus } from "./useServerCoverageTiles";
 
 export interface LiveCoveragePillProps {
@@ -13,6 +14,9 @@ export interface LiveCoveragePillProps {
   onOpacityChange: (opacity: number) => void;
   hideNodes: boolean;
   onHideNodesChange: (hide: boolean) => void;
+  /** Selected pyramid: "all" or a modem-preset id. */
+  group: string;
+  onGroupChange: (group: string) => void;
 }
 
 export function LiveCoveragePill({
@@ -24,6 +28,8 @@ export function LiveCoveragePill({
   onOpacityChange,
   hideNodes,
   onHideNodesChange,
+  group,
+  onGroupChange,
 }: LiveCoveragePillProps) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -121,6 +127,31 @@ export function LiveCoveragePill({
             <p className="text-[11px] text-gray-500 -mt-1">
               Updated {relativeTime(meta.generatedAt)} · heard ≤ {meta.recencyHours} h
             </p>
+          )}
+
+          {/* Modem-preset pyramids — shown once there's more than one mesh to pick. */}
+          {meta && meta.groups.length > 2 && (
+            <div className="space-y-1">
+              <span className="uppercase tracking-wider text-[10px] text-gray-500">Modem preset</span>
+              <div className="flex flex-wrap gap-1">
+                {meta.groups.map((g) => (
+                  <button
+                    key={g}
+                    type="button"
+                    onClick={() => onGroupChange(g)}
+                    aria-pressed={group === g}
+                    title={g === "all" ? "Every mesh combined" : `${g} mesh only`}
+                    className={`px-2 py-0.5 rounded-md text-[10px] font-medium border transition-colors ${
+                      group === g
+                        ? "bg-cyan-500/20 border-cyan-400/40 text-cyan-200"
+                        : "bg-white/5 border-white/10 text-gray-400 hover:text-gray-200"
+                    }`}
+                  >
+                    {g === "all" ? "All" : presetShortLabel(g)}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
 
           <div className="space-y-1">

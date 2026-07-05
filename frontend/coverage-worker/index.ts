@@ -16,7 +16,7 @@ import {
 import { installEnvShim } from "./envShim";
 import { startLookupServer } from "./lookupServer";
 import { type CoverageOrigin, fetchCoverageOrigins } from "./nodes";
-import { bakeCoverage, type BakeMetadata, terminateWorkerPool } from "./render";
+import { bakeAllGroups, type BakeMetadata, cleanupLegacyLayout, terminateWorkerPool } from "./render";
 import { installSharpDecoder } from "./sharpImage";
 
 /** Persistent bake thread: keeps the lookup server responsive during bakes and
@@ -56,10 +56,10 @@ function bakeInThread(origins: CoverageOrigin[], version: string): Promise<BakeM
   });
 }
 
-/** Stable dirty-key: rebake only when the contributing set / positions / TX change. */
+/** Stable dirty-key: rebake only when the contributing set / positions / TX / preset change. */
 function signatureOf(origins: CoverageOrigin[]): string {
   return origins
-    .map((o) => `${o.id}:${o.lng.toFixed(5)}:${o.lat.toFixed(5)}:${o.altitudeM == null ? "_" : Math.round(o.altitudeM)}:${o.txDbm}`)
+    .map((o) => `${o.id}:${o.lng.toFixed(5)}:${o.lat.toFixed(5)}:${o.altitudeM == null ? "_" : Math.round(o.altitudeM)}:${o.txDbm}:${o.preset}`)
     .sort()
     .join("|");
 }
@@ -78,14 +78,14 @@ async function notifyMeshinfo(): Promise<void> {
 
 async function bakeAndNotify(origins: CoverageOrigin[], inThread: boolean): Promise<BakeMetadata | null> {
   const t0 = Date.now();
-  const meta = inThread ? await bakeInThread(origins, String(t0)) : await bakeCoverage(origins, String(t0));
+  const meta = inThread ? await bakeInThread(origins, String(t0)) : await bakeAllGroups(origins, String(t0));
   if (!meta) {
     console.log("[coverage-worker] nothing to bake (no eligible nodes, no prior output)");
     return null;
   }
   console.log(
     `[coverage-worker] baked ${meta.tileCount} tiles (z${meta.minZoom}-${meta.maxZoom}) ` +
-      `from ${meta.nodeCount} nodes in ${((Date.now() - t0) / 1000).toFixed(1)}s`,
+      `from ${meta.nodeCount} nodes across ${meta.groups.length} groups in ${((Date.now() - t0) / 1000).toFixed(1)}s`,
   );
   await notifyMeshinfo();
   return meta;
@@ -149,6 +149,7 @@ async function runLoop(): Promise<void> {
 async function main(): Promise<void> {
   installSharpDecoder();
   installEnvShim();
+  await cleanupLegacyLayout(); // pre-group flat tiles would sit unread forever
   if (process.argv.includes("--once")) {
     await runOnce();
   } else {

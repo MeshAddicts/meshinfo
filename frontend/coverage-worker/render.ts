@@ -6,6 +6,7 @@ import { Worker } from "node:worker_threads";
 
 import type { CoverageMeta } from "../src/pages/map/live/coverageMeta";
 import { buildLiveCoverageParams, LIVE_ANTENNA_AGL_M } from "../src/pages/map/live/liveCoverageParams";
+import { LIVE_PRESET_SENSITIVITY_DBM } from "../src/pages/map/live/liveCoveragePresets";
 import { type ItmContext, loadItmContext } from "../src/pages/map/rf/itm";
 import {
   buildBuildingRaster,
@@ -103,9 +104,15 @@ function snapBounds(b: DEMBounds, step = 0.25): DEMBounds {
 }
 
 /** Everything a cached margin depends on besides the node's own state.
- *  "v2" = ActiveNodeState state.json format (v1 states full-rebake cleanly). */
+ *  "v2" = ActiveNodeState state.json format (v1 states full-rebake cleanly).
+ *  All groups share one bbox → one contextKey, so a node's ITM grid renders
+ *  once and is composited by both the "all" and its preset pyramid. */
 function contextKeyFor(bbox: DEMBounds): string {
-  const paramsFp = JSON.stringify(buildLiveCoverageParams(0, 1)) + LIVE_ANTENNA_AGL_M;
+  const paramsFp =
+    JSON.stringify(buildLiveCoverageParams(0, 1)) +
+    LIVE_ANTENNA_AGL_M +
+    JSON.stringify(LIVE_PRESET_SENSITIVITY_DBM) +
+    cfg.DEFAULT_PRESET;
   return hashKey(
     "v2",
     bbox.west.toFixed(4), bbox.south.toFixed(4), bbox.east.toFixed(4), bbox.north.toFixed(4),
@@ -477,57 +484,50 @@ function wrapX(x: number, z: number): number {
 }
 
 /**
- * Bake to a temp dir then atomically swap into OUTPUT_DIR; returns + writes
- * metadata.json. An empty origin set erases the previous output (a mesh gone
- * quiet must not keep serving stale coverage); returns null when there is
- * nothing baked and nothing to erase.
+ * Bake one group's pyramid to a temp dir then atomically swap it into
+ * `${OUTPUT_DIR}/${group}`; returns + writes metadata.json. An empty origin
+ * set erases the previous output (a mesh gone quiet must not keep serving
+ * stale coverage); returns null when there is nothing baked and nothing to
+ * erase. `bbox` is supplied by bakeAllGroups — shared across groups so the
+ * per-node margin cache is shared too. `cycleSources` (group bakes only) is
+ * the all-bake's authoritative sources for this cycle: cache reuse is judged
+ * against it, and a group whose painted sources lag it recomposites from the
+ * fresh cache instead of re-running ITM.
  */
-export async function bakeCoverage(origins: CoverageOrigin[], version: string): Promise<BakeMetadata | null> {
+async function bakeCoverage(
+  origins: CoverageOrigin[],
+  version: string,
+  bbox: DEMBounds,
+  group: string,
+  groups: string[],
+  cycleSources: string[] | null = null,
+): Promise<BakeMetadata | null> {
   const z = cfg.MAX_ZOOM;
+  const outDir = join(cfg.OUTPUT_DIR, group);
   // state.json lives inside the output dir (written pre-swap) so the two stay atomic
-  const state = await loadState(cfg.OUTPUT_DIR);
-  const stored: DEMBounds | null = state?.bbox
-    ? { west: state.bbox[0], south: state.bbox[1], east: state.bbox[2], north: state.bbox[3] }
-    : null;
-
-  // Sticky bbox — a change moves DEM resolution and invalidates every cached
-  // margin, so keep it while nodes fit and grow (never shrink) otherwise.
-  let bbox: DEMBounds;
-  if (origins.length === 0) {
-    if (!stored || !state || Object.keys(state.active).length === 0) return null; // nothing baked, nothing to erase
-    bbox = stored;
-  } else {
-    const positions = origins.map((o) => [o.lng, o.lat] as [number, number]);
-    const maxReach = origins.reduce((m, o) => Math.max(m, o.reachKm), cfg.CLIENT_REACH_KM);
-    const candidate = snapBounds(unionDemBoundsAround(positions, maxReach, 1.05));
-    bbox = candidate;
-    if (stored) {
-      if (demBoundsContain(stored, candidate)) {
-        bbox = stored;
-      } else {
-        // Union in the stored frame — the candidate may sit in a ±360-shifted
-        // frame when the reference node changed sides of the antimeridian.
-        const dMid = (candidate.west + candidate.east) / 2 - (stored.west + stored.east) / 2;
-        const shift = dMid > 180 ? -360 : dMid < -180 ? 360 : 0;
-        bbox = snapBounds({
-          west: Math.min(stored.west, candidate.west + shift),
-          south: Math.min(stored.south, candidate.south),
-          east: Math.max(stored.east, candidate.east + shift),
-          north: Math.max(stored.north, candidate.north),
-        });
-        console.log("[coverage-worker] bbox grew — full rebake");
-      }
-    }
+  const state = await loadState(outDir);
+  if (origins.length === 0 && (!state || Object.keys(state.active).length === 0)) {
+    return null; // nothing baked, nothing to erase
   }
   const contextKey = contextKeyFor(bbox);
   const dims = tileRectForBounds(bbox, z);
   let incremental = state != null && state.contextKey === contextKey;
+  // Painted sources lag the cycle's (accuracy layer appeared mid-run): the
+  // grids in cache are already re-rendered — recomposite everything, render nothing.
+  if (incremental && cycleSources && JSON.stringify(state?.sources ?? null) !== JSON.stringify(cycleSources)) {
+    incremental = false;
+  }
 
   const wantKey = new Map(origins.map((o) => [o.id, originStateKey(o)]));
-  // A cached margin is only reusable if it was rendered with the sources the
-  // current output uses — a node absent across a sources change must not
+  // A cached margin is only reusable if it was rendered with the sources this
+  // cycle's output uses — a node absent across a sources change must not
   // re-enter with its stale (e.g. clutter-free) grid.
-  const wantSources = state?.sources != null ? JSON.stringify(state.sources) : null;
+  const wantSources =
+    cycleSources != null
+      ? JSON.stringify(cycleSources)
+      : state?.sources != null
+        ? JSON.stringify(state.sources)
+        : null;
   let toRender: CoverageOrigin[] = [];
   const oldHeaders = new Map<string, NodeCacheHeader>();
   const reusableIds: string[] = [];
@@ -540,12 +540,30 @@ export async function bakeCoverage(origins: CoverageOrigin[], version: string): 
   }
   const removedIds = incremental && state ? Object.keys(state.active).filter((id) => !wantKey.has(id)) : [];
 
+  // Unchanged group (same painted set, same context, same groups list, nothing
+  // to render): keep the existing output byte-for-byte — the stable version
+  // means clients viewing it don't even revalidate tiles this cycle.
+  if (incremental && state && toRender.length === 0 && removedIds.length === 0) {
+    const same =
+      origins.length === Object.keys(state.active).length &&
+      origins.every((o) => (state.active[o.id] as ActiveNodeState | undefined)?.key === wantKey.get(o.id));
+    if (same) {
+      try {
+        const prev = JSON.parse(await readFile(join(outDir, "metadata.json"), "utf8")) as BakeMetadata;
+        if (JSON.stringify(prev.groups) === JSON.stringify(groups)) return prev;
+      } catch {
+        // metadata unreadable — fall through to a real bake
+      }
+    }
+  }
+
   // Render only what changed; a pure-aging delta skips rasters + ITM entirely.
   let rendered = new Map<string, MarginGridQ8>();
   if (toRender.length > 0) {
     const src = await ensureRasters(bbox, contextKey);
-    // Sources changed (e.g. NLCD baked later): cached margins lack the layer — re-render all.
-    if (incremental && state?.sources && JSON.stringify(rasterSources) !== JSON.stringify(state.sources)) {
+    // Sources changed (e.g. NLCD baked later): cached margins lack the layer —
+    // re-render all. Group bakes skip this: cycleSources already reconciled it.
+    if (!cycleSources && incremental && state?.sources && JSON.stringify(rasterSources) !== JSON.stringify(state.sources)) {
       console.log(`[coverage-worker] accuracy sources changed (${state.sources} → ${rasterSources}) — full rebake`);
       toRender = [...origins];
       reusableIds.length = 0; // everything re-renders; don't composite stale grids twice
@@ -633,7 +651,7 @@ export async function bakeCoverage(origins: CoverageOrigin[], version: string): 
     if (prevDecoded.has(key)) return prevDecoded.get(key)!;
     let rgba: Uint8ClampedArray | null = null;
     try {
-      const buf = await readFile(join(cfg.OUTPUT_DIR, `${key}.png`));
+      const buf = await readFile(join(outDir, `${key}.png`));
       const px = await decodeTilePixels(new Blob([new Uint8Array(buf)]));
       if (px.width === TILE_SIZE && px.height === TILE_SIZE) rgba = px.data;
     } catch {
@@ -660,13 +678,13 @@ export async function bakeCoverage(origins: CoverageOrigin[], version: string): 
   }
 
   // Assemble output: carry every untouched PNG forward, write the fresh ones.
-  const tmpDir = `${cfg.OUTPUT_DIR}.tmp`;
+  const tmpDir = `${outDir}.tmp`;
   await rm(tmpDir, { recursive: true, force: true });
   await mkdir(tmpDir, { recursive: true });
   const BATCH = 16;
   let copied = 0;
   if (incremental) {
-    const names = await readdir(cfg.OUTPUT_DIR, { recursive: true });
+    const names = await readdir(outDir, { recursive: true });
     const carried: string[] = [];
     for (const name of names) {
       const key = String(name).replace(/\\/g, "/");
@@ -679,7 +697,7 @@ export async function bakeCoverage(origins: CoverageOrigin[], version: string): 
     for (let i = 0; i < carried.length; i += BATCH * 4) {
       await Promise.all(
         carried.slice(i, i + BATCH * 4).map(async (key) => {
-          const src = join(cfg.OUTPUT_DIR, key);
+          const src = join(outDir, key);
           const dst = join(tmpDir, key);
           await mkdir(dirname(dst), { recursive: true });
           try {
@@ -725,6 +743,8 @@ export async function bakeCoverage(origins: CoverageOrigin[], version: string): 
     tileCount: copied + entries.length,
     recencyHours: cfg.RECENCY_HOURS,
     sources: toRender.length > 0 ? rasterSources : state?.sources ?? cachedSources ?? rasterSources,
+    group,
+    groups,
   };
   await writeFile(join(tmpDir, "metadata.json"), JSON.stringify(meta, null, 2));
 
@@ -741,19 +761,159 @@ export async function bakeCoverage(origins: CoverageOrigin[], version: string): 
   };
   await saveState(tmpDir, newState); // rides the swap with the tiles it describes
 
-  // Swap old aside, new into place.
-  const oldDir = `${cfg.OUTPUT_DIR}.old`;
-  await rm(oldDir, { recursive: true, force: true });
-  await rename(cfg.OUTPUT_DIR, oldDir).catch(() => {});
-  await mkdir(dirname(cfg.OUTPUT_DIR) || ".", { recursive: true });
-  await rename(tmpDir, cfg.OUTPUT_DIR);
-  await rm(oldDir, { recursive: true, force: true });
-
-  await pruneCache(cfg.CACHE_DIR, new Set(wantKey.keys()), cfg.CACHE_PRUNE_DAYS);
+  await swapDirs(tmpDir, outDir);
 
   console.log(
-    `[coverage-worker] ${incremental ? "delta" : "full"} bake: ${toRender.length} rendered, ` +
+    `[coverage-worker] ${incremental ? "delta" : "full"} bake [${group}]: ${toRender.length} rendered, ` +
       `${reusableIds.length} cached, ${removedIds.length} removed, ${affected.size} tiles recomposited, ${copied} reused`,
   );
   return meta;
+}
+
+/** "all" plus one group per modem preset. Group names double as directory and
+ *  URL segments, so they must stay path/URL-safe. */
+export const GROUP_ALL = "all";
+const GROUP_NAME_RE = /^[A-Za-z0-9-]{1,32}$/;
+
+/**
+ * Swap `tmpDir` into place as `outDir`: previous output aside, new in, old
+ * removed. Windows bind mounts (Docker Desktop dev) refuse directory renames
+ * while a served file inside is open, so a failed swap restores the previous
+ * output and retries once before surfacing — the bake loop retries the cycle
+ * anyway, and the restored output keeps serving meanwhile.
+ */
+async function swapDirs(tmpDir: string, outDir: string): Promise<void> {
+  const oldDir = `${outDir}.old`;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rm(oldDir, { recursive: true, force: true });
+      await rename(outDir, oldDir).catch((err: NodeJS.ErrnoException) => {
+        if (err.code !== "ENOENT") throw err; // ENOENT = first bake, nothing to move aside
+      });
+      await mkdir(dirname(outDir) || ".", { recursive: true });
+      await rename(tmpDir, outDir);
+      await rm(oldDir, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      await rename(oldDir, outDir).catch(() => {}); // no-op unless outDir went missing
+      if (attempt >= 1) throw err;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+}
+
+/**
+ * One bake cycle: the combined "all" pyramid plus a pyramid per modem preset
+ * present (or previously baked — an emptied preset erases, then its dir is
+ * dropped). All groups share the sticky bbox, so contextKey matches and each
+ * node's ITM margin renders once, into the shared cache, no matter how many
+ * pyramids composite it. Returns the "all" metadata (null = nothing anywhere).
+ */
+export async function bakeAllGroups(origins: CoverageOrigin[], version: string): Promise<BakeMetadata | null> {
+  const allState = await loadState(join(cfg.OUTPUT_DIR, GROUP_ALL));
+  const stored: DEMBounds | null = allState?.bbox
+    ? { west: allState.bbox[0], south: allState.bbox[1], east: allState.bbox[2], north: allState.bbox[3] }
+    : null;
+
+  // Sticky bbox — a change moves DEM resolution and invalidates every cached
+  // margin, so keep it while nodes fit and grow (never shrink) otherwise.
+  let bbox: DEMBounds;
+  if (origins.length === 0) {
+    if (!stored) return null; // nothing ever baked, nothing to erase
+    bbox = stored;
+  } else {
+    const positions = origins.map((o) => [o.lng, o.lat] as [number, number]);
+    const maxReach = origins.reduce((m, o) => Math.max(m, o.reachKm), cfg.CLIENT_REACH_KM);
+    const candidate = snapBounds(unionDemBoundsAround(positions, maxReach, 1.05));
+    bbox = candidate;
+    if (stored) {
+      if (demBoundsContain(stored, candidate)) {
+        bbox = stored;
+      } else {
+        // Union in the stored frame — the candidate may sit in a ±360-shifted
+        // frame when the reference node changed sides of the antimeridian.
+        const dMid = (candidate.west + candidate.east) / 2 - (stored.west + stored.east) / 2;
+        const shift = dMid > 180 ? -360 : dMid < -180 ? 360 : 0;
+        bbox = snapBounds({
+          west: Math.min(stored.west, candidate.west + shift),
+          south: Math.min(stored.south, candidate.south),
+          east: Math.max(stored.east, candidate.east + shift),
+          north: Math.max(stored.north, candidate.north),
+        });
+        console.log("[coverage-worker] bbox grew — full rebake");
+      }
+    }
+  }
+
+  // Group set: presets present now, plus baked group dirs that need erasing.
+  // Ghost dirs (nothing painted, or an unreadable state that could otherwise
+  // serve stale tiles forever) are removed outright.
+  const present = new Set(origins.map((o) => o.preset).filter((p) => GROUP_NAME_RE.test(p) && p !== GROUP_ALL));
+  const groupSet = new Set(present);
+  let dirsChanged = false;
+  try {
+    for (const e of await readdir(cfg.OUTPUT_DIR, { withFileTypes: true })) {
+      const name = e.name;
+      if (!e.isDirectory() || name === GROUP_ALL || present.has(name) || !GROUP_NAME_RE.test(name)) continue;
+      const s = await loadState(join(cfg.OUTPUT_DIR, name));
+      if (s && Object.keys(s.active).length > 0) {
+        groupSet.add(name); // still painted — bake (erases if its preset emptied)
+      } else {
+        await rm(join(cfg.OUTPUT_DIR, name), { recursive: true, force: true });
+        dirsChanged = true;
+      }
+    }
+  } catch {
+    // output root doesn't exist yet — first run
+  }
+  const groups = [GROUP_ALL, ...[...groupSet].sort()];
+
+  let metaAll = await bakeCoverage(origins, version, bbox, GROUP_ALL, groups);
+  for (const g of groups) {
+    if (g === GROUP_ALL) continue;
+    // The all-bake's sources are the cycle's truth: group bakes reuse its
+    // freshly-written cache instead of re-running ITM on a sources change.
+    await bakeCoverage(origins.filter((o) => o.preset === g), version, bbox, g, groups, metaAll?.sources ?? null);
+  }
+
+  // A quiet mesh at the backstop removes dirs while the all-bake no-ops (its
+  // active set is already empty) — refresh the advertised groups list anyway,
+  // or clients keep seeing chips whose pyramids 404.
+  if (!metaAll && dirsChanged) {
+    metaAll = await rewriteGroupsList(groups, version);
+  }
+
+  await pruneCache(cfg.CACHE_DIR, new Set(origins.map((o) => o.id)), cfg.CACHE_PRUNE_DAYS);
+  return metaAll;
+}
+
+/** In-place update of all/metadata.json's groups list (atomic tmp+rename);
+ *  used when directories changed but no group had anything to bake. */
+async function rewriteGroupsList(groups: string[], version: string): Promise<BakeMetadata | null> {
+  const p = join(cfg.OUTPUT_DIR, GROUP_ALL, "metadata.json");
+  try {
+    const meta = JSON.parse(await readFile(p, "utf8")) as BakeMetadata;
+    const updated: BakeMetadata = { ...meta, version, generatedAt: new Date().toISOString(), groups };
+    await writeFile(`${p}.tmp`, JSON.stringify(updated, null, 2));
+    await rename(`${p}.tmp`, p);
+    return updated;
+  } catch {
+    return null; // no all-metadata at all — nothing advertised, nothing to fix
+  }
+}
+
+/** Remove pre-group flat-layout leftovers (tiles/metadata at the output root);
+ *  they'd otherwise sit unread next to the group dirs forever. Run once at boot. */
+export async function cleanupLegacyLayout(): Promise<void> {
+  await rm(join(cfg.OUTPUT_DIR, "metadata.json"), { force: true });
+  await rm(join(cfg.OUTPUT_DIR, "state.json"), { force: true });
+  try {
+    for (const e of await readdir(cfg.OUTPUT_DIR, { withFileTypes: true })) {
+      if (e.isDirectory() && /^\d{1,2}$/.test(e.name)) {
+        await rm(join(cfg.OUTPUT_DIR, e.name), { recursive: true, force: true });
+      }
+    }
+  } catch {
+    // nothing baked yet
+  }
 }

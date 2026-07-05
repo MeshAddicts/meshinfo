@@ -32,6 +32,22 @@ SSE. Once `[coverage]` is enabled, no further meshinfo restarts are needed —
 the tile route is mounted up front, so the first bake appears as soon as it
 lands.
 
+## Modem-preset pyramids
+
+Each bake produces the combined `all` pyramid plus one per modem preset present
+on the mesh (`output/coverage/<group>/…`, e.g. `all`, `LongFast`,
+`MediumFast`); the map's Coverage pill grows an All/LF/MF switch when more than
+one preset is active. A node's preset comes from its `last_channel` hash via
+meshinfo's `[broker.channels.meta.<hash>] preset = "..."` entries — channels
+are not presets, so a custom/regional channel (e.g. a future "SacValley" on
+MediumFast) is supported by adding one meta entry with its hash and preset.
+Unmapped hashes fall back to `COVERAGE_DEFAULT_PRESET`.
+
+Each node's margin is computed against a receiver on its own mesh (an SX1262
+handheld on that preset), so slower presets legitimately paint larger
+footprints. Per-node renders are shared across pyramids — extra groups cost
+compositing and PNG encoding, not ITM time.
+
 ## What to expect
 
 - **First bake:** renders every eligible node — minutes for a regional mesh,
@@ -69,6 +85,7 @@ To hard-cap CPU on a shared host, add `cpus: N` to the service plus
 | `MESHINFO_URL` | `http://meshinfo:9000` | Where to fetch nodes / send notify |
 | `COVERAGE_OUTPUT_DIR` | `/output/coverage` | Tile output (must be the volume meshinfo serves) |
 | `COVERAGE_RECENCY_HOURS` | `4` | A node contributes if heard within this window |
+| `COVERAGE_DEFAULT_PRESET` | `LongFast` | Modem preset assumed for channel hashes without a `[broker.channels.meta]` mapping |
 | `COVERAGE_BBOX` | unset | `west,south,east,north` clip — set only if your DB aggregates multiple disjoint regions |
 | `COVERAGE_MAX_ZOOM` / `COVERAGE_MIN_ZOOM` | `11` / `5` | Tile pyramid range (z11 ≈ 60 m/px) |
 | `COVERAGE_OUTPUT_M_PER_PX` | `200` | Render resolution; higher = cheaper bakes, softer detail |

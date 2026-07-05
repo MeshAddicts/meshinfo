@@ -3,9 +3,10 @@
  * owner config exists; `txDbmForRole` is the override point.
  */
 import { NodeRole } from "../../../types";
-import { effectiveSensitivityDbm, MESHTASTIC_PRESETS, reliabilityPreset } from "../rf/coverageAnalysis";
+import { effectiveSensitivityDbm, reliabilityPreset } from "../rf/coverageAnalysis";
 import type { RasterParams } from "../rf/coverageRaster";
 import { CABLE_LOSS_DB, clampRxHeightM, DEFAULT_ITM_ENV, FADE_MARGIN_DB, FREQ_MHZ } from "../rf/itmEnv";
+import { DEFAULT_LIVE_PRESET, presetSensitivityDbm } from "./liveCoveragePresets";
 
 /** High-power infrastructure TX (dBm) — Station-G2-class routers/repeaters. */
 export const ROUTER_TX_DBM = 33;
@@ -35,19 +36,24 @@ export const LIVE_RX_HEIGHT_M = 2;
  *  this is a single tunable constant approximating masted infrastructure. */
 export const LIVE_ANTENNA_AGL_M = 6;
 
-const MEDIUM_FAST = MESHTASTIC_PRESETS[0]; // MediumFast (-124 dBm typical)
 const LIVE_RELIABILITY = reliabilityPreset("typical"); // 90/50/70
 
-/** RasterParams for one TX class. All classes share env / RX / sensitivity /
- *  reliability; only `txDbm` differs. `clutterAggression` 0 = clutter model off. */
-export function buildLiveCoverageParams(txDbm: number, clutterAggression = 0): RasterParams {
+/** RasterParams for one TX class on one modem preset. The RX probe matches the
+ *  node's own mesh: an SX1262 handheld on that preset (margin is meaningless
+ *  across presets — a LongFast node can't be heard by a MediumFast radio).
+ *  All classes share env / RX height / reliability; txDbm + sensitivity vary. */
+export function buildLiveCoverageParams(
+  txDbm: number,
+  clutterAggression = 0,
+  preset: string = DEFAULT_LIVE_PRESET,
+): RasterParams {
   return {
     freqMhz: FREQ_MHZ,
     txDbm,
     txAntennaDbi: LIVE_TX_ANTENNA_DBI,
     rxAntennaDbi: LIVE_RX_ANTENNA_DBI,
     rxAntennaHeightAboveGroundM: clampRxHeightM(LIVE_RX_HEIGHT_M),
-    rxSensitivityDbm: effectiveSensitivityDbm(MEDIUM_FAST.sensitivityDbm, "SX1262"),
+    rxSensitivityDbm: effectiveSensitivityDbm(presetSensitivityDbm(preset), "SX1262"),
     fadeMarginDb: FADE_MARGIN_DB,
     cableLossDb: CABLE_LOSS_DB,
     clutterAggression,

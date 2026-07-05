@@ -38,6 +38,8 @@ export const LS_KEYS = {
   liveCoverageOpacity: "meshinfo.map.liveCoverageOpacity",
   /** Hide node markers/clusters while the live coverage layer is shown (on by default). */
   liveCoverageHideNodes: "meshinfo.map.liveCoverageHideNodes",
+  /** Live coverage pyramid group: "all" or a modem-preset id (e.g. "LongFast"). */
+  liveCoverageGroup: "meshinfo.map.liveCoverageGroup",
 } as const;
 
 export function readJson<T>(key: string, fallback: T): T {
