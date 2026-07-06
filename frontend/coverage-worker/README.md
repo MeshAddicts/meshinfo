@@ -67,7 +67,13 @@ compositing and PNG encoding, not ITM time.
 Defaults target quality ("ultra" z11 detail). The worker parallelizes across
 cores but always yields to meshinfo/postgres under contention
 (`cpu_shares: 512`). On a small dedicated host (3–4 CPUs, 4–8 GB RAM) the
-defaults work; the first bake is just slower. If RAM is tight:
+defaults work; the first bake is just slower.
+
+Memory scales with the shared terrain raster (8192² ≈ 256 MB) plus one
+transient accuracy-slice set per render worker — the NLCD/canopy/building
+layers are sliced **per node** over its footprint at render resolution (never
+as network-wide rasters), so their sampling stays survey-grade no matter how
+large the mesh's bounding box grows. If RAM is tight:
 
 ```yaml
 environment:
@@ -76,7 +82,7 @@ environment:
 ```
 
 To hard-cap CPU on a shared host, add `cpus: N` to the service plus
-`COVERAGE_WORKERS=N`.
+`COVERAGE_WORKERS=N` (fewer workers also means fewer concurrent slice sets).
 
 ## Environment variables
 
@@ -88,7 +94,7 @@ To hard-cap CPU on a shared host, add `cpus: N` to the service plus
 | `COVERAGE_DEFAULT_PRESET` | `LongFast` | Modem preset assumed for channel hashes without a `[broker.channels.meta]` mapping |
 | `COVERAGE_BBOX` | unset | `west,south,east,north` clip — set only if your DB aggregates multiple disjoint regions |
 | `COVERAGE_MAX_ZOOM` / `COVERAGE_MIN_ZOOM` | `11` / `5` | Tile pyramid range (z11 ≈ 60 m/px) |
-| `COVERAGE_OUTPUT_M_PER_PX` | `200` | Render resolution; higher = cheaper bakes, softer detail |
+| `COVERAGE_OUTPUT_M_PER_PX` | `200` | Render + accuracy-layer sampling resolution; higher = cheaper bakes, softer detail (ITM cost scales inversely with its square) |
 | `COVERAGE_DEM_SIZE` / `COVERAGE_NODE_OUTPUT` | `8192` / `2048` | Terrain raster / per-node grid caps (memory + CPU) |
 | `COVERAGE_WORKERS` | `min(cores−1, 32)` | Render threads |
 | `COVERAGE_MIN_RECOMPUTE_MS` | `600000` | Min interval between rebakes |

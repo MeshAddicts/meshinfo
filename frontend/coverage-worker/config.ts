@@ -29,11 +29,10 @@ export const MIN_ZOOM = Number(process.env.COVERAGE_MIN_ZOOM ?? 5);
 /** Shared-DEM / per-node-sub-DEM dimensions (terrain accuracy; capped for memory). */
 export const SHARED_DEM_SIZE = Number(process.env.COVERAGE_DEM_SIZE ?? 8192);
 export const NODE_DEM_SIZE = Number(process.env.COVERAGE_NODE_DEM_SIZE ?? 2048);
-/** Clutter/canopy/building raster dimension. Separate from the DEM: canopy alone is
- *  3 Float32 planes, so 8192² would cost ~800 MB. */
-export const CLUTTER_RASTER_SIZE = Number(process.env.COVERAGE_CLUTTER_SIZE ?? 4096);
 /** Per-node render grid: ~OUTPUT_M_PER_PX everywhere, capped at NODE_OUTPUT_MAX.
- *  ITM cost scales with the grid square — these are the dominant perf levers. */
+ *  ITM cost scales with the grid square — these are the dominant perf levers.
+ *  Clutter/canopy/building slices are built per node at these same dims, so
+ *  OUTPUT_M_PER_PX also sets the accuracy layers' sampling resolution. */
 export const NODE_OUTPUT_MAX = Number(process.env.COVERAGE_NODE_OUTPUT ?? 2048);
 export const OUTPUT_M_PER_PX = Number(process.env.COVERAGE_OUTPUT_M_PER_PX ?? 200);
 
