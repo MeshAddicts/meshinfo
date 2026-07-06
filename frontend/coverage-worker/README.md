@@ -95,12 +95,13 @@ To hard-cap CPU on a shared host, add `cpus: N` to the service plus
 | `COVERAGE_BBOX` | unset | `west,south,east,north` clip — set only if your DB aggregates multiple disjoint regions |
 | `COVERAGE_MAX_ZOOM` / `COVERAGE_MIN_ZOOM` | `11` / `5` | Tile pyramid range (z11 ≈ 60 m/px) |
 | `COVERAGE_OUTPUT_M_PER_PX` | `200` | Render + accuracy-layer sampling resolution; higher = cheaper bakes, softer detail (ITM cost scales inversely with its square) |
-| `COVERAGE_DEM_SIZE` / `COVERAGE_NODE_OUTPUT` | `8192` / `2048` | Terrain raster / per-node grid caps (memory + CPU) |
+| `COVERAGE_DEM_SIZE` / `COVERAGE_NODE_OUTPUT` | `8192` / `3072` | Terrain raster / per-node grid caps (memory + CPU) |
+| `COVERAGE_ROUTER_REACH_KM` / `COVERAGE_CLIENT_REACH_KM` | `300` / `80` | Per-role footprint radius (router reach covers peak-sited radio horizons) |
 | `COVERAGE_WORKERS` | `min(cores−1, 32)` | Render threads |
 | `COVERAGE_MIN_RECOMPUTE_MS` | `600000` | Min interval between rebakes |
 | `COVERAGE_LOOKUP_PORT` | `9301` | Hover-lookup HTTP port (internal; meshinfo proxies it — keep `[coverage] lookup_url` in sync if changed) |
 
-Per-role behavior: router/repeater-class nodes render at 33 dBm TX with 200 km
+Per-role behavior: router/repeater-class nodes render at 33 dBm TX with 300 km
 reach; everything else 22 dBm / 80 km. Antenna height comes from the node's
 reported altitude (floored at 6 m AGL). See RF-MODEL.md for the propagation
 model.

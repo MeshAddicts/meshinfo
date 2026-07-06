@@ -29,25 +29,20 @@ export const MIN_ZOOM = Number(process.env.COVERAGE_MIN_ZOOM ?? 5);
 /** Shared-DEM / per-node-sub-DEM dimensions (terrain accuracy; capped for memory). */
 export const SHARED_DEM_SIZE = Number(process.env.COVERAGE_DEM_SIZE ?? 8192);
 export const NODE_DEM_SIZE = Number(process.env.COVERAGE_NODE_DEM_SIZE ?? 2048);
-/** Per-node render grid: ~OUTPUT_M_PER_PX everywhere, capped at NODE_OUTPUT_MAX.
- *  ITM cost scales with the grid square — these are the dominant perf levers.
- *  Clutter/canopy/building slices are built per node at these same dims, so
- *  OUTPUT_M_PER_PX also sets the accuracy layers' sampling resolution. */
-export const NODE_OUTPUT_MAX = Number(process.env.COVERAGE_NODE_OUTPUT ?? 2048);
+/** Per-node render grid: ~OUTPUT_M_PER_PX per pixel, capped at NODE_OUTPUT_MAX;
+ *  accuracy slices are built at the same dims. */
+export const NODE_OUTPUT_MAX = Number(process.env.COVERAGE_NODE_OUTPUT ?? 3072);
 export const OUTPUT_M_PER_PX = Number(process.env.COVERAGE_OUTPUT_M_PER_PX ?? 200);
 
-/** Per-role footprint reach (km). Routers full range; clients capped (~80 km max over terrain). */
-export const ROUTER_REACH_KM = Number(process.env.COVERAGE_ROUTER_REACH_KM ?? 200);
+/** Per-role footprint reach (km). */
+export const ROUTER_REACH_KM = Number(process.env.COVERAGE_ROUTER_REACH_KM ?? 300);
 export const CLIENT_REACH_KM = Number(process.env.COVERAGE_CLIENT_REACH_KM ?? 80);
 
 /** A node contributes if heard within this many hours. */
 export const RECENCY_HOURS = Number(process.env.COVERAGE_RECENCY_HOURS ?? 4);
 
-/** Modem preset assumed for nodes whose channel hash has no
- *  `[broker.channels.meta.<hash>] preset` mapping in meshinfo's config.
- *  Strictly validated: preset ids double as group directory names, so an
- *  empty/garbage value must never reach the bake (join(OUTPUT_DIR, "") is
- *  the output root itself). */
+/** Modem preset for channel hashes with no `[broker.channels.meta.<hash>]`
+ *  mapping. Must be a known preset id — it doubles as a group directory name. */
 export const DEFAULT_PRESET = (() => {
   const raw = process.env.COVERAGE_DEFAULT_PRESET;
   if (!raw) return DEFAULT_LIVE_PRESET;

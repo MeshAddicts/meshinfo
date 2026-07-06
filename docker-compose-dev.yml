@@ -138,7 +138,7 @@ services:
       # single-region deployment should remove COVERAGE_BBOX.
       - COVERAGE_BBOX=-124.5,32.5,-114.1,42
       - COVERAGE_WORKERS=14
-      # 100 m paint; router grids cap at NODE_OUTPUT=2048 (~200 m). ~4× the
+      # 100 m paint; router grids cap at NODE_OUTPUT=3072 (~195 m). ~4× the
       # ITM cost of the 200 m default.
       - COVERAGE_OUTPUT_M_PER_PX=100
     # Hard cap so bakes don't soak the dev workstation; shares keep meshinfo ahead.
