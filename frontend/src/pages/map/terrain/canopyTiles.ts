@@ -13,6 +13,9 @@
 import { env } from "../../../env";
 import { fetchWithTimeout } from "./fetchWithTimeout";
 import type { DEMBounds } from "./terrainDEM";
+import { decodeTilePixels } from "./tileDecode";
+import { fetchTilesPooled } from "./tileFetchPool";
+import { lat2tileY, lng2tileX } from "./webMercator";
 
 const TILE_SIZE = 256;
 const MIN_ZOOM = 0;
@@ -26,18 +29,6 @@ function tileBaseUrl(): string {
   // globalThis, not window — also runs inside the raster-build worker
   const apiBase = env.API_BASE_URL ?? globalThis.location.origin;
   return `${apiBase}/tiles/canopy`;
-}
-
-function lng2tileX(lng: number, zoom: number): number {
-  return ((lng + 180) / 360) * Math.pow(2, zoom);
-}
-
-function lat2tileY(lat: number, zoom: number): number {
-  const latRad = (lat * Math.PI) / 180;
-  return (
-    ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) *
-    Math.pow(2, zoom)
-  );
 }
 
 function tileMetersPerPixel(lat: number, zoom: number, tileSize: number): number {
@@ -109,10 +100,21 @@ class CanopyTileLRU {
       this.cache.delete(oldest);
     }
   }
+
+  evictWhere(pred: (tile: CachedCanopyTile) => boolean): void {
+    for (const [k, v] of this.cache) {
+      if (pred(v)) this.cache.delete(k);
+    }
+  }
 }
 
 // 256 tiles × 256² × (2 + 1 + 1) ≈ 64 MB worst case (height u16 + std u8 + mask u8).
 const tileCache = new CanopyTileLRU(256);
+
+/** Drop cached 404 sentinels so a bake completed after them gets re-requested. */
+export function evictMissingCanopyTiles(): void {
+  tileCache.evictWhere((t) => t === TILE_MISSING);
+}
 
 /** R/G = uint16 height (R=high byte), B = uint8 std-dev, A = mask. */
 function decodeCanopyPixels(
@@ -154,25 +156,14 @@ export async function fetchCanopyTile(
   }
 
   const blob = await res.blob();
-  const bitmap = await createImageBitmap(blob);
-  try {
-    const w = bitmap.width;
-    const h = bitmap.height;
-    if (w !== h || w !== TILE_SIZE) {
-      throw new Error(`canopy tile ${key} unexpected size ${w}x${h} (want ${TILE_SIZE})`);
-    }
-    const canvas = new OffscreenCanvas(w, h);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("OffscreenCanvas 2d context unavailable");
-    ctx.drawImage(bitmap, 0, 0);
-    const img = ctx.getImageData(0, 0, w, h);
-    const { height, std, mask } = decodeCanopyPixels(img.data, w * h);
-    const tile: CachedCanopyTile = { height, std, mask, size: w };
-    tileCache.set(key, tile);
-    return tile;
-  } finally {
-    bitmap.close();
+  const { width: w, height: h, data: px } = await decodeTilePixels(blob);
+  if (w !== h || w !== TILE_SIZE) {
+    throw new Error(`canopy tile ${key} unexpected size ${w}x${h} (want ${TILE_SIZE})`);
   }
+  const { height, std, mask } = decodeCanopyPixels(px, w * h);
+  const tile: CachedCanopyTile = { height, std, mask, size: w };
+  tileCache.set(key, tile);
+  return tile;
 }
 
 export interface BuildCanopyRasterOptions {
@@ -194,6 +185,8 @@ export interface CanopyRaster {
   bounds: DEMBounds;
   tilesPresent: number;
   tilesTotal: number;
+  /** Tiles that errored (network/5xx), as opposed to 404 = not baked. */
+  tilesFailed?: number;
 }
 
 /**
@@ -220,25 +213,24 @@ export async function buildCanopyRaster(
   const scale = Math.pow(2, zoom);
 
   const tileMap = new Map<string, CachedCanopyTile>();
-  const jobs: Promise<void>[] = [];
   // Antimeridian wrap + sync pre-seed for in-flight dedupe — see landcoverTiles.ts.
+  const wanted: Array<{ key: string; x: number; y: number }> = [];
   for (let x = xMin; x <= xMax; x++) {
     const fetchX = ((x % scale) + scale) % scale;
     for (let y = yMin; y <= yMax; y++) {
       const key = `${zoom}/${fetchX}/${y}`;
       if (tileMap.has(key)) continue;
       tileMap.set(key, TILE_MISSING);
-      jobs.push(
-        fetchCanopyTile(zoom, fetchX, y)
-          .then((t) => void tileMap.set(key, t))
-          .catch((err) => {
-            console.warn("[canopyTiles]", err);
-            tileMap.set(key, TILE_MISSING);
-          }),
-      );
+      wanted.push({ key, x: fetchX, y });
     }
   }
-  await Promise.all(jobs);
+  const tilesFailed = await fetchTilesPooled(
+    wanted,
+    (x, y) => fetchCanopyTile(zoom, x, y),
+    tileMap,
+    TILE_MISSING,
+    "[canopyTiles]",
+  );
 
   // Deduped tile count (seam-straddling bbox wraps to shared fetch indices).
   const tilesTotal = tileMap.size;
@@ -317,6 +309,7 @@ export async function buildCanopyRaster(
     bounds,
     tilesPresent,
     tilesTotal,
+    tilesFailed,
   };
 }
 
@@ -403,6 +396,7 @@ export function downsampleCanopyRaster(
     bounds: src.bounds,
     tilesPresent: src.tilesPresent,
     tilesTotal: src.tilesTotal,
+    tilesFailed: src.tilesFailed,
   };
 }
 

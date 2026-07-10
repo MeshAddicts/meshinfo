@@ -8,6 +8,9 @@ import { env } from "../../../env";
 import { NLCD_DEFAULT_CLASS_ID } from "../rf/clutterClasses";
 import { fetchWithTimeout } from "./fetchWithTimeout";
 import type { DEMBounds } from "./terrainDEM";
+import { decodeTilePixels } from "./tileDecode";
+import { fetchTilesPooled } from "./tileFetchPool";
+import { lat2tileY, lng2tileX } from "./webMercator";
 
 const TILE_SIZE = 256;
 const MIN_ZOOM = 0;
@@ -19,18 +22,6 @@ function tileBaseUrl(): string {
   // globalThis, not window — also runs inside the raster-build worker
   const apiBase = env.API_BASE_URL ?? globalThis.location.origin;
   return `${apiBase}/tiles/landcover`;
-}
-
-function lng2tileX(lng: number, zoom: number): number {
-  return ((lng + 180) / 360) * Math.pow(2, zoom);
-}
-
-function lat2tileY(lat: number, zoom: number): number {
-  const latRad = (lat * Math.PI) / 180;
-  return (
-    ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) *
-    Math.pow(2, zoom)
-  );
 }
 
 function tileMetersPerPixel(lat: number, zoom: number, tileSize: number): number {
@@ -98,10 +89,22 @@ class LandcoverTileLRU {
       this.cache.delete(oldest);
     }
   }
+
+  evictWhere(pred: (tile: CachedLandcoverTile) => boolean): void {
+    for (const [k, v] of this.cache) {
+      if (pred(v)) this.cache.delete(k);
+    }
+  }
 }
 
 // 256 tiles × 256² × 1B ≈ 16 MB worst case.
 const tileCache = new LandcoverTileLRU(256);
+
+/** Drop cached 404 sentinels so a bake completed after them gets re-requested
+ *  (the coverage-worker re-probes for missing layers on a long-lived process). */
+export function evictMissingLandcoverTiles(): void {
+  tileCache.evictWhere((t) => t === TILE_MISSING);
+}
 
 /** Returns TILE_MISSING for 404 (not an error). */
 export async function fetchLandcoverTile(
@@ -124,33 +127,21 @@ export async function fetchLandcoverTile(
   }
 
   const blob = await res.blob();
-  const bitmap = await createImageBitmap(blob);
-  try {
-    const w = bitmap.width;
-    const h = bitmap.height;
-    if (w !== h) {
-      throw new Error(`landcover tile ${key} has non-square dimensions ${w}x${h}`);
-    }
-    if (w !== TILE_SIZE) {
-      throw new Error(`landcover tile ${key} unexpected size ${w} (want ${TILE_SIZE})`);
-    }
-    const canvas = new OffscreenCanvas(w, h);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("OffscreenCanvas 2d context unavailable");
-    ctx.drawImage(bitmap, 0, 0);
-    const img = ctx.getImageData(0, 0, w, h);
-    const px = img.data;
-    const data = new Uint8Array(w * h);
-    for (let i = 0, n = data.length; i < n; i++) {
-      const o = i * 4;
-      data[i] = px[o + 3] === 0 ? 0 : px[o];
-    }
-    const tile: CachedLandcoverTile = { data, size: w };
-    tileCache.set(key, tile);
-    return tile;
-  } finally {
-    bitmap.close();
+  const { width: w, height: h, data: px } = await decodeTilePixels(blob);
+  if (w !== h) {
+    throw new Error(`landcover tile ${key} has non-square dimensions ${w}x${h}`);
   }
+  if (w !== TILE_SIZE) {
+    throw new Error(`landcover tile ${key} unexpected size ${w} (want ${TILE_SIZE})`);
+  }
+  const data = new Uint8Array(w * h);
+  for (let i = 0, n = data.length; i < n; i++) {
+    const o = i * 4;
+    data[i] = px[o + 3] === 0 ? 0 : px[o];
+  }
+  const tile: CachedLandcoverTile = { data, size: w };
+  tileCache.set(key, tile);
+  return tile;
 }
 
 export interface BuildClutterRasterOptions {
@@ -169,6 +160,9 @@ export interface ClutterRaster {
   /** For telemetry + UI fallback indicator. */
   tilesPresent: number;
   tilesTotal: number;
+  /** Tiles that errored (network/5xx), as opposed to 404 = not baked. Lets the
+   *  coverage-worker tell an outage from a legitimately absent layer. */
+  tilesFailed?: number;
 }
 
 /**
@@ -195,28 +189,26 @@ export async function buildClutterRaster(
   const scale = Math.pow(2, zoom);
 
   const tileMap = new Map<string, CachedLandcoverTile>();
-  const jobs: Promise<void>[] = [];
   // Antimeridian: bbox may straddle ±180 (xMin/xMax outside [0, scale)). Wrap
   // each absolute x to a canonical fetch index so URLs stay valid; the lookup
-  // applies the same wrap. Pre-seed the map synchronously — the .then() that
-  // writes the real value runs later, so the dedupe check needs the placeholder.
+  // applies the same wrap. Pre-seed the map synchronously so dedupe sees it.
+  const wanted: Array<{ key: string; x: number; y: number }> = [];
   for (let x = xMin; x <= xMax; x++) {
     const fetchX = ((x % scale) + scale) % scale;
     for (let y = yMin; y <= yMax; y++) {
       const key = `${zoom}/${fetchX}/${y}`;
       if (tileMap.has(key)) continue;
       tileMap.set(key, TILE_MISSING);
-      jobs.push(
-        fetchLandcoverTile(zoom, fetchX, y)
-          .then((t) => void tileMap.set(key, t))
-          .catch((err) => {
-            console.warn("[landcoverTiles]", err);
-            tileMap.set(key, TILE_MISSING);
-          }),
-      );
+      wanted.push({ key, x: fetchX, y });
     }
   }
-  await Promise.all(jobs);
+  const tilesFailed = await fetchTilesPooled(
+    wanted,
+    (x, y) => fetchLandcoverTile(zoom, x, y),
+    tileMap,
+    TILE_MISSING,
+    "[landcoverTiles]",
+  );
 
   let tilesPresent = 0;
   for (const t of tileMap.values()) {
@@ -257,7 +249,7 @@ export async function buildClutterRaster(
     }
   }
 
-  return { data, width: targetWidth, height: targetHeight, bounds, tilesPresent, tilesTotal };
+  return { data, width: targetWidth, height: targetHeight, bounds, tilesPresent, tilesTotal, tilesFailed };
 }
 
 /** Nearest-neighbor sample at lng/lat. Returns NLCD_DEFAULT_CLASS_ID for out-of-bounds. */
@@ -303,6 +295,7 @@ export function downsampleClutterRaster(
     bounds: src.bounds,
     tilesPresent: src.tilesPresent,
     tilesTotal: src.tilesTotal,
+    tilesFailed: src.tilesFailed,
   };
 }
 

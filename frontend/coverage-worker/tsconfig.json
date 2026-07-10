@@ -1,0 +1,9 @@
+{
+  // Typecheck project for the Node worker: `yarn tsc --noEmit -p coverage-worker`.
+  // Imported ../src modules are pulled in (and checked) via module resolution.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "vite/client"]
+  },
+  "include": ["./**/*.ts"]
+}

@@ -1,12 +1,16 @@
 /**
- * Direct terrain DEM tile fetch + decode. Worker-safe (fetch + createImageBitmap
- * + OffscreenCanvas), LRU-cached, picks the highest zoom under a tile-count cap.
+ * Direct terrain DEM tile fetch + decode. Pixel decode is delegated to
+ * `decodeTilePixels` (browser: createImageBitmap + OffscreenCanvas; Node worker:
+ * an injected sharp decoder). LRU-cached, picks the highest zoom under a tile cap.
  *
  * Mapbox terrain-rgb decode:  elev_m = -10000 + ((R*256² + G*256 + B) * 0.1)
  * Tilezen terrarium decode:   elev_m = (R*256 + G + B/256) - 32768
  */
 import { fetchWithTimeout } from "./fetchWithTimeout";
 import type { DEM, DEMBounds } from "./terrainDEM";
+import { decodeTilePixels } from "./tileDecode";
+import { fetchTilesPooled } from "./tileFetchPool";
+import { lat2tileY, lng2tileX } from "./webMercator";
 
 /** Nominal output tile size; real size taken from each decoded tile (256 or 512). */
 const DEFAULT_TILE_SIZE = 512;
@@ -27,20 +31,6 @@ const MAX_ZOOM = 14;
 /** Tilezen goes to z=15 (Mapbox v4: z=14). */
 const TILEZEN_MAX_ZOOM = 15;
 const MIN_ZOOM = 0;
-
-// Slippy Map / Web Mercator math
-
-function lng2tileX(lng: number, zoom: number): number {
-  return ((lng + 180) / 360) * Math.pow(2, zoom);
-}
-
-function lat2tileY(lat: number, zoom: number): number {
-  const latRad = (lat * Math.PI) / 180;
-  return (
-    ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) *
-    Math.pow(2, zoom)
-  );
-}
 
 /** m/px at zoom. tileSize = source native (512 Mapbox v4, 256 Tilezen). */
 function tileMetersPerPixel(lat: number, zoom: number, tileSize: number): number {
@@ -135,32 +125,20 @@ async function fetchTile(
     throw new Error(`terrain-rgb tile fetch failed ${z}/${x}/${y}: HTTP ${res.status}${auth}`);
   }
   const blob = await res.blob();
-  const bitmap = await createImageBitmap(blob);
-  try {
-    const w = bitmap.width;
-    const h = bitmap.height;
-    if (w !== h) {
-      throw new Error(`terrain tile ${key} has non-square dimensions ${w}x${h}`);
-    }
-    const canvas = new OffscreenCanvas(w, h);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("OffscreenCanvas 2d context unavailable");
-    ctx.drawImage(bitmap, 0, 0);
-    const img = ctx.getImageData(0, 0, w, h);
-    const px = img.data;
-    const elev = new Float32Array(w * h);
-    for (let i = 0; i < elev.length; i++) {
-      const r = px[i * 4];
-      const g = px[i * 4 + 1];
-      const b = px[i * 4 + 2];
-      elev[i] = -10000 + (r * 65536 + g * 256 + b) * 0.1;
-    }
-    const tile: CachedTile = { data: elev, size: w };
-    tileCache.set(key, tile);
-    return tile;
-  } finally {
-    bitmap.close();
+  const { width: w, height: h, data: px } = await decodeTilePixels(blob);
+  if (w !== h) {
+    throw new Error(`terrain tile ${key} has non-square dimensions ${w}x${h}`);
   }
+  const elev = new Float32Array(w * h);
+  for (let i = 0; i < elev.length; i++) {
+    const r = px[i * 4];
+    const g = px[i * 4 + 1];
+    const b = px[i * 4 + 2];
+    elev[i] = -10000 + (r * 65536 + g * 256 + b) * 0.1;
+  }
+  const tile: CachedTile = { data: elev, size: w };
+  tileCache.set(key, tile);
+  return tile;
 }
 
 /** Fetch + decode a Tilezen terrarium tile (no token; cached separately from Mapbox). */
@@ -179,33 +157,21 @@ async function fetchTilezenTile(
     throw new Error(`tilezen tile fetch failed ${z}/${x}/${y}: HTTP ${res.status}`);
   }
   const blob = await res.blob();
-  const bitmap = await createImageBitmap(blob);
-  try {
-    const w = bitmap.width;
-    const h = bitmap.height;
-    if (w !== h) {
-      throw new Error(`tilezen tile ${key} has non-square dimensions ${w}x${h}`);
-    }
-    const canvas = new OffscreenCanvas(w, h);
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("OffscreenCanvas 2d context unavailable");
-    ctx.drawImage(bitmap, 0, 0);
-    const img = ctx.getImageData(0, 0, w, h);
-    const px = img.data;
-    const elev = new Float32Array(w * h);
-    // Terrarium: (R*256 + G + B/256) - 32768. Precision ~3.9 mm vs Mapbox's 0.1 m.
-    for (let i = 0; i < elev.length; i++) {
-      const r = px[i * 4];
-      const g = px[i * 4 + 1];
-      const b = px[i * 4 + 2];
-      elev[i] = (r * 256 + g + b / 256) - 32768;
-    }
-    const tile: CachedTile = { data: elev, size: w };
-    tilezenCache.set(key, tile);
-    return tile;
-  } finally {
-    bitmap.close();
+  const { width: w, height: h, data: px } = await decodeTilePixels(blob);
+  if (w !== h) {
+    throw new Error(`tilezen tile ${key} has non-square dimensions ${w}x${h}`);
   }
+  const elev = new Float32Array(w * h);
+  // Terrarium: (R*256 + G + B/256) - 32768. Precision ~3.9 mm vs Mapbox's 0.1 m.
+  for (let i = 0; i < elev.length; i++) {
+    const r = px[i * 4];
+    const g = px[i * 4 + 1];
+    const b = px[i * 4 + 2];
+    elev[i] = (r * 256 + g + b / 256) - 32768;
+  }
+  const tile: CachedTile = { data: elev, size: w };
+  tilezenCache.set(key, tile);
+  return tile;
 }
 
 /** Bilinear sample at lng/lat. Returns null for NaN corners or elev outside [-500, 9000] m. */
@@ -334,29 +300,20 @@ export async function buildDemFromTerrainRgb(opts: BuildDemOptions): Promise<Bui
   const scale = Math.pow(2, zoom);
 
 
-  // Parallel fetch; individual failures → null tile.
-  // Antimeridian wrap + sync pre-seed for in-flight dedupe — see landcoverTiles.ts.
+  // Pooled fetch; individual failures → null tile.
+  // Antimeridian wrap + sync pre-seed dedupe — see landcoverTiles.ts.
   const tileMap = new Map<string, CachedTile | null>();
-  let failureCount = 0;
-  const jobs: Promise<void>[] = [];
+  const wanted: Array<{ key: string; x: number; y: number }> = [];
   for (let x = xMin; x <= xMax; x++) {
     const fetchX = ((x % scale) + scale) % scale;
     for (let y = yMin; y <= yMax; y++) {
       const key = `${zoom}/${fetchX}/${y}`;
       if (tileMap.has(key)) continue;
       tileMap.set(key, null);
-      jobs.push(
-        fetchTile(zoom, fetchX, y, token)
-          .then((t) => void tileMap.set(key, t))
-          .catch((err) => {
-            failureCount += 1;
-            console.warn("[terrainRgb]", err);
-            tileMap.set(key, null);
-          }),
-      );
+      wanted.push({ key, x: fetchX, y });
     }
   }
-  await Promise.all(jobs);
+  const failureCount = await fetchTilesPooled(wanted, (x, y) => fetchTile(zoom, x, y, token), tileMap, null, "[terrainRgb]");
 
   // Mirror the Tilezen twin: wholesale failure surfaces as an error, not a hollow DEM.
   const totalTiles = tileMap.size;
@@ -445,28 +402,19 @@ export async function buildDemFromTilezen(opts: BuildDemOptions): Promise<BuiltD
   const scale = Math.pow(2, zoom);
 
   // buildDem's Tilezen→Mapbox fallback throws when >half the tiles fail.
-  // Antimeridian wrap + sync pre-seed for in-flight dedupe — see landcoverTiles.ts.
+  // Antimeridian wrap + sync pre-seed dedupe — see landcoverTiles.ts.
   const tileMap = new Map<string, CachedTile | null>();
-  let failureCount = 0;
-  const jobs: Promise<void>[] = [];
+  const wanted: Array<{ key: string; x: number; y: number }> = [];
   for (let x = xMin; x <= xMax; x++) {
     const fetchX = ((x % scale) + scale) % scale;
     for (let y = yMin; y <= yMax; y++) {
       const key = `${zoom}/${fetchX}/${y}`;
       if (tileMap.has(key)) continue;
       tileMap.set(key, null);
-      jobs.push(
-        fetchTilezenTile(zoom, fetchX, y)
-          .then((t) => void tileMap.set(key, t))
-          .catch((err) => {
-            failureCount += 1;
-            console.warn("[terrainRgb/tilezen]", err);
-            tileMap.set(key, null);
-          }),
-      );
+      wanted.push({ key, x: fetchX, y });
     }
   }
-  await Promise.all(jobs);
+  const failureCount = await fetchTilesPooled(wanted, (x, y) => fetchTilezenTile(zoom, x, y), tileMap, null, "[terrainRgb/tilezen]");
 
   // Use the dedupe-aware count so the 50% threshold survives antimeridian spans.
   const totalTiles = tileMap.size;

@@ -79,6 +79,10 @@ import {
   nodesDataSignature,
   ROLE_COLORS,
 } from "./map/lib/utils";
+import { CoverageLookupCard } from "./map/live/CoverageLookupCard";
+import { LiveCoveragePill } from "./map/live/LiveCoveragePill";
+import { useCoverageLookup } from "./map/live/useCoverageLookup";
+import { useServerCoverageTiles } from "./map/live/useServerCoverageTiles";
 import { haversineKm } from "./map/rf/losAnalysis";
 import type { ScanClass } from "./map/rf/scanAnalysis";
 
@@ -234,6 +238,19 @@ export function Map() {
   // Cosmetic 3D buildings (OpenFreeMap). Off by default to keep slow devices light.
   const [buildings3D, setBuildings3D] = useState<boolean>(() => readJson<boolean>(LS_KEYS.buildings3D, false));
 
+  // Live network-coverage layer: a server-baked raster tile pyramid (compute is
+  // server-side; this only show/hides + sets opacity). Off (hidden) by default.
+  const [liveCoverage, setLiveCoverage] = useState<boolean>(() => readJson<boolean>(LS_KEYS.liveCoverage, false));
+  const [liveCoverageOpacity, setLiveCoverageOpacity] = useState<number>(
+    () => readJson<number>(LS_KEYS.liveCoverageOpacity, 0.6),
+  );
+  const [liveCoverageHideNodes, setLiveCoverageHideNodes] = useState<boolean>(
+    () => readJson<boolean>(LS_KEYS.liveCoverageHideNodes, true),
+  );
+  const [liveCoverageGroup, setLiveCoverageGroup] = useState<string>(
+    () => readJson<string>(LS_KEYS.liveCoverageGroup, "all"),
+  );
+
   // RF tool state hooks (own settings + result state)
   const losState = useLosState();
   const coverage = useCoverageState();
@@ -274,6 +291,10 @@ export function Map() {
   useEffect(() => writeJson(LS_KEYS.settingsPanelOpen, settingsPanelOpen), [settingsPanelOpen]);
   useEffect(() => writeJson(LS_KEYS.terrain3D, terrain3D), [terrain3D]);
   useEffect(() => writeJson(LS_KEYS.buildings3D, buildings3D), [buildings3D]);
+  useEffect(() => writeJson(LS_KEYS.liveCoverage, liveCoverage), [liveCoverage]);
+  useEffect(() => writeJson(LS_KEYS.liveCoverageOpacity, liveCoverageOpacity), [liveCoverageOpacity]);
+  useEffect(() => writeJson(LS_KEYS.liveCoverageHideNodes, liveCoverageHideNodes), [liveCoverageHideNodes]);
+  useEffect(() => writeJson(LS_KEYS.liveCoverageGroup, liveCoverageGroup), [liveCoverageGroup]);
 
   // Obsolete key from the prior exaggeration slider; removeItem is idempotent.
   useEffect(() => {
@@ -385,6 +406,8 @@ export function Map() {
   const configRef = useRef(config);
   const recentDaysRef = useRef(recentDays);
   const clusterEnabledRef = useRef(clusterEnabled);
+  // Initialized false; nodesHidden is derived below the coverage hook and synced there.
+  const nodesHiddenRef = useRef(false);
   const livePacketsRef = useRef(livePackets);
   const linkModeRef = useRef(linkMode);
   const myNodeIdRef = useRef(myNodeId);
@@ -689,6 +712,34 @@ export function Map() {
     setPickingMergeOrigin: mergeOrigins.setPickingMergeOrigin,
     moveCoverageMergeOrigin: mergeOrigins.moveCoverageMergeOrigin,
   });
+
+  // Live network-coverage layer — server-baked raster tiles (meshinfo /tiles/coverage),
+  // refreshed on the `coverage` SSE event. No client-side RF compute.
+  const liveCoverageState = useServerCoverageTiles({
+    mbMapRef,
+    enabled: liveCoverage,
+    mapReady: mapLoaded,
+    opacity: liveCoverageOpacity,
+    group: liveCoverageGroup,
+  });
+  const coverageHover = useCoverageLookup({
+    mbMapRef,
+    enabled: liveCoverage && liveCoverageState.status === "ready",
+    mapReady: mapLoaded,
+    suspended: activeTool != null,
+    group: liveCoverageGroup,
+  });
+  // A persisted group can vanish (preset mesh went quiet) — fall back to "all".
+  const liveGroups = liveCoverageState.meta?.groups;
+  useEffect(() => {
+    if (liveGroups && liveCoverageGroup !== "all" && !liveGroups.includes(liveCoverageGroup)) {
+      setLiveCoverageGroup("all");
+    }
+  }, [liveGroups, liveCoverageGroup]);
+  // Hide markers only while the layer actually paints — if the worker goes away
+  // ("unavailable"), markers come back instead of leaving an empty map.
+  const nodesHidden = liveCoverage && liveCoverageHideNodes && liveCoverageState.status === "ready";
+  useEffect(() => { nodesHiddenRef.current = nodesHidden; }, [nodesHidden]);
 
   // Reset the whole tool state. Also imperatively clears map visual geometry
   // so there's no one-tick flash of stale tubes / rasters / scan lines while
@@ -1400,8 +1451,8 @@ export function Map() {
         dimForTool: activeToolRef.current != null && toolStepRef.current === "result",
       });
 
-      // Apply current cluster visibility (use ref to avoid stale closure)
-      applyClusterVisibility(map, clusterEnabledRef.current);
+      // Apply current cluster visibility (use refs to avoid stale closure)
+      applyClusterVisibility(map, clusterEnabledRef.current, nodesHiddenRef.current);
 
       // Re-apply terrain if it was enabled (style.load wipes this)
       if (terrain3DRef.current) {
@@ -1993,6 +2044,7 @@ export function Map() {
           spiderfyDebounce = null;
           // Chase zoom is below the spiderfy threshold — skip the O(N) pool per leg
           if (flyoverFlyingRef.current) return;
+          if (nodesHiddenRef.current) return;
           if (clusterEnabledRef.current) {
             const pool = buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()).features
               .filter((f) => f.geometry?.type === "Point") as any;
@@ -2128,12 +2180,12 @@ export function Map() {
     } catch {}
   }, [mapboxStyle, osmBasemap, provider, mapboxToken]);
 
-  // Cluster toggle
+  // Cluster toggle + coverage-layer node hiding
   useEffect(() => {
     const map = mbMapRef.current;
     if (!map) return;
-    applyClusterVisibility(map, clusterEnabled);
-  }, [clusterEnabled]);
+    applyClusterVisibility(map, clusterEnabled, nodesHidden);
+  }, [clusterEnabled, nodesHidden]);
 
   // Initial mount is handled by ensureSourcesAndLayers on style.load; this only runs live toggles.
   useEffect(() => {
@@ -2271,6 +2323,19 @@ export function Map() {
         onSelect={(id) => handleNodeSelectRef.current(id)}
       />
 
+      <LiveCoveragePill
+        enabled={liveCoverage}
+        onToggle={() => setLiveCoverage((v) => !v)}
+        status={liveCoverageState.status}
+        meta={liveCoverageState.meta}
+        opacity={liveCoverageOpacity}
+        onOpacityChange={setLiveCoverageOpacity}
+        hideNodes={liveCoverageHideNodes}
+        onHideNodesChange={setLiveCoverageHideNodes}
+        group={liveCoverageGroup}
+        onGroupChange={setLiveCoverageGroup}
+      />
+
       <MapHealthWidget nodes={nodes} />
 
       <MapSettingsPanel
@@ -2360,6 +2425,7 @@ export function Map() {
       />
 
       <ClusterHoverCard hover={clusterHover} nodes={nodes} />
+      <CoverageLookupCard hover={clusterHover ? null : coverageHover} nodes={nodes} />
 
       <button
         type="button"

@@ -123,6 +123,15 @@ docker compose --profile bake run --rm landcover-bake
 
 The bake auto-downloads NLCD from MRLC, extracts, and writes tiles to `output/landcover/`. ~15–90 min one-time, no manual download. See [scripts/README-landcover.md](scripts/README-landcover.md) for sub-region or offline options.
 
+### Live Coverage Map
+
+An optional always-current map layer showing the predicted RF footprint of every recently-heard node on your mesh — like a carrier coverage map, rebaked automatically as nodes come and go. Two steps to enable:
+
+1. In `config.toml`, set `[coverage] enabled = true`.
+2. Start the worker: `docker compose --profile coverage up -d --build coverage-worker`
+
+The first bake takes minutes to tens of minutes depending on mesh size and CPU; every rebake after that is incremental (seconds to a couple of minutes). Toggle the layer with the **Coverage** pill on the map; hover (or long-press on mobile) to see which nodes cover a point. See [frontend/coverage-worker/README.md](frontend/coverage-worker/README.md) for how it works, tuning for small servers, and troubleshooting.
+
 ### Caddy / Reverse Proxy
 
 The included `Caddyfile.sample` routes `/api/*` and `/v1/*` to the backend and everything else to the frontend. Caddy automatically provisions Let's Encrypt certificates when you use a public FQDN on ports 80/443.

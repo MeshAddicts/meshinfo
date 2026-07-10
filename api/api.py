@@ -3,7 +3,10 @@ import datetime
 import json
 import logging
 import os
+import re
 from pathlib import Path
+
+import aiohttp
 from fastapi.encoders import jsonable_encoder
 import uvicorn
 from fastapi import FastAPI, Request
@@ -22,13 +25,19 @@ app = FastAPI()
 
 
 class TileFiles(StaticFiles):
-    """StaticFiles with a 1-day cache header. Re-bakes for a new NLCD vintage
-    propagate to clients within ~24 h; Starlette's built-in ETag handling makes
-    the post-cache revalidation a free 304 when the file hasn't changed."""
+    """StaticFiles with a cache header. Static bakes default to a 1-day TTL
+    (re-bakes propagate within ~24 h); the live coverage pyramid passes
+    `no-cache` so clients revalidate every use — Starlette's built-in ETag
+    handling makes unchanged tiles a free 304 (the bake hardlinks untouched
+    PNGs forward, preserving mtime, so their ETags are stable across bakes)."""
+    def __init__(self, *args, cache_control: str = "public, max-age=86400", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cache_control = cache_control
+
     async def get_response(self, path: str, scope):  # type: ignore[override]
         response = await super().get_response(path, scope)
         if isinstance(response, FileResponse):
-            response.headers["Cache-Control"] = "public, max-age=86400"
+            response.headers["Cache-Control"] = self.cache_control
         return response
 
 class API:
@@ -386,6 +395,94 @@ class API:
         async def server_config(request: Request) -> JSONResponse:
             return jsonable_encoder({'config': Config.cleanse(self.config)})
 
+        # Group = "all" or a modem-preset pyramid (e.g. "LongFast"); doubles as
+        # a directory and URL segment, so validate it strictly.
+        COVERAGE_GROUP_RE = re.compile(r"^[A-Za-z0-9-]{1,32}$")
+
+        @app.get("/v1/coverage/metadata")
+        async def coverage_metadata(request: Request) -> JSONResponse:
+            """Coverage tile pyramid metadata (bounds, zoom range, version, groups).
+            `?group=` selects a modem-preset pyramid (default "all"). 404 until first bake."""
+            cov_cfg = self.config.get("coverage", {}) or {}
+            if not cov_cfg.get("enabled", False):
+                return JSONResponse({"error": "coverage disabled"}, status_code=404)
+            group = request.query_params.get("group") or "all"
+            if not COVERAGE_GROUP_RE.fullmatch(group):
+                return JSONResponse({"error": "bad group"}, status_code=400)
+            meta_path = Path(cov_cfg.get("tile_dir", "output/coverage")) / group / "metadata.json"
+            if not meta_path.is_file():
+                return JSONResponse({"error": "coverage not baked yet"}, status_code=404)
+            try:
+                data = await asyncio.to_thread(meta_path.read_text)
+                return JSONResponse(json.loads(data), headers={"Cache-Control": "no-cache"})
+            except Exception:
+                logger.exception("Failed to read coverage metadata")
+                return JSONResponse({"error": "metadata unreadable"}, status_code=500)
+
+        # Shared keep-alive session for lookup proxying (created lazily on the
+        # running loop; a fresh session + TCP connect per hover is wasteful).
+        lookup_session: dict[str, aiohttp.ClientSession] = {}
+
+        def get_lookup_session() -> aiohttp.ClientSession:
+            s = lookup_session.get("s")
+            if s is None or s.closed:
+                s = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5))
+                lookup_session["s"] = s
+            return s
+
+        @app.on_event("shutdown")
+        async def close_lookup_session() -> None:
+            s = lookup_session.get("s")
+            if s is not None and not s.closed:
+                await s.close()
+
+        @app.get("/v1/coverage/lookup")
+        async def coverage_lookup(request: Request) -> JSONResponse:
+            """Nodes covering a point, sorted by margin. Proxies the coverage-worker."""
+            cov_cfg = self.config.get("coverage", {}) or {}
+            if not cov_cfg.get("enabled", False):
+                return JSONResponse({"error": "coverage disabled"}, status_code=404)
+            try:
+                lng = float(request.query_params["lng"])
+                lat = float(request.query_params["lat"])
+            except (KeyError, ValueError):
+                return JSONResponse({"error": "bad lng/lat"}, status_code=400)
+            group = request.query_params.get("group") or "all"
+            if not COVERAGE_GROUP_RE.fullmatch(group):
+                return JSONResponse({"error": "bad group"}, status_code=400)
+            url = cov_cfg.get("lookup_url", "http://coverage-worker:9301")
+            try:
+                session = get_lookup_session()
+                async with session.get(f"{url}/lookup", params={"lng": lng, "lat": lat, "group": group}) as r:
+                    return JSONResponse(await r.json(), status_code=r.status, headers={"Cache-Control": "no-cache"})
+            except Exception:
+                return JSONResponse({"error": "lookup unavailable"}, status_code=503)
+
+        # Version last broadcast, so notify spam can't re-trigger every client.
+        last_notified_version: dict[str, str] = {}
+
+        @app.post("/v1/coverage/notify")
+        async def coverage_notify(request: Request) -> JSONResponse:
+            """Coverage-worker → SSE `coverage` event so live maps refetch tiles.
+            The request body is ignored: the broadcast payload is read from the
+            baked metadata on disk, so an unauthenticated POST can only announce
+            what is actually served — and only once per baked version."""
+            cov_cfg = self.config.get("coverage", {}) or {}
+            if not cov_cfg.get("enabled", False):
+                return JSONResponse({"error": "coverage disabled"}, status_code=404)
+            meta_path = Path(cov_cfg.get("tile_dir", "output/coverage")) / "all" / "metadata.json"
+            try:
+                payload = json.loads(await asyncio.to_thread(meta_path.read_text))
+            except Exception:
+                return JSONResponse({"error": "no baked metadata"}, status_code=404)
+            version = str(payload.get("version"))
+            if last_notified_version.get("v") == version:
+                return JSONResponse({"status": "unchanged"})
+            last_notified_version["v"] = version
+            self.data.broadcaster.publish("coverage", jsonable_encoder(payload))
+            logger.info("Coverage tiles ready: %s", version)
+            return JSONResponse({"status": "ok"})
+
         # Land-cover tiles for the coverage/scan clutter model. Pre-baked by
         # scripts/landcover_tiles.py; missing tiles 404 and the frontend falls
         # back to a default class. See RF-MODEL.md.
@@ -445,6 +542,25 @@ class API:
                     "Run scripts/building_tiles.py to populate.",
                     tile_dir,
                 )
+
+        # Live network-coverage tile pyramid, baked by the coverage-worker.
+        # Created + mounted unconditionally when enabled so a fresh deploy needs
+        # no meshinfo restart after the worker's first bake.
+        coverage_cfg = self.config.get("coverage", {}) or {}
+        if coverage_cfg.get("enabled", False):
+            tile_dir = Path(coverage_cfg.get("tile_dir", "output/coverage"))
+            try:
+                tile_dir.mkdir(parents=True, exist_ok=True)
+                app.mount(
+                    "/tiles/coverage",
+                    # no-cache (not no-store): tiles are live — clients revalidate
+                    # per use and unchanged tiles 304 via stable hardlink ETags.
+                    TileFiles(directory=str(tile_dir), cache_control="no-cache"),
+                    name="coverage_tiles",
+                )
+                logger.info("Mounted coverage tiles at /tiles/coverage from %s", tile_dir.resolve())
+            except Exception:
+                logger.exception("Failed to mount coverage tiles from %s", tile_dir)
 
         # Strip stray quote chars — compose YAML can wrap values producing `'"*"'`.
         # Empty env → no middleware (the previous `[""]` was a deny-all that looked configured).

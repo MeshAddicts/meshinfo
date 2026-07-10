@@ -180,6 +180,9 @@ export function ensureMapSourcesAndLayers(map: MlMap, ctx: EnsureLayersCtx): voi
     });
   }
 
+  // The live network-coverage layer (server-baked raster tiles) is added
+  // dynamically by useServerCoverageTiles once /v1/coverage/metadata is known.
+
   // Iso-margin contour lines
   if (!map.getSource("coverage-contours")) {
     map.addSource("coverage-contours", {

@@ -82,7 +82,9 @@ function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
 
-function gradient(marginDb: number): [number, number, number, number] {
+/** Margin → RGBA color ramp, shared by the tool raster, the coverage-worker's
+ *  server tiles, and the hover card so all three stay in sync. */
+export function gradient(marginDb: number): [number, number, number, number] {
   // 0→5→15→25 dB: magenta #d946ef → orange #f97316 → cyan #06b6d4 → deep #0891b2
   let r: number, g: number, b: number;
   if (marginDb <= 0) {

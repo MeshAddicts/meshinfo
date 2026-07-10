@@ -32,6 +32,14 @@ export const LS_KEYS = {
   coverageLastSettings: "meshinfo.map.coverageLastSettings",
   /** Last-used LOS settings (frequency, modem preset, per-endpoint hw/antenna/height). */
   losSettings: "meshinfo.map.losSettings",
+  /** Live network-coverage layer shown/hidden (off by default). */
+  liveCoverage: "meshinfo.map.liveCoverage",
+  /** Live network-coverage raster opacity (0..1). */
+  liveCoverageOpacity: "meshinfo.map.liveCoverageOpacity",
+  /** Hide node markers/clusters while the live coverage layer is shown (on by default). */
+  liveCoverageHideNodes: "meshinfo.map.liveCoverageHideNodes",
+  /** Live coverage pyramid group: "all" or a modem-preset id (e.g. "LongFast"). */
+  liveCoverageGroup: "meshinfo.map.liveCoverageGroup",
 } as const;
 
 export function readJson<T>(key: string, fallback: T): T {

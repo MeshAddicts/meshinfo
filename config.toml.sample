@@ -364,6 +364,21 @@ tile_dir = "output/buildings"   # bind-mounted into the meshinfo container
 source = "JRC GHS-BUILT-H R2023A"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Live network coverage — Optional
+# A server-baked raster tile pyramid of predicted RF reach across all positioned
+# nodes (the same ITM model as the interactive Coverage tool). Baked by the
+# standalone `coverage-worker` container into tile_dir and served at
+# /tiles/coverage. Off by default — enable only when running the worker.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[coverage]
+enabled = false                 # then: docker compose --profile coverage up -d coverage-worker
+tile_dir = "output/coverage"    # shared with the coverage-worker container
+# Worker endpoint backing the map's hover lookup ("which nodes cover this point").
+lookup_url = "http://coverage-worker:9301"
+# Full guide (tuning, small hosts, troubleshooting): frontend/coverage-worker/README.md
+
+# ─────────────────────────────────────────────────────────────────────────────
 # UI Customization — Optional
 # External tools and node detail links shown in the web UI.
 # ─────────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,35 @@
+# Coverage tile worker — bakes the live network-coverage raster pyramid using the
+# same RF engine as the frontend (ITM WASM + renderCoverageRaster), headless in
+# Node via tsx + sharp. Writes tiles to a shared volume that meshinfo serves.
+
+# Stage 1: compile NTIA ITM to WASM (same as the SPA image).
+FROM --platform=linux/amd64 emscripten/emsdk:6.0.2 AS wasm-build
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /itm
+COPY frontend/wasm/itm/fetch-vendor.sh frontend/wasm/itm/build.sh frontend/wasm/itm/shim.h ./
+RUN chmod +x fetch-vendor.sh build.sh && ./fetch-vendor.sh && ./build.sh
+
+# trunk-ignore-all(checkov/CKV_DOCKER_3)
+FROM node:25.9.0-alpine
+LABEL org.opencontainers.image.source="https://github.com/MeshAddicts/meshinfo"
+LABEL org.opencontainers.image.description="MeshInfo coverage tile worker — bakes the live network-coverage raster pyramid."
+
+# Dependency layer first: only manifest/lockfile changes re-run the install,
+# so source edits don't re-download node_modules.
+WORKDIR /frontend
+COPY frontend/package.json frontend/yarn.lock frontend/.yarnrc.yml ./
+RUN rm -f /usr/local/bin/yarn /usr/local/bin/yarnpkg \
+    && npm install -g corepack \
+    && corepack enable \
+    && yarn
+
+COPY frontend/ /frontend/
+COPY --from=wasm-build /itm/dist/itm.js /frontend/src/generated/itm/itm.js
+COPY --from=wasm-build /itm/dist/itm.d.ts /frontend/src/generated/itm/itm.d.ts
+
+ENV MESHINFO_URL=http://meshinfo:9000
+ENV COVERAGE_OUTPUT_DIR=/output/coverage
+
+# Long-lived service: poll the node set, rebake on change + a periodic backstop.
+CMD ["yarn", "tsx", "coverage-worker/index.ts"]

@@ -129,5 +129,30 @@ services:
     volumes:
       - ./output:/app/output
 
+  # Live network-coverage tile baker (opt-in; CPU-heavy). Start with:
+  #   docker compose --profile coverage up -d --build coverage-worker
+  # Set [coverage] enabled = true in config.toml so meshinfo serves /tiles/coverage.
+  coverage-worker:
+    profiles: ["coverage"]
+    build:
+      context: .
+      dockerfile: Dockerfile.coverage
+    volumes:
+      - ./output:/output
+    environment:
+      - MESHINFO_URL=http://meshinfo:9000
+      - COVERAGE_OUTPUT_DIR=/output/coverage
+      - COVERAGE_RECENCY_HOURS=4
+      # Single-region deployments need no clip. Set COVERAGE_BBOX="west,south,east,north"
+      # only if this instance's DB aggregates multiple disjoint regions.
+      # Low-memory hosts: set COVERAGE_DEM_SIZE=4096 and COVERAGE_NODE_OUTPUT=1024.
+    # Half-weight CPU so meshinfo/postgres win under contention; for a hard cap
+    # on shared hosts add `cpus: N` + COVERAGE_WORKERS=N.
+    cpu_shares: 512
+    restart: unless-stopped
+    depends_on:
+      meshinfo:
+        condition: service_healthy
+
 volumes:
   meshinfo_pgdata:

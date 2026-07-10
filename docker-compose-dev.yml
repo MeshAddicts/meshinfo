@@ -120,5 +120,34 @@ services:
     volumes:
       - ./output:/app/output
 
+  # Live network-coverage tile baker (opt-in; CPU-heavy). Start with:
+  #   docker compose -f docker-compose-dev.yml --profile coverage up -d --build coverage-worker
+  # Writes tiles to ./output/coverage, which meshinfo serves at /tiles/coverage.
+  coverage-worker:
+    profiles: ["coverage"]
+    build:
+      context: .
+      dockerfile: Dockerfile.coverage
+    volumes:
+      - ./output:/output
+    environment:
+      - MESHINFO_URL=http://meshinfo:9000
+      - COVERAGE_OUTPUT_DIR=/output/coverage
+      - COVERAGE_RECENCY_HOURS=4
+      # This dev DB aggregates many regions globally — clip to California. A
+      # single-region deployment should remove COVERAGE_BBOX.
+      - COVERAGE_BBOX=-124.5,32.5,-114.1,42
+      - COVERAGE_WORKERS=14
+      # 100 m paint; router grids cap at NODE_OUTPUT=3072 (~195 m). ~4× the
+      # ITM cost of the 200 m default.
+      - COVERAGE_OUTPUT_M_PER_PX=100
+    # Hard cap so bakes don't soak the dev workstation; shares keep meshinfo ahead.
+    cpus: 16
+    cpu_shares: 512
+    restart: unless-stopped
+    depends_on:
+      meshinfo:
+        condition: service_started
+
 volumes:
   meshinfo_pgdata:
