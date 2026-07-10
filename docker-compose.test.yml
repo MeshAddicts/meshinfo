@@ -1,0 +1,120 @@
+# Test-VM stack: the production topology, built from source on the box, with
+# stock Caddy + HTTP-only routing (Caddyfile.test) instead of the TLS build.
+#
+#   docker compose -f docker-compose.test.yml up -d --build
+#
+# Also needed on the VM: config.toml ([coverage] enabled = true + channel
+# meta), a pg_dump restore for realistic node counts, and optionally the baked
+# output/{landcover,canopy,buildings} dirs for full-fidelity margins. Leave
+# output/coverage* absent so the first bake runs cold — that's the test.
+
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: meshinfo
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=${PG_SHARED_BUFFERS:-256MB}"
+      - "-c"
+      - "work_mem=${PG_WORK_MEM:-8MB}"
+      - "-c"
+      - "maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM:-64MB}"
+      - "-c"
+      - "effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-1GB}"
+    ports:
+      - "5432:5432"
+    volumes:
+      - meshinfo_pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d meshinfo"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mqtt:
+    image: eclipse-mosquitto:latest
+    ports:
+      - 1883:1883
+    volumes:
+      - ./mosquitto/data:/mosquitto/data:rw
+      - ./mosquitto/config:/mosquitto/config:rw
+    restart: unless-stopped
+
+  meshinfo:
+    build:
+      context: .
+    volumes:
+      - ./config.toml:/app/config.toml
+      - ./output:/app/output
+      - ./postgres:/app/postgres:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    ports:
+      - 9000:9000
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mqtt:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(\"http://localhost:9000/\", timeout=3).status==200 else 1)'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.spa
+    environment:
+      NODE_ENV: production
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:alpine
+    ports:
+      - 80:80
+    volumes:
+      - ./Caddyfile.test:/etc/caddy/Caddyfile
+    restart: unless-stopped
+    depends_on:
+      meshinfo:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+
+  coverage-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.coverage
+    volumes:
+      - ./output:/output
+    environment:
+      - MESHINFO_URL=http://meshinfo:9000
+      - COVERAGE_OUTPUT_DIR=/output/coverage
+      # Realistic production window: only nodes heard in the last 24h are
+      # eligible, keeping the node set (~1,300) and coverage bbox small enough
+      # for the small-VPS profile to keep pace (8760h forced full rebakes).
+      - COVERAGE_RECENCY_HOURS=24
+      - COVERAGE_BBOX=-124.5,32.5,-114.1,42
+      # VPS profile under test: 100 m paint, small DEM, 2 render workers,
+      # 4 h recompute floor.
+      - COVERAGE_OUTPUT_M_PER_PX=100
+      - COVERAGE_DEM_SIZE=4096
+      - COVERAGE_WORKERS=2
+      - COVERAGE_MIN_RECOMPUTE_MS=14400000
+    cpu_shares: 512
+    restart: unless-stopped
+    depends_on:
+      meshinfo:
+        condition: service_healthy
+
+volumes:
+  meshinfo_pgdata:
