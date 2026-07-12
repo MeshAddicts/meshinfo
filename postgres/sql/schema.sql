@@ -218,6 +218,55 @@ ALTER TABLE mqtt_messages ADD COLUMN IF NOT EXISTS to_node_id VARCHAR(8);
 CREATE INDEX IF NOT EXISTS idx_mqtt_messages_from_node_id ON mqtt_messages(from_node_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_mqtt_messages_to_node_id ON mqtt_messages(to_node_id, created_at DESC);
 
+-- Uplink dedup (#526): mqtt_messages keeps one canonical row per logical mesh
+-- packet (keyed from_node_id + packet_id within the ingest dedup window); every
+-- per-gateway uplink copy is recorded in packet_receptions instead. packet_id
+-- is populated by the app (trigger fallback for direct SQL inserts); its lookup
+-- index backs the ingest cache-miss fallback and is created by ensure_schema
+-- (initial build on a large archive needs a long timeout).
+ALTER TABLE mqtt_messages ADD COLUMN IF NOT EXISTS packet_id BIGINT;
+
+-- Interned uplink topics: a handful of distinct topic strings repeat across
+-- millions of receptions, so receptions store a small topic_id instead.
+CREATE TABLE IF NOT EXISTS mqtt_topics (
+    id    SERIAL PRIMARY KEY,
+    topic TEXT NOT NULL UNIQUE
+);
+
+-- One row per uplink copy (including the canonical/first one): the per-gateway
+-- RF envelope plus a sparse `extras` patch so each original copy is exactly
+-- reconstructible from canonical payload + this row (storage/db/uplink_dedup.py).
+-- Partitioned monthly like mqtt_messages; the app rolls partitions forward.
+DO $recv$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_class
+        WHERE relname = 'packet_receptions' AND relnamespace = 'public'::regnamespace
+    ) THEN
+        CREATE TABLE packet_receptions (
+            mqtt_row_id BIGINT NOT NULL,
+            created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            gateway     VARCHAR(8),
+            topic_id    INTEGER,
+            rx_rssi     SMALLINT,
+            rx_snr      DOUBLE PRECISION,
+            rx_time     BIGINT,
+            hop_limit   SMALLINT,
+            hops_away   SMALLINT,
+            relay_node  INTEGER,
+            transport   SMALLINT,
+            extras      JSONB
+        ) PARTITION BY RANGE (created_at);
+        -- Safety net so an insert never fails for a missing month.
+        CREATE TABLE packet_receptions_default PARTITION OF packet_receptions DEFAULT;
+    END IF;
+END $recv$;
+
+CREATE INDEX IF NOT EXISTS idx_packet_receptions_row
+    ON packet_receptions(mqtt_row_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_packet_receptions_gateway
+    ON packet_receptions(gateway, created_at DESC);
+
 -- Neighbor snapshot history table (currently unused, for time-lapse update later on)
 CREATE TABLE IF NOT EXISTS node_neighborinfo_history (
   id BIGSERIAL PRIMARY KEY,
