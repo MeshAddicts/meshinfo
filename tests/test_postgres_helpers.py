@@ -12,6 +12,7 @@ from storage.db.postgres import (
     PostgresStorage,
     _decode_cursor,
     _encode_cursor,
+    _finite_or_none,
     _json_default,
     _month_partition_specs,
 )
@@ -50,6 +51,37 @@ class TestDumpsWithDefault:
 
         with pytest.raises(TypeError):
             json.dumps({"ts": datetime.datetime.now()})
+
+
+class TestFiniteOrNone:
+    """Non-finite telemetry values must become NULL, not fail the whole
+    node write. The exact failure shape from production: proto3 JSON
+    renders a sensor's NaN float as the string "NaN", which asyncpg
+    rejects for numeric columns ('must be real number, not str')."""
+
+    def test_nan_string_becomes_none(self):
+        assert _finite_or_none("NaN") is None
+
+    def test_infinity_strings_become_none(self):
+        assert _finite_or_none("Infinity") is None
+        assert _finite_or_none("-Infinity") is None
+
+    def test_nan_float_becomes_none(self):
+        assert _finite_or_none(float("nan")) is None
+
+    def test_infinite_floats_become_none(self):
+        assert _finite_or_none(float("inf")) is None
+        assert _finite_or_none(float("-inf")) is None
+
+    def test_finite_values_pass_through(self):
+        assert _finite_or_none(3.7) == 3.7
+        assert _finite_or_none(87) == 87
+        assert _finite_or_none(0) == 0
+        assert _finite_or_none(None) is None
+
+    def test_non_numeric_values_pass_through(self):
+        # Not this helper's job to coerce or reject other bad input.
+        assert _finite_or_none("not-a-number") == "not-a-number"
 
 
 class TestCursorCodec:
