@@ -20,6 +20,8 @@ export type IPacketMessage = Record<string, unknown> & {
   timestamp?: number;
   type?: string;
   from?: string;
+  /** Uplink copies recorded for this packet (#526); absent on legacy rows. */
+  reception_count?: number;
 };
 
 /** One keyset-paginated page from /v1/packets. */

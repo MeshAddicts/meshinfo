@@ -137,6 +137,8 @@ const PacketRow = React.memo(function PacketRow({
     : "Unknown";
   const topic = String(m.topic ?? "");
   const type = m.type ? String(m.type) : "";
+  // Uplink copies recorded for this packet (#526); absent on legacy rows.
+  const heard = Number(m.reception_count);
   const pretty = useMemo(() => JSON.stringify(m, null, 2), [m]);
 
   return (
@@ -164,6 +166,14 @@ const PacketRow = React.memo(function PacketRow({
             {Number.isFinite(id) ? (
               <span className="ml-2 text-[11px] text-gray-400 dark:text-gray-500 tabular-nums">
                 #{id}
+              </span>
+            ) : null}
+            {Number.isFinite(heard) && heard > 0 ? (
+              <span
+                className="ml-2 rounded-full px-2 py-0.5 border border-emerald-400/50 dark:border-emerald-700 text-[11px] text-emerald-700 dark:text-emerald-300 tabular-nums"
+                title={`Uplinked by ${heard} gateway ${heard === 1 ? "copy" : "copies"} (deduplicated)`}
+              >
+                heard {heard}×
               </span>
             ) : null}
             {selected ? (

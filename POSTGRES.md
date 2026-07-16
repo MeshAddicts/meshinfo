@@ -258,6 +258,106 @@ Notes:
   Complete-history retention still implies the data volume must be
   allowed to grow.
 
+## Uplink dedup and packet_receptions (#526)
+
+Every gateway that hears a mesh packet uplinks its own copy — measured ~10-11
+rows per logical packet, ~91% of archive bytes, with the decoded payload
+byte-identical across copies. Since the dedup change, ingest stores **one
+canonical `mqtt_messages` row per packet** (the first-heard copy, verbatim) and
+records **every uplink copy — including the first — as a `packet_receptions`
+row** (~70 B vs ~700 B per copy):
+
+| column | meaning |
+| --- | --- |
+| `mqtt_row_id` | the canonical `mqtt_messages.id` this copy belongs to |
+| `gateway` | uplinking gateway (envelope `sender`, else topic `!suffix`) |
+| `topic_id` | interned topic string (`mqtt_topics`) — region paths differ per gateway |
+| `rx_rssi` `rx_snr` `rx_time` `hop_limit` `hops_away` `relay_node` `transport` | the per-copy RF envelope |
+| `extras` | sparse JSONB patch vs. the reconstruction template (usually NULL) |
+
+**Losslessness contract:** each original copy is exactly reconstructible as
+`reception_template(canonical, gateway, topic, fields)` + `extras` patch — see
+`storage/db/uplink_dedup.py` (`reconstruct_copy`). Copies whose patch cannot be
+stored (e.g. `\u0000` escapes, which JSONB rejects) fall back to a verbatim
+`mqtt_messages` row, so no path drops data. Packets without a mesh id
+(mapreports) are stored verbatim as before.
+
+Dedup is keyed `(from_node_id, packet_id)` within `storage.dedup_window_seconds`
+(default 900 s; mesh packet ids recycle, so the window must stay bounded). The
+in-memory cache survives restarts via a window-bounded DB lookup on
+`idx_mqtt_messages_packet`. Config: `storage.dedup_uplinks` (default `true`).
+
+**Deploying onto a large existing archive:** first startup builds
+`idx_mqtt_messages_packet` (partial, `WHERE packet_id IS NOT NULL`) which scans
+every partition once — minutes on a multi-10-GB archive, during which ingest
+hasn't started yet. To avoid the pause, pre-build it while the old version is
+still running (`CREATE INDEX CONCURRENTLY` can't target a partitioned parent,
+so use the ON ONLY dance): `CREATE INDEX idx_mqtt_messages_packet ON ONLY
+mqtt_messages (from_node_id, packet_id, created_at DESC) WHERE packet_id IS NOT
+NULL;`, then per partition `CREATE INDEX CONCURRENTLY <part>_packet_idx ON
+<part> (...same...)` + `ALTER INDEX idx_mqtt_messages_packet ATTACH PARTITION
+<part>_packet_idx;`. The app's `CREATE INDEX IF NOT EXISTS` then no-ops.
+
+Side effects to expect: `total_mqtt_messages`, the 24h preset split, and
+per-node packet counts drop ~10× (they now count logical packets, not copies);
+the Logs page shows one row per packet with a "heard N×" chip; the SSE live
+stream still emits one `packet` event per gateway copy (all carrying the
+canonical `mqtt_row_id`), so the live map's fan-in arcs are unaffected.
+
+### Compacting pre-dedup history
+
+Months ingested with dedup enabled are born compact — compaction only applies
+to legacy months from before the dedup deploy. The rewrite is the same lossless
+transform as ingest: same window semantics, canonical rows keep their original
+ids (permalinks to first-heard copies survive), payload text preserved
+byte-for-byte. Every original copy remains reconstructible afterwards —
+`GET /v1/packets/{id}?copies=1` returns each gateway's exact original uplink
+message rebuilt from its reception row.
+
+This is a **one-time, manual migration** — run it once after deploying dedup,
+and it is done forever:
+
+```sh
+docker compose exec meshinfo \
+  python scripts/compact_mqtt_partitions.py --all --dry-run   # discover + counts only
+docker compose exec meshinfo \
+  python scripts/compact_mqtt_partitions.py --all [--drop-original]
+```
+
+`--all` discovers every eligible pre-dedup month and sweeps them oldest-first;
+`--month YYYY_MM` targets one at a time. Originals are kept as
+`mqtt_messages_YYYY_MM_precompact` for review — disk is reclaimed when you
+`DROP` them, or pass `--drop-original` to drop right after the verified swap.
+
+Expect ~80-85% reduction per month. The script refuses current, mixed, or
+already-deduped months. Note: the month a dedup deploy lands in is mixed
+forever and can't be compacted — deploy early in a month to minimize it.
+
+### Backups
+
+The archive is keep-forever, so backups are the only copy of history. The app
+schedules snapshots itself from config.toml — applied on every (re)start, no
+host cron required:
+
+```toml
+[backups]
+schedule = "daily"        # off | daily | weekly | monthly
+keep_days = 4             # prune local dumps older than this
+dir = "backups"           # relative to the repo root, or absolute
+remote_target = ""        # optional rsync destination for off-box copies
+```
+
+Dumps are pg_dump `-Fc` (compressed), validated with `pg_restore --list`
+before being trusted, written to the `./backups` mount, and pruned to
+`keep_days`. A backup runs whenever the newest dump is older than the
+schedule, so a missed window (host was off) is caught up at the next start.
+
+`scripts/backup_db.sh` reads the same `[backups]` section for manual or
+host-cron runs, and is the path that pushes to `remote_target` (SSH keys live
+on the host, not in the container). Environment variables (`KEEP_DAYS`,
+`BACKUP_DIR`, `REMOTE_TARGET`, `CONTAINER`, `DB_USER`, `DB_NAME`) override the
+config for one-off runs.
+
 ## Security
 
 - Use strong passwords for PostgreSQL

@@ -23,6 +23,8 @@ type StatsPayload = {
   total_traceroutes: number;
   total_messages: number;
   total_mqtt_messages: number;
+  /** All-time gateway uplinks (#526) — mqtt_messages counts logical packets. */
+  total_receptions?: number;
 
   session_by_modem_preset?: Record<string, number>;
 };
@@ -117,6 +119,7 @@ export const Stats = () => {
     const traceroutes = safeNum(stats?.total_traceroutes);
 
     const session = safeNum(stats?.total_messages);
+    const receptions = safeNum(stats?.total_receptions);
 
     // modem preset split
     const presetMap = stats?.session_by_modem_preset;
@@ -152,6 +155,7 @@ export const Stats = () => {
       traceroutes,
       persistedTotal,
       session,
+      receptions,
 
       mediumFast,
       longFast,
@@ -191,6 +195,7 @@ export const Stats = () => {
       ["total_telemetry", safeNum(stats.total_telemetry)],
       ["total_traceroutes", safeNum(stats.total_traceroutes)],
       ["total_mqtt_messages", safeNum(stats.total_mqtt_messages)],
+      ["total_receptions", safeNum(stats.total_receptions)],
     ];
 
     if (derived.hasPresetSplit) {
@@ -441,7 +446,7 @@ export const Stats = () => {
                       <KpiCard
                         title="Logged packets"
                         value={derived.session}
-                        subtitle="all-time MQTT messages"
+                        subtitle="all-time logical packets (deduplicated)"
                         icon={<Icon name="inbox" />}
                         compact
                       />
@@ -452,6 +457,15 @@ export const Stats = () => {
                         icon={<Icon name="database" />}
                         compact
                       />
+                      {derived.receptions > 0 ? (
+                        <KpiCard
+                          title="Gateway uplinks"
+                          value={derived.receptions}
+                          subtitle="all-time per-gateway receptions"
+                          icon={<Icon name="pulse" />}
+                          compact
+                        />
+                      ) : null}
                     </div>
                   </div>
 

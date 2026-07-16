@@ -117,7 +117,27 @@ DEFAULT_CONFIG: dict[str, Any] = {
             },
         },
     },
+    # Daily-snapshot backups. The app schedules these itself (maintenance loop,
+    # applied on startup — no host cron needed); scripts/backup_db.sh reads the
+    # same section for manual/host-cron runs.
+    "backups": {
+        # off | daily | weekly | monthly — how often the app takes a pg_dump.
+        "schedule": "daily",
+        "keep_days": 4,
+        # Relative paths resolve against the repo root (mounted at /app in Docker).
+        "dir": "backups",
+        # Optional rsync destination for off-box copies, e.g. "user@host:/backups/meshinfo".
+        # Honored by scripts/backup_db.sh (host-side, where SSH keys live).
+        "remote_target": "",
+    },
     "storage": {
+        # Uplink dedup (#526): store one canonical mqtt_messages row per mesh
+        # packet and every per-gateway copy as a packet_receptions row (lossless).
+        # Disable to restore the legacy one-row-per-copy firehose.
+        "dedup_uplinks": True,
+        # How long copies of one (from, packet id) keep merging into the same
+        # canonical row; also bounds the restart-recovery DB lookup.
+        "dedup_window_seconds": 900,
         "postgres": {
             "enabled": False,
             "host": "postgres",
@@ -467,6 +487,16 @@ def validate(config: dict) -> list[str]:
             f"Postgres min_pool_size ({min_pool}) is greater than max_pool_size ({max_pool}). "
             "This will likely cause connection errors."
         )
+
+    # ── uplink dedup (#526) ───────────────────────────────────────────
+    check(_validate_type(config, "storage.dedup_uplinks", bool))
+    check(_validate_positive_number(config, "storage.dedup_window_seconds"))
+
+    # ── backups ───────────────────────────────────────────────────────
+    check(_validate_one_of(config, "backups.schedule", ["off", "daily", "weekly", "monthly"]))
+    check(_validate_positive_number(config, "backups.keep_days"))
+    check(_validate_type(config, "backups.dir", str))
+    check(_validate_type(config, "backups.remote_target", str))
 
     # ── debug ─────────────────────────────────────────────────────────
     check(_validate_type(config, "debug", bool))

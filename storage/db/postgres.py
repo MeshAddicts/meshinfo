@@ -17,6 +17,16 @@ from pathlib import Path
 from typing import Any, Dict, Optional, List, Tuple
 from zoneinfo import ZoneInfo
 
+from storage.db.uplink_dedup import (
+    UplinkDedupCache,
+    coerce_packet_id,
+    gateway_from_msg,
+    reception_fields,
+    reception_patch,
+    reception_template,
+    reconstruct_copy,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,17 +59,17 @@ def _decode_cursor(cursor: str) -> Optional[Tuple[datetime.datetime, int]]:
 
 
 def _month_partition_specs(
-    start: datetime.date, months_ahead: int
+    start: datetime.date, months_ahead: int, table: str = "mqtt_messages"
 ) -> List[Tuple[str, str, str]]:
     """Monthly partition (name, lo, hi) tuples for start's month through
     months_ahead months later. lo/hi are 'YYYY-MM-DD' strings; each range is
-    half-open [lo, hi). Used to keep mqtt_messages' partitions rolled forward."""
+    half-open [lo, hi). Used to keep the archive tables' partitions rolled forward."""
     specs: List[Tuple[str, str, str]] = []
     month = start.replace(day=1)
     for _ in range(months_ahead + 1):
         nxt = (month + datetime.timedelta(days=32)).replace(day=1)
         specs.append(
-            (f"mqtt_messages_{month:%Y_%m}", f"{month:%Y-%m-%d}", f"{nxt:%Y-%m-%d}")
+            (f"{table}_{month:%Y_%m}", f"{month:%Y-%m-%d}", f"{nxt:%Y-%m-%d}")
         )
         month = nxt
     return specs
@@ -139,6 +149,28 @@ class PostgresStorage:
         # Tracked so close() can cancel before tearing down the pool (otherwise
         # this task errors mid-batch with "InterfaceError: pool is closing").
         self._backfill_task: Optional[asyncio.Task] = None
+
+        # Uplink dedup (#526): one canonical mqtt_messages row per mesh packet,
+        # per-gateway copies recorded in packet_receptions. Safe as a plain
+        # in-memory cache because the MQTT loop is the only (serial) writer.
+        storage_cfg = config.get("storage", {})
+        self.dedup_enabled = bool(storage_cfg.get("dedup_uplinks", True))
+        self.dedup_window = int(storage_cfg.get("dedup_window_seconds", 900))
+        self._dedup_cache = UplinkDedupCache(self.dedup_window)
+        self._topic_ids: Dict[str, int] = {}
+        # How far past a canonical row's created_at its receptions can land —
+        # derived from the dedup window so reads never undercount, with a
+        # 1-day floor to keep partition pruning effective.
+        self._reception_lookback = max(86400, 2 * self.dedup_window)
+        # Uplink count per canonical row (#526). Correlated scalar subquery so
+        # the outer queries keep their unqualified column names. Legacy
+        # pre-dedup rows count 0 and readers omit the key.
+        self._reception_count_sql = f"""(
+            SELECT count(*)::int FROM packet_receptions pr
+            WHERE pr.mqtt_row_id = mqtt_messages.id
+              AND pr.created_at >= mqtt_messages.created_at
+              AND pr.created_at < mqtt_messages.created_at + interval '{self._reception_lookback} seconds'
+        )"""
 
     async def connect(self) -> bool:
         """
@@ -249,6 +281,14 @@ class PostgresStorage:
                         ON mqtt_messages(id)
                         WHERE from_node_id IS NULL;
                 """, timeout=300)
+                # Dedup fallback lookup (#526). Partial: pre-dedup history has
+                # packet_id NULL, so the initial build stays a read-only scan
+                # and the index only ever holds post-dedup (and compacted) rows.
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_mqtt_messages_packet
+                        ON mqtt_messages(from_node_id, packet_id, created_at DESC)
+                        WHERE packet_id IS NOT NULL;
+                """, timeout=600)
         except Exception as e:
             logger.error(f"Failed to run migrations: {e}")
             if self.raise_on_write_error:
@@ -264,11 +304,16 @@ class PostgresStorage:
                     DECLARE
                         v_from TEXT;
                         v_to TEXT;
+                        v_pid TEXT;
                     BEGIN
-                        IF (NEW.from_node_id IS NULL OR NEW.to_node_id IS NULL) AND NEW.payload IS NOT NULL AND NEW.payload ~ '^\\s*\\{' THEN
+                        IF (NEW.from_node_id IS NULL OR NEW.to_node_id IS NULL OR NEW.packet_id IS NULL) AND NEW.payload IS NOT NULL AND NEW.payload ~ '^\\s*\\{' THEN
                             BEGIN
                                 v_from := NEW.payload::jsonb ->> 'from';
                                 v_to   := NEW.payload::jsonb ->> 'to';
+                                v_pid  := NEW.payload::jsonb ->> 'id';
+                                IF NEW.packet_id IS NULL AND v_pid ~ '^[0-9]+$' THEN
+                                    NEW.packet_id := v_pid::bigint;
+                                END IF;
                                 IF NEW.from_node_id IS NULL AND v_from IS NOT NULL THEN
                                     IF v_from ~ '^[0-9]+$' THEN
                                         NEW.from_node_id := lpad(to_hex(v_from::bigint), 8, '0');
@@ -312,32 +357,34 @@ class PostgresStorage:
         self._backfill_task = asyncio.create_task(self._backfill_mqtt_node_ids())
 
     async def ensure_mqtt_partitions(self, months_ahead: int = 2) -> None:
-        """Create the current + next monthly partitions for mqtt_messages when
-        missing. No-op when the table isn't partitioned — i.e. an existing
-        install that hasn't run scripts/migrate-mqtt-partitioning.sh yet."""
+        """Create the current + next monthly partitions for mqtt_messages and
+        packet_receptions when missing. Skips any table that isn't partitioned —
+        i.e. an existing install that hasn't run scripts/migrate-mqtt-partitioning.sh yet."""
         if not self._ready("ensure_mqtt_partitions"):
             return
         try:
             async with self.pool.acquire() as conn:
-                relkind = await conn.fetchval(
-                    "SELECT relkind::text FROM pg_class "
-                    "WHERE relname = 'mqtt_messages' "
-                    "AND relnamespace = 'public'::regnamespace"
-                )
-                if relkind != "p":
-                    return  # regular table — nothing to manage
                 # Anchor on the DB's UTC date, not the app process's local date:
                 # created_at is TIMESTAMPTZ (stored UTC), so a local-time today()
                 # could select the wrong month around the boundary and leave the
                 # currently-active month unpartitioned.
                 today = await conn.fetchval("SELECT (now() AT TIME ZONE 'UTC')::date")
-                for name, lo, hi in _month_partition_specs(today, months_ahead):
-                    await conn.execute(
-                        f"CREATE TABLE IF NOT EXISTS {name} "
-                        f"PARTITION OF mqtt_messages "
-                        f"FOR VALUES FROM (TIMESTAMPTZ '{lo} 00:00:00+00') "
-                        f"TO (TIMESTAMPTZ '{hi} 00:00:00+00')"
+                for table in ("mqtt_messages", "packet_receptions"):
+                    relkind = await conn.fetchval(
+                        "SELECT relkind::text FROM pg_class "
+                        "WHERE relname = $1 "
+                        "AND relnamespace = 'public'::regnamespace",
+                        table,
                     )
+                    if relkind != "p":
+                        continue  # regular/missing table — nothing to manage
+                    for name, lo, hi in _month_partition_specs(today, months_ahead, table):
+                        await conn.execute(
+                            f"CREATE TABLE IF NOT EXISTS {name} "
+                            f"PARTITION OF {table} "
+                            f"FOR VALUES FROM (TIMESTAMPTZ '{lo} 00:00:00+00') "
+                            f"TO (TIMESTAMPTZ '{hi} 00:00:00+00')"
+                        )
         except Exception as e:
             logger.error("ensure_mqtt_partitions failed: %s", e)
 
@@ -1141,6 +1188,7 @@ class PostgresStorage:
             clean.pop("encrypted", None)
             payload_text = self._coerce_mqtt_payload_text(clean)
         else:
+            clean = None  # dedup requires a dict message; object inputs store verbatim
             topic_obj = getattr(mqtt_msg, "topic", None)
             topic = getattr(topic_obj, "value", None) if topic_obj is not None else None
             if topic is None and topic_obj is not None:
@@ -1169,25 +1217,30 @@ class PostgresStorage:
         # Extract from/to node IDs for indexed filtering
         from_node_id = None
         to_node_id = None
+        packet_id = None
         if isinstance(mqtt_msg, dict):
             from_node_id = self._normalize_node_id(mqtt_msg.get("from"))
             to_node_id = self._normalize_node_id(mqtt_msg.get("to"))
+            packet_id = coerce_packet_id(mqtt_msg.get("id"))
 
         try:
             async with self.pool.acquire() as conn:
-                row_id = await conn.fetchval(
-                    """
-                    INSERT INTO mqtt_messages (topic, payload, qos, retain, timestamp, from_node_id, to_node_id)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
-                    RETURNING id
-                    """,
-                    topic,
-                    payload_text,
-                    qos_i,
-                    retain_b,
-                    ts_i,
-                    from_node_id,
-                    to_node_id,
+                # Uplink dedup (#526): copies 2..N of one mesh packet become
+                # packet_receptions rows under the canonical (first-heard) row.
+                # Any dedup-path failure falls back to a plain per-copy insert
+                # below so a copy is never lost to a dedup bug.
+                if self.dedup_enabled and from_node_id is not None and packet_id is not None:
+                    try:
+                        return await self._write_deduped(
+                            conn, clean, topic, payload_text, qos_i, retain_b,
+                            ts_i, from_node_id, to_node_id, packet_id,
+                        )
+                    except Exception as e:
+                        logger.warning("Uplink dedup failed (storing copy verbatim): %s", e)
+
+                row_id = await self._insert_mqtt_row(
+                    conn, topic, payload_text, qos_i, retain_b, ts_i,
+                    from_node_id, to_node_id, packet_id,
                 )
             return int(row_id) if row_id is not None else None
         except Exception as e:
@@ -1195,6 +1248,153 @@ class PostgresStorage:
             if self.raise_on_write_error:
                 raise
             return None
+
+    @staticmethod
+    async def _insert_mqtt_row(
+        conn: asyncpg.Connection,
+        topic: Optional[str],
+        payload_text: Optional[str],
+        qos_i: Optional[int],
+        retain_b: Optional[bool],
+        ts_i: Optional[int],
+        from_node_id: Optional[str],
+        to_node_id: Optional[str],
+        packet_id: Optional[int],
+    ) -> Optional[int]:
+        """Single INSERT shared by the dedup and verbatim-fallback paths so the
+        two can't drift when mqtt_messages gains a column."""
+        return await conn.fetchval(
+            """
+            INSERT INTO mqtt_messages (topic, payload, qos, retain, timestamp, from_node_id, to_node_id, packet_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING id
+            """,
+            topic, payload_text, qos_i, retain_b, ts_i,
+            from_node_id, to_node_id, packet_id,
+        )
+
+    async def _write_deduped(
+        self,
+        conn: asyncpg.Connection,
+        clean: Dict[str, Any],
+        topic: Optional[str],
+        payload_text: Optional[str],
+        qos_i: Optional[int],
+        retain_b: Optional[bool],
+        ts_i: Optional[int],
+        from_node_id: str,
+        to_node_id: Optional[str],
+        packet_id: int,
+    ) -> Optional[int]:
+        """Dedup-aware archive write: returns the canonical row id for every
+        uplink copy of a packet, inserting a canonical row only for the first."""
+        key = (from_node_id, packet_id)
+        hit = self._dedup_cache.get(key)
+        if hit is None:
+            # Cache miss (e.g. app restart mid-window): the canonical row may
+            # still exist in the DB — window-bounded lookup via idx_mqtt_messages_packet.
+            db_hit = await self._dedup_lookup_db(conn, from_node_id, packet_id)
+            if db_hit is not None:
+                row_id, canonical, age = db_hit
+                self._dedup_cache.put(key, row_id, canonical, ttl=self.dedup_window - age)
+                hit = (row_id, canonical)
+
+        if hit is not None:
+            row_id, canonical = hit
+            await self._write_reception(conn, row_id, clean, canonical)
+            return row_id
+
+        # Cache the canonical as readers will see it — parsed from the stored
+        # payload text — so patches diff against the same dict before and after
+        # a restart (the in-memory dict may hold non-JSON-native values).
+        canonical = json.loads(payload_text)
+        if not isinstance(canonical, dict):
+            raise ValueError("payload does not round-trip to a dict")
+
+        # First-heard copy: canonical row + its own reception, atomically.
+        async with conn.transaction():
+            row_id = await self._insert_mqtt_row(
+                conn, topic, payload_text, qos_i, retain_b, ts_i,
+                from_node_id, to_node_id, packet_id,
+            )
+            if row_id is None:
+                raise RuntimeError("canonical insert returned no id")
+            await self._write_reception(conn, int(row_id), clean, canonical)
+        self._dedup_cache.put(key, int(row_id), canonical)
+        return int(row_id)
+
+    async def _dedup_lookup_db(
+        self, conn: asyncpg.Connection, from_node_id: str, packet_id: int
+    ) -> Optional[Tuple[int, Dict[str, Any], float]]:
+        """Find a live canonical row for (from, packet id) inside the dedup
+        window. Returns (row_id, canonical dict, age seconds) or None."""
+        # ASC: adopt the first-heard row — it's the one carrying receptions if a
+        # rare verbatim-fallback row also exists for this key in the window.
+        row = await conn.fetchrow(
+            """SELECT id, payload,
+                      EXTRACT(EPOCH FROM (now() - created_at))::float8 AS age
+               FROM mqtt_messages
+               WHERE from_node_id = $1 AND packet_id = $2
+                 AND created_at > now() - make_interval(secs => $3)
+               ORDER BY created_at ASC LIMIT 1""",
+            from_node_id, packet_id, float(self.dedup_window),
+        )
+        if row is None or not row["payload"]:
+            return None
+        try:
+            canonical = json.loads(row["payload"])
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(canonical, dict):
+            return None
+        return int(row["id"]), canonical, float(row["age"])
+
+    async def _write_reception(
+        self,
+        conn: asyncpg.Connection,
+        row_id: int,
+        msg: Dict[str, Any],
+        canonical: Dict[str, Any],
+    ) -> None:
+        """Record one uplink copy: typed RF envelope columns + a sparse extras
+        patch vs. the reconstruction template, keeping the copy fully reconstructible."""
+        raw_topic = msg.get("topic")
+        topic = raw_topic if isinstance(raw_topic, str) else None
+        gateway = gateway_from_msg(msg)
+        fields = reception_fields(msg)
+        patch = reception_patch(reception_template(canonical, gateway, topic, fields), msg)
+        topic_id = await self._intern_topic(conn, topic)
+        await conn.execute(
+            """INSERT INTO packet_receptions
+                   (mqtt_row_id, gateway, topic_id, rx_rssi, rx_snr,
+                    rx_time, hop_limit, hops_away, relay_node, transport, extras)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)""",
+            row_id, gateway, topic_id,
+            fields["rx_rssi"], fields["rx_snr"], fields["rx_time"],
+            fields["hop_limit"], fields["hops_away"], fields["relay_node"],
+            fields["transport"],
+            json.dumps(patch, default=_json_default) if patch else None,
+        )
+
+    async def _intern_topic(self, conn: asyncpg.Connection, topic: Optional[str]) -> Optional[int]:
+        """Small stable id for an uplink topic string; cached per process."""
+        if not topic:
+            return None
+        tid = self._topic_ids.get(topic)
+        if tid is not None:
+            return tid
+        # DO UPDATE (not DO NOTHING) so RETURNING also yields the existing id.
+        tid = await conn.fetchval(
+            "INSERT INTO mqtt_topics (topic) VALUES ($1) "
+            "ON CONFLICT (topic) DO UPDATE SET topic = EXCLUDED.topic RETURNING id",
+            topic,
+        )
+        if tid is None:
+            return None
+        if len(self._topic_ids) > 4096:
+            self._topic_ids.clear()  # pathological topic churn — reset, stays correct
+        self._topic_ids[topic] = int(tid)
+        return int(tid)
 
     async def query_mqtt_messages(
         self,
@@ -1237,9 +1437,19 @@ class PostgresStorage:
                     idx += 1
 
                 if search:
+                    # The EXISTS arm covers per-copy data that dedup moved out
+                    # of this table: other gateways' uplink topics (and thereby
+                    # their gateway ids, which end every topic).
                     conditions.append(
                         f"(topic ILIKE '%' || ${idx} || '%'"
-                        f" OR payload ILIKE '%' || ${idx} || '%')"
+                        f" OR payload ILIKE '%' || ${idx} || '%'"
+                        f" OR EXISTS (SELECT 1 FROM packet_receptions pr"
+                        f"            JOIN mqtt_topics t ON t.id = pr.topic_id"
+                        f"            WHERE pr.mqtt_row_id = mqtt_messages.id"
+                        f"              AND pr.created_at >= mqtt_messages.created_at"
+                        f"              AND pr.created_at < mqtt_messages.created_at"
+                        f"                  + interval '{self._reception_lookback} seconds'"
+                        f"              AND t.topic ILIKE '%' || ${idx} || '%'))"
                     )
                     params.append(search)
                     idx += 1
@@ -1255,7 +1465,8 @@ class PostgresStorage:
                 params.append(limit + 1)  # +1 row tells us whether another page exists
 
                 rows = await conn.fetch(
-                    f"""SELECT id, topic, payload, qos, retain, timestamp, created_at
+                    f"""SELECT id, topic, payload, qos, retain, timestamp, created_at,
+                               {self._reception_count_sql} AS reception_count
                         FROM mqtt_messages
                         {where}
                         ORDER BY created_at DESC, id DESC LIMIT ${idx}""",
@@ -1288,7 +1499,8 @@ class PostgresStorage:
                 idx = self._append_window_conditions(conditions, params, 2, start, end, before)
                 params.append(limit + 1)
                 rows = await conn.fetch(
-                    f"""SELECT id, topic, payload, qos, retain, timestamp, created_at
+                    f"""SELECT id, topic, payload, qos, retain, timestamp, created_at,
+                               {self._reception_count_sql} AS reception_count
                         FROM mqtt_messages
                         WHERE {" AND ".join(conditions)}
                         ORDER BY created_at DESC, id DESC LIMIT ${idx}""",
@@ -1348,6 +1560,10 @@ class PostgresStorage:
             # Stable DB row id — backs per-packet deeplinks. Namespaced so it
             # can't collide with the mesh packet's own `id` payload field.
             msg["mqtt_row_id"] = row["id"]
+            # Uplink count (#526); 0 means a legacy pre-dedup row — omit so the
+            # UI only badges rows that actually have reception data.
+            if "reception_count" in row.keys() and (row["reception_count"] or 0) > 0:
+                msg["reception_count"] = row["reception_count"]
             messages.append(msg)
         next_cursor = None
         if has_more and page:
@@ -1355,9 +1571,12 @@ class PostgresStorage:
             next_cursor = _encode_cursor(last["created_at"], last["id"])
         return {"messages": messages, "next_cursor": next_cursor}
 
-    async def query_mqtt_message_by_id(self, row_id: int) -> Optional[dict]:
+    async def query_mqtt_message_by_id(self, row_id: int, include_copies: bool = False) -> Optional[dict]:
         """Fetch one mqtt_messages row by its DB id — backs per-packet deeplinks.
-        Returns the parsed message dict (with mqtt_row_id), or None if not found."""
+        Returns the parsed message dict (with mqtt_row_id and, for deduped
+        packets, the per-gateway `receptions` list), or None if not found.
+        include_copies additionally rebuilds each reception into the exact
+        original uplink message (the #526 losslessness contract, user-visible)."""
         if not self._ready("query_mqtt_message_by_id"):
             return None
         try:
@@ -1367,13 +1586,66 @@ class PostgresStorage:
                        FROM mqtt_messages WHERE id = $1""",
                     row_id,
                 )
-            if row is None:
-                return None
+                if row is None:
+                    return None
+                receptions = await conn.fetch(
+                    f"""SELECT pr.gateway, t.topic, pr.rx_rssi, pr.rx_snr, pr.rx_time,
+                              pr.hop_limit, pr.hops_away, pr.relay_node, pr.transport,
+                              pr.extras, pr.created_at
+                       FROM packet_receptions pr
+                       LEFT JOIN mqtt_topics t ON t.id = pr.topic_id
+                       WHERE pr.mqtt_row_id = $1
+                         AND pr.created_at >= $2
+                         AND pr.created_at < $2 + interval '{self._reception_lookback} seconds'
+                       ORDER BY pr.created_at, pr.gateway""",
+                    row_id, row["created_at"],
+                )
             page = self._build_mqtt_message_page([row], 1)
-            return page["messages"][0] if page["messages"] else None
+            msg = page["messages"][0] if page["messages"] else None
+            if msg is not None and receptions:
+                msg["reception_count"] = len(receptions)
+                msg["receptions"] = [self._reception_to_dict(r) for r in receptions]
+                if include_copies:
+                    self._attach_reconstructed_copies(row["payload"], msg["receptions"])
+            return msg
         except Exception as e:
             logger.error("Failed to query mqtt_message by id: %s", e)
             return None
+
+    @staticmethod
+    def _attach_reconstructed_copies(payload_text: Optional[str], receptions: List[dict]) -> None:
+        """Add a `reconstructed` full original message to each reception dict."""
+        try:
+            canonical = json.loads(payload_text) if payload_text else None
+        except (json.JSONDecodeError, TypeError):
+            canonical = None
+        if not isinstance(canonical, dict):
+            return
+        for r in receptions:
+            fields = {
+                "rx_rssi": r.get("rx_rssi"), "rx_snr": r.get("rx_snr"),
+                "rx_time": r.get("rx_time"), "hop_limit": r.get("hop_limit"),
+                "hops_away": r.get("hops_away"), "relay_node": r.get("relay_node"),
+                "transport": r.get("transport"),
+            }
+            try:
+                r["reconstructed"] = reconstruct_copy(
+                    canonical, r.get("gateway"), r.get("topic"), fields, r.get("extras")
+                )
+            except Exception as e:
+                logger.warning("Copy reconstruction failed for a reception: %s", e)
+
+    @staticmethod
+    def _reception_to_dict(row) -> dict:
+        """packet_receptions row -> API dict (extras JSONB arrives as text)."""
+        out = dict(row)
+        extras = out.get("extras")
+        if isinstance(extras, str):
+            try:
+                out["extras"] = json.loads(extras)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return out
 
     # ============================================================================
     # DIRECT QUERY OPERATIONS - For API endpoints when reading from Postgres
@@ -2096,10 +2368,21 @@ class PostgresStorage:
                 stats["total_telemetry"] = await conn.fetchval("SELECT COUNT(*) FROM telemetry")
                 stats["total_traceroutes"] = await conn.fetchval("SELECT COUNT(*) FROM traceroutes")
 
-                # Planner estimate; exact COUNT(*) can hit statement_timeout on this table.
+                # Planner estimate; exact COUNT(*) can hit statement_timeout on this
+                # table. Sum the partitions — a partitioned parent's own reltuples
+                # stays -1/0 unless it is manually ANALYZEd; fall back to the parent
+                # row for legacy non-partitioned installs.
                 try:
                     approx = await conn.fetchval(
-                        "SELECT reltuples::bigint FROM pg_class WHERE relname = 'mqtt_messages'"
+                        """SELECT CASE WHEN EXISTS (
+                                    SELECT 1 FROM pg_inherits
+                                    WHERE inhparent = 'mqtt_messages'::regclass)
+                           THEN (SELECT COALESCE(sum(GREATEST(c.reltuples, 0))::bigint, 0)
+                                 FROM pg_class c JOIN pg_inherits i ON i.inhrelid = c.oid
+                                 WHERE i.inhparent = 'mqtt_messages'::regclass)
+                           ELSE (SELECT GREATEST(reltuples, 0)::bigint FROM pg_class
+                                 WHERE relname = 'mqtt_messages')
+                           END"""
                     )
                     mqtt_count = max(0, int(approx or 0))
                 except Exception as e:
@@ -2107,6 +2390,19 @@ class PostgresStorage:
                     mqtt_count = 0
                 stats["total_messages"] = mqtt_count
                 stats["total_mqtt_messages"] = mqtt_count
+
+                # All-time gateway uplinks (#526): post-dedup, mqtt_messages counts
+                # logical packets — every uplink copy ever heard lives here.
+                try:
+                    receptions = await conn.fetchval(
+                        """SELECT COALESCE(sum(GREATEST(c.reltuples, 0))::bigint, 0)
+                           FROM pg_class c JOIN pg_inherits i ON i.inhrelid = c.oid
+                           WHERE i.inhparent = 'packet_receptions'::regclass"""
+                    )
+                    stats["total_receptions"] = max(0, int(receptions or 0))
+                except Exception as e:
+                    logger.warning("Failed to estimate packet_receptions count: %s", e)
+                    stats["total_receptions"] = 0
 
                 # 24h topic-preset split. Topic format: msh/<region>/2/e/<preset>/!<node>.
                 preset_split: Dict[str, int] = {}

@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 import discord
 from dotenv import load_dotenv
 
+import maintenance
 from api import api
 from bot import discord as discord_bot
 from config import Config, ConfigValidationError
@@ -77,9 +78,12 @@ MAINTENANCE_INTERVAL_SEC = 60.0
 
 async def maintenance_loop(config, data, interval_seconds: float = MAINTENANCE_INTERVAL_SEC) -> None:
     """Periodic DB maintenance: mark nodes inactive past the activity threshold,
-    and keep the mqtt_messages monthly partitions rolled forward."""
+    keep the archive tables' monthly partitions rolled forward, and enforce the
+    config-scheduled backups (applied on every start, so a config.toml change
+    needs only a restart — no host cron)."""
     threshold = config['server']['node_activity_prune_threshold']
     tick = 0
+    backup_task: asyncio.Task | None = None
     while True:
         try:
             pruned = await data.pg_storage.mark_nodes_inactive_by_age(threshold)
@@ -88,6 +92,10 @@ async def maintenance_loop(config, data, interval_seconds: float = MAINTENANCE_I
             # Hourly: create next month's partition ahead of the rollover.
             if tick % 60 == 0:
                 await data.pg_storage.ensure_mqtt_partitions()
+            # Backups run whenever the newest dump is older than the schedule —
+            # a single-flight background task; a multi-GB dump must not stall this loop.
+            if (backup_task is None or backup_task.done()) and maintenance.backup_due(config):
+                backup_task = asyncio.create_task(maintenance.run_backup(config))
         except asyncio.CancelledError:
             raise
         except Exception:

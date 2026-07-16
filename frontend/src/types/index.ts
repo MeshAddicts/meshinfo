@@ -8,6 +8,8 @@ export interface IStatsResponse {
   total_nodes: number;
   total_messages: number;
   total_mqtt_messages: number;
+  /** All-time gateway uplinks (#526); mqtt_messages counts logical packets. */
+  total_receptions?: number;
   total_telemetry: number;
   total_traceroutes: number;
 }
