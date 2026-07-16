@@ -35,6 +35,12 @@ directly for integrations. Responses are JSON unless noted.
 | GET | `/v1/traceroutes` | All recent traceroutes. |
 | GET | `/v1/stats` | Mesh totals (counts, top nodes, modem preset, etc.). |
 
+### Live events (SSE)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/v1/events` | Server-Sent Events stream of live updates, one multiplexed connection per client. Each frame's `event:` type is `node`, `chat`, `telemetry`, or `coverage`; `: ...` comment frames are keep-alive heartbeats. Served unbuffered through Caddy (`flush_interval -1`); the SPA reaches it as `/api/v1/events`. |
+
 ### Static map / Server
 
 | Method | Path | Notes |
