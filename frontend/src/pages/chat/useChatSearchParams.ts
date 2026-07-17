@@ -40,8 +40,8 @@ export function useChatSearchParams(args?: {
   views?: ChatViewParam[];
   defaultCh?: string;
 }) {
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- TODO: memoize views to avoid re-renders
-  const views = args?.views ?? [];
+  // Callers pass a memoized array; this only pins the `?? []` fallback identity.
+  const views = useMemo(() => args?.views ?? [], [args?.views]);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const rawCh = (searchParams.get("ch") ?? "").trim();

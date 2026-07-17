@@ -355,6 +355,13 @@ export const Chat = () => {
   const defaultViewKey =
     views.find((v) => v.isDefault)?.key ?? views[0]?.key ?? "";
 
+  // Stable identity: a fresh array here would defeat useChatSearchParams'
+  // internal memos on every render.
+  const viewParams = useMemo(
+    () => views.map((v) => ({ key: v.key, aliases: v.aliases })),
+    [views]
+  );
+
   // ── 9. URL + canonicalization (ch becomes preset slug) ──
   const {
     searchParams,
@@ -378,7 +385,7 @@ export const Chat = () => {
     setParams,
     clearFilters,
   } = useChatSearchParams({
-    views: views.map((v) => ({ key: v.key, aliases: v.aliases })),
+    views: viewParams,
     defaultCh: defaultViewKey,
   });
 

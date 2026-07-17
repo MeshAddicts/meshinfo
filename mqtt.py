@@ -234,7 +234,6 @@ class MQTT:
                         outs["type"] = "routing"
                         outs["payload"] = out
                         logger.debug("Decoded protobuf message: routing: %s", outs)
-                        # self.handle_routing(outs)
                     except UnicodeDecodeError as e:
                         logger.debug("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
@@ -358,23 +357,6 @@ class MQTT:
                         await self._safe_handle("handle_traceroute", self.handle_traceroute(j))
                 except Exception as e:
                     logger.error("JSON message processing error: %s", e, exc_info=True)
-
-    async def publish(self, client, topic, msg):
-        result = await client.publish(topic, msg)
-        status = result[0]
-        if status == 0:
-            logger.debug("Sent message to topic %s", topic)
-            return True
-        else:
-            logger.warning("Failed to send message to topic %s", topic)
-            return False
-
-    async def subscribe(self, client, topic):
-        client.subscribe(topic)
-        logger.info("Subscribed to topic %s", topic)
-
-    async def unsubscribe(self, client, topic):
-        client.unsubscribe(topic)
 
     ### message handlers
 
