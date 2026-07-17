@@ -298,12 +298,15 @@ class API:
 
         @app.get("/v1/packets/{packet_id}")
         async def packet_by_id(request: Request, packet_id: str) -> JSONResponse:
-            """Single packet by `mqtt_messages` row id — backs per-packet deeplinks."""
+            """Single packet by `mqtt_messages` row id — backs per-packet deeplinks.
+            ?copies=1 rebuilds every gateway's original uplink message from its
+            reception row (dedup is lossless — see POSTGRES.md #526)."""
             try:
                 row_id = int(packet_id)
             except (TypeError, ValueError):
                 return JSONResponse({"error": "packet id must be an integer"}, status_code=400)
-            packet = await self.data.pg_storage.query_mqtt_message_by_id(row_id)
+            include_copies = request.query_params.get("copies", "").lower() in ("1", "true", "yes")
+            packet = await self.data.pg_storage.query_mqtt_message_by_id(row_id, include_copies=include_copies)
             if packet is None:
                 return JSONResponse({"error": "packet not found"}, status_code=404)
             return jsonable_encoder({"packet": packet})

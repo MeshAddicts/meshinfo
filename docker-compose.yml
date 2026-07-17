@@ -50,6 +50,8 @@ services:
       - ./config.toml:/app/config.toml
       - ./output:/app/output
       - ./postgres:/app/postgres:ro
+      # In-app scheduled pg_dump snapshots land here ([backups] in config.toml).
+      - ./backups:/app/backups
     environment:
       - PYTHONUNBUFFERED=1
     # Uncomment if node enrichment fails with "Name or service not known"

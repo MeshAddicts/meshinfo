@@ -10,6 +10,24 @@ debug = false
 # PostgreSQL is the only supported storage backend.
 # ─────────────────────────────────────────────────────────────────────────────
 
+[storage]
+# Uplink dedup (#526): store one canonical mqtt_messages row per mesh packet;
+# every per-gateway uplink copy is kept losslessly in packet_receptions.
+# Disable to restore the legacy one-row-per-copy firehose (~10x the disk).
+dedup_uplinks = true
+dedup_window_seconds = 900            # copies of one packet merge within this window
+
+# Database snapshot backups. The app schedules these itself — the schedule is
+# applied automatically on (re)start, no host cron needed. The raw archive is
+# keep-forever, so backups are the only other copy of history.
+[backups]
+schedule = "daily"                    # off | daily | weekly | monthly
+keep_days = 4                         # prune local dumps older than this
+dir = "backups"                       # relative to the repo root, or absolute
+remote_target = ""                    # optional rsync destination for off-box copies
+                                      # (e.g. "user@host:/backups/meshinfo"); pushed by
+                                      # scripts/backup_db.sh on the host, where SSH keys live
+
 [storage.postgres]
 enabled = true
 host = "postgres"                     # use "localhost" if not using Docker
