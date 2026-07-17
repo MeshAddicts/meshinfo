@@ -165,6 +165,81 @@ class TestHandleNodeinfo:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# handle_mapreport — NODEINFO-like enrichment from MAP_REPORT_APP packets
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestHandleMapreport:
+    def _ok_msg(self, **payload_overrides):
+        payload = {
+            "long_name": "Ridge Repeater",
+            "short_name": "RDG",
+            "hw_model": 31,
+            "role": 2,
+            "firmware_version": "2.5.3",
+            "latitude_i": 371234567,
+            "longitude_i": -1219876543,
+            "altitude": 812,
+            "position_precision": 16,
+        }
+        payload.update(payload_overrides)
+        # sender is the ServiceEnvelope gateway_id — always a "!hex" string.
+        return {"from": 0x11223344, "sender": "!aabbccdd", "channel": 0, "payload": payload}
+
+    def test_happy_path_enriches_node_and_fills_position(self):
+        mqtt, data = make_mqtt()
+        run(mqtt.handle_mapreport(self._ok_msg()))
+        node = data.pg_storage._nodes["11223344"]
+        assert node["longname"] == "Ridge Repeater"
+        assert node["shortname"] == "RDG"
+        assert node["hardware"] == 31
+        assert node["role"] == 2
+        assert node["position"]["latitude_i"] == 371234567
+        assert node["position"]["longitude_i"] == -1219876543
+        assert node["position"]["altitude"] == 812
+        # MapReport calls it position_precision; node_positions stores precision_bits.
+        assert node["position"]["precision_bits"] == 16
+        assert node["gateway"] == "aabbccdd"
+        assert node["last_channel"] == "0"
+
+    def test_role_defaults_to_client_when_omitted(self):
+        """proto3 omits zero enums, so an absent role IS role CLIENT (0)."""
+        mqtt, data = make_mqtt()
+        msg = self._ok_msg()
+        del msg["payload"]["role"]
+        run(mqtt.handle_mapreport(msg))
+        assert data.pg_storage._nodes["11223344"]["role"] == 0
+
+    def test_does_not_overwrite_existing_position(self):
+        """Map reports are timeless; a position learned from a real POSITION
+        packet must win over them, cache included."""
+        existing = {"latitude_i": 1, "longitude_i": 2, "time": 1234}
+        seed = {"id": "11223344", "longname": "X", "shortname": "Y",
+                "position": dict(existing)}
+        mqtt, data = make_mqtt(nodes={"11223344": seed})
+        run(mqtt.handle_mapreport(self._ok_msg()))
+        assert data.pg_storage._nodes["11223344"]["position"] == existing
+
+    def test_absent_coords_leave_position_unset(self):
+        mqtt, data = make_mqtt()
+        msg = self._ok_msg()
+        for key in ("latitude_i", "longitude_i", "altitude", "position_precision"):
+            del msg["payload"][key]
+        run(mqtt.handle_mapreport(msg))
+        assert data.pg_storage._nodes["11223344"]["position"] is None
+
+    def test_missing_payload_skips_without_write(self):
+        mqtt, data = make_mqtt()
+        run(mqtt.handle_mapreport({"from": 0x11223344}))
+        assert data.pg_storage.writes == []
+
+    def test_missing_from_skips_without_write(self):
+        mqtt, data = make_mqtt()
+        run(mqtt.handle_mapreport({"payload": {"long_name": "Ghost"}}))
+        assert data.pg_storage.writes == []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # handle_text — chat path with required-field guards
 # ─────────────────────────────────────────────────────────────────────────────
 

@@ -182,16 +182,17 @@ class MQTT:
 
                 elif mp.decoded.portnum == portnums_pb2.MAP_REPORT_APP:
                     try:
-                        report = mesh_pb2.Position().FromString(mp.decoded.payload)
-                        out = json.loads(MessageToJson(report, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
+                        report = mqtt_pb2.MapReport().FromString(mp.decoded.payload)
+                        out = json.loads(MessageToJson(report, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True))
                         outs["type"] = "mapreport"
                         outs["payload"] = out
                         logger.debug("Decoded protobuf message: mapreport: %s", outs)
-                        # self.handle_mapreport(outs)
                     except UnicodeDecodeError as e:
                         logger.debug("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
                         logger.debug("Protobuf decode error: text: %s", e)
+                    else:
+                        await self._safe_handle("handle_mapreport", self.handle_mapreport(outs))
 
                 elif mp.decoded.portnum == portnums_pb2.NEIGHBORINFO_APP:
                     try:
@@ -233,7 +234,6 @@ class MQTT:
                         outs["type"] = "routing"
                         outs["payload"] = out
                         logger.debug("Decoded protobuf message: routing: %s", outs)
-                        # self.handle_routing(outs)
                     except UnicodeDecodeError as e:
                         logger.debug("Unicode decoding error: text: %s", e)
                     except DecodeError as e:
@@ -358,23 +358,6 @@ class MQTT:
                 except Exception as e:
                     logger.error("JSON message processing error: %s", e, exc_info=True)
 
-    async def publish(self, client, topic, msg):
-        result = await client.publish(topic, msg)
-        status = result[0]
-        if status == 0:
-            logger.debug("Sent message to topic %s", topic)
-            return True
-        else:
-            logger.warning("Failed to send message to topic %s", topic)
-            return False
-
-    async def subscribe(self, client, topic):
-        client.subscribe(topic)
-        logger.info("Subscribed to topic %s", topic)
-
-    async def unsubscribe(self, client, topic):
-        client.unsubscribe(topic)
-
     ### message handlers
 
     async def _safe_handle(self, label: str, coro) -> None:
@@ -496,6 +479,50 @@ class MQTT:
             node['last_channel'] = str(msg['channel'])
 
         await self.data.update_node(id, node)
+
+    async def handle_mapreport(self, msg):
+        from_id = self._normalize_msg_addrs(msg)
+        if from_id is None:
+            logger.debug("handle_mapreport: missing/invalid 'from'; skipping: %s", msg)
+            return
+        payload = msg.get('payload')
+        if not isinstance(payload, dict):
+            logger.debug("handle_mapreport: missing/invalid payload; skipping: %s", msg)
+            return
+
+        node = await self.data.pg_storage.get_node_cached(from_id)
+        if node is None:
+            node = Node.default_node(from_id)
+            logger.debug("Discovered node %s via mapreport", from_id)
+
+        if payload.get('long_name'):
+            node['longname'] = payload['long_name']
+        if payload.get('short_name'):
+            node['shortname'] = payload['short_name']
+        if 'hw_model' in payload:
+            node['hardware'] = payload['hw_model']
+        # proto3 omits zero enums: an absent role means CLIENT (0), same as NODEINFO.
+        node['role'] = payload.get('role', 0)
+
+        # Map reports carry no timestamp, so only fill a position for nodes
+        # that have none — a real POSITION packet owns the field once seen
+        # (the node_positions upsert rejects timeless updates over timestamped
+        # ones; this guard keeps the node cache consistent with that).
+        if not node.get('position') and payload.get('latitude_i') and payload.get('longitude_i'):
+            node['position'] = {
+                'latitude_i': payload['latitude_i'],
+                'longitude_i': payload['longitude_i'],
+                'altitude': payload.get('altitude'),
+                'precision_bits': payload.get('position_precision'),
+            }
+
+        if msg.get('sender'):
+            node['gateway'] = msg['sender']
+
+        if 'channel' in msg:
+            node['last_channel'] = str(msg['channel'])
+
+        await self.data.update_node(from_id, node)
 
     async def handle_position(self, msg):
         id = self._normalize_msg_addrs(msg)

@@ -9,10 +9,13 @@ schema/migration lifecycle. All node/chat/telemetry state lives here.
 import asyncio
 import asyncpg
 import base64
+import contextvars
+import copy
 import datetime
 import json
 import logging
 import math
+import time
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, Optional, List, Tuple
@@ -27,6 +30,7 @@ from storage.db.uplink_dedup import (
     reception_template,
     reconstruct_copy,
 )
+from storage.db.write_retry import WriteRetryQueue, WriteStillFailing
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +62,42 @@ def _finite_or_none(value: Any) -> Any:
         except (TypeError, ValueError):
             pass
     return value
+
+
+# Buffered-write kinds the replay dispatcher understands; enqueue validates
+# against this so a typo'd kind fails in tests, not silently during recovery.
+_RETRY_KINDS = frozenset({"mqtt_message", "telemetry", "chat_message", "traceroute"})
+
+# True while the current *task* is the retry drain replaying a buffered write —
+# a ContextVar, not an instance flag, because live ingest writes interleave
+# with replays on the same loop and must not inherit the replay behavior.
+_REPLAYING: "contextvars.ContextVar[bool]" = contextvars.ContextVar("write_replaying", default=False)
+
+
+def _is_retryable_write_error(e: BaseException) -> bool:
+    """True for unavailability-shaped errors: the write would succeed verbatim
+    once the DB answers again, so it is worth buffering. Data-shaped errors
+    (bad bind, constraint violation) would fail identically on replay and
+    must never be buffered — they'd poison the queue."""
+    if isinstance(e, (
+        asyncpg.PostgresConnectionError,   # connection died mid-query
+        asyncpg.CannotConnectNowError,     # "the database system is starting up"
+        asyncpg.AdminShutdownError,        # "the database system is shutting down"
+        asyncpg.TooManyConnectionsError,   # reconnect stampede right after recovery
+    )):
+        return True
+    if isinstance(e, asyncpg.InterfaceError):
+        # asyncpg's client-side bind failures (exceptions._base.DataError,
+        # e.g. "invalid input for query argument") subclass InterfaceError AND
+        # ValueError — those are data-shaped, not outage-shaped.
+        return not isinstance(e, ValueError)
+    if isinstance(e, TimeoutError):
+        # command_timeout on a reachable-but-slow DB (lock contention, vacuum,
+        # partition maintenance): replaying piles load onto the stall, and the
+        # timed-out INSERT may still have committed server-side.
+        return False
+    # OS-level refused/reset on (re)connect; ConnectionError is an OSError.
+    return isinstance(e, OSError)
 
 
 def _encode_cursor(created_at: datetime.datetime, row_id: int) -> str:
@@ -169,6 +209,16 @@ class PostgresStorage:
         # this task errors mid-batch with "InterfaceError: pool is closing").
         self._backfill_task: Optional[asyncio.Task] = None
 
+        # Archive writes that failed on a DB outage, replayed on recovery so a
+        # postgres bounce doesn't drop packets. See storage/db/write_retry.py.
+        self._write_retry = WriteRetryQueue(self._replay_write, self._probe_connection)
+        self._retry_enqueues = 0
+        # The retry drain is a second writer through the dedup check-then-act
+        # sequence (cache/DB lookup -> canonical insert spans awaits); this
+        # lock keeps the "one canonical per packet" invariant that the
+        # MQTT-loop-is-the-only-writer assumption used to provide.
+        self._dedup_lock = asyncio.Lock()
+
         # Uplink dedup (#526): one canonical mqtt_messages row per mesh packet,
         # per-gateway copies recorded in packet_receptions. Safe as a plain
         # in-memory cache because the MQTT loop is the only (serial) writer.
@@ -227,8 +277,83 @@ class PostgresStorage:
             self.pool = None
             return False
 
+    async def _probe_connection(self) -> bool:
+        """One cheap round-trip; the write-retry drain gates replays on this.
+        Bounded acquire so an exhausted pool can't wedge the drain task."""
+        if self.pool is None:
+            return False
+        try:
+            async with self.pool.acquire(timeout=5.0) as conn:
+                await conn.fetchval("SELECT 1")
+            return True
+        except Exception:
+            return False
+
+    async def _replay_write(self, kind: str, args: Tuple[Any, ...], failed_at: float) -> None:
+        """Re-run a buffered archive write via its public method. Runs with
+        _REPLAYING set so a still-down DB surfaces as WriteStillFailing to the
+        drain (requeue + backoff) instead of re-buffering."""
+        token = _REPLAYING.set(True)
+        try:
+            if kind == "mqtt_message":
+                # The canonical row for this packet may have been written
+                # before the outage — widen the dedup lookup to cover the time
+                # this item spent buffered, or every replayed copy of an
+                # older packet would elect a duplicate canonical.
+                age = max(0.0, time.time() - failed_at)
+                await self.write_mqtt_message(args[0], _dedup_lookback_s=age + self.dedup_window)
+            elif kind == "telemetry":
+                await self.write_telemetry(args[0], args[1])
+            elif kind == "chat_message":
+                await self.write_chat_message(args[0], args[1])
+            elif kind == "traceroute":
+                await self.write_traceroute(args[0], args[1])
+            else:
+                logger.error("Write-retry: unknown kind %r; dropping", kind)
+        finally:
+            _REPLAYING.reset(token)
+
+    def _handle_write_failure(self, label: str, kind: Optional[str],
+                              args: Optional[Tuple[Any, ...]], e: Exception) -> None:
+        """Shared failure policy for the four archive writes. Must be called
+        from an active except block (the bare raise re-raises `e`)."""
+        if self.raise_on_write_error:
+            logger.error(f"Failed to write {label} to PostgreSQL: {e}")
+            raise
+        if kind is not None and args is not None and _is_retryable_write_error(e):
+            if _REPLAYING.get():
+                raise WriteStillFailing(f"{kind}: {e}") from e
+            self._queue_write_retry(kind, args, e)
+            return
+        logger.error(f"Failed to write {label} to PostgreSQL: {e}")
+
+    def _queue_write_retry(self, kind: str, args: Tuple[Any, ...], err: BaseException) -> None:
+        """Snapshot the args (callers mutate message dicts after the write
+        call) and buffer the write for replay."""
+        if kind not in _RETRY_KINDS:
+            raise ValueError(f"unknown write-retry kind {kind!r}")
+        try:
+            args = copy.deepcopy(args)
+        except Exception:
+            logger.error("Failed to write %s to PostgreSQL and could not snapshot it for retry: %s", kind, err)
+            return
+        if not self._write_retry.put(kind, args, failed_at=time.time()):
+            logger.error("Failed to write %s to PostgreSQL during shutdown; dropped: %s", kind, err)
+            return
+        self._retry_enqueues += 1
+        if self._retry_enqueues == 1 or self._retry_enqueues % 100 == 0:
+            # ERROR so operators alerting on write failures still see the
+            # outage; per-write lines stay at debug to avoid a log flood.
+            logger.error(
+                "DB unavailable (%s); buffering archive writes for replay (%d queued)",
+                err, len(self._write_retry),
+            )
+        else:
+            logger.debug("DB unavailable; queued %s for retry (%d pending)", kind, len(self._write_retry))
+
     async def close(self):
         """Cancel background tasks (so they don't touch a closing pool) and tear down."""
+        await self._write_retry.close()
         if self._backfill_task is not None and not self._backfill_task.done():
             self._backfill_task.cancel()
             try:
@@ -970,9 +1095,7 @@ class PostgresStorage:
                 )
 
         except Exception as e:
-            logger.error(f"Failed to write telemetry to PostgreSQL: {e}")
-            if self.raise_on_write_error:
-                raise
+            self._handle_write_failure("telemetry", "telemetry", (node_id, telemetry_msg), e)
 
     async def write_chat_message(self, node_id: str, chat_msg: Dict[str, Any]) -> None:
         """
@@ -1057,9 +1180,7 @@ class PostgresStorage:
                     )
 
         except Exception as e:
-            logger.error(f"Failed to write chat message to PostgreSQL: {e}")
-            if self.raise_on_write_error:
-                raise
+            self._handle_write_failure("chat message", "chat_message", (node_id, chat_msg), e)
 
     async def write_traceroute(self, node_id: str, traceroute_msg: Dict[str, Any]) -> None:
         """
@@ -1152,9 +1273,7 @@ class PostgresStorage:
                 )
 
         except Exception as e:
-            logger.error(f"Failed to write traceroute to PostgreSQL: {e}")
-            if self.raise_on_write_error:
-                raise
+            self._handle_write_failure("traceroute", "traceroute", (node_id, traceroute_msg), e)
 
     def _coerce_mqtt_payload_text(self, value: Any) -> Optional[str]:
         """
@@ -1183,7 +1302,8 @@ class PostgresStorage:
 
         return str(value)
 
-    async def write_mqtt_message(self, mqtt_msg: Any) -> Optional[int]:
+    async def write_mqtt_message(self, mqtt_msg: Any, *,
+                                 _dedup_lookback_s: Optional[float] = None) -> Optional[int]:
         """
         Write a raw MQTT message (or decoded/log dict) into mqtt_messages.
 
@@ -1192,6 +1312,9 @@ class PostgresStorage:
 
         Returns the inserted row's id (the `mqtt_row_id` the read path exposes),
         or None if storage is unavailable or the write failed.
+
+        _dedup_lookback_s: retry-replay only — widens the canonical lookup
+        window to cover the time the message spent buffered.
         """
         if not self._ready("write_mqtt_message"):
             return None
@@ -1250,11 +1373,17 @@ class PostgresStorage:
                 # below so a copy is never lost to a dedup bug.
                 if self.dedup_enabled and from_node_id is not None and packet_id is not None:
                     try:
-                        return await self._write_deduped(
-                            conn, clean, topic, payload_text, qos_i, retain_b,
-                            ts_i, from_node_id, to_node_id, packet_id,
-                        )
+                        # Serialized: the retry drain is a second writer, and
+                        # the dedup check-then-insert must stay atomic per task.
+                        async with self._dedup_lock:
+                            return await self._write_deduped(
+                                conn, clean, topic, payload_text, qos_i, retain_b,
+                                ts_i, from_node_id, to_node_id, packet_id,
+                                lookback_s=_dedup_lookback_s,
+                            )
                     except Exception as e:
+                        if _is_retryable_write_error(e):
+                            raise  # outage, not a dedup bug — buffer the write
                         logger.warning("Uplink dedup failed (storing copy verbatim): %s", e)
 
                 row_id = await self._insert_mqtt_row(
@@ -1263,9 +1392,10 @@ class PostgresStorage:
                 )
             return int(row_id) if row_id is not None else None
         except Exception as e:
-            logger.error(f"Failed to write mqtt message to PostgreSQL: {e}")
-            if self.raise_on_write_error:
-                raise
+            self._handle_write_failure(
+                "mqtt message", "mqtt_message",
+                (mqtt_msg,) if isinstance(mqtt_msg, dict) else None, e,
+            )
             return None
 
     @staticmethod
@@ -1304,18 +1434,22 @@ class PostgresStorage:
         from_node_id: str,
         to_node_id: Optional[str],
         packet_id: int,
+        lookback_s: Optional[float] = None,
     ) -> Optional[int]:
         """Dedup-aware archive write: returns the canonical row id for every
-        uplink copy of a packet, inserting a canonical row only for the first."""
+        uplink copy of a packet, inserting a canonical row only for the first.
+
+        lookback_s widens the DB lookup beyond dedup_window for retry replays,
+        whose packet may have been canonicalized before the outage."""
         key = (from_node_id, packet_id)
         hit = self._dedup_cache.get(key)
         if hit is None:
             # Cache miss (e.g. app restart mid-window): the canonical row may
             # still exist in the DB — window-bounded lookup via idx_mqtt_messages_packet.
-            db_hit = await self._dedup_lookup_db(conn, from_node_id, packet_id)
+            db_hit = await self._dedup_lookup_db(conn, from_node_id, packet_id, lookback_s)
             if db_hit is not None:
                 row_id, canonical, age = db_hit
-                self._dedup_cache.put(key, row_id, canonical, ttl=self.dedup_window - age)
+                self._dedup_cache.put(key, row_id, canonical, ttl=max(0.0, self.dedup_window - age))
                 hit = (row_id, canonical)
 
         if hit is not None:
@@ -1343,10 +1477,12 @@ class PostgresStorage:
         return int(row_id)
 
     async def _dedup_lookup_db(
-        self, conn: asyncpg.Connection, from_node_id: str, packet_id: int
+        self, conn: asyncpg.Connection, from_node_id: str, packet_id: int,
+        lookback_s: Optional[float] = None,
     ) -> Optional[Tuple[int, Dict[str, Any], float]]:
         """Find a live canonical row for (from, packet id) inside the dedup
-        window. Returns (row_id, canonical dict, age seconds) or None."""
+        window (or a wider retry-replay lookback). Returns (row_id, canonical
+        dict, age seconds) or None."""
         # ASC: adopt the first-heard row — it's the one carrying receptions if a
         # rare verbatim-fallback row also exists for this key in the window.
         row = await conn.fetchrow(
@@ -1356,7 +1492,7 @@ class PostgresStorage:
                WHERE from_node_id = $1 AND packet_id = $2
                  AND created_at > now() - make_interval(secs => $3)
                ORDER BY created_at ASC LIMIT 1""",
-            from_node_id, packet_id, float(self.dedup_window),
+            from_node_id, packet_id, max(float(lookback_s or 0.0), float(self.dedup_window)),
         )
         if row is None or not row["payload"]:
             return None

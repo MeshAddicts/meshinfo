@@ -73,7 +73,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "server": {
         "node_id": "",
         "base_url": "",
-        "log_level": "INFO",  # TODO: Wire into logging setup (e.g., logging.getLogger().setLevel(...))
+        "log_level": "INFO",
         "node_activity_prune_threshold": 259200,
         "timezone": "UTC",
         "intervals": {
