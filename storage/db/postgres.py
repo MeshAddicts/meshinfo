@@ -12,6 +12,7 @@ import base64
 import datetime
 import json
 import logging
+import math
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, Optional, List, Tuple
@@ -39,6 +40,24 @@ def _json_default(obj: Any) -> Any:
     if isinstance(obj, datetime.timedelta):
         return obj.total_seconds()
     return str(obj)
+
+
+def _finite_or_none(value: Any) -> Any:
+    """Map non-finite telemetry metrics to None for typed numeric columns.
+
+    Protobuf's proto3 JSON mapping serializes non-finite floats as the
+    strings "NaN"/"Infinity"/"-Infinity" (and some decode paths yield real
+    non-finite floats); asyncpg can bind neither into a numeric column, so
+    the whole node write fails. Everything else passes through unchanged."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, str):
+        try:
+            if not math.isfinite(float(value)):
+                return None
+        except (TypeError, ValueError):
+            pass
+    return value
 
 
 def _encode_cursor(created_at: datetime.datetime, row_id: int) -> str:
@@ -830,7 +849,7 @@ class PostgresStorage:
         present: Dict[str, Any] = {}
         for payload_key, col_name in self.TELEMETRY_COLUMNS.items():
             if payload_key in telemetry:
-                present[col_name] = telemetry[payload_key]
+                present[col_name] = _finite_or_none(telemetry[payload_key])
 
         if not present:
             logger.debug("_write_node_telemetry_current: no recognized telemetry fields for node %s; skipping", node_norm)

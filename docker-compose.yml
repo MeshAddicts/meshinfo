@@ -17,8 +17,10 @@ services:
       - "maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM:-64MB}"
       - "-c"
       - "effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-1GB}"
-    ports:
-      - "5432:5432"
+    # No published port: the app reaches Postgres over the compose network,
+    # and docker-published ports bypass host firewalls (ufw). For host access
+    # use `docker compose exec postgres psql -U postgres meshinfo`, or map
+    # "127.0.0.1:5432:5432" in a docker-compose.override.yml.
     volumes:
       # postgres:18+ stores data in a version-specific subdir; mount the
       # parent (/var/lib/postgresql), not /data. See POSTGRES.md.
@@ -32,6 +34,9 @@ services:
   mqtt:
     container_name: mqtt
     image: eclipse-mosquitto:latest
+    # 1883 stays published on all interfaces by design — mesh gateways on the
+    # WAN publish uplinks here. Protect it with broker auth: see the
+    # password_file/acl_file notes in mosquitto/config/mosquitto.conf.sample.
     ports:
       - 1883:1883
     volumes:
@@ -54,8 +59,10 @@ services:
     # dns:
     #   - 1.1.1.1
     #   - 1.0.0.1
+    # Localhost-only: caddy is the public entry for the API (/v1, /api, /tiles).
+    # Docker-published ports bypass host firewalls, so don't expose 9000 directly.
     ports:
-      - 9000:9000
+      - 127.0.0.1:9000:9000
     restart: unless-stopped
     # Wait for Postgres readiness, not just container start.
     depends_on:
@@ -72,8 +79,9 @@ services:
 
   frontend:
     image: ghcr.io/meshaddicts/meshinfo-spa:latest
+    # Localhost-only: caddy is the public entry for the SPA.
     ports:
-      - 8000:80
+      - 127.0.0.1:8000:80
     env_file:
       - path: ./frontend/.env
         required: false
