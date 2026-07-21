@@ -2334,6 +2334,7 @@ export function Map() {
         onHideNodesChange={setLiveCoverageHideNodes}
         group={liveCoverageGroup}
         onGroupChange={setLiveCoverageGroup}
+        hidden={activeTool != null}
       />
 
       <MapHealthWidget nodes={nodes} />

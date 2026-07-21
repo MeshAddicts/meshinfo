@@ -1,4 +1,7 @@
-/** Top-right toggle pill (left of the mesh-health pill): show/hide + opacity + freshness. */
+/** Live-coverage toggle pill: show/hide + opacity + freshness. Top-right on lg+
+ * (left of the mesh-health pill); below lg it drops to a second row below the
+ * hamburger — the top row is too crowded and it collided with search/tools (#537).
+ * The top row only has room once the lg nav rail applies (clear from ~822px). */
 import { useEffect, useId, useRef, useState } from "react";
 
 import { relativeTime } from "../lib/helpers";
@@ -17,6 +20,9 @@ export interface LiveCoveragePillProps {
   /** Selected pyramid: "all" or a modem-preset id. */
   group: string;
   onGroupChange: (group: string) => void;
+  /** Hide on mobile (like MapSettingsPanel/FiltersResetPill) — the tool-pick
+   * prompt occupies the same top-14 row there. */
+  hidden?: boolean;
 }
 
 export function LiveCoveragePill({
@@ -30,6 +36,7 @@ export function LiveCoveragePill({
   onHideNodesChange,
   group,
   onGroupChange,
+  hidden = false,
 }: LiveCoveragePillProps) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -69,7 +76,10 @@ export function LiveCoveragePill({
       : "Live network coverage — click to show";
 
   return (
-    <div ref={wrapRef} className="fixed top-3 right-44 sm:right-72 z-30 flex flex-col items-end">
+    <div
+      ref={wrapRef}
+      className={`fixed top-14 right-3 lg:top-3 lg:right-72 z-30 flex flex-col items-end ${hidden ? "max-sm:hidden" : ""}`}
+    >
       <div className="flex items-center rounded-xl bg-gray-900/80 backdrop-blur-xl border border-white/10 shadow-2xl">
         <button
           type="button"
