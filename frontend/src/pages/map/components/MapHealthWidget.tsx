@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { IMapNode } from "../lib/types";
 
@@ -60,8 +60,40 @@ function computeHealth(nodes: Record<string, IMapNode>) {
   };
 }
 
-export function MapHealthWidget({ nodes }: { nodes: Record<string, IMapNode> }) {
+export function MapHealthWidget({
+  nodes,
+  hidden = false,
+}: {
+  nodes: Record<string, IMapNode>;
+  /** Hide below lg while a tool is armed — the tool-pick prompt shares the
+   * top-14 row and reaches this pill's row-2 span up to ~920px viewports. */
+  hidden?: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  // Dismiss on Escape or pointerdown outside. Capture + stopPropagation so the
+  // press that closes the panel doesn't also run the map's global Esc chain
+  // (tool cancel / selection clear); editable fields keep their own Esc.
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      e.stopPropagation();
+      setExpanded(false);
+    };
+    const onDown = (e: PointerEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setExpanded(false);
+    };
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("pointerdown", onDown);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("pointerdown", onDown);
+    };
+  }, [expanded]);
   // Cheap online/total for the always-visible pill; the BFS diameter + link counts
   // only matter when expanded, so skip that work every poll while collapsed.
   const basic = useMemo(() => {
@@ -73,7 +105,14 @@ export function MapHealthWidget({ nodes }: { nodes: Record<string, IMapNode> }) 
   const health = useMemo(() => (expanded ? computeHealth(nodes) : null), [expanded, nodes]);
 
   return (
-    <div className="fixed top-3 right-20 sm:right-40 z-30 flex flex-col items-end">
+    <div
+      ref={wrapRef}
+      // Below xl the top row can't hold it: left-anchored tools collide at
+      // <366px and 640-684px, and the lg-only coordinate pill (z-40) covers the
+      // right-40 spot until ~1100px. It sits in the coverage pill's second row
+      // (left of it) instead, returning to the top row at xl alongside it.
+      className={`fixed top-14 right-34 xl:top-3 xl:right-40 z-30 flex flex-col items-end ${hidden ? "max-lg:hidden" : ""}`}
+    >
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
@@ -96,6 +135,7 @@ export function MapHealthWidget({ nodes }: { nodes: Record<string, IMapNode> }) 
 
       {expanded && health && (
         <div id="mesh-health-panel" className="mt-2 min-w-55 rounded-xl p-3
+          max-sm:fixed max-sm:top-24 max-sm:right-3 max-sm:mt-0
           bg-gray-900/90 backdrop-blur-xl border border-white/10 shadow-2xl
           space-y-2 text-xs">
           <div className="flex items-center justify-between">

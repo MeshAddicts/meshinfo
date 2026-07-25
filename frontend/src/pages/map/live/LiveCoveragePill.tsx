@@ -1,7 +1,7 @@
-/** Live-coverage toggle pill: show/hide + opacity + freshness. Top-right on lg+
- * (left of the mesh-health pill); below lg it drops to a second row below the
- * hamburger — the top row is too crowded and it collided with search/tools (#537).
- * The top row only has room once the lg nav rail applies (clear from ~822px). */
+/** Live-coverage toggle pill: show/hide + opacity + freshness. Top-right on xl+;
+ * below xl it drops to a second row under the top bar — the top row collided
+ * with search/tools below ~830px (#537), and at lg..xl the always-on coordinate
+ * pill (left 612px, z-40) reaches ~850px and would cover it. */
 import { useEffect, useId, useRef, useState } from "react";
 
 import { relativeTime } from "../lib/helpers";
@@ -42,18 +42,24 @@ export function LiveCoveragePill({
   const wrapRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
 
+  // Capture + stopPropagation so the Esc that closes the options panel doesn't
+  // also run the map's global Esc chain; editable fields keep their own Esc.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key !== "Escape") return;
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      e.stopPropagation();
+      setOpen(false);
     };
     const onDown = (e: PointerEvent) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
     };
-    document.addEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey, true);
     document.addEventListener("pointerdown", onDown);
     return () => {
-      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("keydown", onKey, true);
       document.removeEventListener("pointerdown", onDown);
     };
   }, [open]);
@@ -78,7 +84,7 @@ export function LiveCoveragePill({
   return (
     <div
       ref={wrapRef}
-      className={`fixed top-14 right-3 lg:top-3 lg:right-72 z-30 flex flex-col items-end ${hidden ? "max-sm:hidden" : ""}`}
+      className={`fixed top-14 right-3 xl:top-3 xl:right-72 z-30 flex flex-col items-end ${hidden ? "max-sm:hidden" : ""}`}
     >
       <div className="flex items-center rounded-xl bg-gray-900/80 backdrop-blur-xl border border-white/10 shadow-2xl">
         <button

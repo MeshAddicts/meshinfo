@@ -2318,10 +2318,30 @@ export function Map() {
         </div>
       )}
 
+      {/* Top-bar widgets in visual order below xl (DOM order = tab order):
+          search, tools, health, coverage. At xl+ coverage returns to the top
+          row visually LEFT of health — a known tab-order mismatch, accepted to
+          keep the phone/tablet order correct. The open tools menu paints above
+          the row-2 pills via its z-40. */}
       <MapSearchBar
         nodes={nodes}
         onSelect={(id) => handleNodeSelectRef.current(id)}
       />
+
+      <MapToolsDrawer
+        activeTool={activeTool}
+        onSelect={(tool) => {
+          resetTool();
+          if (tool) {
+            setActiveTool(tool);
+            setToolStep("pickFrom");
+          }
+        }}
+        terrainEnabled={terrain3D}
+        onRequestTerrainSetup={openTerrainSetup}
+      />
+
+      <MapHealthWidget nodes={nodes} hidden={activeTool != null} />
 
       <LiveCoveragePill
         enabled={liveCoverage}
@@ -2337,7 +2357,27 @@ export function Map() {
         hidden={activeTool != null}
       />
 
-      <MapHealthWidget nodes={nodes} />
+      {/* Before MapSettingsPanel so the bottom row tabs left-to-right and the
+          mobile settings sheet (also z-1100, later in DOM) paints above it. */}
+      <FiltersResetPill
+        recentDays={recentDays}
+        setRecentDays={setRecentDays}
+        linkMode={linkMode}
+        setLinkMode={setLinkMode}
+        roleFilter={roleFilter}
+        setRoleFilter={setRoleFilter}
+        channelFilter={channelFilter}
+        setChannelFilter={setChannelFilter}
+        onOpenFilters={() => {
+          setSettingsOpenSections((prev) => {
+            const next = new Set(prev);
+            next.add("filters");
+            return next;
+          });
+          setSettingsPanelOpen(true);
+        }}
+        hidden={!!detailsData || activeTool != null || settingsPanelOpen}
+      />
 
       <MapSettingsPanel
         settingsPanelRef={settingsPanelRef}
@@ -2378,26 +2418,6 @@ export function Map() {
         resolveChannelLabel={resolveChannelLabel}
       />
 
-      <FiltersResetPill
-        recentDays={recentDays}
-        setRecentDays={setRecentDays}
-        linkMode={linkMode}
-        setLinkMode={setLinkMode}
-        roleFilter={roleFilter}
-        setRoleFilter={setRoleFilter}
-        channelFilter={channelFilter}
-        setChannelFilter={setChannelFilter}
-        onOpenFilters={() => {
-          setSettingsOpenSections((prev) => {
-            const next = new Set(prev);
-            next.add("filters");
-            return next;
-          });
-          setSettingsPanelOpen(true);
-        }}
-        hidden={!!detailsData || activeTool != null}
-      />
-
       {myNodeLabel && (
         <div className="fixed top-3 left-1/2 -translate-x-1/2 z-1060 px-3 py-1.5 rounded-xl shadow-2xl bg-gray-900/80 backdrop-blur-xl text-sm border border-white/10 flex items-center gap-2">
           <span className="text-gray-400">My Node:</span>
@@ -2431,7 +2451,13 @@ export function Map() {
       <button
         type="button"
         onClick={() => setLivePackets((v) => !v)}
-        className="absolute bottom-3 left-3 z-30 flex items-center gap-2 rounded-xl border border-white/10 bg-gray-900/80 px-3 py-1.5 text-xs font-medium shadow-2xl backdrop-blur-xl transition hover:bg-gray-900/90"
+        // lg+: right of the filters pill, which owns the corner (fixed at
+        // map-pad+1rem; this button is absolute inside the rail-shifted map
+        // container, so plain left-32 lands just past the pill's 192px edge).
+        // Below lg the filters pill stacks above this button instead. Hidden
+        // during tool sessions: the centered result panels (coverage 560px,
+        // traceroute 560px, LOS 1200px) all reach this spot at lg widths.
+        className={`absolute bottom-3 left-3 lg:left-32 z-30 flex items-center gap-2 rounded-xl border border-white/10 bg-gray-900/80 px-3 py-1.5 text-xs font-medium shadow-2xl backdrop-blur-xl transition hover:bg-gray-900/90 ${activeTool != null ? "hidden" : ""}`}
         title={livePackets ? "Live map animations on — click to turn off" : "Live map animations off — click to turn on"}
       >
         <span className={`h-2 w-2 rounded-full ${livePackets ? "bg-emerald-400 animate-pulse" : "bg-gray-500"}`} />
@@ -2443,20 +2469,6 @@ export function Map() {
         hasPin={hasCoordPin}
         onJump={jumpToCoord}
         onClearPin={clearCoordPin}
-      />
-
-      {/* Tools drawer — global, top-left next to search */}
-      <MapToolsDrawer
-        activeTool={activeTool}
-        onSelect={(tool) => {
-          resetTool();
-          if (tool) {
-            setActiveTool(tool);
-            setToolStep("pickFrom");
-          }
-        }}
-        terrainEnabled={terrain3D}
-        onRequestTerrainSetup={openTerrainSetup}
       />
 
       {/* Tool prompts — guide the user through picks */}

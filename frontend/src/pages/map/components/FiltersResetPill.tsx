@@ -100,7 +100,11 @@ export function FiltersResetPill({
   return (
     <div
       ref={ref}
-      className={`fixed bottom-4 left-[calc(var(--map-pad)+1rem)] z-1100 transition-[left] duration-200 ${hidden ? "max-sm:hidden" : ""}`}
+      // Below lg, --map-pad is 0 and the bottom-left corner belongs to the
+      // Animations toggle (bottom-3 left-3) — stack above it instead of on it.
+      // hidden hides through lg (not just sm): tool flows own this strip below
+      // lg too (trace corridors panel reaches down to sm:bottom-16).
+      className={`fixed bottom-14 left-3 lg:bottom-4 lg:left-[calc(var(--map-pad)+1rem)] z-1100 transition-[left] duration-200 ${hidden ? "max-lg:hidden" : ""}`}
     >
       {open && hasFilters && (
         <div id="active-filters-popover" className="mb-2 w-56 rounded-xl p-2 space-y-1
