@@ -8,8 +8,17 @@ import type { MergeOrigin } from "../rf/coverageAnalysis";
 /** Each merge origin multiplies per-pixel ITM cost; 8 keeps Survey tractable. */
 export const MAX_MERGE_ORIGINS = 8;
 
+/** Stable empty list so a closed coverage tool never churns memo identities. */
+const EMPTY_MERGE_NODE_OPTIONS: Array<{ id: string; shortname?: string; longname?: string }> = [];
+
 /** Coverage-merge origins are session-only by design — contextual to one analysis. */
-export function useCoverageMergeOrigins(nodes: Record<string, IMapNode>, toolFromId: string | null) {
+export function useCoverageMergeOrigins(
+  nodes: Record<string, IMapNode>,
+  toolFromId: string | null,
+  /** True while the coverage tool is open — the options list only feeds its
+   *  merge-origin dropdown, so don't rebuild it on every nodes refresh otherwise. */
+  enabled: boolean,
+) {
   const [coverageMergeOrigins, setCoverageMergeOrigins] = useState<MergeOrigin[]>([]);
   // True while the panel's "Pick on map" button is armed; the next map click
   // adds a virtual merge origin.
@@ -53,6 +62,7 @@ export function useCoverageMergeOrigins(nodes: Record<string, IMapNode>, toolFro
   }, [nodes]);
 
   const mergeNodeOptions = useMemo(() => {
+    if (!enabled) return EMPTY_MERGE_NODE_OPTIONS;
     const out: Array<{ id: string; shortname?: string; longname?: string }> = [];
     const primaryId = toolFromId ? (toolFromId.startsWith("!") ? toolFromId.slice(1) : toolFromId) : null;
     for (const [rawId, n] of Object.entries(nodes)) {
@@ -62,7 +72,7 @@ export function useCoverageMergeOrigins(nodes: Record<string, IMapNode>, toolFro
       out.push({ id: cleanId, shortname: n.shortname, longname: n.longname });
     }
     return out;
-  }, [nodes, toolFromId]);
+  }, [enabled, nodes, toolFromId]);
 
   return {
     coverageMergeOrigins, setCoverageMergeOrigins,

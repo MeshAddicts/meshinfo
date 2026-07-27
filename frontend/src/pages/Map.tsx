@@ -4,29 +4,25 @@ import maplibregl, {
   GeoJSONSource as MlGeoJSONSource,
   Map as MlMap,
 } from "maplibre-gl";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { toast } from "../components/toastStore";
 import { env } from "../env";
 import { reverseGeocode } from "../maps/geocoder";
 import { buildMapStyle, ensureBuildings3D, ensureTerrain, isDarkBasemap, type OsmBasemap, removeBuildings3D, removeTerrain } from "../maps/mapStyle";
 import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
-import { type ITraceroutesResponse } from "../types";
+import { type INode, type ITraceroutesResponse } from "../types";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { prefersReducedMotion } from "../utils/reducedMotion";
-import { type ClusterHover,ClusterHoverCard } from "./map/components/ClusterHoverCard";
+import { type ClusterHover, ClusterHoverCard, type ClusterHoverLeaf } from "./map/components/ClusterHoverCard";
 import { FiltersResetPill } from "./map/components/FiltersResetPill";
 import { type CoordPillSink, MapCoordinatePill } from "./map/components/MapCoordinatePill";
-import { MapCoveragePanel } from "./map/components/MapCoveragePanel";
 import { MapDetailsPanel } from "./map/components/MapDetailsPanel";
 import { MapHealthWidget } from "./map/components/MapHealthWidget";
-import { MapLosPanel } from "./map/components/MapLosPanel";
-import { MapScanPanel } from "./map/components/MapScanPanel";
 import { MapSearchBar } from "./map/components/MapSearchBar";
 import { MapSettingsPanel } from "./map/components/MapSettingsPanel";
 import { MapToolPrompt, MapToolsDrawer } from "./map/components/MapToolsDrawer";
-import { type CorridorSort, MapTraceCorridorsPanel, type TraceCorridor } from "./map/components/MapTraceCorridorsPanel";
-import { MapTraceroutePanel } from "./map/components/MapTraceroutePanel";
+import { type CorridorSort, type TraceCorridor } from "./map/components/MapTraceCorridorsPanel";
 import { useCoverageCompute } from "./map/hooks/useCoverageCompute";
 import { useCoverageMergeOrigins } from "./map/hooks/useCoverageMergeOrigins";
 import { useCoverageState } from "./map/hooks/useCoverageState";
@@ -46,7 +42,7 @@ import type { ActivityLayer } from "./map/layers/activityLayer";
 import type { ClusterDonutLayer } from "./map/layers/clusterDonutLayer";
 import type { LosTubeLayer } from "./map/layers/losTubeLayer";
 import { bindMapHoverUi } from "./map/layers/mapHoverUi";
-import { ensureMapSourcesAndLayers } from "./map/layers/mapLayers";
+import { ensureMapSourcesAndLayers, ensureTubeLayers } from "./map/layers/mapLayers";
 import {
   anyIdsFanned,
   autoSpiderfyOverlappingPlainNodes,
@@ -67,16 +63,15 @@ import {
 } from "./map/layers/spiderfy";
 import { circularMeanLng, normalizeLng } from "./map/lib/geo";
 import { computeMaxRange, formatLatLng, geodesicCircleCoords, TRANSPARENT_1PX_PNG } from "./map/lib/helpers";
-import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normNodeId } from "./map/lib/linkFeatures";
+import { buildAllLinksFeatureCollection, buildMapboxLinkFeatureCollection, buildTracerouteLinkFeatureCollection, computeHeardByIds, normalizedTraceroutePath, normNodeId } from "./map/lib/linkFeatures";
 import { computeTraceEdgeStats, findPathsBetween, findRunsBetween } from "./map/lib/pathAnalysis";
 import { LS_KEYS, readJson, writeJson } from "./map/lib/storage";
 import type { IMapNode, LinkMode, MapProvider, NodeDetailsData, NodeLike } from "./map/lib/types";
 import {
   applyClusterVisibility,
-  buildNodesGeoJSON,
+  createNodesGeoJSONBuilder,
   DEFAULT_NODE_COLOR,
   emptyLineFeatureCollection,
-  nodesDataSignature,
   ROLE_COLORS,
 } from "./map/lib/utils";
 import { CoverageLookupCard } from "./map/live/CoverageLookupCard";
@@ -86,14 +81,50 @@ import { useServerCoverageTiles } from "./map/live/useServerCoverageTiles";
 import { haversineKm } from "./map/rf/losAnalysis";
 import type { ScanClass } from "./map/rf/scanAnalysis";
 
+// Tool result panels render only while their tool is open — lazy chunks keep
+// their ~110 KB (plus pulled-in RF UI) out of the base map bundle.
+const MapCoveragePanel = lazy(() =>
+  import("./map/components/MapCoveragePanel").then((m) => ({ default: m.MapCoveragePanel })),
+);
+const MapLosPanel = lazy(() =>
+  import("./map/components/MapLosPanel").then((m) => ({ default: m.MapLosPanel })),
+);
+const MapScanPanel = lazy(() =>
+  import("./map/components/MapScanPanel").then((m) => ({ default: m.MapScanPanel })),
+);
+const MapTraceroutePanel = lazy(() =>
+  import("./map/components/MapTraceroutePanel").then((m) => ({ default: m.MapTraceroutePanel })),
+);
+const MapTraceCorridorsPanel = lazy(() =>
+  import("./map/components/MapTraceCorridorsPanel").then((m) => ({ default: m.MapTraceCorridorsPanel })),
+);
+
+// Stable empty defaults: `= {}` / `= []` on a query hook mints a fresh identity
+// every render while the data is undefined.
+const EMPTY_RAW_NODES: Record<string, INode> = {};
+const EMPTY_TRACEROUTES: ITraceroutesResponse[] = [];
+
 export function Map() {
   const mapRef = useRef<HTMLDivElement>(null);
 
   const settingsPanelRef = useRef<HTMLDivElement>(null);
   const settingsToggleRef = useRef<HTMLButtonElement>(null);
 
-  // JSON signature skips setData when the GeoJSON is byte-identical across polls
-  const persistentLinksMbJsonRef = useRef<string>("");
+  // Node-GeoJSON builder with per-feature identity caching; returning the same
+  // FeatureCollection identity means "nothing visible changed — skip setData".
+  const nodesGeoJSONBuilderRef = useRef(createNodesGeoJSONBuilder());
+  const lastUploadedNodesFcRef = useRef<GeoJSON.FeatureCollection | null>(null);
+  /** Which of the two node sources holds stale data (only the visible one gets
+   *  live setData; the other is refreshed when cluster mode toggles). */
+  const nodesFcStaleForRef = useRef<"clustered" | "plain" | null>(null);
+
+  // Persistent-links change detection: per-node link signatures are WeakMap-
+  // cached on the derived node identity, so the common SSE flush costs one
+  // O(N) pass of cache hits instead of a full rebuild + megabyte stringify.
+  const persistentLinksSigRef = useRef("");
+  const nodeLinkSigCacheRef = useRef(new WeakMap<IMapNode, string>());
+  /** Bumped when the fetched traceroute window changes (identity marker for the sig). */
+  const tracerouteEpochRef = useRef(0);
 
   const mbMapRef = useRef<MlMap | null>(null);
   const authErrorToastedRef = useRef(false);
@@ -108,8 +139,6 @@ export function Map() {
   // Bumped per style.load so effects can re-push data into recreated sources/layers.
   const [styleEpoch, setStyleEpoch] = useState(0);
   const mbSelectedIdRef = useRef<string | null>(null);
-  // Last node-source signature; skips redundant setData. -1 = never set.
-  const lastNodesSigRef = useRef<number>(-1);
   // Live packet-arc animation plumbing.
   const activityLayerRef = useRef<ActivityLayer | null>(null);
   /** 3D graded tube for the analyzed route; created once per map. */
@@ -125,9 +154,9 @@ export function Map() {
   const handleLinkHoverRef = useRef<(otherId: string | null) => void>(() => {});
   const selectedNodeIdRef = useRef<string | null>(null);
 
-  const { data: rawNodes = {}, isError: nodesQueryFailed } = useGetNodesQuery();
+  const { data: rawNodes = EMPTY_RAW_NODES, isError: nodesQueryFailed } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
-  const { data: rawTraceroutes = [], isLoading: rawTraceroutesLoading } = useGetTraceroutesQuery();
+  const { data: rawTraceroutes = EMPTY_TRACEROUTES, isLoading: rawTraceroutesLoading } = useGetTraceroutesQuery();
 
   const resolveChannelLabel = useCallback(
     (channelId: string | null | undefined): string | null => {
@@ -204,7 +233,7 @@ export function Map() {
   const tracePairActive = activeTool === "traceroute" && !!toolFromId && !!toolToId;
   // isLoading (not isFetching): true only on a pair's first fetch, so throttled
   // background refetches neither flicker the panel nor re-gate the fitBounds.
-  const { data: pairTraceroutes = [], isLoading: pairTraceroutesLoading } = useGetTraceroutesQuery(
+  const { data: pairTraceroutes = EMPTY_TRACEROUTES, isLoading: pairTraceroutesLoading } = useGetTraceroutesQuery(
     { from: toolFromId ?? "", to: toolToId ?? "", limit: 500 },
     { skip: !tracePairActive },
   );
@@ -232,8 +261,10 @@ export function Map() {
       : []),
     [activeTool, toolFromId, toolToId, traceData],
   );
-  // 3D terrain
-  const [terrain3D, setTerrain3D] = useState<boolean>(() => readJson<boolean>(LS_KEYS.terrain3D, true));
+  // 3D terrain. Off by default (same rationale as buildings3D below): DEM tile
+  // downloads + a terrain pass on every repaint roughly double render cost, and
+  // the RF tools prompt to enable it when they actually need it.
+  const [terrain3D, setTerrain3D] = useState<boolean>(() => readJson<boolean>(LS_KEYS.terrain3D, false));
   const terrainExaggeration = 1.5;
   // Cosmetic 3D buildings (OpenFreeMap). Off by default to keep slow devices light.
   const [buildings3D, setBuildings3D] = useState<boolean>(() => readJson<boolean>(LS_KEYS.buildings3D, false));
@@ -346,37 +377,66 @@ export function Map() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [settingsPanelOpen]);
 
-  const nodes: Record<string, IMapNode> = useMemo(() => {
-    const now = new Date();
-    const sixHoursAgo = now.getTime() - 6 * 60 * 60 * 1000;
+  // Re-derives the time-dependent `online` flag once a minute instead of on
+  // every SSE flush (and lets aging propagate on a quiet-but-open map).
+  const [minuteTick, setMinuteTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setMinuteTick((v) => v + 1), 60_000);
+    return () => clearInterval(t);
+  }, []);
 
-    return Object.fromEntries(
-      Object.entries(rawNodes).map(([id, node]) => [
-        id,
-        {
-          ...node,
-          online:
-            node.last_seen != null &&
-            new Date(node.last_seen as string).getTime() > sixHoursAgo,
-          map_position:
-            node.position &&
-            node.position.latitude_i != null &&
-            node.position.longitude_i != null
-              ? ([
-                  (node.position.longitude_i ?? 0) / 10_000_000,
-                  (node.position.latitude_i ?? 0) / 10_000_000,
-                ] as [number, number])
-              : undefined,
-          neighbors: node.neighborinfo?.neighbors?.map((neighbor) => ({
-            id: convertNodeIdFromIntToHex(neighbor.node_id),
-            snr: neighbor.snr,
-            distance: neighbor.distance ?? 0,
-            lastRxTime: neighbor.last_rx_time,
-          })),
-        },
-      ])
-    );
-  }, [rawNodes]);
+  /** Per-raw-node derived cache. SSE flushes replace only the raw objects that
+   *  actually changed (immer structural sharing keeps the rest), so unchanged
+   *  nodes keep their derived identity across flushes — downstream memo/prop
+   *  compares see stable references instead of N fresh objects 2.5×/sec. */
+  const derivedNodeCacheRef = useRef(
+    new WeakMap<INode, { online: boolean; lastSeenMs: number | null; derived: IMapNode }>(),
+  );
+
+  const nodes: Record<string, IMapNode> = useMemo(() => {
+    const sixHoursAgo = Date.now() - 6 * 60 * 60 * 1000;
+    const cache = derivedNodeCacheRef.current;
+    const out: Record<string, IMapNode> = {};
+
+    for (const [id, node] of Object.entries(rawNodes)) {
+      const hit = cache.get(node);
+      if (hit) {
+        const onlineNow = hit.lastSeenMs != null && hit.lastSeenMs > sixHoursAgo;
+        if (onlineNow === hit.online) {
+          out[id] = hit.derived;
+          continue;
+        }
+      }
+      const parsedLastSeen =
+        node.last_seen != null ? new Date(node.last_seen as string).getTime() : NaN;
+      const lastSeenMs = Number.isFinite(parsedLastSeen) ? parsedLastSeen : null;
+      const online = lastSeenMs != null && lastSeenMs > sixHoursAgo;
+      const derived: IMapNode = {
+        ...node,
+        online,
+        map_position:
+          node.position &&
+          node.position.latitude_i != null &&
+          node.position.longitude_i != null
+            ? ([
+                (node.position.longitude_i ?? 0) / 10_000_000,
+                (node.position.latitude_i ?? 0) / 10_000_000,
+              ] as [number, number])
+            : undefined,
+        neighbors: node.neighborinfo?.neighbors?.map((neighbor) => ({
+          id: convertNodeIdFromIntToHex(neighbor.node_id),
+          snr: neighbor.snr,
+          distance: neighbor.distance ?? 0,
+          lastRxTime: neighbor.last_rx_time,
+        })),
+      };
+      cache.set(node, { online, lastSeenMs, derived });
+      out[id] = derived;
+    }
+    return out;
+    // minuteTick: re-check the time-dependent `online` flag
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawNodes, minuteTick]);
 
   const serverNode = useMemo(
     () => nodes[config?.server?.node_id ?? ""],
@@ -394,8 +454,15 @@ export function Map() {
   const [detailsData, setDetailsData] = useState<NodeDetailsData | null>(null);
   const [clusterHover, setClusterHover] = useState<ClusterHover | null>(null);
 
-  // Coverage merge origins (session-scoped; depends on nodes + toolFromId for primary-id exclusion)
-  const mergeOrigins = useCoverageMergeOrigins(nodes, toolFromId);
+  // Coverage merge origins (session-scoped; depends on nodes + toolFromId for
+  // primary-id exclusion). Only builds its picker list while the coverage
+  // panel can render — incl. the "Scan from here" overlay (keepCoveragePaint),
+  // where the minimized panel can be expanded and searched.
+  const mergeOrigins = useCoverageMergeOrigins(
+    nodes,
+    toolFromId,
+    activeTool === "coverage" || coverage.keepCoveragePaint,
+  );
 
   // URL deep-link + view sync
   const { searchParams, flyToTargetRef, pushViewToUrlRef } = useUrlMapSync(nodes, mbMapRef);
@@ -432,9 +499,31 @@ export function Map() {
   const serverNodeRef = useRef(serverNode);
   const pendingServerCenterRef = useRef(false);
 
+  /** Snapshot of the hovered cluster's member nodes for the hover card.
+   *  Refreshes when the hover target (or its async leaves fill) changes —
+   *  deliberately NOT on node churn while the card is open. */
+  const clusterHoverLeaves = useMemo<ClusterHoverLeaf[]>(() => {
+    if (!clusterHover) return [];
+    const live = nodesRef.current;
+    return clusterHover.ids
+      .map((id) => live[id] ?? live[`!${id}`])
+      .filter((n): n is IMapNode => Boolean(n))
+      .map((n) => ({
+        id: n.id,
+        shortname: n.shortname,
+        longname: n.longname,
+        online: Boolean(n.online),
+        role: n.role,
+        last_seen: n.last_seen ?? undefined,
+      }));
+  }, [clusterHover]);
+
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
   useEffect(() => { serverNodeRef.current = serverNode; }, [serverNode]);
-  useEffect(() => { traceroutesRef.current = rawTraceroutes; }, [rawTraceroutes]);
+  useEffect(() => {
+    traceroutesRef.current = rawTraceroutes;
+    tracerouteEpochRef.current += 1;
+  }, [rawTraceroutes]);
   useEffect(() => { configRef.current = config; }, [config]);
   useEffect(() => { setDetailsDataRef.current = setDetailsData; }, [setDetailsData]);
   useEffect(() => { recentDaysRef.current = recentDays; }, [recentDays]);
@@ -463,6 +552,23 @@ export function Map() {
       mb.getCanvas().style.cursor = isPickingNode ? "crosshair" : "";
     }
   }, [isPickingNode]);
+
+  // LOS/traceroute 3D tubes: shader-compiling custom layers, created on first
+  // tool activation (and re-created after a style switch while a tool is
+  // active) instead of on every base-map load. Declared BEFORE the tool
+  // compute hooks so, within a commit, the layers exist by the time those
+  // hooks' effects push data.
+  useEffect(() => {
+    const map = mbMapRef.current;
+    if (!map || !styleEverLoadedRef.current) return;
+    if (activeTool === "los" || activeTool === "traceroute") {
+      ensureTubeLayers(map, { losTubeLayerRef, traceTubeLayerRef });
+      // Tube altitudes are scaled by terrain exaggeration at upload time;
+      // re-upload against the final post-style-load exaggeration.
+      losTubeLayerRef.current?.refresh();
+      traceTubeLayerRef.current?.refresh();
+    }
+  }, [activeTool, styleEpoch]);
 
   // Dragging an endpoint marker detaches any node anchor into a virtual pin
   const { setLosVirtualFrom, setLosVirtualTo } = losState;
@@ -497,22 +603,22 @@ export function Map() {
     setLosTerrainWarning: losState.setLosTerrainWarning,
   });
 
-  // Lit-up picking: nodes sharing any observed route with the picked origin
+  // Lit-up picking: nodes sharing any observed route with the picked origin.
+  // Identity-stable across SSE flushes (prev-compare) so the draw effect keyed
+  // on it doesn't re-upload rings 2.5×/sec during pickTo.
+  const traceCandidatesPrevRef = useRef<string[]>([]);
   const traceCandidates = useMemo(() => {
-    if (activeTool !== "traceroute" || toolStep !== "pickTo" || !toolFromId) return [];
+    if (activeTool !== "traceroute" || toolStep !== "pickTo" || !toolFromId) {
+      return traceCandidatesPrevRef.current.length === 0
+        ? traceCandidatesPrevRef.current
+        : (traceCandidatesPrevRef.current = []);
+    }
     const a = normNodeId(toolFromId);
-    if (!a) return [];
+    if (!a) return traceCandidatesPrevRef.current.length === 0 ? traceCandidatesPrevRef.current : (traceCandidatesPrevRef.current = []);
     const set = new Set<string>();
     for (const tr of traceData) {
-      const tFrom = normNodeId(tr?.from);
-      const tTo = normNodeId(tr?.to);
-      if (!tFrom || !tTo) continue;
-      const path = [
-        tFrom,
-        ...((tr.route_ids ?? tr.route ?? []) as (string | number)[]).map((r) => normNodeId(r)).filter(Boolean),
-        tTo,
-      ];
-      if (!path.includes(a)) continue;
+      const path = normalizedTraceroutePath(tr);
+      if (path.length < 2 || !path.includes(a)) continue;
       // Positioned candidates only — the rings and the prompt count must agree
       for (const h of path) {
         if (!h || h === a) continue;
@@ -520,7 +626,11 @@ export function Map() {
         if (n?.map_position) set.add(h);
       }
     }
-    return [...set];
+    const computed = [...set];
+    const prev = traceCandidatesPrevRef.current;
+    if (prev.length === computed.length && computed.every((v, i) => v === prev[i])) return prev;
+    traceCandidatesPrevRef.current = computed;
+    return computed;
   }, [activeTool, toolStep, toolFromId, traceData, nodes]);
 
   // Position signature of the analyzed hops: a value-stable string, so SSE
@@ -543,6 +653,19 @@ export function Map() {
     () => (activeTool === "traceroute" ? computeTraceEdgeStats(rawTraceroutes) : []),
     [activeTool, rawTraceroutes],
   );
+  // Cheap endpoint signature so the haversine+sort pass below only re-runs when
+  // a corridor endpoint actually moved/renamed — not on every SSE flush.
+  const corridorPosSig = useMemo(() => {
+    if (traceEdgeStats.length === 0) return "";
+    let sig = "";
+    for (const e of traceEdgeStats) {
+      const na = nodes[e.aId] ?? nodes[`!${e.aId}`];
+      const nb = nodes[e.bId] ?? nodes[`!${e.bId}`];
+      sig += `${na?.map_position ?? ""}~${na?.shortname ?? ""}~${nb?.map_position ?? ""}~${nb?.shortname ?? ""};`;
+    }
+    return sig;
+  }, [traceEdgeStats, nodes]);
+
   const traceCorridors = useMemo((): TraceCorridor[] => {
     if (traceEdgeStats.length === 0) return [];
     const bounds = traceCorridorsInView ? mbMapRef.current?.getBounds() : null;
@@ -577,9 +700,11 @@ export function Map() {
         : y.count - x.count || y.lastTimestamp - x.lastTimestamp,
     );
     return out.slice(0, 15);
-    // mapMoveEpoch: pan/zoom re-runs the viewport filter
+    // mapMoveEpoch: pan/zoom re-runs the viewport filter. `nodes` is read from
+    // the closure but keyed via corridorPosSig — when the sig is unchanged the
+    // node data this memo reads is unchanged too, so skipping the re-run is safe.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [traceEdgeStats, nodes, traceCorridorsInView, traceCorridorSort, mapMoveEpoch]);
+  }, [traceEdgeStats, corridorPosSig, traceCorridorsInView, traceCorridorSort, mapMoveEpoch]);
 
   // Traceroute per-hop RF analysis ("Why This Path") + graded tube / pylons / direct overlay
   const traceCompute = useTraceCompute({
@@ -634,6 +759,10 @@ export function Map() {
   // Stable callbacks for the memoized trace panels (same pattern as scan's)
   const handleToolPanelClose = useCallback(() => resetToolRef.current(), []);
   const handlePanelNodeSelect = useCallback((id: string) => handleNodeSelectRef.current(id), []);
+  const handlePanelHoverLink = useCallback((id: string | null) => handleLinkHoverRef.current(id), []);
+  // Ref-backed so MapDetailsPanel's memo isn't defeated by the function
+  // declaration below getting a fresh identity each render.
+  const handleDetailsClose = useCallback(() => clearSelectionRef.current(), []);
   const handleTraceSelectPath = useCallback((sig: string) => {
     traceFlyover.cancelFlyover(); // a tour follows one path only
     tracePendingPlayRef.current = false;
@@ -651,6 +780,25 @@ export function Map() {
     () => (toolFromId && toolToId ? ([normNodeId(toolFromId), normNodeId(toolToId)] as [string, string]) : null),
     [toolFromId, toolToId],
   );
+
+  /** Position/label lookup narrowed to the hop ids the traceroute panel
+   *  renders. Keyed on the paths + tracePosKey (value-stable across SSE
+   *  churn), NOT on `nodes` — so the panel's React.memo actually holds while
+   *  live flushes stream in. Hop moves re-key via tracePosKey; label renames
+   *  refresh on the next path change (acceptable staleness). */
+  const traceHopNodes = useMemo(() => {
+    const out: Record<string, IMapNode> = {};
+    const addId = (id: string) => {
+      if (out[id] || out[`!${id}`]) return;
+      const live = nodesRef.current;
+      if (live[id]) out[id] = live[id];
+      else if (live[`!${id}`]) out[`!${id}`] = live[`!${id}`];
+    };
+    for (const p of tracePaths) for (const h of p.hops) addId(h);
+    for (const r of traceRuns) for (const h of r.hops) addId(h);
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tracePaths, traceRuns, tracePosKey]);
 
   // Corridor row click → jump straight to the analysis for that pair
   const handleCorridorPick = useCallback((aId: string, bId: string) => {
@@ -1059,15 +1207,9 @@ export function Map() {
         };
         const heardBy = computeHeardByIds(liveNodes, id);
         const neighborFC = buildMapboxLinkFeatureCollection({ node: nodeLike, liveNodes, heardBy });
+        const norm = normNodeId(id);
         const tracerouteFC = buildTracerouteLinkFeatureCollection(
-          traceroutes.filter((tr) => {
-            const norm = normNodeId(id);
-            const from = normNodeId(tr.from);
-            const to = normNodeId(tr.to);
-            if (from === norm || to === norm) return true;
-            const hops = (tr.route_ids ?? tr.route ?? []).map((r: string) => normNodeId(r));
-            return hops.includes(norm);
-          }),
+          traceroutes.filter((tr) => normalizedTraceroutePath(tr).includes(norm)),
           liveNodes,
         );
         return {
@@ -1080,18 +1222,54 @@ export function Map() {
     return emptyLineFeatureCollection();
   }
 
-  /** Push persistent link data to the "links" source. */
+  /** Per-node signature over everything the link builders read (position,
+   *  neighbor entries, minute-bucketed last_seen). WeakMap-cached on the
+   *  derived node identity, so unchanged nodes cost a lookup. */
+  function nodeLinkSig(id: string, node: IMapNode): string {
+    const cached = nodeLinkSigCacheRef.current.get(node);
+    if (cached !== undefined) return cached;
+    const lastSeenMs = node.last_seen ? new Date(node.last_seen as string).getTime() : NaN;
+    let sig = `${id}@${node.map_position ?? ""}~${Number.isFinite(lastSeenMs) ? Math.floor(lastSeenMs / 60_000) : ""}`;
+    if (node.neighbors) {
+      for (const nb of node.neighbors) sig += `|${nb.id}:${nb.snr}:${nb.lastRxTime ?? ""}`;
+    }
+    nodeLinkSigCacheRef.current.set(node, sig);
+    return sig;
+  }
+
+  /** Signature of the persistent-links inputs; equality ⇒ the rebuild+upload
+   *  can be skipped. Includes a minute component so recency buckets still age. */
+  function computeLinksSig(): string {
+    const mode = linkModeRef.current;
+    if (mode === "selected") return "selected";
+    let h = 0x811c9dc5;
+    const mix = (s: string) => {
+      for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+      h = Math.imul(h ^ 0x2c, 0x01000193);
+    };
+    mix(mode);
+    mix(myNodeIdRef.current ?? "");
+    mix(String(tracerouteEpochRef.current));
+    mix(String(Math.floor(Date.now() / 60_000)));
+    for (const [id, node] of Object.entries(nodesRef.current)) {
+      if (!node.neighbors?.length && !node.map_position) continue;
+      mix(nodeLinkSig(id, node));
+    }
+    return String(h >>> 0);
+  }
+
+  /** Push persistent link data to the "links" source (skipped when the
+   *  link-relevant inputs are signature-identical to the last upload). */
   function refreshMapboxLinks() {
     const map = mbMapRef.current;
     if (!map) return;
     try {
       const linksSource = map.getSource("links") as MlGeoJSONSource | undefined;
       if (!linksSource) return;
-      const fc = computePersistentLinks();
-      const json = JSON.stringify(fc);
-      if (json === persistentLinksMbJsonRef.current) return;
-      persistentLinksMbJsonRef.current = json;
-      linksSource.setData(fc);
+      const sig = computeLinksSig();
+      if (sig === persistentLinksSigRef.current) return;
+      persistentLinksSigRef.current = sig;
+      linksSource.setData(computePersistentLinks());
     } catch {}
   }
 
@@ -1109,8 +1287,10 @@ export function Map() {
     const map = mbMapRef.current;
     if (map) {
       try {
-        // Capture on the next actually-drawn frame (custom layers included);
-        // fall back to a timeout if 'idle' never fires.
+        // Wait for a settled frame ('idle': tiles loaded, fades finished),
+        // then capture synchronously inside the next 'render' callback — the
+        // just-drawn frame is still in the WebGL buffer there, so the map
+        // doesn't need preserveDrawingBuffer (a per-frame GPU tax).
         let done = false;
         const capture = () => {
           if (done) return;
@@ -1123,9 +1303,19 @@ export function Map() {
             toast("Couldn't export the map", { kind: "error" });
           }
         };
+        map.once("idle", () => {
+          if (done) return;
+          map.once("render", capture);
+          map.triggerRepaint();
+        });
         map.triggerRepaint();
-        map.once("idle", capture);
-        setTimeout(capture, 1500);
+        // Slow tile loads can hold 'idle' off for a while; report failure
+        // rather than silently downloading a blank or half-loaded frame.
+        setTimeout(() => {
+          if (done) return;
+          done = true;
+          toast("Couldn't export the map — rendering didn't settle in time", { kind: "error" });
+        }, 8000);
       } catch (err) {
         console.error("Map export failed:", err);
         toast("Couldn't export the map", { kind: "error" });
@@ -1330,8 +1520,19 @@ export function Map() {
       pitch: initialPitch,
       bearing: initialBearing,
       attributionControl: false,
-      canvasContextAttributes: { preserveDrawingBuffer: true }, // required for canvas.toDataURL() export
+      // PNG export captures inside a 'render' callback (see handleExport), so
+      // preserveDrawingBuffer — a per-frame GPU copy for the page lifetime —
+      // stays off.
       maxPitch: 85,
+      // Cap the per-source out-of-view tile cache; the viewport-scaled default
+      // (~270 tiles/source) can pin hundreds of MB of GPU textures with @2x
+      // rasters + a DEM source.
+      maxTileCacheSize: 128,
+      // Shorter raster crossfade → shorter forced-repaint tail per tile load.
+      fadeDuration: 100,
+      // Basemap/DEM tiles barely change; don't re-request them when their
+      // ~25h max-age lapses in a long-open tab.
+      refreshExpiredTiles: false,
       // Spread keeps drag-rotate direction consistent regardless of cursor position.
       // `aroundCenter` isn't in public MapOptions but is destructured by the internal handler.
       ...({ aroundCenter: false } as object),
@@ -1408,18 +1609,22 @@ export function Map() {
     };
 
     const getFilters = () => ({ role: roleFilterRef.current, channel: channelFilterRef.current });
+    const buildNodesFc = () =>
+      nodesGeoJSONBuilderRef.current(nodesRef.current, recentDaysRef.current, getFilters());
 
     const refreshMapboxNodeData = () => {
       const m = mbMapRef.current;
       if (!m) return;
 
-      const data = buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters());
+      const data = buildNodesFc();
 
       const clustered = m.getSource("nodes_clustered") as MlGeoJSONSource | undefined;
       clustered?.setData(data);
 
       const plain = m.getSource("nodes_plain") as MlGeoJSONSource | undefined;
       plain?.setData(data);
+      lastUploadedNodesFcRef.current = data;
+      nodesFcStaleForRef.current = null;
     };
 
     const saveView = () => {
@@ -1442,9 +1647,7 @@ export function Map() {
 
     const ensureSourcesAndLayers = () => {
       ensureMapSourcesAndLayers(map, {
-        getNodesData: () => buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()),
-        losTubeLayerRef,
-        traceTubeLayerRef,
+        getNodesData: buildNodesFc,
         clusterDonutLayerRef,
         activityLayerRef,
         animationsEnabled: livePacketsRef.current,
@@ -1470,10 +1673,8 @@ export function Map() {
         }
       }
 
-      // Tube altitudes are scaled by exaggeration at upload time; onAdd ran before
-      // terrain was re-applied above, so re-upload against the final exaggeration.
-      losTubeLayerRef.current?.refresh();
-      traceTubeLayerRef.current?.refresh();
+      // The LOS/trace tube layers are lazily (re-)added by the styleEpoch effect
+      // while their tool is active; nothing to refresh here.
 
       // Ensure sources have current data (important after style changes)
       refreshMapboxNodeData();
@@ -1505,14 +1706,10 @@ export function Map() {
         const heardBy = computeHeardByIds(liveNodes, id);
 
         // Filter traceroutes relevant to this node (used for links + coverage)
-        const relevantTraceroutes = traceroutesRef.current.filter((tr) => {
-          const norm = normNodeId(id);
-          const from = normNodeId(tr.from);
-          const to = normNodeId(tr.to);
-          if (from === norm || to === norm) return true;
-          const hops = (tr.route_ids ?? tr.route ?? []).map((r: string) => normNodeId(r));
-          return hops.includes(norm);
-        });
+        const normId = normNodeId(id);
+        const relevantTraceroutes = traceroutesRef.current.filter((tr) =>
+          normalizedTraceroutePath(tr).includes(normId),
+        );
 
         const maxRangeKm = computeMaxRange(id, [nodeLike.position[0], nodeLike.position[1]], liveNodes, heardBy, relevantTraceroutes);
 
@@ -1780,7 +1977,7 @@ export function Map() {
             // Pass raw node features as fallback — getClusterLeaves can fail
             // silently on stale cluster_ids, and querySourceFeatures can't
             // see nodes hidden inside their cluster aggregate.
-            const pool = buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()).features
+            const pool = buildNodesFc().features
               .filter((f) => f.geometry?.type === "Point") as any;
             const count = (cluster.properties?.point_count as number) ?? 0;
             void spiderfy(map, clusterId, [lng, lat], true, pool, count);
@@ -2046,7 +2243,8 @@ export function Map() {
           if (flyoverFlyingRef.current) return;
           if (nodesHiddenRef.current) return;
           if (clusterEnabledRef.current) {
-            const pool = buildNodesGeoJSON(nodesRef.current, recentDaysRef.current, getFilters()).features
+            // Cache-hit in the builder — reuses the FC last uploaded to the source
+            const pool = buildNodesFc().features
               .filter((f) => f.geometry?.type === "Point") as any;
             void autoSpiderfyVisibleClusters(map, pool);
           } else {
@@ -2172,6 +2370,9 @@ export function Map() {
       setDetailsData(null);
       const linksSource = map.getSource("links") as MlGeoJSONSource | undefined;
       linksSource?.setData(emptyLineFeatureCollection());
+      // The recreated links source starts empty — invalidate the sig so the
+      // next links effect re-pushes instead of skipping as "unchanged".
+      persistentLinksSigRef.current = "";
       // setStyle wipes the fan layers; reset the module state with them or the
       // auto passes stay blocked on a fan that no longer exists.
       removeSpiderfyLayers(map);
@@ -2184,6 +2385,20 @@ export function Map() {
   useEffect(() => {
     const map = mbMapRef.current;
     if (!map) return;
+    // Live setData only feeds the visible source; refresh the one we're about
+    // to show if it went stale while hidden.
+    const stale = nodesFcStaleForRef.current;
+    const fc = lastUploadedNodesFcRef.current;
+    if (
+      fc &&
+      ((clusterEnabled && stale === "clustered") || (!clusterEnabled && stale === "plain"))
+    ) {
+      const src = map.getSource(clusterEnabled ? "nodes_clustered" : "nodes_plain") as
+        | MlGeoJSONSource
+        | undefined;
+      src?.setData(fc as any);
+      nodesFcStaleForRef.current = null;
+    }
     applyClusterVisibility(map, clusterEnabled, nodesHidden);
   }, [clusterEnabled, nodesHidden]);
 
@@ -2219,18 +2434,21 @@ export function Map() {
     const map = mbMapRef.current;
     if (!map) return;
 
-    const data = buildNodesGeoJSON(nodes, recentDays, { role: roleFilter, channel: channelFilter });
+    const data = nodesGeoJSONBuilderRef.current(nodes, recentDays, { role: roleFilter, channel: channelFilter });
 
-    // Skip re-upload when visible state is unchanged; each nodes_clustered
-    // setData forces a full cluster-donut rebuild.
-    const sig = nodesDataSignature(data);
-    if (sig !== lastNodesSigRef.current) {
-      lastNodesSigRef.current = sig;
-      const clustered = map.getSource("nodes_clustered") as MlGeoJSONSource | undefined;
-      clustered?.setData(data);
-
-      const plain = map.getSource("nodes_plain") as MlGeoJSONSource | undefined;
-      plain?.setData(data);
+    // Identical FC identity ⇒ nothing GL-visible changed ⇒ skip the upload
+    // (each nodes_clustered setData forces a full cluster-donut rebuild).
+    // Only the visible source gets live data; the hidden one is refreshed by
+    // the cluster-toggle effect when it's about to be shown.
+    if (data !== lastUploadedNodesFcRef.current) {
+      lastUploadedNodesFcRef.current = data;
+      if (clusterEnabled) {
+        (map.getSource("nodes_clustered") as MlGeoJSONSource | undefined)?.setData(data);
+        nodesFcStaleForRef.current = "plain";
+      } else {
+        (map.getSource("nodes_plain") as MlGeoJSONSource | undefined)?.setData(data);
+        nodesFcStaleForRef.current = "clustered";
+      }
     }
 
     // If selected node disappears, clear selection + links/panel
@@ -2253,7 +2471,7 @@ export function Map() {
         setDetailsData(null);
       }
     }
-  }, [nodes, recentDays, roleFilter, channelFilter]);
+  }, [nodes, recentDays, roleFilter, channelFilter, clusterEnabled, minuteTick]);
 
   // React to linkMode / myNodeId / nodes changes for persistent links
   useEffect(() => {
@@ -2267,14 +2485,19 @@ export function Map() {
         const linksSource = map.getSource("links") as MlGeoJSONSource | undefined;
         linksSource?.setData(emptyLineFeatureCollection());
       } catch {}
+      // The source no longer matches the last computed signature — invalidate,
+      // or switching back to all/mynode within the minute would skip the
+      // re-upload and leave the map without link lines.
+      persistentLinksSigRef.current = "";
       return;
     }
 
     if (linkMode !== "selected") {
       refreshMapboxLinks();
     }
+    // minuteTick: recency-bucket aging; styleEpoch: recreated (empty) source
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [linkMode, myNodeId, nodes, rawTraceroutes]);
+  }, [linkMode, myNodeId, nodes, rawTraceroutes, minuteTick, styleEpoch]);
 
   // ----------------------------
   // Settings panel UI
@@ -2282,15 +2505,33 @@ export function Map() {
   const canUseMapbox = hasMapbox;
   const usingMapbox = provider === "mapbox" && canUseMapbox;
 
-  // Flat sorted list of nodes with positions for the My Node picker
-  const nodeList = useMemo(
-    () =>
-      Object.entries(nodes)
-        .filter(([, n]) => n.map_position)
-        .map(([id, n]) => ({ id, shortname: n.shortname, longname: n.longname }))
-        .sort((a, b) => (a.shortname ?? "").localeCompare(b.shortname ?? "")),
-    [nodes]
-  );
+  // Flat sorted list of nodes with positions for the My Node picker.
+  // Signature-gated: the O(N log N) sort + N object allocations only re-run
+  // when an id/name/position-presence actually changed, not per SSE flush.
+  const pickerSigCacheRef = useRef(new WeakMap<IMapNode, string>());
+  const nodeListPrevRef = useRef<{ sig: number; list: { id: string; shortname?: string; longname?: string }[] }>({ sig: -1, list: [] });
+  const nodeList = useMemo(() => {
+    const cache = pickerSigCacheRef.current;
+    let h = 0x811c9dc5;
+    for (const [id, n] of Object.entries(nodes)) {
+      if (!n.map_position) continue;
+      let s = cache.get(n);
+      if (s === undefined) {
+        s = `${id}|${n.shortname ?? ""}|${n.longname ?? ""}`;
+        cache.set(n, s);
+      }
+      for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+      h = Math.imul(h ^ 0x2c, 0x01000193);
+    }
+    const sig = h >>> 0;
+    if (nodeListPrevRef.current.sig === sig) return nodeListPrevRef.current.list;
+    const list = Object.entries(nodes)
+      .filter(([, n]) => n.map_position)
+      .map(([id, n]) => ({ id, shortname: n.shortname, longname: n.longname }))
+      .sort((a, b) => (a.shortname ?? "").localeCompare(b.shortname ?? ""));
+    nodeListPrevRef.current = { sig, list };
+    return list;
+  }, [nodes]);
 
   return (
     <div className="relative w-full h-full min-h-0 overflow-hidden overscroll-none">
@@ -2325,7 +2566,7 @@ export function Map() {
           the row-2 pills via its z-40. */}
       <MapSearchBar
         nodes={nodes}
-        onSelect={(id) => handleNodeSelectRef.current(id)}
+        onSelect={handlePanelNodeSelect}
       />
 
       <MapToolsDrawer
@@ -2419,7 +2660,7 @@ export function Map() {
       />
 
       {myNodeLabel && (
-        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-1060 px-3 py-1.5 rounded-xl shadow-2xl bg-gray-900/80 backdrop-blur-xl text-sm border border-white/10 flex items-center gap-2">
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-1060 px-3 py-1.5 rounded-xl shadow-2xl bg-gray-900/95 text-sm border border-white/10 flex items-center gap-2">
           <span className="text-gray-400">My Node:</span>
           <span className="font-medium text-gray-200">{myNodeLabel}</span>
           <button
@@ -2440,12 +2681,12 @@ export function Map() {
 
       <MapDetailsPanel
         data={detailsData}
-        onClose={clearMapboxSelectionAndOverlays}
-        onNodeSelect={(id) => handleNodeSelectRef.current(id)}
-        onHoverLink={(id) => handleLinkHoverRef.current(id)}
+        onClose={handleDetailsClose}
+        onNodeSelect={handlePanelNodeSelect}
+        onHoverLink={handlePanelHoverLink}
       />
 
-      <ClusterHoverCard hover={clusterHover} nodes={nodes} />
+      <ClusterHoverCard hover={clusterHover} leaves={clusterHoverLeaves} />
       <CoverageLookupCard hover={clusterHover ? null : coverageHover} nodes={nodes} />
 
       <button
@@ -2457,7 +2698,7 @@ export function Map() {
         // Below lg the filters pill stacks above this button instead. Hidden
         // during tool sessions: the centered result panels (coverage 560px,
         // traceroute 560px, LOS 1200px) all reach this spot at lg widths.
-        className={`absolute bottom-3 left-3 lg:left-32 z-30 flex items-center gap-2 rounded-xl border border-white/10 bg-gray-900/80 px-3 py-1.5 text-xs font-medium shadow-2xl backdrop-blur-xl transition hover:bg-gray-900/90 ${activeTool != null ? "hidden" : ""}`}
+        className={`absolute bottom-3 left-3 lg:left-32 z-30 flex items-center gap-2 rounded-xl border border-white/10 bg-gray-900/95 px-3 py-1.5 text-xs font-medium shadow-2xl transition hover:bg-gray-900 ${activeTool != null ? "hidden" : ""}`}
         title={livePackets ? "Live map animations on — click to turn off" : "Live map animations off — click to turn on"}
       >
         <span className={`h-2 w-2 rounded-full ${livePackets ? "bg-emerald-400 animate-pulse" : "bg-gray-500"}`} />
@@ -2503,6 +2744,7 @@ export function Map() {
 
       {/* Floating LoS panel when LOS tool reached result step */}
       {activeTool === "los" && toolStep === "result" && (toolFromId || losState.losVirtualFrom) && (toolToId || losState.losVirtualTo) && (
+        <Suspense fallback={null}>
         <MapLosPanel
           result={losState.losResult}
           fromLabel={
@@ -2553,11 +2795,13 @@ export function Map() {
           demSource={losState.losDemSource}
           onProfileHover={losCompute.handleLosProfileHover}
         />
+        </Suspense>
       )}
 
       {/* Stays mounted (force-minimized) during a Scan-from-here overlay so
           the user knows coverage is paused, not closed. */}
       {((activeTool === "coverage") || coverage.keepCoveragePaint) && toolStep === "result" && (toolFromId || toolVirtualPos) && (
+        <Suspense fallback={null}>
         <MapCoveragePanel
           overlayMode={coverage.keepCoveragePaint}
           result={coverage.coverageResult}
@@ -2679,10 +2923,12 @@ export function Map() {
             setActiveTool("scan");
           }}
         />
+        </Suspense>
       )}
 
       {/* Busiest-links column — browse corridors while the traceroute tool is active */}
       {activeTool === "traceroute" && (
+        <Suspense fallback={null}>
         <MapTraceCorridorsPanel
           corridors={traceCorridors}
           sortMode={traceCorridorSort}
@@ -2694,10 +2940,12 @@ export function Map() {
           onHover={handleTraceHighlight}
           onPick={handleCorridorPick}
         />
+        </Suspense>
       )}
 
       {/* Floating Traceroute panel */}
       {activeTool === "traceroute" && toolStep === "result" && toolFromId && toolToId && (
+        <Suspense fallback={null}>
         <MapTraceroutePanel
           fromId={toolFromId}
           toId={toolToId}
@@ -2721,15 +2969,17 @@ export function Map() {
           canFly={!prefersReducedMotion()}
           onToggleFlyover={handleToggleFlyover}
           loading={rawTraceroutesLoading || pairTraceroutesLoading}
-          liveNodes={nodes}
+          liveNodes={traceHopNodes}
           onNodeSelect={handlePanelNodeSelect}
           onHighlight={handleTraceHighlight}
           onClose={handleToolPanelClose}
         />
+        </Suspense>
       )}
 
       {/* Floating Scan panel */}
       {activeTool === "scan" && toolStep === "result" && (toolFromId || toolVirtualPos) && (
+        <Suspense fallback={null}>
         <MapScanPanel
           summary={scan.scanSummary}
           originLabel={
@@ -2786,6 +3036,7 @@ export function Map() {
           reliability={scan.scanReliability}
           onReliabilityChange={scan.setScanReliability}
         />
+        </Suspense>
       )}
     </div>
   );

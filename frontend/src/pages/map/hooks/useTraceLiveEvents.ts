@@ -118,8 +118,13 @@ export function useTraceLiveEvents({
     if (activeToolRef.current !== "traceroute") return;
     // Leading + trailing throttle: an event inside the window schedules one
     // deferred refetch instead of being dropped (the page never polls, so a
-    // dropped event would leave the just-run traceroute invisible).
-    const remaining = 10_000 - (Date.now() - traceRefetchAtRef.current);
+    // dropped event would leave the just-run traceroute invisible). 30 s:
+    // every invalidation refetches BOTH the 1000-row global window and the
+    // 500-row pair window (~0.4–1 MB). A cache upsert instead of a refetch
+    // needs the SSE event to carry full rows first — today it only has
+    // from/to/route_ids/id (see mqtt.py's traceroute publish). The open
+    // pair's own traceroutes still land fast via the catcher's 2 s path below.
+    const remaining = 30_000 - (Date.now() - traceRefetchAtRef.current);
     if (remaining > 0) {
       traceRefetchTimerRef.current ??= setTimeout(() => {
         traceRefetchTimerRef.current = null;
@@ -148,9 +153,11 @@ export function useTraceLiveEvents({
       if (!entry) return;
       if (tracePairMatches(entry.ev)) {
         // Catch It Live: the open pair's traceroute lands the moment it's
-        // heard. The refetch trails the debounce so the DB write has landed;
-        // one shared timer coalesces request+reply bursts.
-        traceRefetchTimerRef.current ??= setTimeout(() => {
+        // heard. The refetch trails the debounce so the DB write has landed.
+        // Preempt (don't `??=` behind) any ambient trailing timer — that one
+        // can be up to 30 s out, and the open pair's own result must not wait.
+        if (traceRefetchTimerRef.current != null) clearTimeout(traceRefetchTimerRef.current);
+        traceRefetchTimerRef.current = setTimeout(() => {
           traceRefetchTimerRef.current = null;
           if (activeToolRef.current === "traceroute") invalidateTraceroutes();
         }, 2_000);

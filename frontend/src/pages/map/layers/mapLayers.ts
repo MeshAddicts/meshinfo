@@ -13,14 +13,48 @@ type LayerRef<T> = { current: T | null };
 export type EnsureLayersCtx = {
   /** Fresh node GeoJSON for the two node sources (called once per invocation). */
   getNodesData: () => FeatureCollection<GeoPoint, GeoJsonProperties>;
-  losTubeLayerRef: LayerRef<LosTubeLayer>;
-  traceTubeLayerRef: LayerRef<LosTubeLayer>;
   clusterDonutLayerRef: LayerRef<ClusterDonutLayer>;
   activityLayerRef: LayerRef<ActivityLayer>;
   animationsEnabled: boolean;
   /** An RF tool is showing results — donuts + count labels start dimmed. */
   dimForTool: boolean;
 };
+
+/** The two 3D-tube custom layers (LOS + traceroute analysis). Each costs a
+ *  shader compile + program link, and they only ever draw for the LOS and
+ *  traceroute tools — so they're created lazily on first tool activation
+ *  (and re-created after a style switch while a tool is active) instead of
+ *  on every base-map load. Idempotent like the base ensure. */
+export function ensureTubeLayers(
+  map: MlMap,
+  refs: { losTubeLayerRef: LayerRef<LosTubeLayer>; traceTubeLayerRef: LayerRef<LosTubeLayer> },
+): void {
+  // Insert at the tubes' original mid-stack positions — appended on top they
+  // would alpha-blend over node circles, labels, links and rings.
+  const beforeOf = (...candidates: string[]) => candidates.find((id) => map.getLayer(id));
+  if (!map.getLayer("los-tube")) {
+    try {
+      if (!refs.losTubeLayerRef.current) refs.losTubeLayerRef.current = new LosTubeLayer();
+      map.addLayer(
+        refs.losTubeLayerRef.current,
+        beforeOf("trace-obstructions-fill", "trace-candidates-ring", "scan-links-line", "links-solid"),
+      );
+    } catch (err) {
+      console.warn("[Map] Failed to add LoS tube layer:", err);
+    }
+  }
+  if (!map.getLayer("trace-tube")) {
+    try {
+      if (!refs.traceTubeLayerRef.current) refs.traceTubeLayerRef.current = new LosTubeLayer("trace-tube");
+      map.addLayer(
+        refs.traceTubeLayerRef.current,
+        beforeOf("trace-candidates-ring", "scan-links-line", "links-solid"),
+      );
+    } catch (err) {
+      console.warn("[Map] Failed to add trace tube layer:", err);
+    }
+  }
+}
 
 export function ensureMapSourcesAndLayers(map: MlMap, ctx: EnsureLayersCtx): void {
   if (!map.getSource("nodes_clustered")) {
@@ -290,14 +324,7 @@ export function ensureMapSourcesAndLayers(map: MlMap, ctx: EnsureLayersCtx): voi
       },
     });
   }
-  if (!map.getLayer("los-tube")) {
-    try {
-      if (!ctx.losTubeLayerRef.current) ctx.losTubeLayerRef.current = new LosTubeLayer();
-      map.addLayer(ctx.losTubeLayerRef.current);
-    } catch (err) {
-      console.warn("[Map] Failed to add LoS tube layer:", err);
-    }
-  }
+  // los-tube / trace-tube custom layers: created lazily via ensureTubeLayers.
 
   // Traceroute per-hop analysis: obstruction pylons + direct-path
   // counterfactual + 3D graded tube (own instances so LOS and traceroute
@@ -350,14 +377,6 @@ export function ensureMapSourcesAndLayers(map: MlMap, ctx: EnsureLayersCtx): voi
         "line-dasharray": [2, 2],
       },
     });
-  }
-  if (!map.getLayer("trace-tube")) {
-    try {
-      if (!ctx.traceTubeLayerRef.current) ctx.traceTubeLayerRef.current = new LosTubeLayer("trace-tube");
-      map.addLayer(ctx.traceTubeLayerRef.current);
-    } catch (err) {
-      console.warn("[Map] Failed to add trace tube layer:", err);
-    }
   }
   // Lit-up picking: rings on nodes with observed routes through the origin
   if (!map.getSource("trace-candidates")) {

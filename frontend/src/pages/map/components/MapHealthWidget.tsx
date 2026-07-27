@@ -60,6 +60,12 @@ function computeHealth(nodes: Record<string, IMapNode>) {
   };
 }
 
+type MeshHealth = ReturnType<typeof computeHealth>;
+
+/** Refresh cadence for the expensive expanded-card stats (BFS diameter, link
+ *  counts, avg SNR). They track slow-moving topology, so 10 s is plenty. */
+const HEALTH_REFRESH_MS = 10_000;
+
 export function MapHealthWidget({
   nodes,
   hidden = false,
@@ -94,15 +100,31 @@ export function MapHealthWidget({
       document.removeEventListener("pointerdown", onDown);
     };
   }, [expanded]);
-  // Cheap online/total for the always-visible pill; the BFS diameter + link counts
-  // only matter when expanded, so skip that work every poll while collapsed.
+  // Cheap online/total for the always-visible pill — stays reactive per flush.
   const basic = useMemo(() => {
     const vals = Object.values(nodes);
     let online = 0;
     for (const n of vals) if (n.online) online++;
     return { online, total: vals.length };
   }, [nodes]);
-  const health = useMemo(() => (expanded ? computeHealth(nodes) : null), [expanded, nodes]);
+
+  // The expanded-card stats cost ~5-20ms (adjacency build + up to 100 BFS
+  // traversals), and `nodes` identity changes on every ~400ms live flush.
+  // Recompute on expand and then at most every 10 s, reading the latest
+  // nodes through a ref so flushes alone never trigger the work.
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
+  const [health, setHealth] = useState<MeshHealth | null>(null);
+  useEffect(() => {
+    if (!expanded) {
+      setHealth(null);
+      return;
+    }
+    const recompute = () => setHealth(computeHealth(nodesRef.current));
+    recompute();
+    const id = setInterval(recompute, HEALTH_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [expanded]);
 
   return (
     <div
@@ -120,8 +142,8 @@ export function MapHealthWidget({
         aria-controls="mesh-health-panel"
         aria-label={`Mesh health: ${basic.online} of ${basic.total} nodes online`}
         className="px-2 sm:px-3 py-1.5 rounded-xl text-xs font-medium
-          bg-gray-900/80 backdrop-blur-xl border border-white/10 shadow-2xl
-          text-gray-300 hover:text-gray-100 hover:bg-gray-900/90 transition-colors
+          bg-gray-900/95 border border-white/10 shadow-2xl
+          text-gray-300 hover:text-gray-100 hover:bg-gray-900 transition-colors
           flex items-center gap-1.5 sm:gap-2"
         title="Mesh health"
       >
@@ -136,7 +158,7 @@ export function MapHealthWidget({
       {expanded && health && (
         <div id="mesh-health-panel" className="mt-2 min-w-55 rounded-xl p-3
           max-sm:fixed max-sm:top-24 max-sm:right-3 max-sm:mt-0
-          bg-gray-900/90 backdrop-blur-xl border border-white/10 shadow-2xl
+          bg-gray-900/95 border border-white/10 shadow-2xl
           space-y-2 text-xs">
           <div className="flex items-center justify-between">
             <span className="text-gray-500">Online</span>

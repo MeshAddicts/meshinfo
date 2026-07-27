@@ -74,40 +74,42 @@ export const apiSlice = createApi({
         },
         transformResponse: (response: IChatResponse) => {
         const channels = Object.fromEntries(
-            Object.entries(response.channels).map(([id, channel]) => [
-            id,
-            {
+            Object.entries(response.channels).map(([id, channel]) => {
+            // Mutated accumulator (a spread-per-message reduce is O(n²) on
+            // every refetch): dedupe by id, merging duplicates' sender lists.
+            const byId: Record<
+                string,
+                IChatResponse["channels"]["0"]["messages"][0]
+            > = {};
+            for (const message of channel.messages) {
+                byId[message.id] = {
+                ...message,
+                sender: (byId[message.id]?.sender ?? []).concat(message.sender),
+                };
+            }
+            return [
+                id,
+                {
                 ...channel,
                 // Use backend-provided totalMessages if available,
                 // fall back to response array length for backward compat
                 totalMessages:
-                (channel as any).totalMessages ?? channel.messages.length,
-                messages: Object.values(
-                channel.messages.reduce(
-                    (acc, message) => ({
-                    ...acc,
-                    [message.id]: {
-                        ...message,
-                        sender: (acc[message.id]?.sender ?? []).concat(
-                        message.sender
-                        ),
-                    },
-                    }),
-                    {} as Record<
-                    string,
-                    IChatResponse["channels"]["0"]["messages"][0]
-                    >
-                )
-                ).sort((a, b) => b.timestamp - a.timestamp),
-            },
-            ])
+                    (channel as any).totalMessages ?? channel.messages.length,
+                messages: Object.values(byId).sort(
+                    (a, b) => b.timestamp - a.timestamp
+                ),
+                },
+            ];
+            })
         );
         return { channels };
         },
         providesTags: [{ type: "Chat", id: "LIST" }],
     }),
     getNodes: builder.query<INodesResponse, void | { status: "online" }>({
-      query: () => "nodes",
+      // slim=1: server omits per-node geocoded/last_geocoding/since, which no
+      // frontend code reads (ignored by backends that predate the param).
+      query: () => "nodes?slim=1",
       transformResponse: (response: INodesResponse) =>
         Object.fromEntries(
           Object.entries(response.nodes).map(([id, node]) => [
@@ -142,8 +144,11 @@ export const apiSlice = createApi({
         if (params && params.to) sp.set("to", params.to);
         if (params && params.range && params.range !== "all") sp.set("range", params.range);
         if (params && params.limit) sp.set("limit", String(params.limit));
-        const qs = sp.toString();
-        return qs ? `traceroutes?${qs}` : "traceroutes";
+        // slim=1: server drops the legacy `route` field and unused payload keys,
+        // keeping id/from/to/route_ids/timestamp/snr/rssi + payload.snr_towards
+        // that the map's path analysis reads (ignored by older backends).
+        sp.set("slim", "1");
+        return `traceroutes?${sp.toString()}`;
       },
       providesTags: [{ type: "Traceroutes", id: "LIST" }],
     }),

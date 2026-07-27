@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 
 import { useLiveEvent } from "../../../hooks/useLiveEvent";
 import { useGetNodePacketsQuery } from "../../../slices/apiSlice";
@@ -80,15 +80,41 @@ function NodeLink({
 }
 
 
+interface NeighborRow {
+  id: string;
+  snr: number | null;
+  distanceKm?: number;
+}
+
+/** Attach the geodesic distance to each neighbor row — computed once per
+ *  selection (inside a useMemo) rather than on every render. */
+function withDistances(
+  rows: { id: string; snr: number | null }[],
+  nodePosition: [number, number],
+  liveNodes: Record<string, IMapNode>,
+): NeighborRow[] {
+  return rows.map((row) => {
+    const nnode = liveNodes[row.id];
+    let distanceKm: number | undefined;
+    if (nnode?.map_position) {
+      distanceKm = calculateGeodesicDistance(
+        nodePosition[1],
+        nodePosition[0],
+        nnode.map_position[1],
+        nnode.map_position[0],
+      );
+    }
+    return { id: row.id, snr: row.snr, distanceKm };
+  });
+}
+
 function NeighborTable({
   rows,
-  nodePosition,
   liveNodes,
   onNodeSelect,
   onHoverLink,
 }: {
-  rows: { id: string; snr: number | null }[];
-  nodePosition: [number, number];
+  rows: NeighborRow[];
   liveNodes: Record<string, IMapNode>;
   onNodeSelect: (nodeId: string) => void;
   onHoverLink?: (otherNodeId: string | null) => void;
@@ -110,16 +136,6 @@ function NeighborTable({
           );
         }
 
-        let distance: number | undefined;
-        if (nnode.map_position) {
-          distance = calculateGeodesicDistance(
-            nodePosition[1],
-            nodePosition[0],
-            nnode.map_position[1],
-            nnode.map_position[0],
-          );
-        }
-
         return (
           <div
             key={row.id}
@@ -135,7 +151,7 @@ function NeighborTable({
             />
             <div className="flex items-center gap-3 text-gray-400">
               <span>{row.snr == null ? "—" : `${row.snr} dB`}</span>
-              {distance != null && <span className="text-gray-500">{distance.toFixed(1)} km</span>}
+              {row.distanceKm != null && <span className="text-gray-500">{row.distanceKm.toFixed(1)} km</span>}
             </div>
           </div>
         );
@@ -261,7 +277,10 @@ function RecentActivitySparkline({ nodeId }: { nodeId: string }) {
   );
 }
 
-export function MapDetailsPanel({
+/** Memoized: the map re-renders ~2.5×/s on live node flushes, but this panel
+ *  only needs to render when the selection (or a geocode resolve) swaps the
+ *  `data` identity — the parent passes referentially stable callbacks. */
+export const MapDetailsPanel = memo(function MapDetailsPanel({
   data,
   onClose,
   onNodeSelect,
@@ -303,29 +322,51 @@ export function MapDetailsPanel({
     return () => { onHoverLink?.(null); };
   }, [onHoverLink]);
 
+  // Heavy per-selection derivations. `data` identity only changes on node
+  // selection or a geocode resolve, so these skip every other parent render.
+  const sortedTracerouteLinks = useMemo(() => {
+    if (!data) return [];
+    const normId = normNodeId(data.node.id);
+    const trLinkCounts = new Map<string, number>();
+    for (const tr of data.traceroutes ?? []) {
+      const from = normNodeId(tr.from);
+      const to = normNodeId(tr.to);
+      const hops = (tr.route_ids ?? tr.route ?? []).map((r: string) => normNodeId(r));
+      const path = [from, ...hops, to].filter(Boolean);
+      const idx = path.indexOf(normId);
+      if (idx === -1) continue;
+      if (idx > 0) {
+        const prev = path[idx - 1];
+        trLinkCounts.set(prev, (trLinkCounts.get(prev) ?? 0) + 1);
+      }
+      if (idx < path.length - 1) {
+        const next = path[idx + 1];
+        trLinkCounts.set(next, (trLinkCounts.get(next) ?? 0) + 1);
+      }
+    }
+    return [...trLinkCounts.entries()].sort((a, b) => b[1] - a[1]);
+  }, [data]);
+
+  const neighborRows = useMemo(() => {
+    if (!data) return [];
+    const { node, liveNodes } = data;
+    return withDistances(node.neighbors ?? [], [node.position[0], node.position[1]], liveNodes);
+  }, [data]);
+
+  const heardByRows = useMemo(() => {
+    if (!data) return [];
+    const { node, liveNodes } = data;
+    const rows = data.heardBy.map((nid) => {
+      const nnode = liveNodes[nid];
+      const neighbor = nnode?.neighbors?.find((n) => n.id === node.id);
+      return { id: nid, snr: neighbor?.snr ?? null };
+    });
+    return withDistances(rows, [node.position[0], node.position[1]], liveNodes);
+  }, [data]);
+
   if (!data) return null;
 
-  const { node, liveNodes, displayName, traceroutes = [], channelLabel } = data;
-
-  const normId = normNodeId(node.id);
-  const trLinkCounts = new Map<string, number>();
-  for (const tr of traceroutes) {
-    const from = normNodeId(tr.from);
-    const to = normNodeId(tr.to);
-    const hops = (tr.route_ids ?? tr.route ?? []).map((r: string) => normNodeId(r));
-    const path = [from, ...hops, to].filter(Boolean);
-    const idx = path.indexOf(normId);
-    if (idx === -1) continue;
-    if (idx > 0) {
-      const prev = path[idx - 1];
-      trLinkCounts.set(prev, (trLinkCounts.get(prev) ?? 0) + 1);
-    }
-    if (idx < path.length - 1) {
-      const next = path[idx + 1];
-      trLinkCounts.set(next, (trLinkCounts.get(next) ?? 0) + 1);
-    }
-  }
-  const sortedTracerouteLinks = [...trLinkCounts.entries()].sort((a, b) => b[1] - a[1]);
+  const { node, liveNodes, displayName, channelLabel } = data;
 
   const nodeIdInt = parseInt(node.id, 16);
   const elsewhereLinks = getElsewhereLinks(data.elsewhereLinks);
@@ -334,19 +375,13 @@ export function MapDetailsPanel({
   const liveNode = liveNodes[node.id] ?? liveNodes[`!${node.id}`] ?? liveNodes[node.id.replace(/^!/, "")];
   const hardwareLabel = formatHardwareLabel(liveNode?.hardware);
 
-  const heardByRows = data.heardBy.map((nid) => {
-    const nnode = liveNodes[nid];
-    const neighbor = nnode?.neighbors?.find((n) => n.id === node.id);
-    return { id: nid, snr: neighbor?.snr ?? null };
-  });
-
   return (
     <div
       ref={sheetRef}
       role="dialog"
       aria-label={node.longname || node.shortname || node.id}
       className="fixed z-1050 flex flex-col
-        bg-gray-900/80 backdrop-blur-xl shadow-2xl
+        bg-gray-900/95 shadow-2xl
         bottom-0 left-0 right-0 max-h-[70vh] rounded-t-2xl border-t border-white/10
         animate-[slideInUp_200ms_ease-out]
         sm:bottom-auto sm:left-auto sm:top-0 sm:right-0 sm:max-h-full sm:h-full sm:w-85
@@ -497,8 +532,7 @@ export function MapDetailsPanel({
           defaultOpen
         >
           <NeighborTable
-            rows={node.neighbors ?? []}
-            nodePosition={[node.position[0], node.position[1]]}
+            rows={neighborRows}
             liveNodes={liveNodes}
             onNodeSelect={onNodeSelect}
             onHoverLink={onHoverLink}
@@ -512,7 +546,6 @@ export function MapDetailsPanel({
         >
           <NeighborTable
             rows={heardByRows}
-            nodePosition={[node.position[0], node.position[1]]}
             liveNodes={liveNodes}
             onNodeSelect={onNodeSelect}
             onHoverLink={onHoverLink}
@@ -588,4 +621,4 @@ export function MapDetailsPanel({
       </div>
     </div>
   );
-}
+});

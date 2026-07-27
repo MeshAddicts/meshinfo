@@ -24,10 +24,29 @@ export function MapSearchBar({
     return () => clearTimeout(t);
   }, [query]);
 
+  // Read the node list through a ref and key the scan on (query, node count,
+  // coarse tick) instead of `nodes` identity: every ~400ms live flush swaps
+  // the object, and re-running the full 3k-entry scan (plus dropping the
+  // results identity) on each one is wasted work — results a few seconds
+  // stale are fine here.
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
+  const nodeCount = Object.keys(nodes).length;
+
+  // Bound the staleness: renames / new GPS fixes / online flips don't change
+  // the node count, so refresh an open result list every few seconds too.
+  const [refreshTick, setRefreshTick] = useState(0);
+  const listActive = open && Boolean(debouncedQuery.trim());
+  useEffect(() => {
+    if (!listActive) return;
+    const t = setInterval(() => setRefreshTick((v) => v + 1), 4_000);
+    return () => clearInterval(t);
+  }, [listActive]);
+
   const results = useMemo(() => {
-    if (!debouncedQuery.trim()) return [];
+    if (!debouncedQuery.trim() || nodeCount === 0) return [];
     const q = debouncedQuery.toLowerCase();
-    return Object.entries(nodes)
+    return Object.entries(nodesRef.current)
       .filter(([id, n]) => {
         if (!n.map_position) return false;
         return (
@@ -38,9 +57,17 @@ export function MapSearchBar({
       })
       .slice(0, 20)
       .map(([id, n]) => ({ id, node: n }));
-  }, [debouncedQuery, nodes]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedQuery, nodeCount, refreshTick]);
 
-  useEffect(() => setHighlightIdx(0), [results]);
+  // Reset keyboard highlight only when the query itself changes — resetting on
+  // results identity snapped the highlight back to row 0 mid-navigation.
+  useEffect(() => setHighlightIdx(0), [debouncedQuery]);
+  // …but clamp it when the list shrinks under the cursor (node joined/left),
+  // or Enter would silently do nothing on an out-of-range index.
+  useEffect(() => {
+    setHighlightIdx((i) => Math.min(i, Math.max(results.length - 1, 0)));
+  }, [results]);
 
   useEffect(() => {
     const el = listRef.current?.children[highlightIdx] as HTMLElement | undefined;
@@ -133,7 +160,7 @@ export function MapSearchBar({
             open && results[highlightIdx] ? `node-search-opt-${results[highlightIdx].id}` : undefined
           }
           className="w-full pl-8 pr-3 py-1.5 rounded-xl text-xs
-            bg-gray-900/80 backdrop-blur-xl border border-white/10 shadow-2xl
+            bg-gray-900/95 border border-white/10 shadow-2xl
             text-gray-200 placeholder-gray-500
             focus:outline-none focus:border-cyan-500/50 focus:ring-1 focus:ring-cyan-500/50"
         />

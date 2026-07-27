@@ -9,12 +9,22 @@ export function useUrlMapSync(
   nodes: Record<string, IMapNode>,
   mbMapRef: React.RefObject<MlMap | null>,
 ) {
+  // Router subscription kept ONLY for the ?node= deep link, which must react
+  // to in-app navigations (the node panel's "show on map" link). Everything
+  // else reads window.location fresh and writes via history.replaceState so
+  // the constant pan/zoom sync never re-renders the whole Map route.
   const [searchParams, setSearchParams] = useSearchParams();
   // Ref'd so writes don't depend on setSearchParams' rotating identity.
   const setSearchParamsRef = useRef(setSearchParams);
   setSearchParamsRef.current = setSearchParams;
-  const searchParamsRef = useRef(searchParams);
-  searchParamsRef.current = searchParams;
+
+  // Stable mount-time snapshot for Map.tsx's init-only ?lat/lng/z reads — a
+  // live params object would re-run init-keyed consumers on every navigation.
+  const initialSearchParamsRef = useRef<URLSearchParams | null>(null);
+  if (initialSearchParamsRef.current === null) {
+    initialSearchParamsRef.current = new URLSearchParams(window.location.search);
+  }
+  const initialSearchParams = initialSearchParamsRef.current;
 
   const urlNodeId = searchParams.get("node") ?? "";
   const urlNodeIdRef = useRef(urlNodeId);
@@ -45,7 +55,12 @@ export function useUrlMapSync(
       if (mbMap) {
         flyToHandledRef.current = urlNodeId;
         mbMap.easeTo({ center: [lon, lat], zoom: 14, duration: 1200 });
-        setSearchParams((prev) => { prev.delete("node"); return prev; }, { replace: true });
+        // Build from window.location, not the router's params: lat/lng/z and
+        // tool params are written via replaceState behind the router's back,
+        // so its stale copy would resurrect old values here.
+        const sp = new URLSearchParams(window.location.search);
+        sp.delete("node");
+        setSearchParamsRef.current(sp, { replace: true });
         return true;
       }
 
@@ -63,10 +78,12 @@ export function useUrlMapSync(
     }
 
     return () => timers.forEach(clearTimeout);
-  }, [urlNodeId, flyToTarget, setSearchParams, mbMapRef]);
+  }, [urlNodeId, flyToTarget, mbMapRef]);
 
   // Debounced ?lat/lng/z writer. Called from Map.tsx's moveend (always the live
   // map) — a listener bound here would go stale when the map is recreated.
+  // Writes via history.replaceState, NOT setSearchParams: a router navigation
+  // here would re-render the entire Map route per pan/zoom, purely cosmetic.
   const viewSyncTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const pushViewToUrl = useCallback(() => {
     if (viewSyncTimerRef.current) clearTimeout(viewSyncTimerRef.current);
@@ -74,11 +91,15 @@ export function useUrlMapSync(
       const mb = mbMapRef.current;
       if (!mb) return;
       const c = mb.getCenter();
-      const sp = new URLSearchParams(searchParamsRef.current);
+      // Read fresh at write time so tool params and ?node= are preserved.
+      const sp = new URLSearchParams(window.location.search);
       sp.set("lat", String(+c.lat.toFixed(5)));
       sp.set("lng", String(+c.lng.toFixed(5)));
       sp.set("z", String(+mb.getZoom().toFixed(2)));
-      setSearchParamsRef.current(sp, { replace: true });
+      const next = `${window.location.pathname}?${sp.toString()}${window.location.hash}`;
+      // Keep the router's history.state (usr/key/idx) — nulling it would break
+      // react-router's back/forward bookkeeping.
+      window.history.replaceState(window.history.state, "", next);
     }, 600);
   }, [mbMapRef]);
 
@@ -90,5 +111,7 @@ export function useUrlMapSync(
   const pushViewToUrlRef = useRef(pushViewToUrl);
   pushViewToUrlRef.current = pushViewToUrl;
 
-  return { searchParams, flyToTargetRef, pushViewToUrlRef };
+  // `searchParams` is a frozen mount-time snapshot — Map.tsx only reads it at
+  // map init (?lat/lng/z priority), and a live object is no longer available.
+  return { searchParams: initialSearchParams, flyToTargetRef, pushViewToUrlRef };
 }

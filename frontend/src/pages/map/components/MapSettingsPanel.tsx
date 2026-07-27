@@ -357,7 +357,7 @@ export function MapSettingsPanel({
     "w-full rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-gray-200 focus:border-cyan-500/50 focus:outline-hidden focus:ring-1 focus:ring-cyan-500/50 [&_option]:bg-gray-800 [&_option]:text-gray-200 [&_optgroup]:bg-gray-900 [&_optgroup]:text-gray-400";
 
   const iconBtnBase =
-    "p-2 rounded-xl shadow-2xl border backdrop-blur-xl transition-colors";
+    "p-2 rounded-xl shadow-2xl border transition-colors";
 
   const toggleSection = (key: string) => {
     setOpenSections((prev) => {
@@ -384,7 +384,7 @@ export function MapSettingsPanel({
           }}
           role="dialog"
           aria-labelledby="map-settings-heading"
-          className="shadow-2xl border border-white/10 bg-gray-900/80 backdrop-blur-xl
+          className="shadow-2xl border border-white/10 bg-gray-900/95
                      fixed inset-x-0 bottom-0 max-h-[85dvh] rounded-t-2xl flex flex-col
                      animate-[slideInUp_200ms_ease-out]
                      sm:static sm:mb-2 sm:inset-x-auto sm:bottom-auto
@@ -692,8 +692,8 @@ export function MapSettingsPanel({
           }}
           className={`${iconBtnBase} ${
             legendOpen
-              ? "bg-gray-900/90 border-cyan-500/50"
-              : "bg-gray-900/80 border-white/10 hover:bg-gray-900/90"
+              ? "bg-gray-900/95 border-cyan-500/50"
+              : "bg-gray-900/95 border-white/10 hover:bg-gray-900"
           }`}
           aria-label="Toggle legend"
         >
@@ -713,8 +713,8 @@ export function MapSettingsPanel({
           }}
           className={`${iconBtnBase} ${
             settingsPanelOpen
-              ? "bg-gray-900/90 border-cyan-500/50"
-              : "bg-gray-900/80 border-white/10 hover:bg-gray-900/90"
+              ? "bg-gray-900/95 border-cyan-500/50"
+              : "bg-gray-900/95 border-white/10 hover:bg-gray-900"
           }`}
           aria-label="Toggle Map Settings"
         >

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 
 import { Avatar } from "../../components/Avatar";
@@ -20,7 +20,6 @@ import {
   positionUncertaintyM,
 } from "../map/rf/altitudeAssessment";
 import { getGroundElevation } from "./groundElevation";
-import { NodeMap } from "./NodeMap";
 import {
   cleanNodeId,
   getLatLon,
@@ -28,6 +27,28 @@ import {
   isNodeOnline,
   roleLabel,
 } from "./nodesUtils";
+
+// NodeMap anchors maplibre-gl (~1 MB min); lazy-loading it here keeps the GL
+// engine out of whatever chunk this panel lands in.
+const NodeMap = lazy(() =>
+  import("./NodeMap").then((m) => ({ default: m.NodeMap })),
+);
+
+/** Same dimensions as NodeMap's root div so the swap causes no layout shift. */
+function NodeMapFallback() {
+  return (
+    <div
+      style={{
+        position: "relative",
+        height: "300px",
+        width: "100%",
+        borderRadius: "12px",
+        overflow: "hidden",
+        background: "rgba(0,0,0,0.25)",
+      }}
+    />
+  );
+}
 
 function KV({
   k,
@@ -535,7 +556,9 @@ export function NodeDetailsPanel({
             </div>
             <div className="mt-3">
               {ll ? (
-                <NodeMap node={node} />
+                <Suspense fallback={<NodeMapFallback />}>
+                  <NodeMap node={node} />
+                </Suspense>
               ) : (
                 <div className="text-sm text-gray-600 dark:text-gray-400">
                   No coordinates available for this node.

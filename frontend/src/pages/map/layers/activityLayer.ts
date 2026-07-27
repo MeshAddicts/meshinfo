@@ -1,5 +1,6 @@
 /** WebGL layer for live packet arcs (comets), origin pulses, and gateway ripples.
- *  Time-in-shader over a persistent ring buffer; self-stops when idle. */
+ *  Time-in-shader over a persistent ring buffer; self-stops when idle or when
+ *  every live primitive is off screen (spawns and camera moves re-arm it). */
 import maplibregl, { type CustomRenderMethodInput } from "maplibre-gl";
 
 type RGB = [number, number, number];
@@ -14,7 +15,10 @@ const MIN_ARC_MS = 450; // floor so short hops aren't a blink
 const MAX_ARC_MS = 3000; // ceiling so cross-screen arcs aren't tedious
 const PULSE_MS = 750;
 const RIPPLE_MS = 750;
-const FRAME_MS = 1000 / 30; // keep-alive repaint cap (~30fps, vsync-aligned via rAF)
+const FRAME_MS = 1000 / 30; // keep-alive repaint cap while the camera moves (~30fps)
+const IDLE_ARC_FRAME_MS = 1000 / 20; // camera idle: comets still read as motion at ~20fps
+const IDLE_RING_FRAME_MS = 1000 / 10; // camera idle, rings only: slow growth tolerates ~10fps
+const CULL_MARGIN = 0.25; // viewport fraction; generous so nothing pops in at the edge
 const MAX_BATCH_POINTS = 2048; // staging capacity for one coalesced flush
 
 const VS = `
@@ -140,6 +144,12 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
   private repaintHandle: number | null = null;
   private lastRenderTs = 0; // performance.now() of the last actual render (fps cap)
   private liveHigh = 0; // highest written slot + 1; bounds the draw range
+  private cameraMoving = false; // movestart..moveend; picks the frame cap, gates the cull
+  private onMoveStart: (() => void) | null = null;
+  private onMoveEnd: (() => void) | null = null;
+  /** Live primitives' anchor points (lng/lat) + expiry for the scheduling-time
+   *  viewport cull: arc = endpoints + bezier apex, ring = center. */
+  private culls: { pts: LngLat[]; expiry: number }[] = [];
 
   private scratchArc = new Float32Array(ARC_SAMPLES * FLOATS);
   private scratchRing = new Float32Array(FLOATS);
@@ -192,11 +202,31 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
     this.buffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
     gl.bufferData(gl.ARRAY_BUFFER, this.cpu, gl.DYNAMIC_DRAW);
+
+    // Camera motion picks the frame cap; either edge re-arms a loop parked by
+    // the viewport cull (jumpTo fires movestart+moveend back to back, so a
+    // teleport toward off-screen primitives resumes too).
+    this.onMoveStart = () => {
+      this.cameraMoving = true;
+      if (performance.now() <= this.maxExpiry) this.scheduleNextFrame();
+    };
+    this.onMoveEnd = () => {
+      this.cameraMoving = false;
+      if (performance.now() <= this.maxExpiry) this.scheduleNextFrame();
+    };
+    map.on("movestart", this.onMoveStart);
+    map.on("moveend", this.onMoveEnd);
   }
 
-  onRemove(_map: maplibregl.Map, gl: WebGLRenderingContext): void {
+  onRemove(map: maplibregl.Map, gl: WebGLRenderingContext): void {
     if (this.repaintHandle != null) cancelAnimationFrame(this.repaintHandle);
     this.repaintHandle = null;
+    if (this.onMoveStart) map.off("movestart", this.onMoveStart);
+    if (this.onMoveEnd) map.off("moveend", this.onMoveEnd);
+    this.onMoveStart = null;
+    this.onMoveEnd = null;
+    this.cameraMoving = false;
+    this.culls = [];
     if (this.buffer) gl.deleteBuffer(this.buffer);
     if (this.program) gl.deleteProgram(this.program);
     this.buffer = null;
@@ -211,21 +241,76 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
     this.map?.triggerRepaint();
   }
 
-  /** Keep-alive repaint, vsync-aligned via rAF, capped to ~30fps by frame-skip.
-   *  Halves to ~15fps when the camera is idle and only rings remain — each
-   *  triggerRepaint redraws the whole scene (terrain + satellite). */
+  /** Keep-alive repaint, vsync-aligned via rAF, capped by frame-skip — each
+   *  triggerRepaint redraws the whole scene (terrain + satellite). While the
+   *  camera moves the scene repaints anyway, so keep the full ~30fps; on an
+   *  idle camera drop to ~20fps (comets) / ~10fps (rings only), and park the
+   *  loop while every live primitive is off screen. */
   private scheduleNextFrame(): void {
     if (this.repaintHandle != null || !this.map) return;
     this.repaintHandle = requestAnimationFrame((ts) => {
       this.repaintHandle = null;
-      const ringsOnly = performance.now() > this.arcExpiry;
-      const cap = ringsOnly && this.map && !this.map.isMoving() ? FRAME_MS * 2 : FRAME_MS;
+      const cap = this.cameraMoving
+        ? FRAME_MS
+        : performance.now() > this.arcExpiry
+          ? IDLE_RING_FRAME_MS
+          : IDLE_ARC_FRAME_MS;
       if (ts - this.lastRenderTs < cap - 1) {
         this.scheduleNextFrame(); // too soon — wait for the next vsync, don't render yet
         return;
       }
+      // Cull after the cap so the scan runs at repaint cadence, not per vsync.
+      // Parking (no reschedule, no repaint) ends the loop; spawns and the
+      // movestart/moveend handlers re-arm it.
+      if (!this.cameraMoving && this.allOffscreen(performance.now())) return;
       this.map?.triggerRepaint();
     });
+  }
+
+  /** True when every live primitive's screen bbox misses the viewport plus a
+   *  CULL_MARGIN apron (absorbs ring/comet point sizes and arc altitude lift).
+   *  Prunes expired entries; early-exits on the first visible primitive. */
+  private allOffscreen(now: number): boolean {
+    const map = this.map;
+    if (!map) return false;
+    const culls = this.culls;
+    let n = 0;
+    for (const c of culls) if (c.expiry > now) culls[n++] = c;
+    culls.length = n;
+    if (n === 0) return false; // nothing live — render()'s maxExpiry check owns shutdown
+    const canvas = map.getCanvas();
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    const mx = w * CULL_MARGIN;
+    const my = h * CULL_MARGIN;
+    for (const c of culls) {
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      for (const pt of c.pts) {
+        const p = map.project(pt);
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+      }
+      if (maxX >= -mx && minX <= w + mx && maxY >= -my && minY <= h + my) return false;
+    }
+    return true;
+  }
+
+  /** Record a primitive for the viewport cull; prunes opportunistically so the
+   *  list stays bounded even if the cull never runs (camera moving nonstop). */
+  private pushCull(pts: LngLat[], expiry: number): void {
+    const culls = this.culls;
+    if (culls.length >= 512) {
+      const now = performance.now();
+      let n = 0;
+      for (const c of culls) if (c.expiry > now) culls[n++] = c;
+      culls.length = n;
+    }
+    culls.push({ pts, expiry });
   }
 
   private elevAt(lng: number, lat: number): number {
@@ -324,6 +409,7 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
     this.emit(d, ARC_SAMPLES);
     this.maxExpiry = Math.max(this.maxExpiry, t0 + dur);
     this.arcExpiry = Math.max(this.arcExpiry, t0 + dur);
+    this.pushCull([from, [lngC, latC], to], t0 + dur);
   }
 
   /** Comet duration from on-screen distance → constant travel speed at any zoom. */
@@ -408,6 +494,7 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
     d[10] = weight;
     this.emit(d, 1);
     this.maxExpiry = Math.max(this.maxExpiry, t0 + dur);
+    this.pushCull([at], t0 + dur);
     this.scheduleNextFrame();
   }
 
@@ -448,6 +535,6 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
       if (loc >= 0) gl.disableVertexAttribArray(loc);
     }
 
-    this.scheduleNextFrame(); // keep animating (~30fps) until maxExpiry
+    this.scheduleNextFrame(); // keep animating (capped per camera state) until maxExpiry
   }
 }

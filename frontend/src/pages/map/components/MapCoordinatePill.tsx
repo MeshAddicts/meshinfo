@@ -107,7 +107,7 @@ export function MapCoordinatePill({
       className="hidden lg:block fixed top-3 z-40 left-[calc(var(--map-pad)+33.75rem)]"
     >
       {editing ? (
-        <div className="flex flex-col gap-1 rounded-xl border border-cyan-500/40 bg-gray-900/90 backdrop-blur-xl shadow-2xl px-2.5 py-1.5 max-w-[calc(100vw-var(--map-pad)-35rem)]">
+        <div className="flex flex-col gap-1 rounded-xl border border-cyan-500/40 bg-gray-900/95 shadow-2xl px-2.5 py-1.5 max-w-[calc(100vw-var(--map-pad)-35rem)]">
           <div className="flex items-center gap-1.5">
             <svg className="w-3.5 h-3.5 text-cyan-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
@@ -163,7 +163,7 @@ export function MapCoordinatePill({
           )}
         </div>
       ) : (
-        <div className="flex items-center gap-0.5 rounded-full border border-white/10 bg-gray-900/80 backdrop-blur-xl text-gray-300 shadow-2xl">
+        <div className="flex items-center gap-0.5 rounded-full border border-white/10 bg-gray-900/95 text-gray-300 shadow-2xl">
           <button
             type="button"
             onClick={openEditor}

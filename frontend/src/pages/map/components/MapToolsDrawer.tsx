@@ -96,9 +96,9 @@ export function MapToolsDrawer({
   const currentTool = TOOLS.find((t) => t.id === activeTool);
 
   const pillBase =
-    "shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer select-none shadow-2xl backdrop-blur-xl";
-  const pillActive = "bg-cyan-500/20 border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/30";
-  const pillIdle = "bg-gray-900/80 border-white/10 text-gray-300 hover:bg-gray-900/90 hover:border-white/20 hover:text-gray-100";
+    "shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer select-none shadow-2xl";
+  const pillActive = "bg-cyan-950/95 border-cyan-500/40 text-cyan-300 hover:bg-cyan-900/95";
+  const pillIdle = "bg-gray-900/95 border-white/10 text-gray-300 hover:bg-gray-900 hover:border-white/20 hover:text-gray-100";
 
   return (
     <div
@@ -224,7 +224,7 @@ export function MapToolPrompt({
 }) {
   return (
     <div className="fixed top-14 left-1/2 -translate-x-1/2 z-40
-      rounded-xl shadow-2xl border border-cyan-500/40 bg-gray-900/90 backdrop-blur-xl
+      rounded-xl shadow-2xl border border-cyan-500/40 bg-gray-900/95
       px-4 py-2 flex items-center gap-3
       animate-[slideInUp_200ms_ease-out]">
       <svg className="w-4 h-4 text-cyan-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">

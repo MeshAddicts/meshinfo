@@ -1813,6 +1813,7 @@ class PostgresStorage:
         longname_filter: Optional[str] = None,
         shortname_filter: Optional[str] = None,
         status_filter: Optional[str] = None,
+        slim: bool = False,
     ) -> Dict[str, Any]:
         """
         Query nodes with filters directly from PostgreSQL.
@@ -1823,6 +1824,10 @@ class PostgresStorage:
             longname_filter: Filter by longname substring (case-insensitive)
             shortname_filter: Filter by shortname substring (case-insensitive)
             status_filter: Filter by status ("online" or "offline")
+            slim: Omit per-node fields no frontend consumer reads — `since`
+                and position's `geocoded`/`last_geocoding` (the geocoded blob
+                is 0.5–1.5 KB/node). Default False keeps the full shape for
+                third-party consumers.
 
         Returns:
             Dict mapping node_id to node data
@@ -1885,7 +1890,7 @@ class PostgresStorage:
 
                 for row in rows:
                     node_id = row["id"]
-                    nodes[node_id] = {
+                    node = {
                         "id": node_id,
                         "longname": row["longname"],
                         "shortname": row["shortname"],
@@ -1901,6 +1906,9 @@ class PostgresStorage:
                         "neighborinfo": None,
                         "telemetry": None,
                     }
+                    if slim:
+                        del node["since"]
+                    nodes[node_id] = node
 
                 # Load related data for returned nodes
                 if nodes:
@@ -1918,7 +1926,7 @@ class PostgresStorage:
                     for row in position_rows:
                         node_id = row["node_id"]
                         if node_id in nodes:
-                            nodes[node_id]["position"] = {
+                            position = {
                                 "latitude_i": row["latitude_i"],
                                 "longitude_i": row["longitude_i"],
                                 "altitude": row["altitude"],
@@ -1928,9 +1936,13 @@ class PostgresStorage:
                                 "altitude_geoidal_separation": row["altitude_geoidal_separation"],
                                 "location_source": row["location_source"],
                                 "altitude_source": row["altitude_source"],
-                                "geocoded": self._jsonb(row["geocoded"], None),
-                                "last_geocoding": row["last_geocoding"].isoformat() if row["last_geocoding"] else None,
                             }
+                            if not slim:
+                                # Skipped entirely in slim mode — _jsonb would
+                                # otherwise parse the 0.5–1.5 KB blob per node.
+                                position["geocoded"] = self._jsonb(row["geocoded"], None)
+                                position["last_geocoding"] = row["last_geocoding"].isoformat() if row["last_geocoding"] else None
+                            nodes[node_id]["position"] = position
 
                     # Load neighborinfo
                     neighbor_query = """
@@ -2437,12 +2449,19 @@ class PostgresStorage:
         from_node_id: Optional[str] = None,
         to_node_id: Optional[str] = None,
         range_seconds: Optional[int] = None,
+        slim: bool = False,
     ) -> List[Dict[str, Any]]:
         """Query traceroutes, newest first, optionally filtered.
 
         With both endpoints given, the pair matches in either direction
         (consumers orient the path client-side). A single endpoint filters
         just that column. `range_seconds` windows on created_at.
+
+        With `slim`, each row keeps only what the SPA reads (from, to, id,
+        hops_away, rssi, snr, timestamp, route_ids, payload.snr_towards) —
+        the full rows triple-carry the path via `route`, `route_ids` AND the
+        payload's route/route_back arrays. Default False keeps the full
+        shape for third-party consumers.
         """
         if not self.enabled or not self.pool:
             return []
@@ -2481,6 +2500,28 @@ class PostgresStorage:
 
                 traceroutes = []
                 for row in rows:
+                    if slim:
+                        # payload still has to be parsed: snr_towards lives in
+                        # it (per-leg SNR + reply-orientation detection). Only
+                        # that key survives — route/route_back/snr_back don't.
+                        payload = self._jsonb(row["payload"], {})
+                        slim_payload = {}
+                        if isinstance(payload, dict) and "snr_towards" in payload:
+                            slim_payload["snr_towards"] = payload["snr_towards"]
+                        traceroutes.append(
+                            {
+                                "from": row["from_node_id"],
+                                "to": row["to_node_id"],
+                                "id": row["message_id"],
+                                "hops_away": row["hops_away"],
+                                "rssi": row["rssi"],
+                                "snr": row["snr"],
+                                "timestamp": row["timestamp"],
+                                "route_ids": self._jsonb(row["route_ids"], []),
+                                "payload": slim_payload,
+                            }
+                        )
+                        continue
                     traceroutes.append(
                         {
                             "from": row["from_node_id"],

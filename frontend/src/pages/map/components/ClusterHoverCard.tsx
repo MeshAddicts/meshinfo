@@ -2,7 +2,6 @@ import { useEffect, useMemo, useReducer } from "react";
 
 import { NodeRole, roleTitles } from "../../../types";
 import { relativeTime } from "../lib/helpers";
-import type { IMapNode } from "../lib/types";
 import { DEFAULT_NODE_COLOR, OFFLINE_NODE_COLOR, ROLE_COLORS } from "../lib/utils";
 
 export type ClusterHover = {
@@ -13,6 +12,18 @@ export type ClusterHover = {
   y: number;
 };
 
+/** Per-node snapshot of exactly what the card renders. The parent builds this
+ *  array once per hover (from the cluster's leaf ids) instead of handing the
+ *  whole node cache down — so live node flushes don't re-render the card. */
+export interface ClusterHoverLeaf {
+  id: string;
+  shortname?: string;
+  longname?: string;
+  online: boolean;
+  role?: NodeRole;
+  last_seen?: string;
+}
+
 const LEADERBOARD_MAX = 6;
 
 function roleColor(role: number | null | undefined, online: boolean): string {
@@ -21,27 +32,23 @@ function roleColor(role: number | null | undefined, online: boolean): string {
 }
 
 /** Display-only card anchored beside a hovered cluster. Counts come from the
- *  cluster aggregate; the member breakdown/leaderboard hydrate from the live
- *  node cache, so it stays current while open. */
+ *  cluster aggregate; the member breakdown/leaderboard render from the leaf
+ *  snapshot captured at hover. */
 export function ClusterHoverCard({
   hover,
-  nodes,
+  leaves,
 }: {
   hover: ClusterHover | null;
-  nodes: Record<string, IMapNode>;
+  leaves: ClusterHoverLeaf[];
 }) {
-  // Keep relative times fresh even when the node cache is idle.
+  // Keep relative times fresh even when the node cache is idle. Only the time
+  // strings recompute per tick — the memos below key on `leaves` identity.
   const [, tick] = useReducer((c: number) => c + 1, 0);
   useEffect(() => {
     if (!hover) return;
     const t = setInterval(tick, 1000);
     return () => clearInterval(t);
   }, [hover]);
-
-  const leaves = useMemo(
-    () => (hover ? hover.ids.map((id) => nodes[id]).filter((n): n is IMapNode => Boolean(n)) : []),
-    [hover, nodes],
-  );
 
   const roleBreakdown = useMemo(() => {
     const counts = new Map<number, number>();
@@ -66,7 +73,7 @@ export function ClusterHoverCard({
 
   return (
     <div
-      className="absolute z-40 pointer-events-none w-64 -translate-y-1/2 rounded-xl border border-white/10 bg-gray-900/85 backdrop-blur-xl shadow-2xl text-gray-200 overflow-hidden"
+      className="absolute z-40 pointer-events-none w-64 -translate-y-1/2 rounded-xl border border-white/10 bg-gray-900/95 shadow-2xl text-gray-200 overflow-hidden"
       style={{ left: x + 22, top: y }}
     >
       <div className="px-3 py-2 border-b border-white/10 flex items-center justify-between">
