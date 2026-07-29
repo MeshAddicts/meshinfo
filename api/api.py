@@ -1,9 +1,12 @@
 import asyncio
 import datetime
+import functools
 import json
 import logging
 import os
+import random
 import re
+import time
 from pathlib import Path
 
 import aiohttp
@@ -16,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import FileResponse
 
 from config import Config
-from api.static_map import generate_static_map
+from api.static_map import STATIC_MAP_EXECUTOR, MapUnavailableError, generate_static_map
 import utils
 
 logger = logging.getLogger(__name__)
@@ -94,6 +97,27 @@ class API:
         except (TypeError, ValueError, OSError, OverflowError):
             return None
 
+    @staticmethod
+    def _parse_since(value: str | None) -> datetime.datetime | None:
+        """Parse the /v1/nodes `since` param (unix epoch seconds, int or float)
+        into an aware UTC datetime. Returns None — meaning "no delta filter",
+        never an error — when absent, unparseable, non-positive, or in the
+        future (a client clock ahead of ours must degrade to the full list,
+        not an empty one)."""
+        if not value:
+            return None
+        try:
+            ts = float(value)
+        except (TypeError, ValueError):
+            return None
+        # NaN/inf/negative/future all fail this chained comparison.
+        if not (0 < ts <= time.time()):
+            return None
+        try:
+            return datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc)
+        except (ValueError, OSError, OverflowError):
+            return None
+
     async def serve(self):
         @app.get("/")
         async def root():
@@ -145,22 +169,37 @@ class API:
                     if st in ["online", "offline"]:
                         status_filter = st
 
+            # ?slim=1 omits per-node dead weight (geocoded blob, last_geocoding,
+            # since) for consumers that don't read it — the SPA. Default stays
+            # byte-identical for third-party consumers.
+            slim = request.query_params.get("slim", "").lower() in ("1", "true", "yes")
+
+            # ?since=<epoch seconds> narrows to nodes with last_seen >= since —
+            # the SSE reconnect delta resync. Composes with days/slim; invalid
+            # values fall back to the full (non-delta) response.
+            since = self._parse_since(request.query_params.get("since"))
+
             nodes = await self.data.pg_storage.query_nodes_filtered(
                 days_limit=days_to_limit,
                 node_ids=node_ids,
                 longname_filter=longname_filter,
                 shortname_filter=shortname_filter,
-                status_filter=status_filter
+                status_filter=status_filter,
+                slim=slim,
+                since=since,
             )
 
-            return jsonable_encoder({ "nodes": nodes, "count": len(nodes) })
+            # Wrap in JSONResponse ourselves — returning a plain dict makes
+            # FastAPI run jsonable_encoder + json.dumps a second time on the
+            # event loop (same applies to every /v1 handler below).
+            return JSONResponse(jsonable_encoder({ "nodes": nodes, "count": len(nodes) }))
 
         @app.get("/v1/nodes/{id}")
         async def node(request: Request, id: str) -> JSONResponse:
             node_id = self._coerce_node_id(id)
             node_data = await self.data.pg_storage.query_node_by_id(node_id)
             if node_data:
-                return jsonable_encoder({ "node": node_data })
+                return JSONResponse(jsonable_encoder({ "node": node_data }))
             return JSONResponse(status_code=404, content={"error": "node not found"})
 
         @app.get("/v1/nodes/{id}/telemetry")
@@ -168,14 +207,14 @@ class API:
             node_id = self._coerce_node_id(id)
             telemetry_data = await self.data.pg_storage.query_node_telemetry(node_id)
             if telemetry_data:
-                return jsonable_encoder({ "telemetry": telemetry_data })
+                return JSONResponse(jsonable_encoder({ "telemetry": telemetry_data }))
             return JSONResponse(status_code=404, content={"error": "telemetry not found"})
 
         @app.get("/v1/nodes/{id}/texts")
         async def node_text(request: Request, id: str) -> JSONResponse:
             node_id = self._coerce_node_id(id)
             texts = await self.data.pg_storage.query_node_texts(node_id)
-            return jsonable_encoder({ "texts": texts })
+            return JSONResponse(jsonable_encoder({ "texts": texts }))
 
         @app.get("/v1/nodes/{id}/packets")
         async def node_packets(request: Request, id: str) -> JSONResponse:
@@ -193,15 +232,15 @@ class API:
                 end=self._parse_epoch(request.query_params.get("end")),
                 before=request.query_params.get("before"),
             )
-            return jsonable_encoder(
+            return JSONResponse(jsonable_encoder(
                 {"packets": result["messages"], "next_cursor": result["next_cursor"]}
-            )
+            ))
 
         @app.get("/v1/nodes/{id}/traceroutes")
         async def node_traceroutes(request: Request, id: str) -> JSONResponse:
             node_id = self._coerce_node_id(id)
             traceroutes = await self.data.pg_storage.query_node_traceroutes(node_id)
-            return jsonable_encoder({ "traceroutes": traceroutes })
+            return JSONResponse(jsonable_encoder({ "traceroutes": traceroutes }))
 
         @app.get("/v1/chat")
         async def chat(request: Request) -> JSONResponse:
@@ -221,12 +260,12 @@ class API:
                 channel_id=channel,
                 range_seconds=range_seconds,
             )
-            return jsonable_encoder(chat_data)
+            return JSONResponse(jsonable_encoder(chat_data))
 
         @app.get("/v1/telemetry")
         async def telemetry(request: Request) -> JSONResponse:
             telemetry_data = await self.data.pg_storage.query_all_telemetry()
-            return jsonable_encoder(telemetry_data)
+            return JSONResponse(jsonable_encoder(telemetry_data))
 
         @app.get("/v1/traceroutes")
         async def traceroutes(request: Request) -> JSONResponse:
@@ -237,13 +276,18 @@ class API:
                 limit = int(request.query_params.get("limit", 1000))
             except (TypeError, ValueError):
                 return JSONResponse({"error": "limit must be an integer"}, status_code=400)
+            # ?slim=1 keeps only the row fields the SPA reads and drops the
+            # rest (legacy `route`, duplicate payload arrays). Default stays
+            # byte-identical for third-party consumers.
+            slim = request.query_params.get("slim", "").lower() in ("1", "true", "yes")
             traceroutes_data = await self.data.pg_storage.query_all_traceroutes(
                 limit=max(1, min(limit, 10000)),
                 from_node_id=self._coerce_node_id(from_param) if from_param else None,
                 to_node_id=self._coerce_node_id(to_param) if to_param else None,
                 range_seconds=range_seconds,
+                slim=slim,
             )
-            return jsonable_encoder(traceroutes_data)
+            return JSONResponse(jsonable_encoder(traceroutes_data))
 
         @app.get("/v1/messages")
         async def messages(request: Request) -> JSONResponse:
@@ -257,7 +301,7 @@ class API:
             results = await self.data.pg_storage.query_mqtt_messages(
                 limit=limit, search=search, range_seconds=range_seconds,
             )
-            return jsonable_encoder(results["messages"])
+            return JSONResponse(jsonable_encoder(results["messages"]))
 
         @app.get("/v1/mqtt_messages")
         async def mqtt_messages(request: Request) -> JSONResponse:
@@ -270,7 +314,7 @@ class API:
             results = await self.data.pg_storage.query_mqtt_messages(
                 limit=limit, range_seconds=range_seconds,
             )
-            return jsonable_encoder(results["messages"])
+            return JSONResponse(jsonable_encoder(results["messages"]))
 
         @app.get("/v1/packets")
         async def packets(request: Request) -> JSONResponse:
@@ -294,7 +338,7 @@ class API:
                 end=self._parse_epoch(request.query_params.get("end")),
                 before=request.query_params.get("before"),
             )
-            return jsonable_encoder(result)
+            return JSONResponse(jsonable_encoder(result))
 
         @app.get("/v1/packets/{packet_id}")
         async def packet_by_id(request: Request, packet_id: str) -> JSONResponse:
@@ -309,12 +353,12 @@ class API:
             packet = await self.data.pg_storage.query_mqtt_message_by_id(row_id, include_copies=include_copies)
             if packet is None:
                 return JSONResponse({"error": "packet not found"}, status_code=404)
-            return jsonable_encoder({"packet": packet})
+            return JSONResponse(jsonable_encoder({"packet": packet}))
 
         @app.get("/v1/stats")
         async def stats(request: Request) -> JSONResponse:
             stats = await self.data.pg_storage.query_stats()
-            return jsonable_encoder({"stats": stats})
+            return JSONResponse(jsonable_encoder({"stats": stats}))
 
         @app.get("/v1/events")
         async def events(request: Request) -> StreamingResponse:
@@ -328,12 +372,22 @@ class API:
             same proxy route as the rest of /v1; Caddy serves it through a
             dedicated unbuffered handler (flush_interval -1)."""
             queue = self.data.broadcaster.subscribe()
+            # Jittered per-connection reconnect delay. Without a `retry:`
+            # directive browsers use a fixed ~3s with no jitter, so after an
+            # API restart every open tab reconnects in the same instant.
+            retry_ms = random.randint(3000, 8000)
 
             async def event_stream():
                 # The initial comment flushes response headers immediately so
                 # the browser fires EventSource.onopen, which drives the
                 # client's reconnect resync.
                 yield ": connected\n\n"
+                yield f"retry: {retry_ms}\n\n"
+                # Frame ids are epoch ms at send time, forced strictly
+                # monotonic per connection so Last-Event-ID is unambiguous
+                # for a future delta-resync endpoint (no server-side replay
+                # of Last-Event-ID yet — documented follow-up).
+                last_event_id = 0
                 try:
                     while True:
                         if await request.is_disconnected():
@@ -346,7 +400,8 @@ class API:
                             yield ": heartbeat\n\n"
                             continue
                         data = json.dumps(payload, default=str)
-                        yield f"event: {event_type}\ndata: {data}\n\n"
+                        last_event_id = max(last_event_id + 1, int(time.time() * 1000))
+                        yield f"id: {last_event_id}\nevent: {event_type}\ndata: {data}\n\n"
                 finally:
                     # Always deregister — covers disconnect, GeneratorExit, and
                     # task cancellation so a dropped client can't leak a queue.
@@ -384,11 +439,28 @@ class API:
             height = max(100, min(height, 600))
 
             try:
-                png_bytes = await asyncio.to_thread(generate_static_map, lat, lon, self.config, zoom=zoom, width=width, height=height)
+                # Dedicated 2-thread pool: a render can block on tile fetches
+                # for tens of seconds, and the default to_thread executor is
+                # only 7 threads on this box — don't let renders pin it.
+                png_bytes = await asyncio.get_running_loop().run_in_executor(
+                    STATIC_MAP_EXECUTOR,
+                    functools.partial(
+                        generate_static_map, lat, lon, self.config,
+                        zoom=zoom, width=width, height=height,
+                    ),
+                )
                 return Response(
                     content=png_bytes,
                     media_type="image/png",
                     headers={"Cache-Control": "public, max-age=3600"},
+                )
+            except MapUnavailableError:
+                # Negative-cached failure — fail fast instead of re-fetching
+                # the whole tile grid. Already logged when it first failed.
+                return JSONResponse(
+                    {"error": "Map generation failed"},
+                    status_code=503,
+                    headers={"Retry-After": "120"},
                 )
             except Exception:
                 logger.exception("Failed to generate static map")
@@ -396,7 +468,7 @@ class API:
 
         @app.get("/v1/server/config")
         async def server_config(request: Request) -> JSONResponse:
-            return jsonable_encoder({'config': Config.cleanse(self.config)})
+            return JSONResponse(jsonable_encoder({'config': Config.cleanse(self.config)}))
 
         # Group = "all" or a modem-preset pyramid (e.g. "LongFast"); doubles as
         # a directory and URL segment, so validate it strictly.

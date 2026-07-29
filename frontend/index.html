@@ -5,6 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <base href="/" />
     <title>MeshInfo</title>
+    <!-- Basemap tile CDN for the default style (carto dark). MapLibre
+         round-robins tiles across all four subdomains on every map load, so
+         warm each connection (tiles are CORS-fetched, hence crossorigin). -->
+    <link rel="preconnect" href="https://a.basemaps.cartocdn.com" crossorigin />
+    <link rel="preconnect" href="https://b.basemaps.cartocdn.com" crossorigin />
+    <link rel="preconnect" href="https://c.basemaps.cartocdn.com" crossorigin />
+    <link rel="preconnect" href="https://d.basemaps.cartocdn.com" crossorigin />
+    <!-- Secondary basemaps only hit when the user switches style. -->
+    <link rel="dns-prefetch" href="https://a.tile.openstreetmap.org" />
+    <link rel="dns-prefetch" href="https://b.tile.openstreetmap.org" />
+    <link rel="dns-prefetch" href="https://c.tile.openstreetmap.org" />
   </head>
   <body>
     <div class="w-full h-full" id="root"></div>

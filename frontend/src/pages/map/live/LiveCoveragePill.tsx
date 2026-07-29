@@ -1,4 +1,7 @@
-/** Top-right toggle pill (left of the mesh-health pill): show/hide + opacity + freshness. */
+/** Live-coverage toggle pill: show/hide + opacity + freshness. Top-right on xl+;
+ * below xl it drops to a second row under the top bar — the top row collided
+ * with search/tools below ~830px (#537), and at lg..xl the always-on coordinate
+ * pill (left 612px, z-40) reaches ~850px and would cover it. */
 import { useEffect, useId, useRef, useState } from "react";
 
 import { relativeTime } from "../lib/helpers";
@@ -17,6 +20,9 @@ export interface LiveCoveragePillProps {
   /** Selected pyramid: "all" or a modem-preset id. */
   group: string;
   onGroupChange: (group: string) => void;
+  /** Hide on mobile (like MapSettingsPanel/FiltersResetPill) — the tool-pick
+   * prompt occupies the same top-14 row there. */
+  hidden?: boolean;
 }
 
 export function LiveCoveragePill({
@@ -30,23 +36,30 @@ export function LiveCoveragePill({
   onHideNodesChange,
   group,
   onGroupChange,
+  hidden = false,
 }: LiveCoveragePillProps) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
 
+  // Capture + stopPropagation so the Esc that closes the options panel doesn't
+  // also run the map's global Esc chain; editable fields keep their own Esc.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key !== "Escape") return;
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      e.stopPropagation();
+      setOpen(false);
     };
     const onDown = (e: PointerEvent) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
     };
-    document.addEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey, true);
     document.addEventListener("pointerdown", onDown);
     return () => {
-      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("keydown", onKey, true);
       document.removeEventListener("pointerdown", onDown);
     };
   }, [open]);
@@ -69,7 +82,10 @@ export function LiveCoveragePill({
       : "Live network coverage — click to show";
 
   return (
-    <div ref={wrapRef} className="fixed top-3 right-44 sm:right-72 z-30 flex flex-col items-end">
+    <div
+      ref={wrapRef}
+      className={`fixed top-14 right-3 xl:top-3 xl:right-72 z-30 flex flex-col items-end ${hidden ? "max-sm:hidden" : ""}`}
+    >
       <div className="flex items-center rounded-xl bg-gray-900/80 backdrop-blur-xl border border-white/10 shadow-2xl">
         <button
           type="button"

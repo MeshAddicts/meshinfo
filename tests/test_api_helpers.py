@@ -1,7 +1,9 @@
 """
-Tests for the small pure helpers in api.api — node-id coercion + range parsing.
+Tests for the small pure helpers in api.api — node-id coercion + range/epoch parsing.
 """
 
+import datetime
+import time
 
 from api.api import API
 
@@ -56,3 +58,35 @@ class TestParseRange:
 
     def test_negative_or_zero_defaults_to_24h(self):
         assert API._parse_range("0h") == 24 * 3600
+
+
+class TestParseSince:
+    """?since= on /v1/nodes — the SSE-reconnect delta resync. Anything but a
+    plausible past epoch must mean "no filter" (full list), never an error."""
+
+    def test_integer_epoch_to_aware_utc(self):
+        dt = API._parse_since("1753500000")
+        assert dt == datetime.datetime.fromtimestamp(1753500000, tz=datetime.timezone.utc)
+        assert dt.tzinfo == datetime.timezone.utc
+
+    def test_float_epoch_accepted(self):
+        dt = API._parse_since("1753500000.5")
+        assert dt is not None
+        assert dt.timestamp() == 1753500000.5
+
+    def test_missing_or_empty_returns_none(self):
+        assert API._parse_since(None) is None
+        assert API._parse_since("") is None
+
+    def test_garbage_returns_none(self):
+        assert API._parse_since("garbage") is None
+
+    def test_future_returns_none(self):
+        # A client clock ahead of ours must degrade to the full list.
+        assert API._parse_since(str(int(time.time()) + 3600)) is None
+
+    def test_non_positive_and_non_finite_return_none(self):
+        assert API._parse_since("0") is None
+        assert API._parse_since("-5") is None
+        assert API._parse_since("nan") is None
+        assert API._parse_since("inf") is None

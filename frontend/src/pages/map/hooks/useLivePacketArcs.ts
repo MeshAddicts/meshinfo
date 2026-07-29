@@ -98,12 +98,20 @@ export function useLivePacketArcs({
 
   useLiveEvent<RawPacket>("packet", (p) => {
     if (!livePacketsRef.current || prefersReducedMotion()) return;
+    // Hidden tab: rAF is frozen but the EventSource keeps delivering, so the
+    // pending buffer would grow unbounded overnight — and arcs spawned while
+    // hidden are invisible and stale by the time the tab returns.
+    if (document.visibilityState === "hidden") return;
     if (flyoverFlyingRef.current) return; // spotlight: the tour owns the stage
     if (p.type === "traceroute") return; // handled by the dedicated multi-hop tracer
     const coalescer = (coalescerRef.current ??= new PacketCoalescer());
     const arc = coalescer.ingest(p, Date.now());
     if (!arc) return;
-    pendingArcsRef.current.push(arc);
+    const pending = pendingArcsRef.current;
+    // Belt-and-braces cap: the flush drops the excess anyway, so never let the
+    // buffer outgrow one flush's budget (drop oldest, keep the feed live).
+    if (pending.length >= MAX_ARCS_PER_FLUSH) pending.shift();
+    pending.push(arc);
     if (flushRafRef.current == null) flushRafRef.current = requestAnimationFrame(flushPacketArcs);
   });
 

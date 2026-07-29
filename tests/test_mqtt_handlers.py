@@ -456,6 +456,52 @@ class TestHandleTraceroute:
         assert payload["to"] == "abcd1234"
         assert payload["route_ids"] == ["67ea9400"]
 
+    def test_event_carries_full_traceroute_row(self):
+        """The SSE event mirrors a non-slim /v1/traceroutes row (same names,
+        same value types — timestamp stays epoch seconds like the BIGINT
+        column) so the SPA can upsert it into its cached list instead of
+        refetching the endpoint."""
+        mqtt, data = make_mqtt(nodes={
+            "67ea9400": {"id": "67ea9400", "longname": "A"},
+            "abcd1234": {"id": "abcd1234", "longname": "B"},
+        })
+        q = data.broadcaster.subscribe()
+        payload = {
+            "route": [0x67EA9400],
+            "route_back": [],
+            "snr_towards": [-13],
+            "snr_back": [],
+        }
+        run(mqtt.handle_traceroute({
+            "from": 0x67EA9400,
+            "to": 0xABCD1234,
+            "sender": "!ABCD1234",
+            "id": 987654321,
+            "channel": 3,
+            "hops_away": 2,
+            "rssi": -110,
+            "snr": -13.5,
+            "timestamp": 1753500000,
+            "payload": payload,
+        }))
+        _, event = q.get_nowait()
+        assert event == {
+            "from": "67ea9400",
+            "to": "abcd1234",
+            # Normalized like the DB write, not the raw gateway string.
+            "sender": "abcd1234",
+            "id": 987654321,
+            "channel": 3,
+            "packet_id": None,
+            "hops_away": 2,
+            "rssi": -110,
+            "snr": -13.5,
+            "timestamp": 1753500000,
+            "route": [0x67EA9400],
+            "route_ids": ["67ea9400"],
+            "payload": payload,
+        }
+
     def test_json_longname_route_resolved(self):
         mqtt, data = make_mqtt(nodes={
             "67ea9400": {"id": "67ea9400", "longname": "Alpha"},

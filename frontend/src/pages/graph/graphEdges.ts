@@ -33,7 +33,8 @@ export function buildTracerouteEdges(traceroutes: any[], validIds: Set<string>):
   const wByKey = new Map<string, number>();
   for (const tr of traceroutes) {
     const from = normNodeId(tr?.from), to = normNodeId(tr?.to);
-    const route: string[] = (tr?.route ?? tr?.payload?.route ?? []).map(normNodeId).filter(Boolean);
+    // route_ids first: slim traceroute rows (?slim=1) drop the legacy route fields.
+    const route: string[] = (tr?.route_ids ?? tr?.route ?? tr?.payload?.route ?? []).map(normNodeId).filter(Boolean);
     const path = [from, ...route, to].filter(Boolean);
     for (let i = 0; i < path.length - 1; i++) {
       const a = path[i], b = path[i + 1];

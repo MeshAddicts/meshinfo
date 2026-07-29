@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { IMapNode } from "../lib/types";
 
@@ -60,20 +60,81 @@ function computeHealth(nodes: Record<string, IMapNode>) {
   };
 }
 
-export function MapHealthWidget({ nodes }: { nodes: Record<string, IMapNode> }) {
+type MeshHealth = ReturnType<typeof computeHealth>;
+
+/** Refresh cadence for the expensive expanded-card stats (BFS diameter, link
+ *  counts, avg SNR). They track slow-moving topology, so 10 s is plenty. */
+const HEALTH_REFRESH_MS = 10_000;
+
+export function MapHealthWidget({
+  nodes,
+  hidden = false,
+}: {
+  nodes: Record<string, IMapNode>;
+  /** Hide below lg while a tool is armed — the tool-pick prompt shares the
+   * top-14 row and reaches this pill's row-2 span up to ~920px viewports. */
+  hidden?: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
-  // Cheap online/total for the always-visible pill; the BFS diameter + link counts
-  // only matter when expanded, so skip that work every poll while collapsed.
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  // Dismiss on Escape or pointerdown outside. Capture + stopPropagation so the
+  // press that closes the panel doesn't also run the map's global Esc chain
+  // (tool cancel / selection clear); editable fields keep their own Esc.
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      e.stopPropagation();
+      setExpanded(false);
+    };
+    const onDown = (e: PointerEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setExpanded(false);
+    };
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("pointerdown", onDown);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("pointerdown", onDown);
+    };
+  }, [expanded]);
+  // Cheap online/total for the always-visible pill — stays reactive per flush.
   const basic = useMemo(() => {
     const vals = Object.values(nodes);
     let online = 0;
     for (const n of vals) if (n.online) online++;
     return { online, total: vals.length };
   }, [nodes]);
-  const health = useMemo(() => (expanded ? computeHealth(nodes) : null), [expanded, nodes]);
+
+  // The expanded-card stats cost ~5-20ms (adjacency build + up to 100 BFS
+  // traversals), and `nodes` identity changes on every ~400ms live flush.
+  // Recompute on expand and then at most every 10 s, reading the latest
+  // nodes through a ref so flushes alone never trigger the work.
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
+  const [health, setHealth] = useState<MeshHealth | null>(null);
+  useEffect(() => {
+    if (!expanded) {
+      setHealth(null);
+      return;
+    }
+    const recompute = () => setHealth(computeHealth(nodesRef.current));
+    recompute();
+    const id = setInterval(recompute, HEALTH_REFRESH_MS);
+    return () => clearInterval(id);
+  }, [expanded]);
 
   return (
-    <div className="fixed top-3 right-20 sm:right-40 z-30 flex flex-col items-end">
+    <div
+      ref={wrapRef}
+      // Below xl the top row can't hold it: left-anchored tools collide at
+      // <366px and 640-684px, and the lg-only coordinate pill (z-40) covers the
+      // right-40 spot until ~1100px. It sits in the coverage pill's second row
+      // (left of it) instead, returning to the top row at xl alongside it.
+      className={`fixed top-14 right-34 xl:top-3 xl:right-40 z-30 flex flex-col items-end ${hidden ? "max-lg:hidden" : ""}`}
+    >
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
@@ -81,8 +142,8 @@ export function MapHealthWidget({ nodes }: { nodes: Record<string, IMapNode> }) 
         aria-controls="mesh-health-panel"
         aria-label={`Mesh health: ${basic.online} of ${basic.total} nodes online`}
         className="px-2 sm:px-3 py-1.5 rounded-xl text-xs font-medium
-          bg-gray-900/80 backdrop-blur-xl border border-white/10 shadow-2xl
-          text-gray-300 hover:text-gray-100 hover:bg-gray-900/90 transition-colors
+          bg-gray-900/95 border border-white/10 shadow-2xl
+          text-gray-300 hover:text-gray-100 hover:bg-gray-900 transition-colors
           flex items-center gap-1.5 sm:gap-2"
         title="Mesh health"
       >
@@ -96,7 +157,8 @@ export function MapHealthWidget({ nodes }: { nodes: Record<string, IMapNode> }) 
 
       {expanded && health && (
         <div id="mesh-health-panel" className="mt-2 min-w-55 rounded-xl p-3
-          bg-gray-900/90 backdrop-blur-xl border border-white/10 shadow-2xl
+          max-sm:fixed max-sm:top-24 max-sm:right-3 max-sm:mt-0
+          bg-gray-900/95 border border-white/10 shadow-2xl
           space-y-2 text-xs">
           <div className="flex items-center justify-between">
             <span className="text-gray-500">Online</span>

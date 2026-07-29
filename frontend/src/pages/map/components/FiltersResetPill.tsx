@@ -100,7 +100,11 @@ export function FiltersResetPill({
   return (
     <div
       ref={ref}
-      className={`fixed bottom-4 left-[calc(var(--map-pad)+1rem)] z-1100 transition-[left] duration-200 ${hidden ? "max-sm:hidden" : ""}`}
+      // Below lg, --map-pad is 0 and the bottom-left corner belongs to the
+      // Animations toggle (bottom-3 left-3) — stack above it instead of on it.
+      // hidden hides through lg (not just sm): tool flows own this strip below
+      // lg too (trace corridors panel reaches down to sm:bottom-16).
+      className={`fixed bottom-14 left-3 lg:bottom-4 lg:left-[calc(var(--map-pad)+1rem)] z-1100 transition-[left] duration-200 ${hidden ? "max-lg:hidden" : ""}`}
     >
       {open && hasFilters && (
         <div id="active-filters-popover" className="mb-2 w-56 rounded-xl p-2 space-y-1
@@ -151,12 +155,12 @@ export function FiltersResetPill({
             ? `${chips.length} ${chips.length === 1 ? "filter" : "filters"} applied — click to manage`
             : "No filters applied — click to configure"
         }
-        className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium shadow-2xl backdrop-blur-xl
+        className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium shadow-2xl
           transition-colors flex items-center gap-1.5
           ${
             hasFilters
-              ? "bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/30"
-              : "bg-gray-900/80 border border-white/10 text-gray-400 hover:bg-gray-900/90 hover:text-gray-200"
+              ? "bg-cyan-950/95 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-900/95"
+              : "bg-gray-900/95 border border-white/10 text-gray-400 hover:bg-gray-900 hover:text-gray-200"
           }`}
       >
         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">

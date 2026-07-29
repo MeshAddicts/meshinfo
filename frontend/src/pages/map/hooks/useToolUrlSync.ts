@@ -3,7 +3,6 @@
  *  fires a play=1 tour when the restored path is ready. LOS and traceroute share
  *  one URL snapshot — the tools are mutually exclusive. */
 import { useEffect, useRef } from "react";
-import { useSearchParams } from "react-router";
 
 import { prefersReducedMotion } from "../../../utils/reducedMotion";
 import type { AnalyzedPath } from "../lib/pathAnalysis";
@@ -11,6 +10,23 @@ import type { useLosState } from "./useLosState";
 
 type LosState = ReturnType<typeof useLosState>;
 type MapTool = "los" | "traceroute" | "coverage" | "scan" | null;
+
+/** Rewrite only the tool-owned params via history.replaceState — a router
+ *  navigation (setSearchParams) would re-render the whole Map route per tool
+ *  change for a purely cosmetic URL update. Reads window.location fresh so
+ *  ?lat/lng/z, ?node= and any other params are preserved, and skips the write
+ *  when nothing changed (Safari rate-limits replaceState). */
+function writeToolParams(mutate: (sp: URLSearchParams) => void): void {
+  const sp = new URLSearchParams(window.location.search);
+  const before = sp.toString();
+  mutate(sp);
+  const after = sp.toString();
+  if (after === before) return;
+  const next = `${window.location.pathname}${after ? `?${after}` : ""}${window.location.hash}`;
+  // Keep the router's history.state (usr/key/idx) — nulling it would break
+  // react-router's back/forward bookkeeping.
+  window.history.replaceState(window.history.state, "", next);
+}
 
 export type ToolUrlSyncParams = {
   activeTool: MapTool;
@@ -36,10 +52,6 @@ export function useToolUrlSync({
   losState, tracePendingPlayRef, traceSelectedPath, tracePosKey, styleEpoch,
   startFlyover,
 }: ToolUrlSyncParams): void {
-  const [, setSearchParams] = useSearchParams();
-  const setSearchParamsRef = useRef(setSearchParams);
-  setSearchParamsRef.current = setSearchParams;
-
   // Snapshot the URL at first render: the write effect rewrites the real URL
   // synchronously (loader-less router), so the restore effect must never read
   // window.location at effect time — it would see its own params stripped.
@@ -57,12 +69,11 @@ export function useToolUrlSync({
     const showing =
       activeTool === "los" && toolStep === "result" &&
       (toolFromId || losState.losVirtualFrom) && (toolToId || losState.losVirtualTo);
-    // No-op guard: react-router navigates even when the updater returns prev,
-    // so don't call setSearchParams at all when there is nothing to change.
+    // Only strip when the URL currently claims tool=los — the traceroute
+    // sync owns its own snapshot of the shared keys.
     const had = new URLSearchParams(window.location.search).get("tool") === "los";
     if (!showing && !had) return;
-    setSearchParamsRef.current((prev) => {
-      const sp = new URLSearchParams(prev);
+    writeToolParams((sp) => {
       if (showing) {
         sp.set("tool", "los");
         sp.set("from", toolFromId ?? `${losState.losVirtualFrom![1].toFixed(5)},${losState.losVirtualFrom![0].toFixed(5)}`);
@@ -73,8 +84,7 @@ export function useToolUrlSync({
       } else {
         for (const k of ["tool", "from", "to", "fh", "th", "fq"]) sp.delete(k);
       }
-      return sp;
-    }, { replace: true });
+    });
   }, [activeTool, toolStep, toolFromId, toolToId, losState.losVirtualFrom, losState.losVirtualTo, losState.losFromHeightM, losState.losToHeightM, losState.losFreqMhz]);
 
   // Restore a shared LOS analysis from the URL snapshot (once, on mount)
@@ -128,8 +138,7 @@ export function useToolUrlSync({
     const showing = activeTool === "traceroute" && toolStep === "result" && !!toolFromId && !!toolToId;
     const had = new URLSearchParams(window.location.search).get("tool") === "traceroute";
     if (!showing && !had) return;
-    setSearchParamsRef.current((prev) => {
-      const sp = new URLSearchParams(prev);
+    writeToolParams((sp) => {
       if (showing) {
         sp.set("tool", "traceroute");
         sp.set("from", toolFromId);
@@ -139,8 +148,7 @@ export function useToolUrlSync({
       } else {
         for (const k of ["tool", "from", "to", "play"]) sp.delete(k);
       }
-      return sp;
-    }, { replace: true });
+    });
   }, [activeTool, toolStep, toolFromId, toolToId]);
 
   // Restore a shared traceroute analysis from the URL snapshot (once, on mount)
@@ -156,11 +164,9 @@ export function useToolUrlSync({
     if (!f || !t || f === t) {
       // Invalid share link: the write effect never re-runs (no state changed),
       // so strip the stale params here or they linger in the URL forever.
-      setSearchParamsRef.current((prev) => {
-        const spx = new URLSearchParams(prev);
+      writeToolParams((spx) => {
         for (const k of ["tool", "from", "to", "play"]) spx.delete(k);
-        return spx;
-      }, { replace: true });
+      });
       return;
     }
     setToolFromId(f);

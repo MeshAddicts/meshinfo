@@ -133,6 +133,9 @@ export function useScanCompute(params: ScanComputeParams) {
   // changes (~400 ms), so mouse-move re-renders don't rebuild it; the expensive scan
   // re-runs only when this VALUE changes (a node's position/altitude actually moved).
   const targetsSig = useMemo(() => {
+    // Scan-off fast path: the compute effect below ignores targets unless the
+    // scan tool is showing results, so skip the O(N) walk on every SSE flush.
+    if (activeTool !== "scan" || toolStep !== "result") return "";
     let sig = "";
     for (const rawId in nodes) {
       const n = nodes[rawId];
@@ -141,7 +144,7 @@ export function useScanCompute(params: ScanComputeParams) {
       sig += `${rawId}:${n.map_position[0].toFixed(5)},${n.map_position[1].toFixed(5)},${alt == null ? "x" : Math.round(alt)};`;
     }
     return sig;
-  }, [nodes]);
+  }, [nodes, activeTool, toolStep]);
 
   const nodesEmpty = Object.keys(nodes).length === 0;
 

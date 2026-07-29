@@ -1,6 +1,7 @@
 /**
  * WebGL custom layer: billboarded proportional donut markers for clusters.
- * Buffer rebuilds on moveend/idle; pixel→NDC sizing happens in the shader.
+ * Buffer rebuilds on debounced moveend and on loaded sourcedata; pixel→NDC
+ * sizing happens in the shader.
  * Hit-testing is handled by the companion "clusters" circle layer.
  */
 import maplibregl, { type CustomRenderMethodInput } from "maplibre-gl";
@@ -156,7 +157,6 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
   private animationsEnabled = true;
 
   private onMoveend: (() => void) | null = null;
-  private onIdle: (() => void) | null = null;
   private onSourceData: ((e: maplibregl.MapSourceDataEvent) => void) | null = null;
   private moveendTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -186,11 +186,14 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
 
     this.buffer = gl.createBuffer();
 
+    // No 'idle' binding: triggerRepaint from an idle handler schedules a new
+    // frame after every settled render, which loops at refresh rate forever.
+    // Tiles that finish after moveend's debounce are caught by sourcedata below.
     const markDirty = () => {
       this.dirty = true;
       map.triggerRepaint();
     };
-    // Trailing-debounce moveend (fires many times per zoom/pan); idle catches the settled state.
+    // Trailing-debounce moveend (wheel zooms fire it once per tick).
     this.onMoveend = () => {
       if (this.moveendTimer != null) clearTimeout(this.moveendTimer);
       this.moveendTimer = setTimeout(() => {
@@ -198,13 +201,17 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
         markDirty();
       }, 120);
     };
-    this.onIdle = markDirty;
     this.onSourceData = (e) => {
       if (e.sourceId === "nodes_clustered") {
-        // Hide stale donuts while tiles re-render after setData(); render() will rebuild.
-        this.vertexCount = 0;
-        this.dirty = true;
-        map.triggerRepaint();
+        // Rebuild only when the source is queryable. Per setData the map sees a
+        // burst: 'metadata' + 'content' (both fire while tiles still reload, so
+        // isSourceLoaded is false) then one event per finished tile — only the
+        // last carries isSourceLoaded=true. That final event is the rebuild
+        // signal; it also covers tiles that land after moveend's debounce and
+        // the initial load. Reloading tiles keep rendering the old data, so
+        // donuts stay in sync with the circle layer until then.
+        if (!e.isSourceLoaded || e.sourceDataType === "metadata") return;
+        markDirty();
         return;
       }
       // Kick a repaint when DEM tiles arrive on an idle map; render's per-frame
@@ -215,7 +222,6 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
       }
     };
     map.on("moveend", this.onMoveend);
-    map.on("idle", this.onIdle);
     map.on("sourcedata", this.onSourceData);
   }
 
@@ -225,7 +231,6 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
       this.moveendTimer = null;
     }
     if (this.onMoveend) map.off("moveend", this.onMoveend);
-    if (this.onIdle) map.off("idle", this.onIdle);
     if (this.onSourceData) map.off("sourcedata", this.onSourceData);
     if (this.buffer) gl.deleteBuffer(this.buffer);
     if (this.program) gl.deleteProgram(this.program);
@@ -235,7 +240,6 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
     this.map = null;
     this.vertexCount = 0;
     this.onMoveend = null;
-    this.onIdle = null;
     this.onSourceData = null;
     this.anim.clear();
     this.vertScratch = null;
@@ -267,10 +271,35 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
       this.vertexCount = 0;
       return;
     }
+    // Hidden (plain-node mode / coverage hide-nodes): don't build donuts from
+    // source data the rendered layers aren't showing.
+    if (map.getLayoutProperty(this.id, "visibility") === "none") {
+      this.lastClusters = [];
+      this.vertexCount = 0;
+      return;
+    }
 
-    const features = map.queryRenderedFeatures({ layers: ["clusters"] });
+    // SOURCE features, not rendered features: queryRenderedFeatures only sees
+    // the current viewport (donuts at the pan edge popped in a debounce late)
+    // and goes partial while tiles churn mid-pan/mid-setData (a rebuild on a
+    // partial snapshot blinked existing donuts out until the next one). Source
+    // tiles keep serving their previous data while reloading, and viewport-
+    // straddling tiles contribute their full content — clusters up to roughly
+    // a tile-width offscreen are already in the buffer when they scroll in;
+    // the few offscreen extras cost only vertices.
+    const features = map.querySourceFeatures("nodes_clustered", {
+      filter: ["has", "point_count"],
+    });
 
-    // Dedupe by position — cluster_ids can flip across setData calls
+    // A mid-reload source can still come back empty for an instant — keep the
+    // previous donuts; the final isSourceLoaded sourcedata event follows with
+    // the authoritative rebuild.
+    if (features.length === 0 && this.lastClusters.length > 0 && !map.isSourceLoaded("nodes_clustered")) {
+      return;
+    }
+
+    // Dedupe by position — cluster_ids can flip across setData calls, and
+    // querySourceFeatures duplicates features that straddle tile borders
     const seen = new Set<string>();
     const next: { lng: number; lat: number; r: number; ratio: number; key: string }[] = [];
 

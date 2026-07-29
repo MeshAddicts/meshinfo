@@ -18,14 +18,44 @@ function straightCoords(from: [number, number], to: [number, number]): [number, 
   return [from, [unwrapLngTo(from[0], to[0]), to[1]]];
 }
 
-/** Time-since-heard → opacity multiplier. Stale links taper to 0.3 (still visible). */
+/** Time-since-heard → opacity multiplier. Stale links taper to 0.3 (still
+ *  visible). Quantized to 0.1 steps (like dimForLastSeen) so an edge only
+ *  changes its feature — and forces a source re-upload — on a bucket crossing,
+ *  not on every SSE last_seen bump. */
 export function recencyOpacityFromAgeMs(ageMs: number | null): number {
   if (ageMs == null || !Number.isFinite(ageMs)) return 0.6;
   const m = ageMs / 60_000;
   if (m <= 15) return 1.0;
-  if (m <= 60) return 1.0 - ((m - 15) / 45) * 0.4;       // 1.0 → 0.6
-  if (m <= 360) return 0.6 - ((m - 60) / 300) * 0.3;     // 0.6 → 0.3
-  return 0.3;
+  const raw =
+    m <= 60 ? 1.0 - ((m - 15) / 45) * 0.4                // 1.0 → 0.6
+    : m <= 360 ? 0.6 - ((m - 60) / 300) * 0.3            // 0.6 → 0.3
+    : 0.3;
+  return Math.round(raw * 10) / 10;
+}
+
+/** Minute-floor for the lastHeardMs feature property: hover cards show relative
+ *  time, so sub-minute precision only defeats feature-identity stability. */
+function quantizeLastHeardMs(ms: number | null): number | null {
+  return ms == null ? null : Math.floor(ms / 60_000) * 60_000;
+}
+
+// Traceroute rows are immutable once fetched; normalizing hop ids costs a regex
+// per hop, so cache the normalized path per row across the many passes that
+// need it (link building, candidate rings, per-node filters).
+const normalizedPathCache = new WeakMap<ITraceroutesResponse, string[]>();
+
+/** Full normalized hop path [from, ...route, to] for a traceroute row, cached. */
+export function normalizedTraceroutePath(tr: ITraceroutesResponse): string[] {
+  const cached = normalizedPathCache.get(tr);
+  if (cached) return cached;
+  const from = normNodeId(tr?.from);
+  const to = normNodeId(tr?.to);
+  const route: string[] = ((tr?.route_ids ?? tr?.route ?? tr?.payload?.route ?? []) as (string | number)[])
+    .map(normNodeId)
+    .filter(Boolean);
+  const path = [from, ...route, to].filter(Boolean);
+  normalizedPathCache.set(tr, path);
+  return path;
 }
 
 /** Most recent edge activity (ms). Prefers per-direction `lastRxTime`; falls
@@ -128,7 +158,7 @@ export function buildMapboxLinkFeatureCollection(opts: {
         snr,
         aId: node.id,
         bId: otherId,
-        lastHeardMs,
+        lastHeardMs: quantizeLastHeardMs(lastHeardMs),
         recencyOpacity,
       },
       geometry: {
@@ -181,7 +211,7 @@ export function buildAllLinksFeatureCollection(
           snr,
           aId: nodeId,
           bId: neighbor.id,
-          lastHeardMs,
+          lastHeardMs: quantizeLastHeardMs(lastHeardMs),
           recencyOpacity,
         },
         geometry: {
@@ -205,12 +235,7 @@ export function buildTracerouteLinkFeatureCollection(
   const seen = new Set<string>();
 
   for (const tr of traceroutes) {
-    const from = normNodeId(tr?.from);
-    const to = normNodeId(tr?.to);
-    const route: string[] = (tr?.route_ids ?? tr?.route ?? tr?.payload?.route ?? [])
-      .map(normNodeId)
-      .filter(Boolean);
-    const path = [from, ...route, to].filter(Boolean);
+    const path = normalizedTraceroutePath(tr);
 
     for (let i = 0; i < path.length - 1; i++) {
       const a = path[i], b = path[i + 1];
@@ -241,7 +266,7 @@ export function buildTracerouteLinkFeatureCollection(
           snr: null,
           aId: ka,
           bId: kb,
-          lastHeardMs,
+          lastHeardMs: quantizeLastHeardMs(lastHeardMs),
           recencyOpacity,
         },
         geometry: {

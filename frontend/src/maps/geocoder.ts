@@ -27,7 +27,36 @@ function pickProvider(): "nominatim" | "mapbox" {
   return mapProvider === "mapbox" ? "mapbox" : "nominatim";
 }
 
-export async function reverseGeocode(lon: number, lat: number): Promise<string> {
+// Node positions are stable, so the same coordinates get clicked repeatedly —
+// cache results (and in-flight lookups, so a double-click fires one request).
+const geocodeCache = new Map<string, Promise<string>>();
+const GEOCODE_CACHE_MAX = 200;
+
+export function reverseGeocode(lon: number, lat: number): Promise<string> {
+  const key = `${lon.toFixed(4)},${lat.toFixed(4)}`;
+  const cached = geocodeCache.get(key);
+  if (cached) return cached;
+
+  const lookup = reverseGeocodeUncached(lon, lat)
+    .then((name) => {
+      // Rate-limited/failed lookups resolve "" — return it but don't retain
+      // it, so a later click can succeed once the limit clears.
+      if (!name) geocodeCache.delete(key);
+      return name;
+    })
+    .catch(() => {
+      geocodeCache.delete(key);
+      return "";
+    });
+  if (geocodeCache.size >= GEOCODE_CACHE_MAX) {
+    const oldest = geocodeCache.keys().next().value;
+    if (oldest !== undefined) geocodeCache.delete(oldest);
+  }
+  geocodeCache.set(key, lookup);
+  return lookup;
+}
+
+async function reverseGeocodeUncached(lon: number, lat: number): Promise<string> {
   const provider = pickProvider();
 
   if (provider === "mapbox") {
