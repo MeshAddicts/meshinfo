@@ -33,6 +33,7 @@ jobs:
       # Corepack picks the yarn version up from frontend/package.json `packageManager`.
       - run: corepack enable
       - run: yarn install
+      - run: yarn lint
       - run: yarn tsc --noEmit
       - run: yarn test
       # Production bundle — catches asset/dynamic-import issues vitest doesn't.
