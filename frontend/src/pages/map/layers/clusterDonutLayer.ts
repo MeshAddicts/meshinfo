@@ -271,10 +271,35 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
       this.vertexCount = 0;
       return;
     }
+    // Hidden (plain-node mode / coverage hide-nodes): don't build donuts from
+    // source data the rendered layers aren't showing.
+    if (map.getLayoutProperty(this.id, "visibility") === "none") {
+      this.lastClusters = [];
+      this.vertexCount = 0;
+      return;
+    }
 
-    const features = map.queryRenderedFeatures({ layers: ["clusters"] });
+    // SOURCE features, not rendered features: queryRenderedFeatures only sees
+    // the current viewport (donuts at the pan edge popped in a debounce late)
+    // and goes partial while tiles churn mid-pan/mid-setData (a rebuild on a
+    // partial snapshot blinked existing donuts out until the next one). Source
+    // tiles keep serving their previous data while reloading, and viewport-
+    // straddling tiles contribute their full content — clusters up to roughly
+    // a tile-width offscreen are already in the buffer when they scroll in;
+    // the few offscreen extras cost only vertices.
+    const features = map.querySourceFeatures("nodes_clustered", {
+      filter: ["has", "point_count"],
+    });
 
-    // Dedupe by position — cluster_ids can flip across setData calls
+    // A mid-reload source can still come back empty for an instant — keep the
+    // previous donuts; the final isSourceLoaded sourcedata event follows with
+    // the authoritative rebuild.
+    if (features.length === 0 && this.lastClusters.length > 0 && !map.isSourceLoaded("nodes_clustered")) {
+      return;
+    }
+
+    // Dedupe by position — cluster_ids can flip across setData calls, and
+    // querySourceFeatures duplicates features that straddle tile borders
     const seen = new Set<string>();
     const next: { lng: number; lat: number; r: number; ratio: number; key: string }[] = [];
 
