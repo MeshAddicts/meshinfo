@@ -679,8 +679,12 @@ export function ensureMapSourcesAndLayers(map: MlMap, ctx: EnsureLayersCtx): voi
     });
   }
 
-  // Live packet activity (custom WebGL layer; drawn above nodes)
+  // Live packet activity (overlay-canvas layer; animates outside the map)
   if (!map.getLayer("activity")) {
+    // A full-rebuild setStyle discards the old style WITHOUT calling custom
+    // layers' onRemove — the previous instance's overlay canvas, WebGL
+    // context, and map listeners would leak. Dispose it explicitly first.
+    ctx.activityLayerRef.current?.onRemove(map);
     const al = new ActivityLayer();
     map.addLayer(al);
     ctx.activityLayerRef.current = al;

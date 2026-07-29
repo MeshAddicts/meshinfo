@@ -2332,6 +2332,14 @@ export function Map() {
         // Reset the spiderfy module state before the map dies — it's module-
         // global and would otherwise leak a phantom fan into the next mount.
         removeSpiderfyLayers(mbMapRef.current);
+        // map.remove() tears the style down without calling custom layers'
+        // onRemove — the activity overlay's canvas/context/listeners only get
+        // cleaned through an explicit removeLayer (or its own dispose).
+        try {
+          if (mbMapRef.current.getLayer("activity")) mbMapRef.current.removeLayer("activity");
+          else activityLayerRef.current?.onRemove(mbMapRef.current);
+        } catch {}
+        activityLayerRef.current = null;
         mbMapRef.current.remove();
         mbMapRef.current = null;
         mbSelectedIdRef.current = null;

@@ -10,15 +10,24 @@ import { INode } from "../types";
 import { liveNodeFlushGate } from "../utils/liveGate";
 
 // Same base as RTK Query, so the stream uses the same proxy route as REST.
-const EVENTS_URL = `${env.API_BASE_URL ?? window.location.origin}/v1/events`;
+const API_BASE = env.API_BASE_URL ?? window.location.origin;
+const EVENTS_URL = `${API_BASE}/v1/events`;
 
 // Coalesce node bursts into one cache write per window.
 const FLUSH_MS = 400;
 
-// Only refetch the full node list after a reconnect if the stream was actually
+// Only resync the node list after a reconnect if the stream was actually
 // down long enough to have missed meaningful state. Short blips (proxy restart,
 // wifi hiccup) cost nothing; the next SSE events catch us up.
 const RESYNC_DOWN_MS = 30_000;
+
+// Delta resync: ask the server only for nodes seen since the gap started,
+// with a 2-minute overlap against clock skew and in-flight events. Past a
+// 60-minute gap, fall back to the full ~1.4 MB refetch — an old cache plus a
+// giant delta isn't worth it, and nodes that fell out of the server's 7-day
+// window are never dropped by deltas.
+const RESYNC_DELTA_OVERLAP_MS = 120_000;
+const RESYNC_DELTA_MAX_GAP_MS = 60 * 60_000;
 
 // Handles node + chat internally; exposes the EventSource for other event types.
 export function LiveEventsProvider({ children }: { children: ReactNode }) {
@@ -31,6 +40,20 @@ export function LiveEventsProvider({ children }: { children: ReactNode }) {
 
     const pending = new Map<string, INode>();
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    // Patch both known getNodes args (no-op if uncached). Shared by the SSE
+    // flush and the delta resync so both write byte-identical cache entries.
+    const patchNodeCaches = (batch: INode[]) => {
+      dispatch(
+        apiSlice.util.updateQueryData("getNodes", undefined, (draft) => {
+          for (const node of batch) draft[node.id] = node;
+        }),
+      );
+      dispatch(
+        apiSlice.util.updateQueryData("getNodes", { status: "online" }, (draft) => {
+          for (const node of batch) draft[node.id] = node;
+        }),
+      );
+    };
     const flush = () => {
       flushTimer = null;
       if (pending.size === 0) return;
@@ -46,22 +69,62 @@ export function LiveEventsProvider({ children }: { children: ReactNode }) {
       }
       const batch = Array.from(pending.values());
       pending.clear();
-      // Patch both known getNodes args (no-op if uncached).
-      dispatch(
-        apiSlice.util.updateQueryData("getNodes", undefined, (draft) => {
-          for (const node of batch) draft[node.id] = node;
-        }),
-      );
-      dispatch(
-        apiSlice.util.updateQueryData("getNodes", { status: "online" }, (draft) => {
-          for (const node of batch) draft[node.id] = node;
-        }),
-      );
+      patchNodeCaches(batch);
     };
 
-    const resync = () => {
-      dispatch(apiSlice.util.invalidateTags([{ type: "Node", id: "LIST" }]));
+    // Delta window basis: lastActivityAt captured when the resync is TRIGGERED
+    // (onOpen). By the time a hidden-tab resync actually runs, post-reconnect
+    // events have already bumped lastActivityAt past the gap it must cover.
+    let resyncSinceBasis = Date.now();
+    let resyncInFlight = false;
+    // A reconnect while a resync is in flight must not be LOST — onOpen has
+    // already burned its cooldown slot and basis by the time it calls us, and
+    // on flaky networks a hung fetch could otherwise eat resyncs for minutes.
+    let resyncQueued = false;
+    const resync = async () => {
       dispatch(chatPinged());
+      if (resyncInFlight) {
+        resyncQueued = true;
+        return;
+      }
+      resyncInFlight = true;
+      try {
+        // Bounded gap → fetch only nodes seen since it opened (a few KB)
+        // instead of invalidating the full ~1.4 MB list.
+        if (Date.now() - resyncSinceBasis <= RESYNC_DELTA_MAX_GAP_MS) {
+          try {
+            const since = Math.floor((resyncSinceBasis - RESYNC_DELTA_OVERLAP_MS) / 1000);
+            const res = await fetch(`${API_BASE}/v1/nodes?slim=1&since=${since}`, {
+              // Bound the wait: the flaky networks that trigger resyncs are the
+              // ones where a fetch can hang toward the browser's ~300s default.
+              signal: AbortSignal.timeout(15_000),
+            });
+            if (!res.ok) throw new Error(`delta resync HTTP ${res.status}`);
+            const body = (await res.json()) as { nodes?: Record<string, INode> };
+            if (body?.nodes == null || typeof body.nodes !== "object") {
+              throw new Error("delta resync: malformed response");
+            }
+            // An older backend ignores `since` and returns the full node set —
+            // the same upsert applies it wholesale (correct, just not a delta).
+            const batch = Object.values(body.nodes)
+              .map(transformNode)
+              .filter((n) => n?.id);
+            if (batch.length > 0) patchNodeCaches(batch);
+            return;
+          } catch {
+            // Network error / timeout / non-OK / bad JSON — fall through.
+          }
+        }
+        dispatch(apiSlice.util.invalidateTags([{ type: "Node", id: "LIST" }]));
+      } finally {
+        resyncInFlight = false;
+        if (resyncQueued) {
+          // Re-run with the newer basis onOpen already stored; if this run
+          // fell back to a full refetch, the rerun's delta is a cheap no-op.
+          resyncQueued = false;
+          void resync();
+        }
+      }
     };
 
     // `open` fires on the FIRST connect too — when useGetNodesQuery's initial
@@ -95,19 +158,21 @@ export function LiveEventsProvider({ children }: { children: ReactNode }) {
       if (downMs < RESYNC_DOWN_MS) return;
       if (now - lastResyncAt < RESYNC_COOLDOWN_MS) return;
       lastResyncAt = now;
+      // Snapshot before any post-reconnect event bumps lastActivityAt.
+      resyncSinceBasis = lastActivityAt;
       if (document.hidden) {
         // Defer to a single catch-up when the tab becomes visible.
         pendingResync = true;
         return;
       }
-      resync();
+      void resync();
     };
     const onVisible = () => {
       if (document.hidden) return;
       if (pendingResync) {
         pendingResync = false;
-        resync();
-        pending.clear(); // the refetch supersedes anything coalesced
+        void resync();
+        pending.clear(); // the resync supersedes anything coalesced
         return;
       }
       flush();

@@ -114,7 +114,9 @@ describe("streaming q8 compositor parity", () => {
     // Flips only happen inside the ±0.13 dB band around 0 dB; for these
     // synthetic ±40 dB fields that band is ~0.3% of pixels at most.
     expect(alphaFlips / comparedPx).toBeLessThan(0.005);
-  });
+    // 8 grids × full-raster parity sits right at vitest's 5s default on a
+    // loaded 3-core box — give the compute room instead of flaking.
+  }, 20_000);
 
   it("treats NaN-sentinel corners identically (holes stay holes)", () => {
     const z = 11;

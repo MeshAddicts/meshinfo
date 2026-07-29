@@ -4,6 +4,7 @@ keeps JSONB writes from silently failing when a payload carries a datetime
 (the JSON-decoder path coerces last_seen/last_geocoding into datetime objects).
 """
 
+import asyncio
 import datetime
 import json
 
@@ -170,3 +171,88 @@ class TestMonthPartitionSpecs:
         specs = _month_partition_specs(datetime.date(2026, 1, 31), 5)
         for prev, nxt in zip(specs, specs[1:]):
             assert prev[2] == nxt[1]  # each hi is the next lo — no gaps, no overlap
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# query_nodes_filtered — WHERE construction via a recording fake conn (no DB)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class _RecordingConn:
+    """Records fetch calls; returns no rows so the related-data loads no-op."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def fetch(self, sql, *args):
+        self.calls.append((sql, args))
+        return []
+
+
+class _FakePool:
+    def __init__(self, conn):
+        self._conn = conn
+
+    def acquire(self, timeout=None):
+        conn = self._conn
+
+        class _CM:
+            async def __aenter__(self):
+                return conn
+
+            async def __aexit__(self, *exc):
+                return False
+
+        return _CM()
+
+
+def _storage_with_recording_conn():
+    storage = PostgresStorage({
+        "storage": {"postgres": {"enabled": True}},
+        "server": {"timezone": "UTC"},
+    })
+    conn = _RecordingConn()
+    storage.pool = _FakePool(conn)
+    return storage, conn
+
+
+class TestQueryNodesFilteredSql:
+    """Pins the ?since= delta-resync clause: an inclusive last_seen bound,
+    ANDed with (never replacing) the days window, with correct $n numbering
+    for the filters that follow it."""
+
+    SINCE = datetime.datetime(2026, 7, 25, 12, 0, 0, tzinfo=datetime.timezone.utc)
+
+    def test_since_ands_with_days_window(self):
+        storage, conn = _storage_with_recording_conn()
+        asyncio.run(storage.query_nodes_filtered(days_limit=7, since=self.SINCE))
+        sql, args = conn.calls[0]
+        assert "last_seen >= NOW() - $1 * INTERVAL '1 day'" in sql
+        assert "last_seen >= $2" in sql
+        assert args == (7, self.SINCE)
+
+    def test_since_alone(self):
+        storage, conn = _storage_with_recording_conn()
+        asyncio.run(storage.query_nodes_filtered(days_limit=None, since=self.SINCE))
+        sql, args = conn.calls[0]
+        assert "last_seen >= $1" in sql
+        assert args == (self.SINCE,)
+
+    def test_since_keeps_later_params_numbered_correctly(self):
+        storage, conn = _storage_with_recording_conn()
+        asyncio.run(storage.query_nodes_filtered(
+            days_limit=7, since=self.SINCE, node_ids=["67ea9400"],
+            longname_filter="Alpha", status_filter="online",
+        ))
+        sql, args = conn.calls[0]
+        assert "id IN ($3)" in sql
+        assert "LOWER(longname) LIKE $4" in sql
+        assert "active = TRUE" in sql
+        assert args == (7, self.SINCE, "67ea9400", "%alpha%")
+
+    def test_no_since_leaves_query_unchanged(self):
+        storage, conn = _storage_with_recording_conn()
+        asyncio.run(storage.query_nodes_filtered(days_limit=7))
+        sql, args = conn.calls[0]
+        assert "last_seen >= $2" not in sql
+        assert args == (7,)

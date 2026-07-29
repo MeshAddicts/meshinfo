@@ -1814,6 +1814,7 @@ class PostgresStorage:
         shortname_filter: Optional[str] = None,
         status_filter: Optional[str] = None,
         slim: bool = False,
+        since: Optional[datetime.datetime] = None,
     ) -> Dict[str, Any]:
         """
         Query nodes with filters directly from PostgreSQL.
@@ -1828,6 +1829,8 @@ class PostgresStorage:
                 and position's `geocoded`/`last_geocoding` (the geocoded blob
                 is 0.5–1.5 KB/node). Default False keeps the full shape for
                 third-party consumers.
+            since: Only return nodes with last_seen >= this instant (aware-UTC
+                datetime; delta resync). ANDs with the other filters.
 
         Returns:
             Dict mapping node_id to node data
@@ -1854,6 +1857,14 @@ class PostgresStorage:
                             params.append(days_int)
                             param_num += 1
                         # days_int <= 0 => treat as "no days filter"
+
+                # Delta-resync filter (?since=). last_seen is TIMESTAMPTZ, so
+                # the aware-UTC datetime compares instant-to-instant regardless
+                # of the server's timezone setting.
+                if since is not None:
+                    where_parts.append(f"last_seen >= ${param_num}")
+                    params.append(since)
+                    param_num += 1
 
                 # Node IDs filter
                 if node_ids:

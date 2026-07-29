@@ -97,6 +97,27 @@ class API:
         except (TypeError, ValueError, OSError, OverflowError):
             return None
 
+    @staticmethod
+    def _parse_since(value: str | None) -> datetime.datetime | None:
+        """Parse the /v1/nodes `since` param (unix epoch seconds, int or float)
+        into an aware UTC datetime. Returns None — meaning "no delta filter",
+        never an error — when absent, unparseable, non-positive, or in the
+        future (a client clock ahead of ours must degrade to the full list,
+        not an empty one)."""
+        if not value:
+            return None
+        try:
+            ts = float(value)
+        except (TypeError, ValueError):
+            return None
+        # NaN/inf/negative/future all fail this chained comparison.
+        if not (0 < ts <= time.time()):
+            return None
+        try:
+            return datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc)
+        except (ValueError, OSError, OverflowError):
+            return None
+
     async def serve(self):
         @app.get("/")
         async def root():
@@ -153,6 +174,11 @@ class API:
             # byte-identical for third-party consumers.
             slim = request.query_params.get("slim", "").lower() in ("1", "true", "yes")
 
+            # ?since=<epoch seconds> narrows to nodes with last_seen >= since —
+            # the SSE reconnect delta resync. Composes with days/slim; invalid
+            # values fall back to the full (non-delta) response.
+            since = self._parse_since(request.query_params.get("since"))
+
             nodes = await self.data.pg_storage.query_nodes_filtered(
                 days_limit=days_to_limit,
                 node_ids=node_ids,
@@ -160,6 +186,7 @@ class API:
                 shortname_filter=shortname_filter,
                 status_filter=status_filter,
                 slim=slim,
+                since=since,
             )
 
             # Wrap in JSONResponse ourselves — returning a plain dict makes

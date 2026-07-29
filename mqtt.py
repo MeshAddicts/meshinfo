@@ -698,18 +698,48 @@ class MQTT:
         await self.data.pg_storage.write_traceroute(id, msg)
 
         # Live push: resolved multi-hop path for the map's traceroute tracer.
+        # The event mirrors a full non-slim /v1/traceroutes row (same field
+        # names and value types; `timestamp` stays epoch seconds like the
+        # BIGINT column) so clients can upsert it into their cached list
+        # instead of refetching. `sender` is normalized the same way the DB
+        # write is, so the event matches a later REST fetch of the row.
         if self.data.broadcaster.subscriber_count:
             try:
-                self.data.broadcaster.publish(
-                    "traceroute",
-                    jsonable_encoder(
-                        {
-                            "from": id,
-                            "to": msg.get("to"),
-                            "route_ids": msg["route_ids"],
-                            "id": msg.get("id"),
-                        }
-                    ),
+                # The broker payload is publisher-controlled: forward only the
+                # keys the REST row actually mirrors, never the dict verbatim,
+                # so a hostile publisher can't fan arbitrary bytes out to every
+                # SSE subscriber.
+                raw_payload = msg.get("payload", {})
+                payload = (
+                    {
+                        k: raw_payload[k]
+                        for k in ("route", "route_back", "snr_towards", "snr_back")
+                        if k in raw_payload
+                    }
+                    if isinstance(raw_payload, dict)
+                    else {}
                 )
+                event = jsonable_encoder(
+                    {
+                        "from": id,
+                        "to": msg.get("to"),
+                        "sender": normalize_node_id(msg.get("sender")),
+                        "id": msg.get("id"),
+                        "channel": msg.get("channel"),
+                        "packet_id": msg.get("packet_id"),
+                        "hops_away": msg.get("hops_away"),
+                        "rssi": msg.get("rssi"),
+                        "snr": msg.get("snr"),
+                        "timestamp": msg.get("timestamp"),
+                        "route": msg.get("route", []),
+                        "route_ids": msg["route_ids"],
+                        "payload": payload,
+                    }
+                )
+                # A sane traceroute row is well under 4 KB; a pathological one
+                # degrades to the legacy skinny event (clients then refetch).
+                if len(json.dumps(event, default=str)) > 4096:
+                    event = {"from": id, "to": msg.get("to"), "route_ids": msg["route_ids"], "id": msg.get("id")}
+                self.data.broadcaster.publish("traceroute", event)
             except Exception as e:
                 logger.debug("traceroute broadcast failed: %s", e)
