@@ -2,7 +2,8 @@
  *  over ghost gaps, '?' chip markers), alternates recency-faded with
  *  usage-weighted widths, endpoint markers, one-shot fitBounds per pair, and
  *  the lit-up picking rings. Owns the marker/fit refs so resetTool can clear them. */
-import maplibregl, { GeoJSONSource as MlGeoJSONSource, Map as MlMap } from "maplibre-gl";
+import * as maplibregl from "maplibre-gl";
+import { GeoJSONSource as MlGeoJSONSource, Map as MlMap } from "maplibre-gl";
 import { useEffect, useRef } from "react";
 
 import { normalizeLng, unwrapLngTo } from "../lib/geo";

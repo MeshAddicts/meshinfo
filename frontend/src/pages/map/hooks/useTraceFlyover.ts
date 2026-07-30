@@ -4,7 +4,8 @@
  * pulse, a dwell, and a persistent shortname chip. Esc / user camera input /
  * tool close / path change cancels.
  */
-import maplibregl, { Map as MlMap } from "maplibre-gl";
+import * as maplibregl from "maplibre-gl";
+import { Map as MlMap } from "maplibre-gl";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { liveNodeFlushGate } from "../../../utils/liveGate";

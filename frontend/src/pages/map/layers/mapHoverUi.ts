@@ -1,5 +1,6 @@
 /** Bind-once hover UI: cursor elevation feed, node tooltips, link hover cards. */
-import maplibregl, { Map as MlMap } from "maplibre-gl";
+import * as maplibregl from "maplibre-gl";
+import { Map as MlMap } from "maplibre-gl";
 
 import { NodeRole, roleTitles } from "../../../types";
 import type { CoordPillSink } from "../components/MapCoordinatePill";

@@ -4,7 +4,8 @@
  * sizing happens in the shader.
  * Hit-testing is handled by the companion "clusters" circle layer.
  */
-import maplibregl, { type CustomRenderMethodInput } from "maplibre-gl";
+import * as maplibregl from "maplibre-gl";
+import { type CustomRenderMethodInput } from "maplibre-gl";
 
 import { MAP_STYLE_IDS } from "../../../maps/mapStyle";
 import { prefersReducedMotion } from "../../../utils/reducedMotion";
@@ -366,8 +367,9 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
     const terrainEnabled = !!map.getTerrain?.();
     const elevationAt = (lng: number, lat: number): number => {
       if (!terrainEnabled) return 0;
-      // Want exaggerated elevation here: mercatorMatrix doesn't scale terrain,
-      // so vertex z must already be in the same exaggerated space as the rendered mesh.
+      // Want exaggerated elevation here: the projection matrix doesn't scale
+      // terrain, so vertex z must already be in the same exaggerated space as
+      // the rendered mesh.
       const e = map.queryTerrainElevation?.({ lng, lat });
       return Number.isFinite(e) ? (e as number) : 0;
     };
@@ -437,10 +439,10 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
 
     if (this.vertexCount === 0) return;
 
-    // Shader expects 0..1 Mercator → clip; the public `modelViewProjectionMatrix`
-    // expects coord×worldSize. Internal `mercatorMatrix` has the worldSize baked in.
-    const tr = this.map ? (this.map as unknown as { transform?: { mercatorMatrix?: Float32List | number[] } }).transform : undefined;
-    const matrix = (tr?.mercatorMatrix ?? options.modelViewProjectionMatrix) as Float32List;
+    // Shader expects 0..1 Mercator → clip. `defaultProjectionData.mainMatrix`
+    // is exactly that under mercator projection (conformal z in "3d" mode);
+    // `modelViewProjectionMatrix` won't do — it expects coord×worldSize.
+    const matrix = options.defaultProjectionData.mainMatrix as Float32List;
 
     gl.useProgram(this.program);
     gl.uniformMatrix4fv(this.uMatrix, false, matrix);

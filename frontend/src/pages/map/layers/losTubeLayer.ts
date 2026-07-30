@@ -2,7 +2,8 @@
  * 3D LoS "tube" custom layer: GL_LINE_STRIP in Mercator world space,
  * color-coded per vertex (clear/fresnel/blocked). Sits in the depth buffer.
  */
-import maplibregl, { type CustomRenderMethodInput } from "maplibre-gl";
+import * as maplibregl from "maplibre-gl";
+import { type CustomRenderMethodInput } from "maplibre-gl";
 
 import { normalizeLng, shortestLngDelta } from "../lib/geo";
 
@@ -171,9 +172,8 @@ export class LosTubeLayer implements maplibregl.CustomLayerInterface {
   render(gl: WebGLRenderingContext | WebGL2RenderingContext, options: CustomRenderMethodInput): void {
     if (!this.program || !this.buffer || this.vertexCount < 2) return;
 
-    // See clusterDonutLayer.ts for the mercatorMatrix vs modelViewProjectionMatrix story.
-    const tr = this.map ? (this.map as unknown as { transform?: { mercatorMatrix?: Float32List | number[] } }).transform : undefined;
-    const matrix = (tr?.mercatorMatrix ?? options.modelViewProjectionMatrix) as Float32List;
+    // See clusterDonutLayer.ts for the matrix story (0..1 Mercator → clip).
+    const matrix = options.defaultProjectionData.mainMatrix as Float32List;
 
     gl.useProgram(this.program);
     gl.uniformMatrix4fv(this.uMatrix, false, matrix);
