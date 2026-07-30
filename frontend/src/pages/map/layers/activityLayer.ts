@@ -16,7 +16,8 @@
  *  it). Note the overlay composites above ALL map layers (labels, spiderfy
  *  fans included) — acceptable for ephemeral translucent effects; DOM markers
  *  and panels still paint above it. */
-import maplibregl, { type CustomRenderMethodInput } from "maplibre-gl";
+import * as maplibregl from "maplibre-gl";
+import { type CustomRenderMethodInput } from "maplibre-gl";
 
 type RGB = [number, number, number];
 type LngLat = [number, number];
@@ -641,8 +642,8 @@ export class ActivityLayer implements maplibregl.CustomLayerInterface {
    *  arcs stay glued to the basemap during pans; draws NOTHING into the map's
    *  own context, and never asks the map to repaint. */
   render(_gl: WebGLRenderingContext | WebGL2RenderingContext, options: CustomRenderMethodInput): void {
-    const tr = (this.map as unknown as { transform?: { mercatorMatrix?: Float32List | number[] } })?.transform;
-    const src = (tr?.mercatorMatrix ?? options.modelViewProjectionMatrix) as ArrayLike<number>;
+    // 0..1 Mercator → clip (see clusterDonutLayer.ts for the matrix story).
+    const src = options.defaultProjectionData.mainMatrix as ArrayLike<number>;
     // Copy — maplibre mutates its matrices between frames.
     if (this.matrix?.length !== 16) this.matrix = new Float32Array(16);
     for (let i = 0; i < 16; i++) this.matrix[i] = src[i];

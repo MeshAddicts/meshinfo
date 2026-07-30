@@ -1,4 +1,5 @@
-import maplibregl, {
+import * as maplibregl from "maplibre-gl";
+import {
   GeoJSONSource as MlGeoJSONSource,
   Map as MlMap,
 } from "maplibre-gl";

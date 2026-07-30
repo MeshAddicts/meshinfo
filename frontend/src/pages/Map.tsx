@@ -1,6 +1,8 @@
 import "maplibre-gl/dist/maplibre-gl.css";
+import "../maps/maplibreWorker";
 
-import maplibregl, {
+import * as maplibregl from "maplibre-gl";
+import {
   GeoJSONSource as MlGeoJSONSource,
   Map as MlMap,
 } from "maplibre-gl";
