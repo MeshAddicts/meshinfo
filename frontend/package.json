@@ -49,7 +49,7 @@
     "vite": "^8.0.3",
     "vitest": "^4.1.1"
   },
-  "packageManager": "yarn@4.17.1",
+  "packageManager": "yarn@4.18.0",
   "engines": {
     "node": ">=20.19.0"
   }

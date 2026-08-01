@@ -17,6 +17,11 @@ interface MergeNodeOption {
   longname?: string;
 }
 
+const AUTO_RECALC_TIP =
+  "Recompute automatically when a setting changes (moving the pin always recomputes). " +
+  "Turn off to batch several changes and apply them with one Calculate — handy at " +
+  "Ultra/Survey detail where each run takes a while.";
+
 /** Info icon with hover/focus tooltip. `align` picks the edge it anchors to. */
 function InfoTip({ children, align = "right" }: { children: React.ReactNode; align?: "left" | "right" }) {
   const tipId = useId();
@@ -558,7 +563,7 @@ export function MapCoveragePanel({
                 onClick={onRecalculate}
                 className="text-[10px] px-2 py-0.5 rounded-md bg-cyan-500/15 border border-cyan-500/40 text-cyan-200 hover:bg-cyan-500/25 transition-colors font-medium"
               >
-                Compute
+                Calculate
               </button>
             )}
             {isComputing && (
@@ -632,6 +637,38 @@ export function MapCoveragePanel({
   if (showRays) ovParts.push("rays");
   const ovSummary = ovParts.length === 0 ? "None" : ovParts.join(" · ");
 
+  // Manual Calculate (#536). Enabled whenever params are dirty — even in Auto
+  // mode (a cancelled compute leaves dirty params that Auto won't relaunch)
+  // and mid-compute (clicking supersedes the in-flight run). Otherwise idle in
+  // Auto mode / during a compute there is nothing useful to trigger.
+  const calcDisabled = !paramsDirty && (autoRecalc || isComputing);
+  const calcTitle = paramsDirty
+    ? "Settings changed — recompute coverage now"
+    : autoRecalc
+      ? "Auto is on — setting changes recompute immediately"
+      : isComputing
+        ? "Compute in progress"
+        : "Recompute coverage with the current settings";
+  // aria-disabled (not disabled) keeps the button focusable so keyboard and
+  // screen-reader users can still reach the state explanation.
+  const renderCalculate = (sizing: string) => (
+    <button
+      type="button"
+      aria-disabled={calcDisabled}
+      onClick={() => { if (!calcDisabled) onRecalculate(); }}
+      title={calcTitle}
+      className={`rounded-md border text-[10px] font-medium whitespace-nowrap transition-colors ${sizing} ${
+        calcDisabled
+          ? "opacity-40 cursor-not-allowed bg-white/5 border-white/10 text-gray-400"
+          : paramsDirty
+            ? "bg-amber-500/15 border-amber-500/40 text-amber-200 hover:bg-amber-500/25"
+            : "bg-cyan-500/10 border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/20"
+      }`}
+    >
+      Calculate
+    </button>
+  );
+
   return (
     <div
       ref={sheet.sheetRef}
@@ -695,19 +732,13 @@ export function MapCoveragePanel({
           </div>
         );
       })()}
-      {/* Manual-mode pending chip: settings changed, recompute deferred. */}
+      {/* Manual-mode pending chip: status only — the always-visible header /
+          mobile-row Calculate button is the action. */}
       {paramsDirty && !isComputing && !errorMessage && (
         <div className="absolute -top-8 left-1/2 -translate-x-1/2 max-w-[calc(100vw-1rem)] px-3 py-1 rounded-full
           bg-gray-900/95 backdrop-blur-xl border border-amber-500/40 shadow-2xl
-          text-[10px] text-amber-200 flex items-center gap-2 whitespace-nowrap">
+          text-[10px] text-amber-200 whitespace-nowrap">
           <span className="truncate min-w-0">Settings changed</span>
-          <button
-            type="button"
-            onClick={onRecalculate}
-            className="px-1.5 py-0 rounded bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-100 font-medium transition-colors"
-          >
-            Recalculate
-          </button>
         </div>
       )}
 
@@ -792,6 +823,23 @@ export function MapCoveragePanel({
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          {/* Recompute cluster (#536), desktop: Auto toggle + manual
+              Calculate, visible even when minimized. Phones get the same
+              controls in their own row below — the header hasn't the width. */}
+          <div className="hidden sm:flex items-center gap-1">
+            <label className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-white/10 bg-white/5 text-[10px] text-gray-300 cursor-pointer select-none hover:bg-white/10 transition-colors">
+              <input
+                type="checkbox"
+                checked={autoRecalc}
+                onChange={(e) => onAutoRecalcChange(e.target.checked)}
+                aria-label="Auto-recalculate when a setting changes"
+                className="w-3 h-3 accent-cyan-500 cursor-pointer"
+              />
+              <span>Auto</span>
+              <InfoTip align="right">{AUTO_RECALC_TIP}</InfoTip>
+            </label>
+            {renderCalculate("px-2 py-0.5")}
+          </div>
           <button
             type="button"
             onClick={() => setMinimized((m) => !m)}
@@ -866,6 +914,24 @@ export function MapCoveragePanel({
             </svg>
           </button>
         </div>
+      </div>
+
+      {/* Recompute cluster (#536), phones: full-width row so the header keeps
+          the origin readout and the close button stays on-screen. */}
+      <div className="sm:hidden flex items-center justify-between gap-2 px-3 py-1.5 border-b border-white/5 shrink-0">
+        <label className="flex items-center gap-1.5 text-[11px] text-gray-300 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={autoRecalc}
+            onChange={(e) => onAutoRecalcChange(e.target.checked)}
+            className="w-3.5 h-3.5 accent-cyan-500 cursor-pointer"
+          />
+          <span className="inline-flex items-center gap-1">
+            Auto-recalculate
+            <InfoTip align="left">{AUTO_RECALC_TIP}</InfoTip>
+          </span>
+        </label>
+        {renderCalculate("px-2.5 py-1.5")}
       </div>
 
       <div className="px-3 pt-2 pb-1 shrink-0">
@@ -1633,34 +1699,6 @@ export function MapCoveragePanel({
                 { value: "survey",   label: "Survey", sub: "2048 px" },
               ]}
             />
-          </div>
-          <div className="flex items-center justify-between gap-2 pt-1 border-t border-white/5">
-            <label className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={autoRecalc}
-                onChange={(e) => onAutoRecalcChange(e.target.checked)}
-                className="w-3.5 h-3.5 accent-cyan-500 cursor-pointer"
-              />
-              <span className="inline-flex items-center gap-1 min-w-0">
-                Auto-recalculate
-                <InfoTip align="left">
-                  Recompute automatically when a setting changes (moving the
-                  pin always recomputes). Turn off to batch several changes
-                  and apply them with one Recalculate — handy at Ultra/Survey
-                  detail where each run takes a while.
-                </InfoTip>
-              </span>
-            </label>
-            {!autoRecalc && paramsDirty && (
-              <button
-                type="button"
-                onClick={onRecalculate}
-                className="px-2 py-0.5 rounded-md border text-[10px] whitespace-nowrap shrink-0 transition-colors bg-amber-500/15 border-amber-500/40 text-amber-200 hover:bg-amber-500/25 font-medium"
-              >
-                Recalculate
-              </button>
-            )}
           </div>
         </Row>
 
