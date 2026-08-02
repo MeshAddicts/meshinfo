@@ -17,6 +17,10 @@ import { LivePill } from "../components/LivePill";
 import { MobileSheet } from "../components/MobileSheet";
 import { useLiveEvent } from "../hooks/useLiveEvent";
 import {
+  REMEMBERED_CH_KEYS,
+  useRememberedChannel,
+} from "../hooks/useRememberedChannel";
+import {
   IPacketMessage,
   IPacketsArg,
   useGetConfigQuery,
@@ -299,6 +303,17 @@ export const Log = () => {
     () => views.find((v) => v.key === urlCh) ?? views[0],
     [views, urlCh],
   );
+
+  // Land returning visitors on the channel pill they last had selected.
+  useRememberedChannel({
+    storageKey: REMEMBERED_CH_KEYS.logs,
+    value: selectedView.key === "all" ? "" : selectedView.key,
+    urlHasCh: !!searchParams.get("ch")?.trim(),
+    suppressRestore: [...searchParams.keys()].some((k) => k !== "ch"),
+    ready: views.length > 1,
+    isValid: (stored) => views.some((v) => v.key === stored),
+    apply: (stored) => setParam("ch", stored, "replace"),
+  });
 
   // ---- packet query --------------------------------------------------------
   const packetsArg: IPacketsArg = useMemo(() => {

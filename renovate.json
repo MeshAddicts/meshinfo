@@ -31,8 +31,23 @@
       "automerge": true
     },
     {
+      "description": "LTS-only Node (revisit when the LTS line after 26 is announced)",
+      "matchPackageNames": ["node"],
+      "allowedVersions": "/^(24|26)(\\.|$)/"
+    },
+    {
       "matchUpdateTypes": ["minor", "patch"],
       "automerge": true
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Track the CI frontend job's Node major via the node-version datasource",
+      "fileMatch": ["^\\.github/workflows/tests\\.yml$"],
+      "matchStrings": ["node-version:\\s*[\"']?(?<currentValue>[\\d.]+)[\"']?"],
+      "depNameTemplate": "node",
+      "datasourceTemplate": "node-version"
     }
   ]
 }

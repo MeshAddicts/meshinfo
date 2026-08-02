@@ -77,7 +77,7 @@ import {
   ROLE_COLORS,
 } from "./map/lib/utils";
 import { CoverageLookupCard } from "./map/live/CoverageLookupCard";
-import { nextCoverageSearch, parseCoverageParam } from "./map/live/coverageUrlParam";
+import { type CoverageParam, nextCoverageSearch, parseCoverageParam } from "./map/live/coverageUrlParam";
 import { LiveCoveragePill } from "./map/live/LiveCoveragePill";
 import { useCoverageLookup } from "./map/live/useCoverageLookup";
 import { useServerCoverageTiles } from "./map/live/useServerCoverageTiles";
@@ -274,15 +274,19 @@ export function Map() {
 
   // Live network-coverage layer: a server-baked raster tile pyramid (compute is
   // server-side; this only show/hides + sets opacity). Off (hidden) by default.
-  // A shared link's ?cov=1|0 overrides the saved preference for this session.
-  // Snapshot at first render — effects rewrite the real URL before a re-render
-  // could read it (same rationale as useUrlMapSync's snapshot).
-  const urlLiveCoverageRef = useRef<boolean | null | undefined>(undefined);
-  if (urlLiveCoverageRef.current === undefined) {
-    urlLiveCoverageRef.current = parseCoverageParam(window.location.search);
+  // A shared link's ?cov= (on/off, optionally which preset group) overrides the
+  // saved preferences for this session. Snapshot at first render — effects
+  // rewrite the real URL before a re-render could read it (same rationale as
+  // useUrlMapSync's snapshot). Enabled/group overrides are tracked separately
+  // so changing one setting doesn't stop the link driving the other.
+  const urlCovParamRef = useRef<CoverageParam | null | undefined>(undefined);
+  if (urlCovParamRef.current === undefined) {
+    urlCovParamRef.current = parseCoverageParam(window.location.search);
   }
+  const urlCovEnabledRef = useRef<boolean | null>(urlCovParamRef.current?.enabled ?? null);
+  const urlCovGroupRef = useRef<string | null>(urlCovParamRef.current?.group ?? null);
   const [liveCoverage, setLiveCoverage] = useState<boolean>(
-    () => urlLiveCoverageRef.current ?? readJson<boolean>(LS_KEYS.liveCoverage, false),
+    () => urlCovEnabledRef.current ?? readJson<boolean>(LS_KEYS.liveCoverage, false),
   );
   const [liveCoverageOpacity, setLiveCoverageOpacity] = useState<number>(
     // Full opacity by default: at 0.6 the paint was hard to read over some
@@ -293,7 +297,7 @@ export function Map() {
     () => readJson<boolean>(LS_KEYS.liveCoverageHideNodes, true),
   );
   const [liveCoverageGroup, setLiveCoverageGroup] = useState<string>(
-    () => readJson<string>(LS_KEYS.liveCoverageGroup, "all"),
+    () => urlCovGroupRef.current ?? readJson<string>(LS_KEYS.liveCoverageGroup, "all"),
   );
 
   // RF tool state hooks (own settings + result state)
@@ -339,26 +343,33 @@ export function Map() {
   useEffect(() => {
     // The sharer's ?cov drives this session but must not overwrite the viewer's
     // saved preference — persist only once the viewer changes the toggle.
-    if (urlLiveCoverageRef.current != null && liveCoverage === urlLiveCoverageRef.current) return;
-    urlLiveCoverageRef.current = null;
+    if (urlCovEnabledRef.current != null && liveCoverage === urlCovEnabledRef.current) return;
+    urlCovEnabledRef.current = null;
     writeJson(LS_KEYS.liveCoverage, liveCoverage);
   }, [liveCoverage]);
-  // Mirror the overlay toggle into ?cov= so the view is shareable. replaceState,
-  // not setSearchParams — a router navigation would re-render the whole Map
-  // route for a purely cosmetic URL update (same rationale as the lat/lng/z
-  // sync), and the no-write cases keep Safari's replaceState rate limit happy.
+  // Mirror the overlay toggle + preset group into ?cov= so the view is
+  // shareable. replaceState, not setSearchParams — a router navigation would
+  // re-render the whole Map route for a purely cosmetic URL update (same
+  // rationale as the lat/lng/z sync), and the no-write cases keep Safari's
+  // replaceState rate limit happy.
   useEffect(() => {
-    const next = nextCoverageSearch(window.location.search, liveCoverage);
+    const next = nextCoverageSearch(window.location.search, liveCoverage, liveCoverageGroup);
     if (next === null) return;
     window.history.replaceState(
       window.history.state,
       "",
       `${window.location.pathname}?${next}${window.location.hash}`,
     );
-  }, [liveCoverage]);
+  }, [liveCoverage, liveCoverageGroup]);
   useEffect(() => writeJson(LS_KEYS.liveCoverageOpacity, liveCoverageOpacity), [liveCoverageOpacity]);
   useEffect(() => writeJson(LS_KEYS.liveCoverageHideNodes, liveCoverageHideNodes), [liveCoverageHideNodes]);
-  useEffect(() => writeJson(LS_KEYS.liveCoverageGroup, liveCoverageGroup), [liveCoverageGroup]);
+  useEffect(() => {
+    // Same contract as ?cov on/off: a linked group must not overwrite the
+    // viewer's saved pick until they change it themselves.
+    if (urlCovGroupRef.current != null && liveCoverageGroup === urlCovGroupRef.current) return;
+    urlCovGroupRef.current = null;
+    writeJson(LS_KEYS.liveCoverageGroup, liveCoverageGroup);
+  }, [liveCoverageGroup]);
 
   // Obsolete key from the prior exaggeration slider; removeItem is idempotent.
   useEffect(() => {
@@ -914,7 +925,17 @@ export function Map() {
   const liveGroups = liveCoverageState.meta?.groups;
   useEffect(() => {
     if (liveGroups && liveCoverageGroup !== "all" && !liveGroups.includes(liveCoverageGroup)) {
-      setLiveCoverageGroup("all");
+      if (urlCovGroupRef.current === liveCoverageGroup) {
+        // A deeplinked group that isn't baked must not clobber the viewer's
+        // own saved pick — fall back to it, or "all" if that's gone too.
+        // Decided in one step: setting an identical invalid value would
+        // bail out of the re-render and strand this effect.
+        urlCovGroupRef.current = null;
+        const saved = readJson<string>(LS_KEYS.liveCoverageGroup, "all");
+        setLiveCoverageGroup(saved === "all" || liveGroups.includes(saved) ? saved : "all");
+      } else {
+        setLiveCoverageGroup("all");
+      }
     }
   }, [liveGroups, liveCoverageGroup]);
   // Hide markers only while the layer actually paints — if the worker goes away
