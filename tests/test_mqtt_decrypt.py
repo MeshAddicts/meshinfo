@@ -106,7 +106,16 @@ def make_mqtt_pb(keys):
     return MQTT(config, data), data
 
 
-def _build_encrypted_envelope(key_bytes, text, from_=0x67EA9401, pkt_id=424242):
+def _build_encrypted_envelope(
+    key_bytes,
+    text,
+    from_=0x67EA9401,
+    pkt_id=424242,
+    rx_rssi=-92,
+    rx_snr=5.5,
+    hop_start=3,
+    hop_limit=1,
+):
     """Serialize a ServiceEnvelope whose MeshPacket carries an AES-CTR
     encrypted TEXT_MESSAGE_APP payload, mirroring what a Meshtastic gateway
     uplinks. Nonce layout must match mqtt.py: packet_id LE64 ‖ from LE64.
@@ -126,10 +135,10 @@ def _build_encrypted_envelope(key_bytes, text, from_=0x67EA9401, pkt_id=424242):
     mp.id = pkt_id
     mp.channel = 8
     mp.rx_time = 1700000000
-    mp.rx_rssi = -92
-    mp.rx_snr = 5.5
-    mp.hop_start = 3
-    mp.hop_limit = 1
+    mp.rx_rssi = rx_rssi
+    mp.rx_snr = rx_snr
+    mp.hop_start = hop_start
+    mp.hop_limit = hop_limit
     mp.encrypted = ciphertext
 
     se = mqtt_pb2.ServiceEnvelope()
@@ -194,6 +203,28 @@ class TestProcessEncryptedPacket:
         assert from_id == GOLDEN_FROM_HEX
         assert chat["text"] == GOLDEN_TEXT
         assert chat["channel"] == "8"
+
+    def test_encrypted_packet_zero_header_fields_handled(self):
+        """Zero-valued header fields must survive the decrypt branch's dict
+        re-serialization: hops_away is read off mp directly (hop_limit==0 —
+        an exhausted-hops packet — vanishes from MessageToJson output), and a
+        zero rssi/snr pair stays absent instead of fabricating a reading."""
+        mqtt, data = make_mqtt_pb([DEFAULT_KEY_B64])
+        env = _build_encrypted_envelope(
+            base64.b64decode(DEFAULT_KEY_B64),
+            "zero header fields",
+            rx_rssi=0,
+            rx_snr=0.0,
+            hop_start=3,
+            hop_limit=0,
+        )
+        run(mqtt.process_mqtt_msg(None, FakeMsg(GOLDEN_TOPIC, env)))
+
+        stored = data.pg_storage.mqtt_writes[0]
+        assert stored["hops_away"] == 3
+        assert stored["hop_limit"] == 0
+        assert "rssi" not in stored
+        assert "snr" not in stored
 
     def test_second_key_in_list_decrypts(self):
         """The key loop must survive a failing key and go on to the right one."""

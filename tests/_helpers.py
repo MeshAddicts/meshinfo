@@ -9,6 +9,7 @@ import mode.
 
 import asyncio
 
+from meshtastic import mesh_pb2, mqtt_pb2
 from broadcaster import Broadcaster
 
 
@@ -72,3 +73,53 @@ class FakeDataStore:
 def run(coro):
     """Drive an async function without pytest-asyncio (not in requirements-dev)."""
     return asyncio.run(coro)
+
+
+class _FakeTopic:
+    def __init__(self, value: str):
+        self.value = value
+
+
+class FakeMqttMessage:
+    """Minimal aiomqtt message stand-in for driving process_mqtt_msg."""
+
+    def __init__(self, topic: str, payload: bytes, qos: int = 0, retain: bool = False):
+        self.topic = _FakeTopic(topic)
+        self.payload = payload
+        self.qos = qos
+        self.retain = retain
+
+
+def build_envelope(
+    from_=0x67EA9400,
+    to=0xABCD1234,
+    packet_id=123456,
+    portnum=1,  # TEXT_MESSAGE_APP
+    payload=b"hi",
+    hop_start=0,
+    hop_limit=0,
+    rx_rssi=0,
+    rx_snr=0.0,
+    rx_time=1753500000,
+    channel=0,
+    gateway_id="!abcd1234",
+    topic="msh/US/2/e/LongFast/!abcd1234",
+) -> FakeMqttMessage:
+    """Serialize a real ServiceEnvelope wrapping an unencrypted MeshPacket —
+    the exact wire shape process_mqtt_msg decodes, so proto3 zero-omission
+    behavior (hop_limit==0, rx_rssi==0, channel==0) is exercised for real."""
+    mp = mesh_pb2.MeshPacket(
+        **{"from": from_},
+        to=to,
+        id=packet_id,
+        hop_start=hop_start,
+        hop_limit=hop_limit,
+        rx_rssi=rx_rssi,
+        rx_snr=rx_snr,
+        rx_time=rx_time,
+        channel=channel,
+    )
+    mp.decoded.portnum = portnum
+    mp.decoded.payload = payload
+    se = mqtt_pb2.ServiceEnvelope(packet=mp, gateway_id=gateway_id, channel_id="LongFast")
+    return FakeMqttMessage(topic, se.SerializeToString())

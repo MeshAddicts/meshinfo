@@ -133,8 +133,21 @@ class MQTT:
                             logger.debug("Decryption failed: %s", e)
                             continue
 
-                outs['rssi'] = mp.rx_rssi
-                outs['snr'] = mp.rx_snr
+                # rx_rssi/rx_snr are proto3 no-presence fields: a 0/0.0 pair
+                # means "no RF measurement" (typical when the gateway uplinks
+                # its own packet), not a perfect reading. rssi==0 dBm is
+                # physically implausible; snr alone can legitimately be 0.0 dB,
+                # so drop snr only when rssi is also zero (snr-only legacy
+                # gateways keep their reading). Omit the keys entirely rather
+                # than storing None: a no-reading COPY then diffs to an empty
+                # dedup extras patch (None would patch every one). When the
+                # no-reading copy is itself the CANONICAL, later real readings
+                # still cost a small set-patch each — inherent, reconstruction
+                # stays lossless.
+                if mp.rx_rssi != 0:
+                    outs['rssi'] = mp.rx_rssi
+                if mp.rx_rssi != 0 or mp.rx_snr != 0.0:
+                    outs['snr'] = mp.rx_snr
                 # Clamp rx_time to current time if node clock is ahead
                 rx_time = mp.rx_time
                 now_epoch = int(time.time())
@@ -146,6 +159,9 @@ class MQTT:
                 outs['topic'] = msg.topic.value
                 outs["qos"] = getattr(msg, "qos", None)
                 outs["retain"] = getattr(msg, "retain", None)
+                # Channel index straight from the packet: MessageToJson omits
+                # the zero value, silently hiding the primary channel (0).
+                outs.setdefault('channel', mp.channel)
 
                 # Fallback: extract gateway from topic suffix if gateway_id was empty
                 if not outs.get('sender'):
@@ -153,14 +169,17 @@ class MQTT:
                     if topic_parts and topic_parts[-1].startswith('!'):
                         outs['sender'] = topic_parts[-1].replace('!', '')
 
-                # Calculate hops_away from hop_start and hop_limit
-                hop_start = outs.get("hop_start")
-                hop_limit = outs.get("hop_limit")
-                if hop_start is not None and hop_limit is not None:
-                    try:
-                        outs["hops_away"] = int(hop_start) - int(hop_limit)
-                    except (ValueError, TypeError):
-                        pass
+                # hops_away from the protobuf header, read directly off mp:
+                # proto3 zero-omission hides hop_limit==0 (a packet that used
+                # ALL its hops — exactly the rows that used to lose their hop
+                # count) and hop_start==0 from MessageToJson's dict.
+                # hop_start==0 means pre-2.3 firmware that never reported it →
+                # genuinely unknown, leave hops_away absent (stored as NULL).
+                # Clamped at 0: hop_limit > hop_start is a firmware anomaly.
+                if mp.hop_start > 0:
+                    outs["hop_start"] = mp.hop_start
+                    outs["hop_limit"] = mp.hop_limit
+                    outs["hops_away"] = max(mp.hop_start - mp.hop_limit, 0)
 
                 if mp.decoded.portnum == portnums_pb2.TEXT_MESSAGE_APP:
                     payload_bytes = bytes(mp.decoded.payload)
@@ -324,7 +343,17 @@ class MQTT:
                 logger.debug("Processed message: %s", outs)
                 await self.handle_log(outs)
 
-        elif self.config['broker']['decoders']['json']['enabled']:
+        # The JSON decoder is EXCLUSIVE with the protobuf decoder, by design:
+        # the topic namespaces are disjoint (/2/e/ + /2/map/ vs /2/json), but
+        # the PACKETS are not — a gateway with JSON output publishes the same
+        # mesh packet to both, so running both decoders would double-fire
+        # every SSE event and record a duplicate packet_receptions row per
+        # such gateway. With protobuf enabled, /2/json copies are skipped;
+        # enable the JSON decoder alone for meshes that only publish JSON.
+        if (
+            self.config['broker']['decoders']['json']['enabled']
+            and not self.config['broker']['decoders']['protobuf']['enabled']
+        ):
             if '/2/json' in msg.topic.value:
                 logger.debug("Received a JSON message: %s %s", msg.topic, msg.payload)
                 try:
@@ -684,7 +713,7 @@ class MQTT:
             if isinstance(r, str):
                 # JSON publisher path: route entries arrive as longnames.
                 node = await self.data.pg_storage.find_node_by_longname(r)
-            elif isinstance(r, int):
+            elif isinstance(r, int) and not isinstance(r, bool):
                 # Protobuf path: route entries are uint32 node ids.
                 node = await self.data.pg_storage.get_node_cached(utils.convert_node_id_from_int_to_hex(r))
             else:
@@ -692,6 +721,15 @@ class MQTT:
 
             if node:
                 msg['route_ids'].append(node['id'])
+            elif isinstance(r, int) and not isinstance(r, bool):
+                # Unknown protobuf hop: store the canonical 8-hex id, not the
+                # raw int, so consumers can group/resolve it once the node is
+                # seen (normalize_node_id also rejects out-of-uint32 garbage,
+                # falling back to the raw echo). The else branch stays
+                # verbatim on purpose — JSON-path strings are longnames (a
+                # hex-looking "cafe" must not be minted into an id), and bools
+                # are excluded so a hostile `true` can't become node 00000001.
+                msg['route_ids'].append(normalize_node_id(r) or r)
             else:
                 msg['route_ids'].append(r)
 
