@@ -11,6 +11,10 @@ import { ExportMenu } from "../components/ExportMenu";
 import { HeardBy } from "../components/HeardBy";
 import { LivePill } from "../components/LivePill";
 import { MobileSheet } from "../components/MobileSheet";
+import {
+  REMEMBERED_CH_KEYS,
+  useRememberedChannel,
+} from "../hooks/useRememberedChannel";
 import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { csvEscape, downloadBlob } from "../utils/export";
@@ -158,6 +162,17 @@ export const Nodes = () => {
     }
     return null;
   }, [urlCh, channelViews]);
+
+  // Land returning visitors on the channel pill they last had selected.
+  useRememberedChannel({
+    storageKey: REMEMBERED_CH_KEYS.nodes,
+    value: selectedChannelId ?? "",
+    urlHasCh: !!searchParams.get("ch")?.trim(),
+    suppressRestore: [...searchParams.keys()].some((k) => k !== "ch"),
+    ready: channelViews.length > 1,
+    isValid: (stored) => channelViews.some((v) => v.channelId === stored),
+    apply: (stored) => setParam("ch", stored, "replace"),
+  });
 
   // Range threshold clock: update infrequently (range cutoffs don't need 1s precision)
   const [rangeNowMs, setRangeNowMs] = useState(() => Date.now());

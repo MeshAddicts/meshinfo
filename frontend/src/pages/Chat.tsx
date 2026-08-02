@@ -15,6 +15,10 @@ import { LivePill } from "../components/LivePill";
 import { MobileSheet } from "../components/MobileSheet";
 import { useAppSelector } from "../hooks/redux";
 import {
+  REMEMBERED_CH_KEYS,
+  useRememberedChannel,
+} from "../hooks/useRememberedChannel";
+import {
   useGetChatsQuery,
   useGetConfigQuery,
   useGetNodesQuery,
@@ -387,6 +391,17 @@ export const Chat = () => {
   } = useChatSearchParams({
     views: viewParams,
     defaultCh: defaultViewKey,
+  });
+
+  // Land returning visitors on the channel they last had selected.
+  useRememberedChannel({
+    storageKey: REMEMBERED_CH_KEYS.chat,
+    value: urlCh === defaultViewKey ? "" : urlCh,
+    urlHasCh: !!searchParams.get("ch")?.trim(),
+    suppressRestore: [...searchParams.keys()].some((k) => k !== "ch"),
+    ready: views.length > 0,
+    isValid: (stored) => views.some((v) => v.key === stored),
+    apply: (stored) => setParam("ch", stored, "replace"),
   });
 
   // ── 10. Selected view (for display / pills) ──

@@ -143,10 +143,9 @@ export const MESH_NAV: NavItemDef[] = [
 
 // Falls back here when config.mesh.tools is absent.
 export const DEFAULT_TOOLS: ExternalLinkDef[] = [
-  { name: "Armooo's MeshView", url: "https://meshview.armooo.net" },
   { name: "Liam's Meshtastic Map", url: "https://meshtastic.liamcottle.net" },
   { name: "MeshMap", url: "https://meshmap.net" },
-  { name: "Bay Mesh Explorer", url: "https://app.bayme.sh" },
+  { name: "Bay Mesh Explorer", url: "https://meshview.bayme.sh" },
   { name: "HWT Path Profiler", url: "https://heywhatsthat.com/profiler.html" },
 ];
 

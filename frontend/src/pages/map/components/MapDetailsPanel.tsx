@@ -3,6 +3,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useLiveEvent } from "../../../hooks/useLiveEvent";
 import { useGetNodePacketsQuery } from "../../../slices/apiSlice";
 import { HardwareModel, type NodeRole,roleTitles } from "../../../types";
+import { convertNodeIdFromHexToInt } from "../../../utils/convertNodeId";
 import { getElsewhereLinks, resolveElsewhereUrl } from "../../../utils/elsewhereLinks";
 import { normalizeNodeId8 } from "../../../utils/normalizeNodeId8";
 import { useBottomSheetGesture } from "../hooks/useBottomSheet";
@@ -368,7 +369,7 @@ export const MapDetailsPanel = memo(function MapDetailsPanel({
 
   const { node, liveNodes, displayName, channelLabel } = data;
 
-  const nodeIdInt = parseInt(node.id, 16);
+  const nodeIdInt = convertNodeIdFromHexToInt(node.id);
   const elsewhereLinks = getElsewhereLinks(data.elsewhereLinks);
 
   // node.id and liveNodes keys can disagree on the `!` prefix, and `hardware` may arrive as a string from the API

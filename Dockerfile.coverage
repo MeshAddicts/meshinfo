@@ -11,7 +11,7 @@ COPY frontend/wasm/itm/fetch-vendor.sh frontend/wasm/itm/build.sh frontend/wasm/
 RUN chmod +x fetch-vendor.sh build.sh && ./fetch-vendor.sh && ./build.sh
 
 # trunk-ignore-all(checkov/CKV_DOCKER_3)
-FROM node:25.9.0-alpine
+FROM node:24.18.1-alpine
 LABEL org.opencontainers.image.source="https://github.com/MeshAddicts/meshinfo"
 LABEL org.opencontainers.image.description="MeshInfo coverage tile worker — bakes the live network-coverage raster pyramid."
 

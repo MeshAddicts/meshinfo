@@ -10,7 +10,7 @@ WORKDIR /itm
 COPY frontend/wasm/itm/fetch-vendor.sh frontend/wasm/itm/build.sh frontend/wasm/itm/shim.h ./
 RUN chmod +x fetch-vendor.sh build.sh && ./fetch-vendor.sh && ./build.sh
 
-FROM node:25.9.0-alpine AS build
+FROM node:24.18.1-alpine AS build
 
 LABEL org.opencontainers.image.source="https://github.com/MeshAddicts/meshinfo"
 LABEL org.opencontainers.image.description="Realtime web UI to run against a Meshtastic regional or private mesh network."
