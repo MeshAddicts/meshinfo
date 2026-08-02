@@ -1,3 +1,4 @@
+import { dedupeExchanges, isResolvedHop, orientTraceroute } from "../../utils/traceroute";
 import { type GraphEdge,normNodeId } from "./graphUtils";
 
 export function buildNeighborEdges(nodesById: Record<string, any>): GraphEdge[] {
@@ -31,14 +32,23 @@ export function buildNeighborEdges(nodesById: Record<string, any>): GraphEdge[] 
 
 export function buildTracerouteEdges(traceroutes: any[], validIds: Set<string>): GraphEdge[] {
   const wByKey = new Map<string, number>();
-  for (const tr of traceroutes) {
-    const from = normNodeId(tr?.from), to = normNodeId(tr?.to);
-    // route_ids first: slim traceroute rows (?slim=1) drop the legacy route fields.
-    const route: string[] = (tr?.route_ids ?? tr?.route ?? tr?.payload?.route ?? []).map(normNodeId).filter(Boolean);
-    const path = [from, ...route, to].filter(Boolean);
+  // orientTraceroute travel-orders reply rows (header swap ≠ path reversal —
+  // a raw [from,...route,to] walk fabricates both endpoint edges on replies);
+  // dedupeExchanges keeps a request+reply capture of one traceroute from
+  // double-weighting every edge.
+  for (const tr of dedupeExchanges(traceroutes)) {
+    const o = orientTraceroute(tr);
+    if (!o) continue;
+    const path = o.orderedPath;
+    const lastLegIdx = path.length - 2;
     for (let i = 0; i < path.length - 1; i++) {
+      // A mid-flight request never observed its final (…→target) leg.
+      if (o.provisional && i === lastLegIdx) continue;
       const a = path[i], b = path[i + 1];
       if (!a || !b || a === b) continue;
+      // Placeholder/sentinel hops break the chain; skip the legs touching
+      // them rather than splicing a fake edge across the gap.
+      if (!isResolvedHop(a) || !isResolvedHop(b)) continue;
       const ka = a < b ? a : b, kb = a < b ? b : a;
       wByKey.set(`${ka}~${kb}`, (wByKey.get(`${ka}~${kb}`) ?? 0) + 1);
     }

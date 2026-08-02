@@ -1,6 +1,7 @@
 import type { Map as MlMap } from "maplibre-gl";
 
 import type { ITraceroutesResponse } from "../../../types";
+import { isResolvedHop, orientTraceroute } from "../../../utils/traceroute";
 import { AGGRESSION_STOPS, DEFAULT_AGGRESSION_IDX } from "../rf/coverageAnalysis";
 import { normalizeLng } from "./geo";
 import { normNodeId } from "./linkFeatures";
@@ -163,19 +164,23 @@ export function computeMaxRange(
 
   for (const id of heardBy) connectedIds.add(id);
 
-  // Traceroute peers (adjacent hops)
+  // Traceroute peers (adjacent hops, travel-ordered — a raw header walk
+  // attributes both endpoint legs to the wrong nodes on reply rows)
   const normId = normNodeId(nodeId);
   for (const tr of traceroutes) {
-    const from = normNodeId(tr?.from);
-    const to = normNodeId(tr?.to);
-    const route: string[] = (tr?.route_ids ?? tr?.route ?? [])
-      .map(normNodeId)
-      .filter(Boolean);
-    const path = [from, ...route, to].filter(Boolean);
+    const o = orientTraceroute(tr);
+    if (!o) continue;
+    const path = o.orderedPath;
     const idx = path.indexOf(normId);
     if (idx === -1) continue;
-    if (idx > 0 && path[idx - 1]) connectedIds.add(path[idx - 1]);
-    if (idx < path.length - 1 && path[idx + 1]) connectedIds.add(path[idx + 1]);
+    const prev = idx > 0 ? path[idx - 1] : null;
+    // The final (…→target) leg of a mid-flight request was never observed.
+    const nextIsProvisional = o.provisional && idx + 1 === path.length - 1;
+    const next = idx < path.length - 1 && !nextIsProvisional ? path[idx + 1] : null;
+    if (prev && isResolvedHop(prev) && !(o.provisional && idx === path.length - 1)) {
+      connectedIds.add(prev);
+    }
+    if (next && isResolvedHop(next)) connectedIds.add(next);
   }
 
   let maxDist = 0;

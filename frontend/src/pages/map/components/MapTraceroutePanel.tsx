@@ -471,15 +471,15 @@ function MapTraceroutePanelInner({
                           onSelectPath(run.sig);
                         }}
                         onMouseEnter={() => onHighlight?.(toCoords(run.hops))}
-                        title={`${observedAgo(run.timestamp) ?? "age unknown"} · ${run.hopCount} ${run.hopCount === 1 ? "hop" : "hops"}${changed ? " · route changed" : ""}`}
-                        aria-label={`Run ${i + 1} of ${displayRuns.length}, ${run.hopCount} hops${changed ? ", route changed" : ""}`}
+                        title={`${observedAgo(run.timestamp) ?? "age unknown"} · ${run.hopCount} ${run.hopCount === 1 ? "hop" : "hops"}${changed ? " · route changed" : ""}${run.provisional ? " · request, awaiting reply" : ""}`}
+                        aria-label={`Run ${i + 1} of ${displayRuns.length}, ${run.hopCount} hops${changed ? ", route changed" : ""}${run.provisional ? ", request awaiting reply" : ""}`}
                         className={`flex-1 min-w-0.75 rounded-[1px] transition-colors ${
                           isSel
                             ? "bg-cyan-400/90"
                             : changed
                               ? "bg-amber-400/60 hover:bg-amber-300/80"
                               : "bg-white/15 hover:bg-white/35"
-                        }`}
+                        }${run.provisional ? " opacity-50 outline outline-1 outline-dashed outline-white/40 -outline-offset-1" : ""}`}
                       />
                     );
                   })}

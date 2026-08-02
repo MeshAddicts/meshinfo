@@ -17,6 +17,7 @@ import { store } from "../../../store";
 import type { ITraceroutesResponse } from "../../../types";
 import { normalizeNodeId8 } from "../../../utils/normalizeNodeId8";
 import { prefersReducedMotion } from "../../../utils/reducedMotion";
+import { orientTraceroute } from "../../../utils/traceroute";
 import type { ActivityLayer } from "../layers/activityLayer";
 import type { ClusterDonutLayer } from "../layers/clusterDonutLayer";
 import { samePoint } from "../lib/geo";
@@ -92,9 +93,10 @@ export function useTraceLiveEvents({
   // behind a 300 s full-row backstop timer).
   const traceRefetchDueAtRef = useRef(0);
 
-  // Resolve a traceroute's hops to positions and draw one sequential comet along
-  // [from, ...route, to], snapping each hop to its cluster and skipping hops with
-  // no known position.
+  // Resolve a traceroute's hops to positions and draw one sequential comet in
+  // TRAVEL order (orientTraceroute swaps reply-row headers back; skinny events
+  // without payload fall back to header order), snapping each hop to its
+  // cluster and skipping hops with no known position.
   const animateTraceroute = useCallback((t: TraceEv) => {
     const layer = activityLayerRef.current;
     if (!layer) return;
@@ -118,7 +120,8 @@ export function useTraceLiveEvents({
       return best ?? pos;
     };
     const pts: [number, number][] = [];
-    for (const raw of [t.from, ...(t.route_ids ?? []), t.to]) {
+    const walk = orientTraceroute(t)?.orderedPath ?? [t.from, ...(t.route_ids ?? []), t.to];
+    for (const raw of walk) {
       const id = normalizeNodeId8(raw);
       const pos = id ? liveNodes[id]?.map_position : undefined;
       if (!pos) continue; // hop with unknown position — skip (honest gap)

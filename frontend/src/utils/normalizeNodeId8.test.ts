@@ -1,6 +1,30 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeNodeId8 } from "./normalizeNodeId8";
+import { normalizeNodeId8, normNodeId } from "./normalizeNodeId8";
+
+describe("normNodeId", () => {
+  it("pads numeric ids to 8 hex chars (matches backend keys)", () => {
+    expect(normNodeId(0x0165ec15)).toBe("0165ec15");
+    expect(normNodeId(255)).toBe("000000ff");
+  });
+
+  it("treats ≤8-digit all-decimal strings as hex verbatim", () => {
+    // 8-hex backend ids can be all digits; decimal ids arrive as numbers or
+    // >8-digit strings, so at ≤8 chars hex must win.
+    expect(normNodeId("23456789")).toBe("23456789");
+    expect(normNodeId("1234567")).toBe("1234567");
+  });
+
+  it("decimal-parses >8-digit numeric strings, padded", () => {
+    expect(normNodeId("1128082076")).toBe((1128082076).toString(16));
+    expect(normNodeId("305441741")).toBe("1234abcd");
+  });
+
+  it("passes longnames through lowercased and unpadded", () => {
+    expect(normNodeId("Base Camp")).toBe("base camp");
+    expect(normNodeId("cafe")).toBe("cafe");
+  });
+});
 
 describe("normalizeNodeId8", () => {
   it("left-pads short hex to the canonical 8 chars", () => {

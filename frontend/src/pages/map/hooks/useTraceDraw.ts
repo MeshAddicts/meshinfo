@@ -90,9 +90,23 @@ export function useTraceDraw({
         const bLng = unwrapLngTo(aLng, B.pos[0]);
         prevLng = bLng;
         const isGap = B.i - A.i > 1;
+        // Request-only path: the unobserved leg (index from pathAnalysis —
+        // last leg when displayed forward, leg 0 when the a→b pick reversed
+        // travel order) draws dashed and faded, not solid. This segment spans
+        // hop-legs A.i..B.i-1.
+        const provisionalLeg =
+          primary.provisionalLegIndex != null &&
+          A.i <= primary.provisionalLegIndex &&
+          primary.provisionalLegIndex < B.i;
         features.push({
           type: "Feature",
-          properties: { primary: true, gap: isGap, sort: 1000, opacity: 0.95, width: 4 },
+          properties: {
+            primary: true,
+            gap: isGap || provisionalLeg,
+            sort: 1000,
+            opacity: provisionalLeg ? 0.5 : 0.95,
+            width: provisionalLeg ? 3 : 4,
+          },
           geometry: { type: "LineString", coordinates: [[aLng, A.pos[1]], [bLng, B.pos[1]]] },
         });
         if (isGap) {

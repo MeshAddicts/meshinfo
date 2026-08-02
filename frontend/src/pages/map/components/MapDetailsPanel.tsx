@@ -6,6 +6,7 @@ import { HardwareModel, type NodeRole,roleTitles } from "../../../types";
 import { convertNodeIdFromHexToInt } from "../../../utils/convertNodeId";
 import { getElsewhereLinks, resolveElsewhereUrl } from "../../../utils/elsewhereLinks";
 import { normalizeNodeId8 } from "../../../utils/normalizeNodeId8";
+import { dedupeExchanges, isResolvedHop, orientTraceroute } from "../../../utils/traceroute";
 import { useBottomSheetGesture } from "../hooks/useBottomSheet";
 import { normNodeId } from "../lib/linkFeatures";
 import type { IMapNode, NodeDetailsData } from "../lib/types";
@@ -329,20 +330,21 @@ export const MapDetailsPanel = memo(function MapDetailsPanel({
     if (!data) return [];
     const normId = normNodeId(data.node.id);
     const trLinkCounts = new Map<string, number>();
-    for (const tr of data.traceroutes ?? []) {
-      const from = normNodeId(tr.from);
-      const to = normNodeId(tr.to);
-      const hops = (tr.route_ids ?? tr.route ?? []).map((r: string) => normNodeId(r));
-      const path = [from, ...hops, to].filter(Boolean);
+    // Travel-ordered walk (reply headers are swapped), request+reply of one
+    // exchange counted once, speculative/unresolved legs excluded.
+    for (const tr of dedupeExchanges(data.traceroutes ?? [])) {
+      const o = orientTraceroute(tr);
+      if (!o) continue;
+      const path = o.orderedPath;
       const idx = path.indexOf(normId);
       if (idx === -1) continue;
-      if (idx > 0) {
+      if (idx > 0 && !(o.provisional && idx === path.length - 1)) {
         const prev = path[idx - 1];
-        trLinkCounts.set(prev, (trLinkCounts.get(prev) ?? 0) + 1);
+        if (isResolvedHop(prev)) trLinkCounts.set(prev, (trLinkCounts.get(prev) ?? 0) + 1);
       }
-      if (idx < path.length - 1) {
+      if (idx < path.length - 1 && !(o.provisional && idx + 1 === path.length - 1)) {
         const next = path[idx + 1];
-        trLinkCounts.set(next, (trLinkCounts.get(next) ?? 0) + 1);
+        if (isResolvedHop(next)) trLinkCounts.set(next, (trLinkCounts.get(next) ?? 0) + 1);
       }
     }
     return [...trLinkCounts.entries()].sort((a, b) => b[1] - a[1]);

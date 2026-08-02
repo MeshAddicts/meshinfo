@@ -23,7 +23,9 @@ import {
 } from "./traceroutes/traceroutesTypes";
 import {
   coerceEvent,
+  dedupeExchangeEvents,
   groupTracerouteEvents,
+  hopChipLabel,
   type NodesById,
   routeHopsOf,
   routeIdsOf,
@@ -117,9 +119,17 @@ export const Traceroutes = () => {
     const legacySel = searchParams.get("sel") ?? "";
     const legacyRange = searchParams.get("range") ?? "";
 
+    // Directed pair keys from old share links (pair:B|A) canonicalize to the
+    // sorted undirected key so they keep resolving after the orientation fix.
+    const selPair = legacySel.startsWith("pair:") ? legacySel.slice(5) : "";
+    const selPairParts = selPair.split("|");
+    const selPairCanonical =
+      selPairParts.length === 2 && selPairParts[0] > selPairParts[1];
+
     const needsCleanup =
       !!legacyView ||
       legacyRange === "30d" ||
+      selPairCanonical ||
       [
         "newest",
         "oldest",
@@ -161,6 +171,12 @@ export const Traceroutes = () => {
         // old selection keys (evt:/route:) won’t exist anymore
         const s = p.get("sel") ?? "";
         if (s && s !== "all" && !s.startsWith("pair:")) p.delete("sel");
+        else if (s.startsWith("pair:")) {
+          const parts = s.slice(5).split("|");
+          if (parts.length === 2 && parts[0] > parts[1]) {
+            p.set("sel", `pair:${parts[1]}|${parts[0]}`);
+          }
+        }
 
         return p;
       },
@@ -225,7 +241,16 @@ export const Traceroutes = () => {
   // URL state
   const range = clampRange(searchParams.get("range"));
   const urlQ = searchParams.get("q") || "";
-  const selectedKey = searchParams.get("sel") || DEFAULT_SEL;
+  // Canonicalize directed legacy pair keys at READ time — the URL-rewrite
+  // effect above is cosmetic and loses a race against the missing-key reset
+  // below, so the lookup key must already be canonical here.
+  const selRawParam = searchParams.get("sel") || DEFAULT_SEL;
+  const selectedKey = useMemo(() => {
+    if (!selRawParam.startsWith("pair:")) return selRawParam;
+    const parts = selRawParam.slice(5).split("|");
+    if (parts.length === 2 && parts[0] > parts[1]) return `pair:${parts[1]}|${parts[0]}`;
+    return selRawParam;
+  }, [selRawParam]);
   const sort = clampSort(searchParams.get("sort") || DEFAULT_SORT);
 
   // Live polling (simple: on/off)
@@ -402,41 +427,53 @@ export const Traceroutes = () => {
     return arr;
   }, [filteredEvents]);
 
-  // Unique route sequences across all filtered events (for overview)
-  const uniqueRoutesTotal = useMemo(() => {
-    return groupTracerouteEvents(filteredEventsSorted).length;
+  // One traceroute exchange can be captured as two packets (request + reply);
+  // runs/routes/pair stats count exchanges, packet totals stay visible beside.
+  const exchangesSorted: TracerouteEvent[] = useMemo(() => {
+    return dedupeExchangeEvents(filteredEventsSorted);
   }, [filteredEventsSorted]);
 
+  // Unique route sequences across all filtered exchanges (for overview)
+  const uniqueRoutesTotal = useMemo(() => {
+    return groupTracerouteEvents(exchangesSorted).length;
+  }, [exchangesSorted]);
+
   // ---- Build pair summaries + events-by-pair
+  // Keyed on the undirected canonical pairKey so request/reply captures and
+  // A→B / B→A initiations of one pair share a single entry. Stats count
+  // EXCHANGES; raw packet counts ride along for visibility.
   const { pairItems, eventsByPairKey, listItems } = useMemo(() => {
     const byPair = new Map<
       string,
       {
         from: string;
         to: string;
+        bidirectional: boolean;
         count: number;
         firstTsMs: number;
         lastTsMs: number;
         uniqueRouteKeys: Set<string>;
         routeCounts: Map<
           string,
-          { routeIds: string[]; count: number; lastTsMs: number }
+          { routeIds: string[]; from: string; to: string; count: number; lastTsMs: number }
         >;
       }
     >();
 
     const eventsMap = new Map<string, TracerouteEvent[]>();
 
-    for (const e of filteredEventsSorted) {
-      const pairKey = `${e.from}|${e.to}`;
+    for (const e of exchangesSorted) {
+      const pairKey = e.pairKey;
       const ts = safeTsMs(e.timestamp);
       if (!eventsMap.has(pairKey)) eventsMap.set(pairKey, []);
       eventsMap.get(pairKey)!.push(e);
 
       if (!byPair.has(pairKey)) {
+        // Newest-first iteration: the first event fixes the displayed direction
         byPair.set(pairKey, {
           from: e.from,
           to: e.to,
+          bidirectional: false,
           count: 1,
           firstTsMs: ts,
           lastTsMs: ts,
@@ -448,27 +485,40 @@ export const Traceroutes = () => {
         s.count += 1;
         s.firstTsMs = Math.min(s.firstTsMs || ts, ts || s.firstTsMs);
         s.lastTsMs = Math.max(s.lastTsMs || ts, ts || s.lastTsMs);
+        if (e.from !== s.from) s.bidirectional = true;
       }
 
       const s = byPair.get(pairKey)!;
       const rids = routeIdsOf(e);
-      const rk = rids.join(",");
+      // Direction is part of a route's identity; ids are already normalized
+      const rk = `${e.from}>${rids.join(",")}>${e.to}`;
       s.uniqueRouteKeys.add(rk);
 
       const cur = s.routeCounts.get(rk);
       if (!cur) {
-        s.routeCounts.set(rk, { routeIds: rids, count: 1, lastTsMs: ts });
+        s.routeCounts.set(rk, { routeIds: rids, from: e.from, to: e.to, count: 1, lastTsMs: ts });
       } else {
         cur.count += 1;
         cur.lastTsMs = Math.max(cur.lastTsMs || ts, ts || cur.lastTsMs);
       }
     }
 
+    // Raw packet totals per pair (requests + replies before collapsing)
+    const packetsByPair = new Map<string, number>();
+    for (const e of filteredEventsSorted) {
+      packetsByPair.set(e.pairKey, (packetsByPair.get(e.pairKey) ?? 0) + 1);
+    }
+
     const pairs: TraceroutesListItem[] = Array.from(byPair.entries()).map(
       ([pairKey, s]) => {
         // compute a "top route" for the list preview
-        let best: { routeIds: string[]; count: number; lastTsMs: number } | null =
-          null;
+        let best: {
+          routeIds: string[];
+          from: string;
+          to: string;
+          count: number;
+          lastTsMs: number;
+        } | null = null;
 
         for (const v of s.routeCounts.values()) {
           if (
@@ -484,12 +534,16 @@ export const Traceroutes = () => {
           pairKey,
           from: s.from,
           to: s.to,
+          bidirectional: s.bidirectional,
           count: s.count,
+          packetCount: packetsByPair.get(pairKey) ?? s.count,
           firstTsMs: s.firstTsMs,
           lastTsMs: s.lastTsMs,
           uniqueRoutes: s.uniqueRouteKeys.size,
           topRouteIds: best?.routeIds ?? [],
           topRouteCount: best?.count ?? 0,
+          topRouteFrom: best?.from ?? s.from,
+          topRouteTo: best?.to ?? s.to,
         };
 
         return {
@@ -534,7 +588,8 @@ export const Traceroutes = () => {
       kind: "all",
       key: "all",
       totalPairs: sortedPairs.length,
-      totalEvents: filteredEventsSorted.length,
+      totalEvents: exchangesSorted.length,
+      totalPackets: filteredEventsSorted.length,
       lastTsMs: maxLast,
       uniqueRoutes: uniqueRoutesTotal,
     };
@@ -546,7 +601,7 @@ export const Traceroutes = () => {
       eventsByPairKey: eventsMap,
       listItems: items,
     };
-  }, [filteredEventsSorted, sort, uniqueRoutesTotal]);
+  }, [exchangesSorted, filteredEventsSorted, sort, uniqueRoutesTotal]);
 
   // ---- Selection
   const selectedItem = useMemo(() => {
@@ -555,6 +610,10 @@ export const Traceroutes = () => {
 
   useEffect(() => {
     if (!selectedItem) return;
+    // Don't judge a deep-linked pair against an empty/stale list: before the
+    // data lands, listItems holds only the overview item and the reset would
+    // wipe every share link's selection.
+    if (!traceroutesRaw || !nodes) return;
     if (selectedKey && !listItems.find((it) => it.key === selectedKey)) {
       setParam("sel", DEFAULT_SEL, "replace");
     }
@@ -565,9 +624,15 @@ export const Traceroutes = () => {
     selectedItem && selectedItem.kind === "pair" ? selectedItem.pairKey : null;
 
   const eventsSelected: TracerouteEvent[] = useMemo(() => {
-    if (!selectedPairKey) return filteredEventsSorted;
+    if (!selectedPairKey) return exchangesSorted;
     return eventsByPairKey.get(selectedPairKey) ?? [];
-  }, [selectedPairKey, filteredEventsSorted, eventsByPairKey]);
+  }, [selectedPairKey, exchangesSorted, eventsByPairKey]);
+
+  // Exports stay packet-level (raw data, one row per received packet)
+  const packetsSelected: TracerouteEvent[] = useMemo(() => {
+    if (!selectedPairKey) return filteredEventsSorted;
+    return filteredEventsSorted.filter((e) => e.pairKey === selectedPairKey);
+  }, [selectedPairKey, filteredEventsSorted]);
 
   // ---- Header derived values
   const totalPairs =
@@ -575,13 +640,14 @@ export const Traceroutes = () => {
       ? listItems[0].totalPairs
       : Math.max(0, listItems.length - 1);
 
-  const totalEvents = filteredEventsSorted.length;
+  const totalEvents = exchangesSorted.length;
+  const totalPackets = filteredEventsSorted.length;
 
   const totalLabel = `${totalPairs.toLocaleString()} pair${
     totalPairs === 1 ? "" : "s"
   } • ${totalEvents.toLocaleString()} traceroute${
     totalEvents === 1 ? "" : "s"
-  }`;
+  } (${totalPackets.toLocaleString()} packet${totalPackets === 1 ? "" : "s"})`;
 
   const liveUiMode = liveEnabled ? ("live" as const) : ("off" as const);
   const livePillTitle = liveEnabled
@@ -610,8 +676,8 @@ export const Traceroutes = () => {
     [setParam],
   );
 
-  // ---- Export (scope = selected pair or all)
-  const exportRowsCount = eventsSelected.length;
+  // ---- Export (scope = selected pair or all; packet-level rows)
+  const exportRowsCount = packetsSelected.length;
 
   const exportFilenameBase = useMemo(() => {
     if (selectedPairKey) {
@@ -629,9 +695,11 @@ export const Traceroutes = () => {
       exportedAt: new Date().toISOString(),
       selection: selectedPairKey ? { pair: selectedPairKey } : { all: true },
       params: Object.fromEntries(searchParams.entries()),
-      count: eventsSelected.length,
-      rows: eventsSelected.map((e) => {
-         
+      count: packetsSelected.length,
+      // One row per received packet; from/to/route_ids are travel-oriented,
+      // raw packet headers ride along as header_from/header_to.
+      rows: packetsSelected.map((e) => {
+
         const { __idx, ...rest } = e as any;
         return rest;
       }),
@@ -647,8 +715,11 @@ export const Traceroutes = () => {
   const doExportCsv = () => {
     if (!nodes) return;
 
+    // from/to/route are travel-oriented (initiator → target); header_from/
+    // header_to are the raw packet header (swapped on reply packets).
     const cols = [
       "timestamp",
+      "direction",
       "from_id",
       "from_short",
       "to_id",
@@ -657,21 +728,33 @@ export const Traceroutes = () => {
       "route_hops",
       "route_ids",
       "route_short",
+      "leg_snr_db",
+      "snr",
+      "rssi",
+      "message_id",
+      "header_from",
+      "header_to",
     ] as const;
 
     const lines: string[] = [];
     lines.push(cols.join(","));
 
-    for (const e of eventsSelected) {
+    for (const e of packetsSelected) {
       const fromShort = nodes[e.from]?.shortname ?? "UNK";
       const toShort = nodes[e.to]?.shortname ?? "UNK";
       const rids = routeIdsOf(e);
       const routeShort = rids
-        .map((id) => nodes[id]?.shortname ?? "UNK")
+        .map((id) => hopChipLabel(nodes, id))
         .join(" > ");
+      const legSnr = Array.isArray(e.payload?.snr_towards)
+        ? e.payload.snr_towards
+            .map((v) => (v === -128 ? "?" : String(v / 4)))
+            .join(" ")
+        : "";
 
       const row: Record<string, any> = {
         timestamp: e.timestamp ? new Date(safeTsMs(e.timestamp)).toISOString() : "",
+        direction: e.isReply ? "reply" : "request",
         from_id: e.from,
         from_short: fromShort,
         to_id: e.to,
@@ -680,6 +763,12 @@ export const Traceroutes = () => {
         route_hops: rids.length,
         route_ids: rids.join(" "),
         route_short: routeShort,
+        leg_snr_db: legSnr,
+        snr: e.snr ?? "",
+        rssi: e.rssi ?? "",
+        message_id: e.id ?? "",
+        header_from: e.header_from,
+        header_to: e.header_to,
       };
 
       lines.push(cols.map((c) => csvEscape(row[c])).join(","));
@@ -916,7 +1005,7 @@ export const Traceroutes = () => {
                   selectedItem={selectedItem ?? listItems[0]}
                   nodes={nodes}
                   range={range}
-                  eventsAll={filteredEventsSorted}
+                  eventsAll={exchangesSorted}
                   eventsSelected={eventsSelected}
                   pairItems={pairItems}
                   uniqueRoutesTotal={uniqueRoutesTotal}

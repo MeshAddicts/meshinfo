@@ -9,6 +9,8 @@ import {
 } from "./traceroutesTypes";
 import {
   groupTracerouteEvents,
+  hopChipLabel,
+  isHopLinkable,
   type NodesById,
   routeIdsOf,
   safeTsMs,
@@ -71,11 +73,17 @@ function RouteChips({
   return (
     <div className="flex flex-wrap items-center gap-2">
       {routeIds.map((id, i) => {
-        const label = nodes[id]?.shortname || "UNK";
+        const label = hopChipLabel(nodes, id);
         return (
           <span key={`${id}-${i}`} className="inline-flex items-center gap-2">
             <span className="inline-flex items-center rounded-full border border-gray-300/60 dark:border-gray-700 px-3 py-1 text-xs text-gray-700 dark:text-gray-200 bg-white/60 dark:bg-gray-950/40">
-              <NodeInline id={id} label={label} />
+              {isHopLinkable(id) ? (
+                <NodeInline id={id} label={label} />
+              ) : (
+                <span className="text-gray-500 italic" title={id}>
+                  {label}
+                </span>
+              )}
             </span>
             {i < routeIds.length - 1 ? (
               <span className="text-gray-300 dark:text-gray-700">›</span>
@@ -87,8 +95,19 @@ function RouteChips({
   );
 }
 
+function ProvisionalBadge() {
+  return (
+    <span
+      className="inline-flex items-center rounded-full border border-amber-400/50 bg-amber-50/60 dark:bg-amber-900/20 px-2 py-0.5 text-[10px] text-amber-700 dark:text-amber-300"
+      title="Mid-flight request packet — the final hop is implied by the header and the reply was not observed"
+    >
+      awaiting reply
+    </span>
+  );
+}
+
 function buildRouteText(nodes: NodesById, routeIds: string[]) {
-  return routeIds.map((id) => nodes[id]?.shortname || "UNK").join(" > ");
+  return routeIds.map((id) => hopChipLabel(nodes, id)).join(" > ");
 }
 
 function pairLabel(nodes: NodesById, from: string, to: string) {
@@ -141,9 +160,13 @@ export function TracerouteDetailsPanel({
         ? Math.max(...scopeEvents.map((e) => safeTsMs(e.timestamp)))
         : 0;
 
+      const packetsNote =
+        selectedItem.totalPackets > selectedItem.totalEvents
+          ? ` (${selectedItem.totalPackets.toLocaleString()} packets)`
+          : "";
       return {
         title: "Traceroutes overview",
-        subtitle: `Range: ${range} • ${eventsAll.length.toLocaleString()} runs • ${pairItems.length.toLocaleString()} pairs • ${uniqueRoutesTotal.toLocaleString()} unique routes`,
+        subtitle: `Range: ${range} • ${selectedItem.totalEvents.toLocaleString()} runs${packetsNote} • ${pairItems.length.toLocaleString()} pairs • ${uniqueRoutesTotal.toLocaleString()} unique routes`,
         lastTsMs: last,
         from: null as string | null,
         to: null as string | null,
@@ -153,7 +176,10 @@ export function TracerouteDetailsPanel({
     const from = selectedItem.from;
     const to = selectedItem.to;
     const title = pairLabel(nodes, from, to);
-    const subtitle = `${selectedItem.summary.count.toLocaleString()} runs • ${selectedItem.summary.uniqueRoutes.toLocaleString()} unique routes • Range: ${range}`;
+    const s = selectedItem.summary;
+    const pairPacketsNote =
+      s.packetCount > s.count ? ` (${s.packetCount.toLocaleString()} packets)` : "";
+    const subtitle = `${s.count.toLocaleString()} runs${pairPacketsNote} • ${s.uniqueRoutes.toLocaleString()} unique routes • Range: ${range}`;
 
     return {
       title,
@@ -162,7 +188,7 @@ export function TracerouteDetailsPanel({
       from,
       to,
     };
-  }, [selectedItem, nodes, range, eventsAll.length, pairItems.length, uniqueRoutesTotal, scopeEvents]);
+  }, [selectedItem, nodes, range, pairItems.length, uniqueRoutesTotal, scopeEvents]);
 
   const lastEvent = useMemo(() => {
     if (!scopeEvents.length) return null;
@@ -381,7 +407,8 @@ export function TracerouteDetailsPanel({
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
                               <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
-                                {g.count.toLocaleString()}× • {g.route_ids.length} hops
+                                {g.count.toLocaleString()}× • {g.route_ids.length} hops{" "}
+                                {g.provisional ? <ProvisionalBadge /> : null}
                               </div>
                               <div className="text-xs text-gray-500 mt-1">
                                 Last: {g.lastTsMs ? formatTimestamp(g.lastTsMs) : "—"}
@@ -496,8 +523,11 @@ export function TracerouteDetailsPanel({
                             </>
                           )}
                         </div>
-                        <div className="text-[11px] text-gray-500 tabular-nums">
-                          hops={rids.length}
+                        <div className="flex items-center gap-2">
+                          {e.provisional ? <ProvisionalBadge /> : null}
+                          <div className="text-[11px] text-gray-500 tabular-nums">
+                            hops={rids.length}
+                          </div>
                         </div>
                       </div>
 

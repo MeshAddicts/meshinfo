@@ -145,8 +145,11 @@ export const apiSlice = createApi({
         if (params && params.range && params.range !== "all") sp.set("range", params.range);
         if (params && params.limit) sp.set("limit", String(params.limit));
         // slim=1: server drops the legacy `route` field and unused payload keys,
-        // keeping id/from/to/route_ids/timestamp/snr/rssi + payload.snr_towards
-        // that the map's path analysis reads (ignored by older backends).
+        // keeping id/from/to/route_ids/timestamp/snr/rssi + payload.snr_towards.
+        // payload.snr_towards is load-bearing for EVERY consumer now, not just
+        // map path analysis: utils/traceroute.ts orientTraceroute derives reply
+        // orientation from it (Traceroutes page, graph edges, link layer, live
+        // comet). Ignored by older backends.
         sp.set("slim", "1");
         return `traceroutes?${sp.toString()}`;
       },

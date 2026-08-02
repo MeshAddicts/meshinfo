@@ -50,7 +50,10 @@ export interface ITraceroutesResponse {
   /** Full RouteDiscovery. SNR arrays are firmware-scaled ×4 with -128 = unknown.
    *  Rows carrying the full snr_towards (length = route + 1) are REPLY packets:
    *  their towards path reads header `to` → route → header `from` (the route
-   *  stays request-oriented while the reply header swaps the endpoints). */
+   *  stays request-oriented while the reply header swaps the endpoints).
+   *  NEVER walk [from, ...route, to] by hand — utils/traceroute.ts
+   *  orientTraceroute is the single mandatory entry point for a row's hop
+   *  sequence (it also normalizes hops and flags mid-flight requests). */
   payload: {
     route: (string | number)[];
     route_back?: (string | number)[];

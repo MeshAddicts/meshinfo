@@ -7,6 +7,7 @@ import type {
 
 import type { ITraceroutesResponse } from "../../../types";
 import { normNodeId } from "../../../utils/normalizeNodeId8";
+import { isResolvedHop, orientTraceroute } from "../../../utils/traceroute";
 import { unwrapLngTo } from "./geo";
 import type { IMapNeighbor, IMapNode, NodeLike } from "./types";
 
@@ -39,23 +40,14 @@ function quantizeLastHeardMs(ms: number | null): number | null {
   return ms == null ? null : Math.floor(ms / 60_000) * 60_000;
 }
 
-// Traceroute rows are immutable once fetched; normalizing hop ids costs a regex
-// per hop, so cache the normalized path per row across the many passes that
-// need it (link building, candidate rings, per-node filters).
-const normalizedPathCache = new WeakMap<ITraceroutesResponse, string[]>();
-
-/** Full normalized hop path [from, ...route, to] for a traceroute row, cached. */
+/** Full normalized TRAVEL-ordered hop path for a traceroute row (reply rows
+ *  have their header endpoints swapped back into initiator → … → target
+ *  order). Unresolvable hops are kept as `?<raw>` placeholders — splicing
+ *  them out would fabricate a shortcut edge across the gap — so edge builders
+ *  must skip legs touching them, not this function. Cached per row inside
+ *  orientTraceroute. */
 export function normalizedTraceroutePath(tr: ITraceroutesResponse): string[] {
-  const cached = normalizedPathCache.get(tr);
-  if (cached) return cached;
-  const from = normNodeId(tr?.from);
-  const to = normNodeId(tr?.to);
-  const route: string[] = ((tr?.route_ids ?? tr?.route ?? tr?.payload?.route ?? []) as (string | number)[])
-    .map(normNodeId)
-    .filter(Boolean);
-  const path = [from, ...route, to].filter(Boolean);
-  normalizedPathCache.set(tr, path);
-  return path;
+  return orientTraceroute(tr)?.orderedPath ?? [];
 }
 
 /** Most recent edge activity (ms). Prefers per-direction `lastRxTime`; falls
@@ -235,11 +227,20 @@ export function buildTracerouteLinkFeatureCollection(
   const seen = new Set<string>();
 
   for (const tr of traceroutes) {
-    const path = normalizedTraceroutePath(tr);
+    const o = orientTraceroute(tr);
+    if (!o) continue;
+    const path = o.orderedPath;
+    const lastLegIdx = path.length - 2;
 
     for (let i = 0; i < path.length - 1; i++) {
+      // A mid-flight request never observed its final (…→target) leg — drawing
+      // it would fabricate an RF link the mesh may not have.
+      if (o.provisional && i === lastLegIdx) continue;
       const a = path[i], b = path[i + 1];
       if (!a || !b || a === b) continue;
+      // Placeholder/sentinel hops can't be positioned; skipping the LEG (not
+      // the hop) keeps us from splicing a phantom edge across the gap.
+      if (!isResolvedHop(a) || !isResolvedHop(b)) continue;
 
       const ka = a < b ? a : b;
       const kb = a < b ? b : a;
