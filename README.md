@@ -186,7 +186,7 @@ python main.py
 
 ### Frontend
 
-Requires Node.js 22+ and Yarn 4 (managed via Corepack — no manual install needed).
+Requires Node.js 24 LTS (minimum 22.22.2) and Yarn 4 (managed via Corepack — no manual install needed).
 
 ```sh
 cd frontend

@@ -8,7 +8,7 @@ Thanks for your interest in contributing! MeshInfo is open source under the [GPL
 
 - [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
 - Python 3.14+ (for backend development without Docker)
-- Node.js 22+ and Yarn 4 via Corepack (for frontend development)
+- Node.js 24 LTS (minimum 22.22.2) and Yarn 4 via Corepack (for frontend development)
 - A running PostgreSQL 18 instance (Docker Compose provides one)
 
 ### Development Setup
