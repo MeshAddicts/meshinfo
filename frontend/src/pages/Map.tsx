@@ -184,7 +184,7 @@ export function Map() {
     return (
       stored ??
       env.MAPBOX_STYLE ??
-      "mapbox/satellite-streets-v12"
+      "mapbox/dark-v11"
     );
   });
 
@@ -285,7 +285,9 @@ export function Map() {
     () => urlLiveCoverageRef.current ?? readJson<boolean>(LS_KEYS.liveCoverage, false),
   );
   const [liveCoverageOpacity, setLiveCoverageOpacity] = useState<number>(
-    () => readJson<number>(LS_KEYS.liveCoverageOpacity, 0.6),
+    // Full opacity by default: at 0.6 the paint was hard to read over some
+    // basemap layers; the pill's slider still lets viewers dial it down.
+    () => readJson<number>(LS_KEYS.liveCoverageOpacity, 1),
   );
   const [liveCoverageHideNodes, setLiveCoverageHideNodes] = useState<boolean>(
     () => readJson<boolean>(LS_KEYS.liveCoverageHideNodes, true),

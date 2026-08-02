@@ -180,7 +180,7 @@ export const NodeMap = ({ node }: { node: INode }) => {
     const mapboxStyle =
       readJson<string | null>(LS_KEYS.mapboxStyle, null) ??
       env.MAPBOX_STYLE ??
-      "mapbox/satellite-streets-v12";
+      "mapbox/dark-v11";
 
     const osmBasemap =
       readJson<OsmBasemap | null>(LS_KEYS.osmBasemap, null) ?? "carto_dark";
