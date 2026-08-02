@@ -403,10 +403,6 @@ lookup_url = "http://coverage-worker:9301"
 
 # External tools shown in the web UI sidebar
 [[mesh.tools]]
-name = "Armooo's MeshView"
-url = "https://meshview.armooo.net"
-
-[[mesh.tools]]
 name = "Liam's Meshtastic Map"
 url = "https://meshtastic.liamcottle.net"
 
@@ -416,7 +412,7 @@ url = "https://meshmap.net"
 
 [[mesh.tools]]
 name = "Bay Mesh Explorer"
-url = "https://app.bayme.sh"
+url = "https://meshview.bayme.sh"
 
 [[mesh.tools]]
 name = "HWT Path Profiler"
@@ -425,12 +421,8 @@ url = "https://heywhatsthat.com/profiler.html"
 # "Elsewhere" links shown on node detail pages
 # URLs support {node_id_hex} and {node_id_int} placeholders
 [[mesh.elsewhere_links]]
-name = "Armooo's MeshView"
-url = "https://meshview.armooo.net/packet_list/{node_id_int}"
-
-[[mesh.elsewhere_links]]
 name = "Bay Mesh Explorer"
-url = "https://app.bayme.sh/node/{node_id_hex}"
+url = "https://meshview.bayme.sh/node/{node_id_int}"
 
 [[mesh.elsewhere_links]]
 name = "Liam's Map"
