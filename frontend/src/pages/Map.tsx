@@ -77,6 +77,7 @@ import {
   ROLE_COLORS,
 } from "./map/lib/utils";
 import { CoverageLookupCard } from "./map/live/CoverageLookupCard";
+import { nextCoverageSearch, parseCoverageParam } from "./map/live/coverageUrlParam";
 import { LiveCoveragePill } from "./map/live/LiveCoveragePill";
 import { useCoverageLookup } from "./map/live/useCoverageLookup";
 import { useServerCoverageTiles } from "./map/live/useServerCoverageTiles";
@@ -273,7 +274,16 @@ export function Map() {
 
   // Live network-coverage layer: a server-baked raster tile pyramid (compute is
   // server-side; this only show/hides + sets opacity). Off (hidden) by default.
-  const [liveCoverage, setLiveCoverage] = useState<boolean>(() => readJson<boolean>(LS_KEYS.liveCoverage, false));
+  // A shared link's ?cov=1|0 overrides the saved preference for this session.
+  // Snapshot at first render — effects rewrite the real URL before a re-render
+  // could read it (same rationale as useUrlMapSync's snapshot).
+  const urlLiveCoverageRef = useRef<boolean | null | undefined>(undefined);
+  if (urlLiveCoverageRef.current === undefined) {
+    urlLiveCoverageRef.current = parseCoverageParam(window.location.search);
+  }
+  const [liveCoverage, setLiveCoverage] = useState<boolean>(
+    () => urlLiveCoverageRef.current ?? readJson<boolean>(LS_KEYS.liveCoverage, false),
+  );
   const [liveCoverageOpacity, setLiveCoverageOpacity] = useState<number>(
     () => readJson<number>(LS_KEYS.liveCoverageOpacity, 0.6),
   );
@@ -324,7 +334,26 @@ export function Map() {
   useEffect(() => writeJson(LS_KEYS.settingsPanelOpen, settingsPanelOpen), [settingsPanelOpen]);
   useEffect(() => writeJson(LS_KEYS.terrain3D, terrain3D), [terrain3D]);
   useEffect(() => writeJson(LS_KEYS.buildings3D, buildings3D), [buildings3D]);
-  useEffect(() => writeJson(LS_KEYS.liveCoverage, liveCoverage), [liveCoverage]);
+  useEffect(() => {
+    // The sharer's ?cov drives this session but must not overwrite the viewer's
+    // saved preference — persist only once the viewer changes the toggle.
+    if (urlLiveCoverageRef.current != null && liveCoverage === urlLiveCoverageRef.current) return;
+    urlLiveCoverageRef.current = null;
+    writeJson(LS_KEYS.liveCoverage, liveCoverage);
+  }, [liveCoverage]);
+  // Mirror the overlay toggle into ?cov= so the view is shareable. replaceState,
+  // not setSearchParams — a router navigation would re-render the whole Map
+  // route for a purely cosmetic URL update (same rationale as the lat/lng/z
+  // sync), and the no-write cases keep Safari's replaceState rate limit happy.
+  useEffect(() => {
+    const next = nextCoverageSearch(window.location.search, liveCoverage);
+    if (next === null) return;
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}?${next}${window.location.hash}`,
+    );
+  }, [liveCoverage]);
   useEffect(() => writeJson(LS_KEYS.liveCoverageOpacity, liveCoverageOpacity), [liveCoverageOpacity]);
   useEffect(() => writeJson(LS_KEYS.liveCoverageHideNodes, liveCoverageHideNodes), [liveCoverageHideNodes]);
   useEffect(() => writeJson(LS_KEYS.liveCoverageGroup, liveCoverageGroup), [liveCoverageGroup]);
