@@ -149,6 +149,37 @@ function computeOriented(tr: TracerouteRowLike): OrientedTraceroute | null {
   };
 }
 
+/** Accumulated-data metric for competing copies of ONE packet — mirrors the
+ *  backend's richer-wins upsert (sum of the four RouteDiscovery array
+ *  lengths), with a deviation: the route component falls back to route_ids
+ *  when payload.route is absent (slim REST rows strip the payload down to
+ *  snr_towards). The metric is EXACT only between two full-payload rows;
+ *  a slim REPLY row still under-counts (its route_back/snr_back are
+ *  stripped), so callers must not richness-compare a slim row against a full
+ *  one — see hasFullTraceroutePayload. Only meaningful between rows sharing
+ *  a packet identity (id + header endpoints). */
+export function tracerouteRichness(tr: TracerouteRowLike): number {
+  const p = tr.payload;
+  const routeLen = Array.isArray(p?.route)
+    ? p.route.length
+    : Array.isArray(tr.route_ids)
+      ? tr.route_ids.length
+      : 0;
+  return (
+    routeLen +
+    (Array.isArray(p?.snr_towards) ? p.snr_towards.length : 0) +
+    (Array.isArray(p?.route_back) ? p.route_back.length : 0) +
+    (Array.isArray(p?.snr_back) ? p.snr_back.length : 0)
+  );
+}
+
+/** True when the row carries the full RouteDiscovery payload (SSE rows, non-
+ *  slim REST rows). Slim rows strip payload.route/route_back/snr_back, making
+ *  their richness incomparable against full rows. */
+export function hasFullTraceroutePayload(tr: TracerouteRowLike): boolean {
+  return Array.isArray(tr.payload?.route);
+}
+
 /** One traceroute exchange writes up to two rows: the request packet (caught
  *  mid-flight, truncated route) and the reply packet (complete route).
  *  Counting both inflates runs/edge stats ~2× on well-heard pairs. */

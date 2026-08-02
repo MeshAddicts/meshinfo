@@ -46,8 +46,30 @@ class FakePgStorage:
     async def write_telemetry(self, node_id: str, msg) -> None:
         self.telemetry_writes.append((node_id, dict(msg)))
 
-    async def write_traceroute(self, node_id: str, msg) -> None:
+    async def write_traceroute(self, node_id: str, msg) -> str:
+        # Richer-wins emulation mirroring the real upsert's outcome contract
+        # ('inserted' | 'upgraded' | 'duplicate') so handler broadcast-gating
+        # tests exercise every branch. Keyed on (node_id, msg id); id-less
+        # messages always insert (the real writer skips them, but existing
+        # handler tests assert the write reaches the store).
+        def richness(m):
+            p = m.get("payload") or {}
+            return sum(
+                len(p[k])
+                for k in ("route", "route_back", "snr_towards", "snr_back")
+                if isinstance(p.get(k), list)
+            )
+
+        msg_id = msg.get("id")
+        if msg_id is not None:
+            for i, (nid, prev) in enumerate(self.traceroute_writes):
+                if nid == node_id and prev.get("id") == msg_id:
+                    if richness(msg) > richness(prev):
+                        self.traceroute_writes[i] = (node_id, dict(msg))
+                        return "upgraded"
+                    return "duplicate"
         self.traceroute_writes.append((node_id, dict(msg)))
+        return "inserted"
 
     async def find_node_by_longname(self, name: str):
         for nid, n in self._nodes.items():

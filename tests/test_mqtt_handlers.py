@@ -515,6 +515,67 @@ class TestHandleTraceroute:
         _, event = q.get_nowait()
         assert event["route_ids"] == ["deadbeef"]
 
+    def test_duplicate_copy_broadcasts_no_second_event(self):
+        """A confirmed poorer/equal gateway copy must stay silent — the live
+        feed mirrors the richer-wins storage outcome."""
+        mqtt, data = make_mqtt()
+        q = data.broadcaster.subscribe()
+        msg = {
+            "from": 0x67EA9400,
+            "to": 0xABCD1234,
+            "id": 555,
+            "payload": {"route": [1], "snr_towards": [4]},
+        }
+        run(mqtt.handle_traceroute(dict(msg)))
+        run(mqtt.handle_traceroute(dict(msg)))  # identical second copy
+        assert q.qsize() == 1
+        assert len(data.pg_storage.traceroute_writes) == 1
+
+    def test_richer_copy_broadcasts_upgraded_event(self):
+        mqtt, data = make_mqtt()
+        q = data.broadcaster.subscribe()
+        run(mqtt.handle_traceroute({
+            "from": 0x67EA9400,
+            "to": 0xABCD1234,
+            "id": 556,
+            "payload": {"route": [1, 2], "snr_towards": [4, 8, 12], "route_back": []},
+        }))
+        run(mqtt.handle_traceroute({
+            "from": 0x67EA9400,
+            "to": 0xABCD1234,
+            "id": 556,
+            "payload": {
+                "route": [1, 2],
+                "snr_towards": [4, 8, 12],
+                "route_back": [3, 4],
+                "snr_back": [9, 10],
+            },
+        }))
+        assert q.qsize() == 2
+        q.get_nowait()
+        _, upgraded = q.get_nowait()
+        assert upgraded["payload"]["route_back"] == [3, 4]
+        _, written = data.pg_storage.traceroute_writes[0]
+        assert written["payload"]["route_back"] == [3, 4]
+
+    def test_outage_none_outcome_still_broadcasts(self):
+        """DB down (write buffered, outcome None): the live feed must not go
+        dark for the whole outage."""
+        mqtt, data = make_mqtt()
+
+        async def down(node_id, msg):
+            return None
+
+        data.pg_storage.write_traceroute = down
+        q = data.broadcaster.subscribe()
+        run(mqtt.handle_traceroute({
+            "from": 0x67EA9400,
+            "to": 0xABCD1234,
+            "id": 557,
+            "payload": {"route": [1]},
+        }))
+        assert q.qsize() == 1
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # process_mqtt_msg — envelope decode; pins the proto3 zero-omission fixes

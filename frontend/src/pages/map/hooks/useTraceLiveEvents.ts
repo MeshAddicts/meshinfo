@@ -17,7 +17,11 @@ import { store } from "../../../store";
 import type { ITraceroutesResponse } from "../../../types";
 import { normalizeNodeId8 } from "../../../utils/normalizeNodeId8";
 import { prefersReducedMotion } from "../../../utils/reducedMotion";
-import { orientTraceroute } from "../../../utils/traceroute";
+import {
+  hasFullTraceroutePayload,
+  orientTraceroute,
+  tracerouteRichness,
+} from "../../../utils/traceroute";
 import type { ActivityLayer } from "../layers/activityLayer";
 import type { ClusterDonutLayer } from "../layers/clusterDonutLayer";
 import { samePoint } from "../lib/geo";
@@ -181,11 +185,26 @@ export function useTraceLiveEvents({
       const row = t as unknown as ITraceroutesResponse;
       const key = `${row.id}:${row.from}`; // Map.tsx's merge key
       const upsert = (max: number) => (draft: ITraceroutesResponse[]) => {
-        // Key collision = another gateway's copy of a row we already hold.
-        // Keep the FIRST copy, matching the DB's ON CONFLICT DO NOTHING — a
-        // later refetch would return the first-written copy, and replacing it
-        // here would let per-gateway rssi/snr diverge from REST.
-        if (draft.some((tr) => `${tr.id}:${tr.from}` === key)) return;
+        // Key collision = another copy of a row we already hold. Mirror the
+        // DB's richer-wins upsert: a held SLIM row (refetch snapshot; its
+        // payload strips route_back/snr_back, so richness is incomparable)
+        // is replaced by any full incoming row — a full row carries
+        // everything slim does plus the payload arrays, and a rare poorer
+        // outage-copy self-heals on the next refetch. Between two FULL rows
+        // the richness compare is exact: replace only strictly richer
+        // ('upgraded' broadcasts), keep the held row otherwise (no churn on
+        // identical fan-out copies, no regression on reordered delivery).
+        const held = draft.findIndex((tr) => `${tr.id}:${tr.from}` === key);
+        if (held !== -1) {
+          const heldRow = draft[held];
+          if (
+            !hasFullTraceroutePayload(heldRow) ||
+            tracerouteRichness(row) > tracerouteRichness(heldRow)
+          ) {
+            draft[held] = row;
+          }
+          return;
+        }
         // Cache is newest-first (ORDER BY created_at DESC); a live row is
         // almost always the newest, so this loop exits at index 0.
         let i = 0;

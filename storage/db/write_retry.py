@@ -21,9 +21,11 @@ concurrently can never be mistaken for replay failures.
 Known, accepted semantics:
 - At-least-once: an ambiguous failure (connection dies after the server
   committed but before the client read the result) replays a write that
-  already landed. telemetry/chat/traceroute inserts are idempotent
-  (ON CONFLICT DO NOTHING); a replayed mqtt_message can in rare cases add a
-  duplicate reception/row — weighed against certain loss, we take it.
+  already landed. telemetry/chat inserts are idempotent (ON CONFLICT DO
+  NOTHING); traceroutes use a richer-wins upsert whose strict `>` richness
+  guard makes an exact replay a no-op (equally idempotent). A replayed
+  mqtt_message can in rare cases add a duplicate reception/row — weighed
+  against certain loss, we take it.
 - Replayed rows get created_at = replay time (they sort/partition by when
   they were actually stored).
 - Live SSE broadcasts for replayed writes are not re-emitted; the archive

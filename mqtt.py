@@ -733,7 +733,7 @@ class MQTT:
             else:
                 msg['route_ids'].append(r)
 
-        await self.data.pg_storage.write_traceroute(id, msg)
+        outcome = await self.data.pg_storage.write_traceroute(id, msg)
 
         # Live push: resolved multi-hop path for the map's traceroute tracer.
         # The event mirrors a full non-slim /v1/traceroutes row (same field
@@ -741,7 +741,14 @@ class MQTT:
         # BIGINT column) so clients can upsert it into their cached list
         # instead of refetching. `sender` is normalized the same way the DB
         # write is, so the event matches a later REST fetch of the row.
-        if self.data.broadcaster.subscriber_count:
+        # Gated on the richer-wins upsert outcome so the live feed mirrors
+        # storage: 'inserted' and 'upgraded' broadcast (clients replace their
+        # cached copy with the richer row); 'duplicate' stays silent — that
+        # covers poorer/equal copies AND the ~1-in-2^32 stale id collision,
+        # where a genuinely new packet is dropped like DO NOTHING always did;
+        # None (write skipped or buffered on a DB outage) still broadcasts so
+        # the live view survives the outage.
+        if outcome != "duplicate" and self.data.broadcaster.subscriber_count:
             try:
                 # The broker payload is publisher-controlled: forward only the
                 # keys the REST row actually mirrors, never the dict verbatim,

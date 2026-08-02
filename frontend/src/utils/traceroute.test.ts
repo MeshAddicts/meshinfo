@@ -4,8 +4,10 @@ import {
   canonicalPairKey,
   decodeSnr,
   dedupeExchanges,
+  hasFullTraceroutePayload,
   isResolvedHop,
   orientTraceroute,
+  tracerouteRichness,
   type TracerouteRowLike,
 } from "./traceroute";
 
@@ -117,6 +119,47 @@ describe("decodeSnr", () => {
     expect(decodeSnr(0)).toBe(0);
     expect(decodeSnr(-128)).toBeNull();
     expect(decodeSnr(undefined)).toBeNull();
+  });
+});
+
+describe("tracerouteRichness", () => {
+  it("sums the four RouteDiscovery arrays (mirrors the DB upsert metric)", () => {
+    const poor: TracerouteRowLike = {
+      payload: { route: [1, 2], snr_towards: [4, 8, 12], route_back: [], snr_back: [] },
+    };
+    const rich: TracerouteRowLike = {
+      payload: { route: [1, 2], snr_towards: [4, 8, 12], route_back: [3], snr_back: [9] },
+    };
+    expect(tracerouteRichness(poor)).toBe(5);
+    expect(tracerouteRichness(rich)).toBe(7);
+  });
+
+  it("falls back to route_ids for slim rows so they don't under-count", () => {
+    // Slim REST row: payload stripped to snr_towards, route carried as route_ids
+    const slim: TracerouteRowLike = {
+      route_ids: ["000000b1", "000000b2"],
+      payload: { snr_towards: [4, 8, 12] },
+    };
+    // The identical packet as a full SSE row, no back-leg data yet
+    const fullSameData: TracerouteRowLike = {
+      route_ids: ["000000b1", "000000b2"],
+      payload: { route: [1, 2], snr_towards: [4, 8, 12], route_back: [], snr_back: [] },
+    };
+    expect(tracerouteRichness(slim)).toBe(5);
+    // Equal — a same-data full row must NOT read as richer than its slim twin
+    expect(tracerouteRichness(fullSameData)).toBe(tracerouteRichness(slim));
+  });
+
+  it("handles missing/malformed payloads as zero", () => {
+    expect(tracerouteRichness({})).toBe(0);
+    expect(tracerouteRichness({ payload: { route: "bogus" as unknown as [] } })).toBe(0);
+  });
+
+  it("hasFullTraceroutePayload separates slim rows from full rows", () => {
+    expect(hasFullTraceroutePayload({ payload: { route: [1], snr_towards: [4, 8] } })).toBe(true);
+    // Slim REST row: payload stripped to snr_towards only
+    expect(hasFullTraceroutePayload({ route_ids: ["000000b1"], payload: { snr_towards: [4, 8] } })).toBe(false);
+    expect(hasFullTraceroutePayload({})).toBe(false);
   });
 });
 

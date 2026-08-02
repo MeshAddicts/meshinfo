@@ -68,6 +68,103 @@ def _finite_or_none(value: Any) -> Any:
 # against this so a typo'd kind fails in tests, not silently during recovery.
 _RETRY_KINDS = frozenset({"mqtt_message", "telemetry", "chat_message", "traceroute"})
 
+# Richer-wins traceroute upsert: upgrades are confined to rows younger than
+# this window so a genuinely NEW traceroute reusing a 32-bit packet id weeks
+# later can never overwrite history (outside the window the statement degrades
+# to the old DO NOTHING semantics — the pre-existing id-reuse drop, not a
+# regression). One hour also covers write-retry drain latency after an outage
+# (the buffer holds roughly half an hour of traffic).
+TRACEROUTE_UPGRADE_WINDOW_S = 3600
+
+
+# Meshtastic hop_limit tops out at 7, so genuine RouteDiscovery arrays never
+# exceed ~8 entries; counting is capped there so a hostile publisher padding
+# arrays gains bounded score, not an arbitrary overwrite budget.
+_TRACEROUTE_ARRAY_CAP = 10
+
+
+def _traceroute_richness_sql(payload_expr: str) -> str:
+    """SQL summing the four RouteDiscovery array lengths of a payload jsonb.
+
+    Richness is monotone along the relay chain — every hop appends to
+    route/route_back/snr_* — so the richest single copy is a superset of every
+    poorer copy and whole-row replacement never needs field-level merging.
+    jsonb_typeof guards make it total for malformed/JSON-publisher payloads;
+    per-array LEAST caps bound what publisher-crafted padding can score.
+    """
+    return " + ".join(
+        f"CASE WHEN jsonb_typeof({payload_expr}->'{key}') = 'array'"
+        f" THEN LEAST(jsonb_array_length({payload_expr}->'{key}'), {_TRACEROUTE_ARRAY_CAP})"
+        " ELSE 0 END"
+        for key in ("route", "route_back", "snr_towards", "snr_back")
+    )
+
+
+def _traceroute_prefix_guard_sql(key: str) -> str:
+    """SQL requiring the stored payload's array to be a PREFIX of the incoming
+    copy's — the monotonicity invariant made enforceable: genuine richer copies
+    only ever APPEND hops, so an upgrade may extend recorded data but never
+    rewrite it. Blocks a hostile publisher from replacing genuine hops with
+    forged ones inside the upgrade window (they can at most append plausible
+    junk — no more power than winning the original first-uplink race gave
+    them). Skipped when the stored value isn't an array (absent key /
+    legacy / malformed — IS DISTINCT FROM keeps the NULL of an absent key
+    from vetoing the whole guard)."""
+    return f"""(
+        jsonb_typeof(traceroutes.payload->'{key}') IS DISTINCT FROM 'array'
+        OR traceroutes.payload->'{key}' = (
+            SELECT COALESCE(jsonb_agg(e ORDER BY ord), '[]'::jsonb)
+            FROM jsonb_array_elements(EXCLUDED.payload->'{key}')
+                 WITH ORDINALITY AS t(e, ord)
+            WHERE ord <= jsonb_array_length(traceroutes.payload->'{key}')
+        )
+    )"""
+
+
+# Guarded richer-wins upsert. Copy-scoped columns move TOGETHER on an upgrade
+# (payload + the reception fields sender/rssi/snr/hops_away): mixing
+# first-copy reception data with a later copy's payload would create a row no
+# gateway ever heard. Exceptions: created_at and the PK stay put (created_at
+# is first-heard and anchors the recency guard, list ordering, pagination),
+# and a valid stored timestamp/rx_time is never regressed by a clock-less
+# gateway's copy (rx_time=0 on nodes without a time source) — the SSE event
+# for such an upgrade carries the incoming copy's zero timestamp and diverges
+# from REST on that one field until the next refetch, an accepted cost.
+# RETURNING (xmax = 0) discriminates insert (true) from update (false); no row
+# means the guard refused the copy: poorer/equal, prefix-violating, or a
+# STALE id collision (row older than the window — such packets are genuinely
+# new but indistinguishable from history rewrites, so they are dropped, as
+# the old DO NOTHING always did). $15 = upgrade window (s).
+TRACEROUTE_UPSERT_SQL = f"""
+    INSERT INTO traceroutes (
+        from_node_id, to_node_id, sender_node_id, message_id, channel,
+        packet_id, hops_away, rssi, snr, timestamp, rx_time,
+        route, route_ids, payload
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14::jsonb)
+    ON CONFLICT (from_node_id, message_id) DO UPDATE SET
+        to_node_id     = EXCLUDED.to_node_id,
+        sender_node_id = EXCLUDED.sender_node_id,
+        channel        = EXCLUDED.channel,
+        packet_id      = EXCLUDED.packet_id,
+        hops_away      = EXCLUDED.hops_away,
+        rssi           = EXCLUDED.rssi,
+        snr            = EXCLUDED.snr,
+        timestamp      = CASE
+            WHEN EXCLUDED.timestamp IS NULL OR EXCLUDED.timestamp = 0
+            THEN traceroutes.timestamp ELSE EXCLUDED.timestamp END,
+        rx_time        = COALESCE(EXCLUDED.rx_time, traceroutes.rx_time),
+        route          = EXCLUDED.route,
+        route_ids      = EXCLUDED.route_ids,
+        payload        = EXCLUDED.payload
+    WHERE traceroutes.created_at > now() - make_interval(secs => $15)
+      AND ({_traceroute_richness_sql("EXCLUDED.payload")})
+        > ({_traceroute_richness_sql("traceroutes.payload")})
+      AND {_traceroute_prefix_guard_sql("route")}
+      AND {_traceroute_prefix_guard_sql("route_back")}
+    RETURNING (xmax = 0) AS inserted
+"""
+
 # True while the current *task* is the retry drain replaying a buffered write —
 # a ContextVar, not an instance flag, because live ingest writes interleave
 # with replays on the same loop and must not inherit the replay behavior.
@@ -1182,16 +1279,27 @@ class PostgresStorage:
         except Exception as e:
             self._handle_write_failure("chat message", "chat_message", (node_id, chat_msg), e)
 
-    async def write_traceroute(self, node_id: str, traceroute_msg: Dict[str, Any]) -> None:
+    async def write_traceroute(self, node_id: str, traceroute_msg: Dict[str, Any]) -> Optional[str]:
         """
-        Write traceroute to PostgreSQL.
+        Write traceroute to PostgreSQL via the richer-wins upsert: the stored
+        row is always the richest single heard copy of a packet (whole-copy
+        replacement, reception fields included; created_at stays first-heard).
 
         Args:
             node_id: from-node id (any supported form; will be normalized)
             traceroute_msg: Traceroute message dictionary
+
+        Returns:
+            'inserted' | 'upgraded' | 'duplicate', or None when the write was
+            skipped or failed (buffered for retry on outage-shaped errors).
+            'duplicate' covers every guard refusal: poorer/equal copies,
+            prefix-violating (forged) copies, AND stale 32-bit id collisions
+            with a row older than the upgrade window — that last packet is
+            genuinely new but dropped, exactly as ON CONFLICT DO NOTHING
+            always dropped it (probability ~ per-node rows / 2^32).
         """
         if not self._ready("write_traceroute"):
-            return
+            return None
 
         if not isinstance(node_id, str) or not node_id:
             raise ValueError("write_traceroute: node_id must be a non-empty string")
@@ -1204,7 +1312,7 @@ class PostgresStorage:
                 from_id = await self._ensure_node_stub(conn, node_id)
                 if not from_id:
                     logger.warning(f"write_traceroute: could not normalize node_id={node_id!r}, skipping")
-                    return
+                    return None
 
                 msg_from = traceroute_msg.get("from")
                 if msg_from is not None:
@@ -1239,23 +1347,15 @@ class PostgresStorage:
                 msg_id = traceroute_msg.get("id")
                 if msg_id is None:
                     logger.warning("write_traceroute: missing traceroute_msg['id']; skipping insert")
-                    return
+                    return None
                 try:
                     msg_id = int(msg_id)
                 except (TypeError, ValueError):
                     logger.warning("write_traceroute: invalid traceroute_msg['id']=%r; skipping insert", msg_id)
-                    return
+                    return None
 
-                await conn.execute(
-                    """
-                    INSERT INTO traceroutes (
-                        from_node_id, to_node_id, sender_node_id, message_id, channel,
-                        packet_id, hops_away, rssi, snr, timestamp, rx_time,
-                        route, route_ids, payload
-                    )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14::jsonb)
-                    ON CONFLICT (from_node_id, message_id) DO NOTHING
-                    """,
+                row = await conn.fetchrow(
+                    TRACEROUTE_UPSERT_SQL,
                     from_id,
                     to_id,
                     sender_id,
@@ -1270,10 +1370,15 @@ class PostgresStorage:
                     route_json,
                     route_ids_json,
                     payload_json,
+                    float(TRACEROUTE_UPGRADE_WINDOW_S),
                 )
+                if row is None:
+                    return "duplicate"
+                return "inserted" if row["inserted"] else "upgraded"
 
         except Exception as e:
             self._handle_write_failure("traceroute", "traceroute", (node_id, traceroute_msg), e)
+            return None
 
     def _coerce_mqtt_payload_text(self, value: Any) -> Optional[str]:
         """
