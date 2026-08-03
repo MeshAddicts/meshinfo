@@ -485,8 +485,8 @@ function MapTraceroutePanelInner({
                           onSelectPath(run.sig);
                         }}
                         onMouseEnter={() => onHighlight?.(toCoords(run.hops))}
-                        title={`${observedAgo(run.timestamp) ?? "age unknown"} · ${run.hopCount} ${run.hopCount === 1 ? "hop" : "hops"}${changed ? " · route changed" : ""}${run.provisional ? " · request, awaiting reply" : ""}`}
-                        aria-label={`Run ${i + 1} of ${displayRuns.length}, ${run.hopCount} hops${changed ? ", route changed" : ""}${run.provisional ? ", request awaiting reply" : ""}`}
+                        title={`${observedAgo(run.timestamp) ?? "age unknown"} · ${run.hopCount} ${run.hopCount === 1 ? "hop" : "hops"}${changed ? " · route changed" : ""}${run.provisional ? " · no reply" : ""}`}
+                        aria-label={`Run ${i + 1} of ${displayRuns.length}, ${run.hopCount} hops${changed ? ", route changed" : ""}${run.provisional ? ", no reply" : ""}`}
                         className={`flex-1 min-w-0.75 rounded-[1px] transition-colors ${
                           isSel
                             ? "bg-cyan-400/90"

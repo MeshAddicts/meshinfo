@@ -96,13 +96,27 @@ function RouteChips({
   );
 }
 
-function ProvisionalBadge() {
+// Replies land within seconds; past this age the exchange is settled.
+const REPLY_PENDING_MS = 5 * 60_000;
+
+function ProvisionalBadge({ tsMs }: { tsMs?: number }) {
+  const pending = tsMs != null && Date.now() - tsMs < REPLY_PENDING_MS;
+  if (pending) {
+    return (
+      <span
+        className="inline-flex items-center rounded-full border border-amber-400/50 bg-amber-50/60 dark:bg-amber-900/20 px-2 py-0.5 text-[10px] text-amber-700 dark:text-amber-300"
+        title="Request seen mid-flight — the reply may still arrive"
+      >
+        awaiting reply
+      </span>
+    );
+  }
   return (
     <span
-      className="inline-flex items-center rounded-full border border-amber-400/50 bg-amber-50/60 dark:bg-amber-900/20 px-2 py-0.5 text-[10px] text-amber-700 dark:text-amber-300"
-      title="Mid-flight request packet — the final hop is implied by the header and the reply was not observed"
+      className="inline-flex items-center rounded-full border border-gray-400/40 bg-gray-100/50 dark:bg-gray-800/40 px-2 py-0.5 text-[10px] text-gray-500 dark:text-gray-400"
+      title="The target never answered this traceroute — only the request was observed"
     >
-      awaiting reply
+      no reply
     </span>
   );
 }
@@ -409,7 +423,7 @@ export function TracerouteDetailsPanel({
                             <div className="min-w-0">
                               <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
                                 {g.count.toLocaleString()}× • {g.route_ids.length} hops{" "}
-                                {g.provisional ? <ProvisionalBadge /> : null}
+                                {g.provisional ? <ProvisionalBadge tsMs={g.lastTsMs} /> : null}
                               </div>
                               <div className="text-xs text-gray-500 mt-1">
                                 Last: {g.lastTsMs ? formatTimestamp(g.lastTsMs) : "—"}
@@ -525,7 +539,7 @@ export function TracerouteDetailsPanel({
                           )}
                         </div>
                         <div className="flex items-center gap-2">
-                          {e.provisional ? <ProvisionalBadge /> : null}
+                          {e.provisional ? <ProvisionalBadge tsMs={safeTsMs(e.timestamp)} /> : null}
                           <div className="text-[11px] text-gray-500 tabular-nums">
                             hops={rids.length}
                           </div>
