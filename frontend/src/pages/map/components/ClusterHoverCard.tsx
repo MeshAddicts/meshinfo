@@ -2,7 +2,7 @@ import { useEffect, useMemo, useReducer } from "react";
 
 import { NodeRole, roleTitles } from "../../../types";
 import { relativeTime } from "../lib/helpers";
-import { DEFAULT_NODE_COLOR, nodeColor, OFFLINE_NODE_COLOR } from "../lib/utils";
+import { DEFAULT_NODE_COLOR, dimForLastSeen, nodeColor, OFFLINE_NODE_COLOR } from "../lib/utils";
 
 export type ClusterHover = {
   ids: string[]; // leaf node ids, captured at hover (empty while resolving)
@@ -106,7 +106,15 @@ export function ClusterHoverCard({
             <ul className="space-y-0.5">
               {topHeard.map((n) => (
                 <li key={n.id} className="flex items-center gap-1.5 text-[11px]">
-                  <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: nodeColor(n.role, !!n.online) }} />
+                  <span
+                    className="w-1.5 h-1.5 rounded-full shrink-0"
+                    style={{
+                      background: nodeColor(n.role, !!n.online),
+                      // Brightness = recency, matching the map dots (dimForLastSeen
+                      // is quantized, so the per-second ticks rarely change it).
+                      opacity: dimForLastSeen(n.last_seen, Date.now()),
+                    }}
+                  />
                   <span className="truncate flex-1">{n.shortname || n.longname || n.id}</span>
                   <span className="text-gray-500 tabular-nums shrink-0">{relativeTime(n.last_seen)}</span>
                 </li>

@@ -111,8 +111,9 @@ function compile(gl: WebGLRenderingContext, type: number, src: string): WebGLSha
   return s;
 }
 
-// Matches the "clusters" circle hit-test layer radius curve
-function pixelRadiusForCount(count: number): number {
+// Matches the "clusters" circle hit-test layer radius curve.
+// Exported so spiderfy legs can start at the donut edge.
+export function pixelRadiusForCount(count: number): number {
   const c = Math.max(count, 2);
   if (c <= 10)  return 16 + (22 - 16) * ((c - 2)   / (10 - 2));
   if (c <= 25)  return 22 + (30 - 22) * ((c - 10)  / (25 - 10));
