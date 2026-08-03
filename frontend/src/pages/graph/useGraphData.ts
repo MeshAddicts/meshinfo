@@ -76,7 +76,11 @@ export function useGraphData(
     let allEdges = mergeEdges(neighborEdges, tracerouteEdges);
 
     if (filter !== "all") {
-      allEdges = allEdges.filter((e) => e.kind === filter);
+      // Evidence flags, not kind: a merged link has both and must survive
+      // either single-kind filter.
+      allEdges = allEdges.filter((e) =>
+        filter === "neighbor" ? e.hasNeighbor : e.hasTraceroute,
+      );
     }
 
     // Compute degrees

@@ -260,8 +260,7 @@ describe("findRunsBetween", () => {
     const fwd = findRunsBetween("0000000a", "0000000d", [request])[0];
     expect(fwd.hops).toEqual(["0000000a", "000000b1", "0000000d"]);
     expect(fwd.provisionalLegIndex).toBe(1);
-    // Displayed reversed (a=D): the same speculative leg is now leg 0 —
-    // dashing the last leg here would invert the honesty cue
+    // Displayed reversed (a=D): the same speculative leg is now leg 0
     const rev = findRunsBetween("0000000d", "0000000a", [request])[0];
     expect(rev.hops).toEqual(["0000000d", "000000b1", "0000000a"]);
     expect(rev.provisionalLegIndex).toBe(0);

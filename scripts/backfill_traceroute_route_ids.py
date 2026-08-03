@@ -1,26 +1,7 @@
 #!/usr/bin/env python3
-"""
-One-time backfill: normalize raw-int entries inside traceroutes.route_ids
-JSONB to canonical 8-char lowercase hex strings.
-
-Before the ingest fix, a traceroute hop through a node this instance had never
-seen was stored as the raw uint32 node number (protobuf path); afterwards it is
-stored as padded hex. Historical int entries never re-resolve in the SPA's
-node lookups and fragment route grouping (the same physical route keys as
-"…,2864434397,…" in old rows and "…,aabbccdd,…" in new ones). This rewrites
-only the int entries; resolved hex strings, longnames, and out-of-uint32
-garbage are left byte-identical. The parallel legacy `route` column and the
-payload JSONB (verbatim RouteDiscovery) are deliberately untouched.
-
-Idempotent: rows without numeric entries are skipped by the WHERE clause, so a
-re-run after completion updates nothing. Batched by primary key with a pause
-between batches to stay polite on a small box; safe to interrupt and re-run
-(each batch commits independently).
-
-Usage:
-    python3 scripts/backfill_traceroute_route_ids.py --dry-run
-    python3 scripts/backfill_traceroute_route_ids.py
-    python3 scripts/backfill_traceroute_route_ids.py --dsn postgresql://...
+"""One-time, idempotent backfill: normalize raw-int entries in
+traceroutes.route_ids to canonical 8-hex strings. Strings and out-of-uint32
+garbage stay byte-identical; safe to interrupt and re-run (batched commits).
 """
 from __future__ import annotations
 
@@ -45,8 +26,7 @@ def _dsn_from_config(path: Path) -> str:
     )
 
 
-# Rewrites one row's route_ids array, preserving element order. Only integral
-# numbers within uint32 become hex; everything else passes through untouched.
+# Preserves element order; only integral numbers within uint32 become hex.
 NORMALIZE_SQL = """
 UPDATE traceroutes
 SET route_ids = (
@@ -65,10 +45,8 @@ SET route_ids = (
 WHERE id = ANY($1::bigint[])
 """
 
-# Rows the updater will actually touch. The dry-run queries MUST use this
-# same predicate: counting merely-numeric rows would include out-of-uint32
-# raw echoes the ingest deliberately keeps, so a completed run would never
-# show a zero residue.
+# Dry-run MUST use this same predicate: out-of-uint32 raw echoes are kept
+# on purpose, so a looser count would never reach zero.
 AFFECTED_PREDICATE = """
 jsonb_typeof(route_ids) = 'array'
   AND EXISTS (

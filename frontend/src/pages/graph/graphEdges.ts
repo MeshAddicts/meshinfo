@@ -2,7 +2,7 @@ import { dedupeExchanges, isResolvedHop, orientTraceroute } from "../../utils/tr
 import { type GraphEdge,normNodeId } from "./graphUtils";
 
 export function buildNeighborEdges(nodesById: Record<string, any>): GraphEdge[] {
-  const wByKey = new Map<string, { w: number; snr: number }>();
+  const wByKey = new Map<string, { w: number; snr: number | undefined }>();
   for (const rawId of Object.keys(nodesById)) {
     const id = normNodeId(rawId);
     const node = nodesById[rawId];
@@ -17,9 +17,15 @@ export function buildNeighborEdges(nodesById: Record<string, any>): GraphEdge[] 
       const a = id < nbId ? id : nbId, b = id < nbId ? nbId : id;
       const key = `${a}~${b}`;
       const existing = wByKey.get(key);
-      const snr = typeof nb?.snr === "number" ? nb.snr : 0;
-      if (existing) { existing.w += 1; if (snr > existing.snr) existing.snr = snr; }
-      else wByKey.set(key, { w: 1, snr });
+      // Missing SNR stays undefined — coercing to 0 dB would out-rank real
+      // negative readings in the max.
+      const snr = typeof nb?.snr === "number" ? nb.snr : undefined;
+      if (existing) {
+        existing.w += 1;
+        if (snr != null && (existing.snr == null || snr > existing.snr)) existing.snr = snr;
+      } else {
+        wByKey.set(key, { w: 1, snr });
+      }
     }
   }
   const edges: GraphEdge[] = [];
@@ -32,10 +38,8 @@ export function buildNeighborEdges(nodesById: Record<string, any>): GraphEdge[] 
 
 export function buildTracerouteEdges(traceroutes: any[], validIds: Set<string>): GraphEdge[] {
   const wByKey = new Map<string, number>();
-  // orientTraceroute travel-orders reply rows (header swap ≠ path reversal —
-  // a raw [from,...route,to] walk fabricates both endpoint edges on replies);
-  // dedupeExchanges keeps a request+reply capture of one traceroute from
-  // double-weighting every edge.
+  // orientTraceroute travel-orders reply rows (header swap ≠ path reversal);
+  // dedupeExchanges keeps a request+reply capture from double-weighting edges.
   for (const tr of dedupeExchanges(traceroutes)) {
     const o = orientTraceroute(tr);
     if (!o) continue;
@@ -63,11 +67,16 @@ export function buildTracerouteEdges(traceroutes: any[], validIds: Set<string>):
 
 export function mergeEdges(neighborEdges: GraphEdge[], tracerouteEdges: GraphEdge[]): GraphEdge[] {
   const map = new Map<string, GraphEdge>();
-  for (const e of neighborEdges) map.set(`${e.a}~${e.b}`, { ...e });
+  for (const e of neighborEdges) map.set(`${e.a}~${e.b}`, { ...e, hasNeighbor: true });
   for (const e of tracerouteEdges) {
     const key = `${e.a}~${e.b}`;
     const ex = map.get(key);
-    if (ex) ex.w += e.w; else map.set(key, { ...e });
+    if (ex) {
+      ex.w += e.w;
+      ex.hasTraceroute = true;
+    } else {
+      map.set(key, { ...e, hasTraceroute: true });
+    }
   }
   return Array.from(map.values());
 }

@@ -1,10 +1,6 @@
-/** Normalize a node ID (int or hex string) to lowercase hex.
- *  Numeric ids (and >8-digit decimal strings, which can't be 8-hex ids) are
- *  zero-padded to 8 chars so they match backend normalize_node_id output and
- *  the getNodes cache keys; ≤8-char all-digit strings are treated as hex
- *  verbatim — backend ids are always 8-hex, and decimal ids only arrive as
- *  JSON numbers or longer-than-8-digit strings. Non-hex strings (longnames)
- *  pass through lowercased and unpadded — padding would fabricate an id. */
+/** Normalize a node ID (int or hex string) to lowercase hex. Numeric ids and >8-digit
+ *  decimal strings zero-pad to 8 chars (matches backend keys); ≤8-char all-digit strings
+ *  are hex verbatim; non-hex strings (longnames) pass through lowercased, unpadded. */
 export function normNodeId(raw: unknown): string {
   if (raw == null) return "";
   if (typeof raw === "number") {

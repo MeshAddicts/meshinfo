@@ -69,7 +69,7 @@ describe("buildTracerouteLinkFeatureCollection", () => {
     });
     const keys = edgeKeys([reply]);
     expect(keys).toEqual(["0000000a|000000b1", "0000000d|000000b2", "000000b1|000000b2"]);
-    // The pre-fix phantom edges D–R1 and R2–O must not exist
+    // Phantom endpoint edges D–R1 and R2–O must not exist
     expect(keys).not.toContain("0000000d|000000b1");
     expect(keys).not.toContain("0000000a|000000b2");
   });
@@ -81,8 +81,7 @@ describe("buildTracerouteLinkFeatureCollection", () => {
       route_ids: ["000000b1", "Some Longname"],
       payload: { route: [], snr_towards: [4, 8, 12] },
     });
-    // Real legs: O–R1 (drawable), R1–?, ?–D (both skipped). No O–D shortcut,
-    // and crucially no R1–D splice across the unknown hop.
+    // Only O–R1 is drawable; no O–D shortcut, no R1–D splice across the unknown hop.
     expect(edgeKeys([reply])).toEqual(["0000000a|000000b1"]);
   });
 

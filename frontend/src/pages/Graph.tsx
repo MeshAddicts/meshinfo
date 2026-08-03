@@ -226,7 +226,7 @@ export const Graph = () => {
                               </span>
                               <span className="text-gray-500 shrink-0 ml-1">
                                 {e.kind === "neighbor" ? "RF" : "tr"}
-                                {e.snr != null && e.snr !== 0 && ` ${e.snr}dB`}
+                                {e.snr != null && ` ${e.snr}dB`}
                               </span>
                             </button>
                           );

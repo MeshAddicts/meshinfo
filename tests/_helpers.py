@@ -47,11 +47,8 @@ class FakePgStorage:
         self.telemetry_writes.append((node_id, dict(msg)))
 
     async def write_traceroute(self, node_id: str, msg) -> str:
-        # Richer-wins emulation mirroring the real upsert's outcome contract
-        # ('inserted' | 'upgraded' | 'duplicate') so handler broadcast-gating
-        # tests exercise every branch. Keyed on (node_id, msg id); id-less
-        # messages always insert (the real writer skips them, but existing
-        # handler tests assert the write reaches the store).
+        # Mirrors the real upsert's outcome contract ('inserted' | 'upgraded'
+        # | 'duplicate'); id-less messages always insert.
         def richness(m):
             p = m.get("payload") or {}
             return sum(
@@ -65,8 +62,7 @@ class FakePgStorage:
             for i, (nid, prev) in enumerate(self.traceroute_writes):
                 if nid == node_id and prev.get("id") == msg_id:
                     if richness(msg) > richness(prev):
-                        # Upgrades keep the original row's created_at (mirrors
-                        # RETURNING created_at surfacing it onto the msg).
+                        # Upgrades keep the original row's created_at.
                         msg["created_at"] = prev.get("created_at")
                         self.traceroute_writes[i] = (node_id, dict(msg))
                         return "upgraded"
@@ -132,9 +128,8 @@ def build_envelope(
     topic="msh/US/2/e/LongFast/!abcd1234",
     request_id=0,
 ) -> FakeMqttMessage:
-    """Serialize a real ServiceEnvelope wrapping an unencrypted MeshPacket —
-    the exact wire shape process_mqtt_msg decodes, so proto3 zero-omission
-    behavior (hop_limit==0, rx_rssi==0, channel==0) is exercised for real."""
+    """Serialize a real ServiceEnvelope wrapping an unencrypted MeshPacket, so
+    proto3 zero-omission (hop_limit==0, rx_rssi==0, channel==0) is exercised."""
     mp = mesh_pb2.MeshPacket(
         **{"from": from_},
         to=to,

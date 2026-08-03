@@ -40,12 +40,9 @@ function quantizeLastHeardMs(ms: number | null): number | null {
   return ms == null ? null : Math.floor(ms / 60_000) * 60_000;
 }
 
-/** Full normalized TRAVEL-ordered hop path for a traceroute row (reply rows
- *  have their header endpoints swapped back into initiator → … → target
- *  order). Unresolvable hops are kept as `?<raw>` placeholders — splicing
- *  them out would fabricate a shortcut edge across the gap — so edge builders
- *  must skip legs touching them, not this function. Cached per row inside
- *  orientTraceroute. */
+/** Full normalized travel-ordered hop path for a traceroute row (cached in
+ *  orientTraceroute). Unresolvable hops stay as `?<raw>` placeholders — edge
+ *  builders must skip legs touching them, not splice across the gap. */
 export function normalizedTraceroutePath(tr: ITraceroutesResponse): string[] {
   return orientTraceroute(tr)?.orderedPath ?? [];
 }
@@ -233,8 +230,7 @@ export function buildTracerouteLinkFeatureCollection(
     const lastLegIdx = path.length - 2;
 
     for (let i = 0; i < path.length - 1; i++) {
-      // A mid-flight request never observed its final (…→target) leg — drawing
-      // it would fabricate an RF link the mesh may not have.
+      // A mid-flight request never observed its final (…→target) leg — don't draw it.
       if (o.provisional && i === lastLegIdx) continue;
       const a = path[i], b = path[i + 1];
       if (!a || !b || a === b) continue;

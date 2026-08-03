@@ -181,17 +181,12 @@ CREATE INDEX IF NOT EXISTS idx_traceroutes_from_node_id ON traceroutes(from_node
 CREATE INDEX IF NOT EXISTS idx_traceroutes_to_node_id ON traceroutes(to_node_id);
 CREATE INDEX IF NOT EXISTS idx_traceroutes_created_at ON traceroutes(created_at DESC);
 
--- Resolved return-path hop ids (reply rows only; NULL on rows written before
--- the column existed — consumers must treat absence as "not resolved", the
--- verbatim RouteDiscovery route_back still lives in payload).
--- NOTE: fresh-install copies. Existing databases get these from the
--- migrations block in ensure_schema (storage/db/postgres.py), which runs
--- with a long timeout — this file executes as one short-timeout transaction,
--- where a full-table index build could roll everything back.
+-- Resolved return-path hop ids (reply rows only; NULL = not resolved).
+-- Fresh-install copies: existing databases get these from the ensure_schema
+-- migrations block, which runs with a long timeout.
 ALTER TABLE traceroutes ADD COLUMN IF NOT EXISTS route_back_ids JSONB;
 CREATE INDEX IF NOT EXISTS idx_traceroutes_sender_node_id ON traceroutes(sender_node_id);
--- Containment lookups for "traceroutes involving node X as a relay"
--- (route_ids @> jsonb_build_array(id)); jsonb_path_ops is @>-only and small.
+-- Containment lookups for "traceroutes involving node X as a relay".
 CREATE INDEX IF NOT EXISTS idx_traceroutes_route_ids_gin
     ON traceroutes USING gin (route_ids jsonb_path_ops);
 CREATE INDEX IF NOT EXISTS idx_traceroutes_route_back_ids_gin

@@ -234,22 +234,14 @@ export function Map() {
   // window that makes most pairs come back empty. Merged with the global cache
   // so routes crossing the pair as intermediate hops still count.
   const tracePairActive = activeTool === "traceroute" && !!toolFromId && !!toolToId;
-  // currentData (not data/isLoading): `data` retains the PREVIOUS pair's rows
-  // across an arg switch — which both leaked the old pair's 500 rows into
-  // traceData until the new fetch settled AND made isLoading useless as a
-  // fit gate (it's per-hook-lifetime, false forever after the first pair).
-  // currentData is undefined until THIS arg's fetch lands, and stays present
-  // through same-arg background refetches, so the gate below is true exactly
-  // while the selected pair's history is genuinely missing.
+  // currentData (not data): `data` retains the previous pair's rows across an
+  // arg switch; currentData is undefined until this pair's own fetch lands.
   const { currentData: pairTraceroutesRaw, isError: pairTraceroutesError } = useGetTraceroutesQuery(
     { from: toolFromId ?? "", to: toolToId ?? "", limit: 500 },
     { skip: !tracePairActive },
   );
   const pairTraceroutes = pairTraceroutesRaw ?? EMPTY_TRACEROUTES;
-  // isError escape: a failed pair fetch leaves currentData undefined forever
-  // (RTKQ doesn't auto-retry) — without it the fit gate and the panel's
-  // loading state would wedge; on error the tool degrades to the global
-  // window, exactly like the pre-currentData behavior.
+  // isError escape: a failed fetch never sets currentData; degrade to the global window.
   const pairTraceroutesLoading =
     tracePairActive && pairTraceroutesRaw === undefined && !pairTraceroutesError;
   const traceData = useMemo(() => {
@@ -831,11 +823,8 @@ export function Map() {
     if (traceFlyover.isFlying) {
       traceFlyover.cancelFlyover();
     } else if (traceSelectedPath) {
-      // Pin the flown path: with no explicit selection, traceSelectedPath is
-      // tracePaths[0] (newest), and a live row arriving mid-tour would
-      // silently re-point the panel + drawn primary at the new path while
-      // the camera keeps flying the old one. An explicit sig keeps them on
-      // the toured path for the duration (and after — the user chose it).
+      // Pin the toured path: without an explicit sig, a live row arriving
+      // mid-tour re-points the panel/primary while the camera flies the old path.
       setTraceSelectedSig(traceSelectedPath.hops.join(">"));
       traceFlyover.startFlyover(traceSelectedPath);
     }

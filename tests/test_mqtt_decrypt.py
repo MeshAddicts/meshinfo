@@ -205,10 +205,7 @@ class TestProcessEncryptedPacket:
         assert chat["channel"] == "8"
 
     def test_encrypted_packet_zero_header_fields_handled(self):
-        """Zero-valued header fields must survive the decrypt branch's dict
-        re-serialization: hops_away is read off mp directly (hop_limit==0 —
-        an exhausted-hops packet — vanishes from MessageToJson output), and a
-        zero rssi/snr pair stays absent instead of fabricating a reading."""
+        """hop_limit==0 still yields hops_away; a 0/0.0 rssi/snr pair stays absent."""
         mqtt, data = make_mqtt_pb([DEFAULT_KEY_B64])
         env = _build_encrypted_envelope(
             base64.b64decode(DEFAULT_KEY_B64),

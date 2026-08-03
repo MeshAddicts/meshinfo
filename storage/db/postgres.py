@@ -68,30 +68,20 @@ def _finite_or_none(value: Any) -> Any:
 # against this so a typo'd kind fails in tests, not silently during recovery.
 _RETRY_KINDS = frozenset({"mqtt_message", "telemetry", "chat_message", "traceroute"})
 
-# Richer-wins traceroute upsert: upgrades are confined to rows younger than
-# this window so a genuinely NEW traceroute reusing a 32-bit packet id weeks
-# later can never overwrite history (outside the window the statement degrades
-# to the old DO NOTHING semantics — the pre-existing id-reuse drop, not a
-# regression). One hour also covers write-retry drain latency after an outage
-# (the buffer holds roughly half an hour of traffic).
+# Upgrades only touch rows younger than this, so a new traceroute reusing a
+# 32-bit packet id later can never overwrite history (degrades to DO NOTHING).
 TRACEROUTE_UPGRADE_WINDOW_S = 3600
 
 
-# Meshtastic hop_limit tops out at 7, so genuine RouteDiscovery arrays never
-# exceed ~8 entries; counting is capped there so a hostile publisher padding
-# arrays gains bounded score, not an arbitrary overwrite budget.
+# Genuine RouteDiscovery arrays never exceed ~8 entries (hop_limit <= 7);
+# the cap bounds what a hostile publisher's padding can score.
 _TRACEROUTE_ARRAY_CAP = 10
 
 
 def _traceroute_richness_sql(payload_expr: str) -> str:
     """SQL summing the four RouteDiscovery array lengths of a payload jsonb.
-
-    Richness is monotone along the relay chain — every hop appends to
-    route/route_back/snr_* — so the richest single copy is a superset of every
-    poorer copy and whole-row replacement never needs field-level merging.
-    jsonb_typeof guards make it total for malformed/JSON-publisher payloads;
-    per-array LEAST caps bound what publisher-crafted padding can score.
-    """
+    Richness is monotone along the relay chain, so the richest copy is a
+    superset of every poorer one — whole-row replacement needs no merging."""
     return " + ".join(
         f"CASE WHEN jsonb_typeof({payload_expr}->'{key}') = 'array'"
         f" THEN LEAST(jsonb_array_length({payload_expr}->'{key}'), {_TRACEROUTE_ARRAY_CAP})"
@@ -101,15 +91,9 @@ def _traceroute_richness_sql(payload_expr: str) -> str:
 
 
 def _traceroute_prefix_guard_sql(key: str) -> str:
-    """SQL requiring the stored payload's array to be a PREFIX of the incoming
-    copy's — the monotonicity invariant made enforceable: genuine richer copies
-    only ever APPEND hops, so an upgrade may extend recorded data but never
-    rewrite it. Blocks a hostile publisher from replacing genuine hops with
-    forged ones inside the upgrade window (they can at most append plausible
-    junk — no more power than winning the original first-uplink race gave
-    them). Skipped when the stored value isn't an array (absent key /
-    legacy / malformed — IS DISTINCT FROM keeps the NULL of an absent key
-    from vetoing the whole guard)."""
+    """SQL requiring the stored array to be a prefix of the incoming copy's:
+    genuine richer copies only append hops, so upgrades may extend but never
+    rewrite recorded data. Skipped when the stored value isn't an array."""
     return f"""(
         jsonb_typeof(traceroutes.payload->'{key}') IS DISTINCT FROM 'array'
         OR traceroutes.payload->'{key}' = (
@@ -121,20 +105,10 @@ def _traceroute_prefix_guard_sql(key: str) -> str:
     )"""
 
 
-# Guarded richer-wins upsert. Copy-scoped columns move TOGETHER on an upgrade
-# (payload + the reception fields sender/rssi/snr/hops_away): mixing
-# first-copy reception data with a later copy's payload would create a row no
-# gateway ever heard. Exceptions: created_at and the PK stay put (created_at
-# is first-heard and anchors the recency guard, list ordering, pagination),
-# and a valid stored timestamp/rx_time is never regressed by a clock-less
-# gateway's copy (rx_time=0 on nodes without a time source) — the SSE event
-# for such an upgrade carries the incoming copy's zero timestamp and diverges
-# from REST on that one field until the next refetch, an accepted cost.
-# RETURNING (xmax = 0) discriminates insert (true) from update (false); no row
-# means the guard refused the copy: poorer/equal, prefix-violating, or a
-# STALE id collision (row older than the window — such packets are genuinely
-# new but indistinguishable from history rewrites, so they are dropped, as
-# the old DO NOTHING always did). $16 = upgrade window (s).
+# Guarded richer-wins upsert: copy-scoped columns move together on an upgrade,
+# but created_at stays first-heard and a valid timestamp/rx_time is never
+# regressed by a clock-less gateway's copy (rx_time=0). RETURNING (xmax = 0)
+# discriminates insert from update; no row = guard refused. $16 = window (s).
 TRACEROUTE_UPSERT_SQL = f"""
     INSERT INTO traceroutes (
         from_node_id, to_node_id, sender_node_id, message_id, channel,
@@ -531,13 +505,9 @@ class PostgresStorage:
                         ON mqtt_messages(from_node_id, packet_id, created_at DESC)
                         WHERE packet_id IS NOT NULL;
                 """, timeout=600)
-                # Traceroute return-path column + involvement indexes. The
-                # ALTER is instant; the index builds scan the whole table on
-                # first run, hence the explicit timeout (schema.sql also
-                # carries copies for fresh installs, but its single implicit
-                # transaction runs under the pool's 10s command_timeout — a
-                # timeout there would roll the ALTER back with it, so the
-                # migrations block is the authoritative path for upgrades).
+                # First-run index builds scan the whole table, hence the
+                # explicit timeout; this block, not schema.sql, is the
+                # authoritative path for upgrades.
                 await conn.execute("""
                     ALTER TABLE traceroutes ADD COLUMN IF NOT EXISTS route_back_ids JSONB;
                 """)
@@ -1299,24 +1269,8 @@ class PostgresStorage:
             self._handle_write_failure("chat message", "chat_message", (node_id, chat_msg), e)
 
     async def write_traceroute(self, node_id: str, traceroute_msg: Dict[str, Any]) -> Optional[str]:
-        """
-        Write traceroute to PostgreSQL via the richer-wins upsert: the stored
-        row is always the richest single heard copy of a packet (whole-copy
-        replacement, reception fields included; created_at stays first-heard).
-
-        Args:
-            node_id: from-node id (any supported form; will be normalized)
-            traceroute_msg: Traceroute message dictionary
-
-        Returns:
-            'inserted' | 'upgraded' | 'duplicate', or None when the write was
-            skipped or failed (buffered for retry on outage-shaped errors).
-            'duplicate' covers every guard refusal: poorer/equal copies,
-            prefix-violating (forged) copies, AND stale 32-bit id collisions
-            with a row older than the upgrade window — that last packet is
-            genuinely new but dropped, exactly as ON CONFLICT DO NOTHING
-            always dropped it (probability ~ per-node rows / 2^32).
-        """
+        """Richer-wins traceroute upsert. Returns 'inserted' | 'upgraded' |
+        'duplicate' (any guard refusal), or None when skipped/failed."""
         if not self._ready("write_traceroute"):
             return None
 
@@ -1395,9 +1349,7 @@ class PostgresStorage:
                 )
                 if row is None:
                     return "duplicate"
-                # The row's REAL created_at (first-heard — upgrades keep it),
-                # surfaced on the msg so the SSE event matches a later REST
-                # fetch instead of stamping upgrade-time.
+                # Surface first-heard created_at so the SSE event matches REST.
                 if row["created_at"] is not None:
                     traceroute_msg["created_at"] = int(row["created_at"].timestamp())
                 return "inserted" if row["inserted"] else "upgraded"
@@ -2343,9 +2295,8 @@ class PostgresStorage:
             return []
 
     async def query_node_traceroutes(self, node_id: str, limit: int = 1000) -> List[Dict[str, Any]]:
-        """Query traceroutes INVOLVING a node: as initiator, target, uplink
-        gateway, or relay hop on either leg (containment over the resolved
-        hop arrays, GIN-indexed)."""
+        """Query traceroutes involving a node: initiator, target, gateway,
+        or relay hop on either leg."""
         if not self.enabled or not self.pool:
             return []
 
@@ -2608,18 +2559,12 @@ class PostgresStorage:
         (consumers orient the path client-side). A single endpoint filters
         just that column. `range_seconds` windows on created_at.
 
-        With `slim`, each row keeps what the SPA reads: from, to, id,
-        packet_id (the reply's request_id — exact exchange pairing),
-        hops_away, rssi, snr, timestamp, created_at (epoch; dates rows whose
-        packet timestamp is 0), route_ids, route_back_ids, and the payload's
-        snr_towards/route_back/snr_back. Default False keeps the legacy full
-        shape byte-identical for third-party consumers.
+        With `slim`, each row keeps only what the SPA reads; default False
+        keeps the legacy full shape for third-party consumers.
 
-        Keyset pagination: `before` is an opaque cursor (from a previous
-        page's next_cursor) over (created_at, id) — stable because upgrades
-        never touch created_at. With `with_cursor` the return value is
-        {"traceroutes": rows, "next_cursor": str | None} instead of a bare
-        list; next_cursor is present only when the page filled `limit`.
+        `before` is an opaque keyset cursor over (created_at, id) — stable
+        because upgrades never touch created_at. With `with_cursor` the return
+        is {"traceroutes": rows, "next_cursor": str | None} instead of a list.
         """
         if not self.enabled or not self.pool:
             return {"traceroutes": [], "next_cursor": None} if with_cursor else []
@@ -2665,10 +2610,7 @@ class PostgresStorage:
                 traceroutes = []
                 for row in rows:
                     if slim:
-                        # payload still has to be parsed: snr_towards drives
-                        # reply-orientation detection + per-leg SNR, and the
-                        # back arrays carry the return leg. The legacy `route`
-                        # stays dropped (route_ids duplicates it resolved).
+                        # Legacy `route` stays dropped (route_ids duplicates it resolved).
                         payload = self._jsonb(row["payload"], {})
                         slim_payload = {}
                         if isinstance(payload, dict):

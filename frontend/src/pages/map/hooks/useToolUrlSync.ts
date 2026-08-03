@@ -44,9 +44,8 @@ export type ToolUrlSyncParams = {
   tracePosKey: string;
   styleEpoch: number;
   startFlyover: (path: AnalyzedPath) => boolean;
-  /** Explicitly selected path signature (alternate / history run) — carried
-   *  in the URL so a shared link reproduces the route being looked at, not
-   *  just the pair (which silently showed the recipient the newest path). */
+  /** Explicitly selected path signature (alternate/history run) — carried in
+   *  the URL so a shared link reproduces the exact route, not just the pair. */
   traceSelectedSig: string | null;
   setTraceSelectedSig: (sig: string | null) => void;
 };
@@ -148,8 +147,7 @@ export function useToolUrlSync({
         sp.set("tool", "traceroute");
         sp.set("from", toolFromId);
         sp.set("to", toolToId);
-        // The explicitly selected alternate/run — without it, "Copy link"
-        // while inspecting an alternate handed the recipient the newest path.
+        // Without &sel, a copied link hands the recipient the newest path.
         if (traceSelectedSig) sp.set("sel", traceSelectedSig);
         else sp.delete("sel");
         // play=1 is a one-shot request from a shared link — never persist it
@@ -180,10 +178,8 @@ export function useToolUrlSync({
     }
     setToolFromId(f);
     setToolToId(t);
-    // Restore the shared alternate/run selection. The sig is only ever
-    // compared against locally computed path signatures (find-by-equality;
-    // an unknown sig falls back to the newest path), so a bounded length is
-    // the only sanitation it needs.
+    // The sig is only compared by equality against locally computed path
+    // signatures, so a bounded length is the only sanitation it needs.
     const sel = sp.get("sel");
     if (sel && sel.length <= 512) setTraceSelectedSig(sel);
     setActiveTool("traceroute");
@@ -203,13 +199,8 @@ export function useToolUrlSync({
       return;
     }
     if (!traceSelectedPath) return; // traceroutes still loading — retry on next change
-    // A restored &sel alternate usually arrives with the pair-scoped history
-    // (after the global window): starting the tour on the newest-path
-    // fallback would fly — and then PIN — the wrong route. Wait for the
-    // sel'd path; the effect retries as data/positions land. If the sig has
-    // aged out of history entirely, the tour simply doesn't autostart (the
-    // recipient still sees the pair and can press Play) — better than
-    // silently touring a different route than the one that was shared.
+    // Wait for the sel'd path before touring (the effect retries as data
+    // lands); if the sig aged out of history the tour just doesn't autostart.
     if (traceSelectedSig && traceSelectedPath.hops.join(">") !== traceSelectedSig) return;
     if (startFlyover(traceSelectedPath)) {
       // Pin the toured path so a live row arriving mid-tour can't re-point

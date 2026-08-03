@@ -47,33 +47,28 @@ export interface ITraceroutesResponse {
   from: string;
   hop_start?: number;
   id: number;
-  /** Reply rows: the request's packet id (exact exchange pairing); null on
-   *  requests and rows written before the backend captured it. */
+  /** Reply rows: the request's packet id (exact exchange pairing). */
   packet_id?: number | null;
   /** Server ingest time, epoch seconds (slim rows + SSE events). */
   created_at?: number | null;
-  /** Server-resolved return-path hops, return-travel order. */
+  /** Resolved return-path hops, return-travel order. */
   route_back_ids?: (string | number)[];
-  /** Full RouteDiscovery. SNR arrays are firmware-scaled ×4 with -128 = unknown.
-   *  Rows carrying the full snr_towards (length = route + 1) are REPLY packets:
-   *  their towards path reads header `to` → route → header `from` (the route
-   *  stays request-oriented while the reply header swaps the endpoints).
-   *  NEVER walk [from, ...route, to] by hand — utils/traceroute.ts
-   *  orientTraceroute is the single mandatory entry point for a row's hop
-   *  sequence (it also normalizes hops and flags mid-flight requests). */
+  /** RouteDiscovery. SNR arrays ×4-scaled, -128 = unknown; snr_towards length = route + 1
+   *  marks a REPLY — walk via orientTraceroute only. Slim rows omit payload.route. */
   payload: {
-    route: (string | number)[];
+    route?: (string | number)[];
     route_back?: (string | number)[];
     snr_towards?: number[];
     snr_back?: number[];
   };
-  route: string[];
+  route?: string[];
   route_ids?: string[];
-  rssi: number;
+  /** null/absent = no RF measurement (self-gatewayed or bridged copies). */
+  rssi?: number | null;
   rx_rssi?: number;
   rx_snr?: number;
   rx_time?: number;
-  snr: number;
+  snr?: number | null;
   timestamp: number;
   to: string;
   topic?: string;

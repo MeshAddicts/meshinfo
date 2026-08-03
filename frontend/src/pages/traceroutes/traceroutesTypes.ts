@@ -17,9 +17,8 @@ export type TraceroutePairSummary = {
   lastTsMs: number;
   uniqueRoutes: number;
 
-  // preview for list row; topRouteFrom/topRouteTo carry the top route's OWN
-  // direction — on a bidirectional (⇄) pair it can oppose the summary's
-  // newest-run from/to, and unlabeled chips would read backwards.
+  // Preview for list row; topRouteFrom/topRouteTo carry the top route's own
+  // direction, which can oppose the newest-run from/to on a ⇄ pair.
   topRouteIds: string[];
   topRouteCount: number;
   topRouteFrom: string;

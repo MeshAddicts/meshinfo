@@ -46,9 +46,8 @@ export interface TraceLeg {
   index: number;
   fromId: string;
   toId: string;
-  /** null when either end lacks a position. NOT interchangeable with
-   *  verdict "gap": ungraded analyses mark every leg "gap" while still
-   *  carrying real haversine distances for positioned pairs. */
+  /** null when either end lacks a position — not implied by verdict "gap":
+   *  ungraded analyses mark every leg "gap" yet still carry real distances. */
   distanceKm: number | null;
   verdict: TraceLegVerdict;
   /** Worst first-Fresnel clearance along the leg as a ratio of F₁ (≥0.6 = clear enough). */
@@ -72,9 +71,8 @@ export interface TraceDirect {
 export interface TraceAnalysis {
   /** Path signature this analysis belongs to (hops.join(">")). */
   sig: string;
-  /** True only when the terrain grading pass produced this analysis; false
-   *  for ungraded dossiers (no terrain / no token / too few positions), whose
-   *  legs all carry verdict "gap" regardless of real obstruction state. */
+  /** False for ungraded dossiers (no terrain/token/positions): their legs all
+   *  read verdict "gap" regardless of real obstruction state. */
   graded: boolean;
   legs: TraceLeg[];
   direct: TraceDirect | null;
@@ -163,10 +161,8 @@ export function useTraceCompute(params: TraceComputeParams) {
       .filter((x): x is { pos: [number, number]; i: number } => x.pos != null);
     const ghostHops = hops.length - positioned.length;
 
-    // Ungraded dossier: per-leg haversine distances from positions alone.
-    // Packet-measured per-leg SNR and distances need neither terrain nor a
-    // Mapbox token, so the panel gets rows even when grading can't run —
-    // verdicts stay "gap" (ungraded) and the tube/obstruction artifacts null.
+    // Ungraded dossier: distances/measured SNR need neither terrain nor a
+    // token; verdicts stay "gap" and the tube/obstruction artifacts null.
     const ungradedAnalysis = (): TraceAnalysis => ({
       sig: pathKey,
       graded: false,

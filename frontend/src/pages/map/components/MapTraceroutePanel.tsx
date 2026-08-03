@@ -104,9 +104,7 @@ function MapTraceroutePanelInner({
   const isLatest = selected != null && selected === paths[0];
   // Dossier rows only apply to the path they were computed for
   const legRows = analysis && selected && analysis.sig === selected.hops.join(">") ? analysis.legs : null;
-  // Verdicts exist only when the grading pass produced this analysis —
-  // ungraded dossiers (terrain off, token missing, grade in flight) mark
-  // every leg "gap" and badging that would be pure noise.
+  // Ungraded dossiers mark every leg "gap" — badge verdicts only when grading ran.
   const legsGraded = legRows != null && !!analysis?.graded;
 
   const [minimized, setMinimized] = useState(false);

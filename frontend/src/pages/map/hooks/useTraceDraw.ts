@@ -89,8 +89,7 @@ export function useTraceDraw({
         "display:flex;flex-direction:column;align-items:center;gap:2px;pointer-events:auto;";
       const chip = document.createElement("div");
       chip.textContent = label;
-      // max-width + ellipsis: stacked edge-ghost chips sit on a fixed pitch,
-      // and an unclamped long label would paint over its neighbors.
+      // max-width + ellipsis: stacked chips sit on a fixed pitch; a long label would overlap neighbors.
       chip.style.cssText =
         "padding:1px 6px;border-radius:9999px;background:rgba(17,24,39,0.88);" +
         "border:1px dashed rgba(156,163,175,0.6);color:#d1d5db;font-size:10px;" +
@@ -123,10 +122,8 @@ export function useTraceDraw({
         const bLng = unwrapLngTo(aLng, B.pos[0]);
         prevLng = bLng;
         const isGap = B.i - A.i > 1;
-        // Request-only path: the unobserved leg (index from pathAnalysis —
-        // last leg when displayed forward, leg 0 when the a→b pick reversed
-        // travel order) draws dashed and faded, not solid. This segment spans
-        // hop-legs A.i..B.i-1.
+        // A request-only path's unobserved leg draws dashed/faded.
+        // This segment spans hop-legs A.i..B.i-1.
         const provisionalLeg =
           primary.provisionalLegIndex != null &&
           A.i <= primary.provisionalLegIndex &&
@@ -154,13 +151,10 @@ export function useTraceDraw({
         }
       }
 
-      // Leading/trailing ghosts: hops before the first (or after the last)
-      // positioned hop have no gap run to interpolate into, and used to be
-      // completely invisible — stack their chips beside the nearest
-      // positioned hop instead so the path's true extent is visible.
+      // Hops outside the positioned span have no gap run to interpolate into;
+      // stack their chips beside the nearest positioned hop.
       if (positioned.length > 0) {
-        // Far-to-near add order: markers added later paint on top, and the
-        // hop nearest the positioned anchor should win an overlap.
+        // Far-to-near add order: the hop nearest the anchor paints on top of an overlap.
         const first = positioned[0];
         for (let g = 0; g < first.i; g++) {
           addGhostMarker(primary.hops[g], first.pos, [-(first.i - g) * 60, -10]);
@@ -180,10 +174,8 @@ export function useTraceDraw({
       .filter((p) => p.hops.join(">") !== primarySig)
       .slice(0, 5)
       .forEach((p, rank) => {
-        // Split the strand at unpositioned hops: silently splicing the nodes
-        // on either side of a gap into one segment draws an RF link that was
-        // never observed — the same fabrication the primary path avoids with
-        // its dashed gap segments.
+        // Split the strand at unpositioned hops — splicing across a gap would
+        // draw an RF link that was never observed.
         const runs: [number, number][][] = [];
         let cur: [number, number][] = [];
         for (const hop of p.hops) {
@@ -215,8 +207,7 @@ export function useTraceDraw({
       });
     src.setData({ type: "FeatureCollection", features });
 
-    // Endpoint markers placed INDEPENDENTLY: one unpositioned endpoint used
-    // to bail out of both, hiding the endpoint we do know about.
+    // Endpoint markers are placed independently: one unknown endpoint must not hide the other.
     const fromPos = posOf(toolFromId);
     const toPos = posOf(toolToId);
     if (fromPos) {

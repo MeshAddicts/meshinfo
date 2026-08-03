@@ -6,8 +6,7 @@ import {
 } from "../../../utils/traceroute";
 import { normNodeId } from "./linkFeatures";
 
-// Orientation/decoding primitives moved to utils/traceroute (shared with the
-// Traceroutes page and graph); re-exported so existing map imports keep working.
+// Re-exported from utils/traceroute so existing map imports keep working.
 export { decodeSnr, tsToMs } from "../../../utils/traceroute";
 
 export interface AnalyzedPath {
@@ -26,13 +25,11 @@ export interface AnalyzedPath {
   legSnrDb?: (number | null)[];
   /** True when the SNR was measured opposite to the displayed a→b orientation. */
   legSnrReversed?: boolean;
-  /** True when ONLY mid-flight request packets observed this sequence: the
-   *  row's final (…→target) leg is implied by the header, not observed. */
+  /** Only request packets observed this sequence; the final (…→target) leg
+   *  is implied by the header, not observed. */
   provisional: boolean;
-  /** DISPLAYED index of the unobserved leg (legSnrDb/hop coordinates: leg i is
-   *  hops[i]→hops[i+1]), or null when no displayed leg is speculative. NOT
-   *  always the last leg — a reversed a→b extraction puts it at index 0, and a
-   *  sub-path that stops short of the row's target contains it not at all. */
+  /** Displayed index of the unobserved leg (leg i = hops[i]→hops[i+1]), or
+   *  null. NOT always last: a reversed a→b extraction puts it at index 0. */
   provisionalLegIndex: number | null;
 }
 
@@ -61,10 +58,8 @@ interface ExtractedPath {
 }
 
 /** Extract the a→b sub-path of one traceroute row, or null if it doesn't
- *  contain both nodes. Shared by the dedup (paths) and chronological (runs)
- *  views so orientation semantics can never drift apart. Travel ordering,
- *  reply detection, and per-leg SNR alignment all come from orientTraceroute
- *  — the single mandatory entry point for walking a row's hops. */
+ *  contain both nodes. Hop ordering and reply detection come from
+ *  orientTraceroute — the mandatory entry point for walking a row's hops. */
 function extractPathFromRow(a: string, b: string, tr: ITraceroutesResponse): ExtractedPath | null {
   const o = orientTraceroute(tr);
   if (!o) return null;
@@ -88,10 +83,8 @@ function extractPathFromRow(a: string, b: string, tr: ITraceroutesResponse): Ext
     legSnrDb = forward ? legs : legs.slice().reverse();
   }
 
-  // The row's unobserved leg is the LAST leg of fullPath. It appears in this
-  // sub-path only when the slice reaches the row's target (hi === last index);
-  // in displayed coordinates it is then the last leg when forward, leg 0 when
-  // reversed.
+  // The unobserved leg is fullPath's last; it lands in this sub-path only when
+  // the slice reaches the target — last leg when forward, leg 0 when reversed.
   let provisionalLegIndex: number | null = null;
   if (o.provisional && hi === fullPath.length - 1) {
     provisionalLegIndex = forward ? hops.length - 2 : 0;
@@ -101,8 +94,8 @@ function extractPathFromRow(a: string, b: string, tr: ITraceroutesResponse): Ext
     hops,
     sig: hops.join(">"),
     timestamp: tr.timestamp ?? 0,
-    snr: tr.snr,
-    rssi: tr.rssi,
+    snr: tr.snr ?? undefined,
+    rssi: tr.rssi ?? undefined,
     legSnrDb,
     forward,
     provisional: o.provisional,
@@ -111,9 +104,8 @@ function extractPathFromRow(a: string, b: string, tr: ITraceroutesResponse): Ext
 }
 
 /** Unique traceroute paths between two nodes (either direction), newest first.
- *  Freshness outranks hop count: a stale one-hop fluke must not beat the route
- *  the mesh is actually using now. Request+reply rows of one exchange are
- *  collapsed to the reply before analysis. */
+ *  Freshness outranks hop count; request+reply rows of one exchange collapse
+ *  to the reply before analysis. */
 export function findPathsBetween(
   fromId: string,
   toId: string,
@@ -170,9 +162,8 @@ export function findPathsBetween(
 }
 
 /** Every observed run between the pair, oldest first — the time-machine view.
- *  No dedup of repeated signatures (stability over time is the point), but
- *  request+reply packets of ONE exchange collapse to the reply so a single
- *  traceroute never counts as two runs or fakes a route-change tick. */
+ *  No dedup of repeated signatures, but request+reply packets of one exchange
+ *  collapse to the reply so a single traceroute never counts as two runs. */
 export function findRunsBetween(
   fromId: string,
   toId: string,
@@ -210,11 +201,8 @@ export interface TraceEdgeStat {
 }
 
 /** Count how often each adjacent hop pair appears across runs — the mesh's
- *  busiest links. Edges touching an unresolved hop or the 0xffffffff sentinel
- *  are skipped, rows are travel-ordered via orientTraceroute, request+reply
- *  pairs collapse to one run, and the speculative final leg of a mid-flight
- *  request (never actually observed) is excluded — otherwise every request
- *  heard near the initiator fabricates a direct initiator–target corridor. */
+ *  busiest links. Skips unresolved/sentinel hops and a mid-flight request's
+ *  speculative final leg; request+reply exchanges collapse to one run. */
 export function computeTraceEdgeStats(traceroutes: ITraceroutesResponse[]): TraceEdgeStat[] {
   const byKey = new Map<string, TraceEdgeStat>();
   for (const tr of dedupeExchanges(traceroutes)) {

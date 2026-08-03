@@ -9,8 +9,7 @@ describe("normNodeId", () => {
   });
 
   it("treats ≤8-digit all-decimal strings as hex verbatim", () => {
-    // 8-hex backend ids can be all digits; decimal ids arrive as numbers or
-    // >8-digit strings, so at ≤8 chars hex must win.
+    // Decimal ids only arrive as numbers or >8-digit strings, so at ≤8 chars hex wins.
     expect(normNodeId("23456789")).toBe("23456789");
     expect(normNodeId("1234567")).toBe("1234567");
   });

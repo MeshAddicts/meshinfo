@@ -537,8 +537,7 @@ export function TracerouteDetailsPanel({
                       </div>
 
                       {(() => {
-                        // Return leg travels target → … → initiator; only
-                        // reply rows that recorded it have one to show.
+                        // Return leg travels target → … → initiator.
                         const back = returnRouteIdsOf(e);
                         if (!back.length) return null;
                         return (

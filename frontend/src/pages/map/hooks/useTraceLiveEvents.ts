@@ -97,10 +97,8 @@ export function useTraceLiveEvents({
   // behind a 300 s full-row backstop timer).
   const traceRefetchDueAtRef = useRef(0);
 
-  // Resolve a traceroute's hops to positions and draw one sequential comet in
-  // TRAVEL order (orientTraceroute swaps reply-row headers back; skinny events
-  // without payload fall back to header order), snapping each hop to its
-  // cluster and skipping hops with no known position.
+  // Draw one sequential comet along the hops in travel order (skinny events
+  // without payload fall back to header order), snapping each hop to its cluster.
   const animateTraceroute = useCallback((t: TraceEv) => {
     const layer = activityLayerRef.current;
     if (!layer) return;
@@ -185,16 +183,8 @@ export function useTraceLiveEvents({
       const row = t as unknown as ITraceroutesResponse;
       const key = `${row.id}:${row.from}`; // Map.tsx's merge key
       const upsert = (max: number) => (draft: ITraceroutesResponse[]) => {
-        // Key collision = another copy of a row we already hold. Mirror the
-        // DB's richer-wins upsert: a held SLIM row (refetch snapshot — lacks
-        // payload.route; older backends also stripped the back arrays, so
-        // richness against it isn't trustworthy) is replaced by any full
-        // incoming row — a full row carries everything slim does plus the
-        // payload arrays, and a rare poorer outage-copy self-heals on the
-        // next refetch. Between two FULL rows the richness compare is exact:
-        // replace only strictly richer ('upgraded' broadcasts), keep the held
-        // row otherwise (no churn on identical fan-out copies, no regression
-        // on reordered delivery).
+        // Mirror the DB's richer-wins upsert: any full row replaces a held
+        // slim row; between two full rows replace only strictly richer.
         const held = draft.findIndex((tr) => `${tr.id}:${tr.from}` === key);
         if (held !== -1) {
           const heldRow = draft[held];

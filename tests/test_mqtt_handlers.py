@@ -22,9 +22,8 @@ def make_mqtt(nodes=None, json_decoder=False, protobuf_decoder=True):
             "client_id": "test",
             "username": "",
             "password": "",
-            # process_mqtt_msg reads both decoder gates unconditionally.
-            # channels.encryption is only read in the encrypted branch, which
-            # these tests never enter — deliberately absent.
+            # channels.encryption is only read in the encrypted branch,
+            # which these tests never enter — deliberately absent.
             "decoders": {
                 "protobuf": {"enabled": protobuf_decoder},
                 "json": {"enabled": json_decoder},
@@ -474,9 +473,7 @@ class TestHandleTraceroute:
         assert data.pg_storage.traceroute_writes == []
 
     def test_unknown_int_hop_stored_as_canonical_hex(self):
-        """A hop through a node this instance has never seen must store the
-        canonical 8-hex id, not the raw int — raw ints never re-resolve after
-        the node appears and fragment route grouping."""
+        """Raw ints never re-resolve and fragment route grouping."""
         mqtt, data = make_mqtt(nodes={
             "67ea9400": {"id": "67ea9400", "longname": "A"},
         })
@@ -517,8 +514,7 @@ class TestHandleTraceroute:
         assert written["route_back_ids"] == ["deadbeef", "67ea9400"]
 
     def test_bool_hop_not_minted_into_node_id(self):
-        """bool subclasses int: a hostile JSON `true` route entry must echo
-        verbatim, never become node 00000001."""
+        """bool subclasses int: `true` must echo verbatim, never become node 00000001."""
         mqtt, data = make_mqtt()
         run(mqtt.handle_traceroute({
             "from": 0x67EA9400,
@@ -539,8 +535,7 @@ class TestHandleTraceroute:
         assert event["route_ids"] == ["deadbeef"]
 
     def test_duplicate_copy_broadcasts_no_second_event(self):
-        """A confirmed poorer/equal gateway copy must stay silent — the live
-        feed mirrors the richer-wins storage outcome."""
+        """A poorer/equal gateway copy stays silent — live feed mirrors storage."""
         mqtt, data = make_mqtt()
         q = data.broadcaster.subscribe()
         msg = {
@@ -582,8 +577,7 @@ class TestHandleTraceroute:
         assert written["payload"]["route_back"] == [3, 4]
 
     def test_outage_none_outcome_still_broadcasts(self):
-        """DB down (write buffered, outcome None): the live feed must not go
-        dark for the whole outage."""
+        """DB down (outcome None): the live feed must not go dark."""
         mqtt, data = make_mqtt()
 
         async def down(node_id, msg):
@@ -602,7 +596,6 @@ class TestHandleTraceroute:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # process_mqtt_msg — envelope decode; pins the proto3 zero-omission fixes
-# (hop_limit==0, rx_rssi==0, channel==0 all vanish from MessageToJson output)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -614,9 +607,7 @@ class TestProcessEnvelope:
         return data.pg_storage.mqtt_writes[0], data
 
     def test_exhausted_hops_get_real_hops_away(self):
-        """hop_start=3, hop_limit=0: the packet used ALL its hops — exactly
-        the max-distance rows that used to store hops_away NULL because
-        MessageToJson omits the zero-valued hop_limit."""
+        """hop_limit==0 (all hops used) vanishes from MessageToJson; hops_away must still compute."""
         archived, _ = self._archived(build_envelope(hop_start=3, hop_limit=0))
         assert archived["hops_away"] == 3
         assert archived["hop_start"] == 3
@@ -656,9 +647,8 @@ class TestProcessEnvelope:
         assert archived["channel"] == 2
 
     def test_zero_hop_traceroute_not_dropped(self):
-        """RouteDiscovery with an empty route (direct neighbor) must reach
-        write_traceroute — the payload's route arrives as [] thanks to the
-        decode's always_print_fields_with_no_presence, not absent."""
+        """Empty route (direct neighbor) still reaches write_traceroute;
+        the decode yields route=[], not absent."""
         rd = mesh_pb2.RouteDiscovery(route=[], snr_towards=[-128])
         msg = build_envelope(
             portnum=portnums_pb2.TRACEROUTE_APP,
@@ -672,8 +662,6 @@ class TestProcessEnvelope:
         assert written["payload"]["snr_towards"] == [-128]
 
     def test_traceroute_reply_request_id_captured_as_packet_id(self):
-        """Data.request_id (the request's packet id, set on replies) must land
-        in the stored row's packet_id for exact exchange pairing."""
         rd = mesh_pb2.RouteDiscovery(route=[], snr_towards=[8])
         msg = build_envelope(
             portnum=portnums_pb2.TRACEROUTE_APP,
@@ -706,10 +694,8 @@ class TestProcessEnvelope:
         assert data.pg_storage.mqtt_writes[0]["topic"] == "msh/US/2/json/LongFast/!abcd1234"
 
     def test_json_decoder_exclusive_with_protobuf(self):
-        """Both decoders enabled: /2/json copies are SKIPPED by design — a
-        gateway with JSON output publishes the same packet to both
-        namespaces, and processing both would double-fire every SSE event
-        and duplicate packet_receptions rows."""
+        """Both enabled: /2/json copies are skipped — gateways publish the
+        same packet to both namespaces."""
         mqtt, data = make_mqtt(json_decoder=True, protobuf_decoder=True)
         payload = json.dumps({"type": "text", "from": 123}).encode("utf-8")
         msg = FakeMqttMessage("msh/US/2/json/LongFast/!abcd1234", payload)
@@ -717,9 +703,7 @@ class TestProcessEnvelope:
         assert data.pg_storage.mqtt_writes == []
 
     def test_packet_sse_event_omits_unmeasured_keys(self):
-        """The live 'packet' event forwards the archived dict: a self-gateway
-        zero pair must arrive without rssi/snr keys (absent, not null), and
-        an exhausted-hops packet must carry its computed hops_away."""
+        """A zero rssi/snr pair arrives absent (not null) on the live 'packet' event."""
         mqtt, data = make_mqtt()
         q = data.broadcaster.subscribe()
         run(mqtt.process_mqtt_msg(

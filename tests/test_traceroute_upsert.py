@@ -1,9 +1,7 @@
-"""
-Real-database tests for the traceroute richer-wins upsert (TRACEROUTE_UPSERT_SQL).
+"""Real-database tests for the traceroute richer-wins upsert.
 
-Opt-in: they need a THROWAWAY postgres reachable via TRACEROUTE_PG_DSN and are
-skipped otherwise, keeping the default suite runnable anywhere. Never point the
-DSN at a live database — the setup truncates the traceroutes table. Recipe:
+Opt-in via TRACEROUTE_PG_DSN (skipped otherwise). NEVER point the DSN at a
+live database — the setup TRUNCATEs traceroutes. Throwaway recipe:
 
     docker run --rm -d --name tr-upsert-pg -e POSTGRES_PASSWORD=x \
         -e POSTGRES_DB=meshinfo -p 127.0.0.1:5433:5432 postgres:18
@@ -12,10 +10,6 @@ DSN at a live database — the setup truncates the traceroutes table. Recipe:
     TRACEROUTE_PG_DSN=postgresql://postgres:x@127.0.0.1:5433/meshinfo \
         python -m pytest tests/test_traceroute_upsert.py -q
     docker rm -f tr-upsert-pg
-
-The tests drive the exact SQL constant the app executes, so guard behavior
-(recency window, strict richness, concurrency arbitration) is pinned against a
-real server, not a fake.
 """
 
 import asyncio
@@ -47,10 +41,8 @@ def run(coro):
     return asyncio.run(coro)
 
 
-# Live-DSN tripwire: a fresh schema-loaded throwaway starts EMPTY, so a
-# populated traceroutes table means the DSN points somewhere real — refuse
-# before the TRUNCATE below can destroy it. Checked once per session (our own
-# tests populate the table afterwards).
+# Live-DSN tripwire: a populated traceroutes table means the DSN points at
+# something real — refuse before the TRUNCATE. Checked once per session.
 _dsn_checked = False
 
 
@@ -176,8 +168,7 @@ class TestRicherWinsUpsert:
         run(body())
 
     def test_prefix_guard_refuses_rewritten_hops(self):
-        """A 'richer' copy that REWRITES recorded hops instead of extending
-        them is forged — genuine copies only append (monotonicity)."""
+        """Genuine copies only append; a copy that rewrites recorded hops is forged."""
 
         async def body():
             conn = await _conn()
@@ -205,18 +196,14 @@ class TestRicherWinsUpsert:
         run(body())
 
     def test_padding_gains_are_capped(self):
-        """Publisher-padded arrays score at most the per-array cap, so junk
-        padding can't manufacture unlimited richness."""
+        """Publisher-padded arrays score at most the per-array cap."""
 
         async def body():
             conn = await _conn()
             try:
                 genuine = {"route": [1, 2], "snr_towards": [4, 8, 12]}
                 assert await _upsert(conn, 7, genuine) == "inserted"
-                # Extends the (empty) route_back prefix but pads far past any
-                # real mesh: counts as at most the cap, still > stored here —
-                # the cap bounds the SCORE; the prefix guard bounds the DAMAGE
-                # (recorded hops survive verbatim).
+                # The cap bounds the score; the prefix guard bounds the damage.
                 padded = dict(genuine, route_back=[0] * 50)
                 assert await _upsert(conn, 7, padded) == "upgraded"
                 row = await conn.fetchrow("SELECT payload FROM traceroutes")
@@ -227,8 +214,7 @@ class TestRicherWinsUpsert:
         run(body())
 
     def test_upgrade_never_regresses_a_valid_timestamp(self):
-        """A clock-less gateway's richer copy (timestamp 0) must not wipe the
-        stored valid timestamp — dedupe windows and sort order depend on it."""
+        """A clock-less gateway's richer copy (timestamp 0) must not wipe a valid timestamp."""
 
         async def body():
             conn = await _conn()
@@ -286,9 +272,7 @@ class TestRicherWinsUpsert:
             try:
                 for i in range(50):
                     mid = 1000 + i
-                    # Alternate submission order; actual arrival order is
-                    # nondeterministic, the assertion covers whichever
-                    # interleaving the server saw.
+                    # Alternate submission order; arrival order is nondeterministic.
                     a = lambda: _upsert(c1, mid, POOR, rssi=-90)
                     b = lambda: _upsert(c2, mid, RICH, rssi=-110)
                     if i % 2:
@@ -336,9 +320,8 @@ SEED_SQL = """
 
 
 class TestKeysetPaginationAndShapes:
-    """Drives the real query functions (not just the SQL constants) so the
-    param-assembly around cursors, containment, and slim projection is pinned
-    against a live server."""
+    """Drives the real query functions (cursor param assembly, containment,
+    slim projection) against a live server."""
 
     async def _seeded_storage(self):
         conn = await _conn()  # tripwire + node stubs + clean slate

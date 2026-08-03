@@ -282,17 +282,11 @@ class API:
                 limit = int(request.query_params.get("limit", 1000))
             except (TypeError, ValueError):
                 return JSONResponse({"error": "limit must be an integer"}, status_code=400)
-            # ?slim=1 keeps only the row fields the SPA reads and drops the
-            # rest (legacy `route`). Default stays byte-identical for
-            # third-party consumers: bare array, no cursor, legacy fields.
+            # ?slim=1 keeps only the row fields the SPA reads; default stays
+            # byte-identical for third-party consumers.
             slim = request.query_params.get("slim", "").lower() in ("1", "true", "yes")
-            # Keyset pagination is opt-in via ?envelope=1 ONLY: the response
-            # becomes {traceroutes, next_cursor}; pass next_cursor back as
-            # ?before= to walk older pages. Deliberately NOT implied by slim —
-            # already-open tabs run the previous bundle, which requests slim=1
-            # and expects a bare array; forcing the envelope onto slim would
-            # crash every open dashboard at deploy. Bare-array responses
-            # (default and slim-without-envelope) cannot carry a cursor.
+            # Pagination opt-in via ?envelope=1 ({traceroutes, next_cursor}); NOT
+            # implied by slim — already-open tabs request slim=1 and expect a bare array.
             envelope = request.query_params.get("envelope", "").lower() in ("1", "true", "yes")
             before = request.query_params.get("before")
             traceroutes_data = await self.data.pg_storage.query_all_traceroutes(

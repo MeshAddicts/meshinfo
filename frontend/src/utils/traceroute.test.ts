@@ -11,8 +11,7 @@ import {
   type TracerouteRowLike,
 } from "./traceroute";
 
-/** Trace A → R1 → R2 → D captured as the REQUEST packet mid-flight (route
- *  accumulated up to R1; snr_towards has one entry per observed leg). */
+/** REQUEST row caught mid-flight: route accumulated up to R1, one snr_towards per observed leg. */
 const requestRow = (over: Partial<TracerouteRowLike> = {}): TracerouteRowLike => ({
   from: "000000aa",
   to: "000000dd",
@@ -23,8 +22,7 @@ const requestRow = (over: Partial<TracerouteRowLike> = {}): TracerouteRowLike =>
   ...over,
 });
 
-/** The matching REPLY packet: header endpoints swapped, route request-ordered
- *  and complete, snr_towards = route + 1 (destination appended its reading). */
+/** Matching REPLY: header endpoints swapped, route request-ordered, snr_towards = route + 1. */
 const replyRow = (over: Partial<TracerouteRowLike> = {}): TracerouteRowLike => ({
   from: "000000dd",
   to: "000000aa",
@@ -208,16 +206,14 @@ describe("dedupeExchanges", () => {
   });
 
   it("pairs exactly via packet_id, ignoring window and path", () => {
-    // Request stored 10 minutes before the reply (heuristic window is 60s)
-    // via a DIFFERENT first hop (heuristic prefix rule would also fail)
+    // Outside the 60s window and via a different first hop — packet_id pairing must still win.
     const req = requestRow({ id: 424242, timestamp: 400, route_ids: ["000000c9"], payload: { route: [0xc9], snr_towards: [4] } });
     const rep = replyRow({ timestamp: 1010, packet_id: 424242 });
     expect(dedupeExchanges([req, rep])).toEqual([rep]);
   });
 
   it("exact-keyed replies never heuristically merge a different request", () => {
-    // The reply names its request (never stored/heard); the same-pair request
-    // within the window belongs to another attempt and must survive.
+    // The named request was never heard; the in-window same-pair request is another attempt.
     const otherReq = requestRow({ id: 111, timestamp: 1000 });
     const rep = replyRow({ timestamp: 1010, packet_id: 999999 });
     expect(dedupeExchanges([otherReq, rep])).toEqual([otherReq, rep]);

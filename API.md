@@ -15,7 +15,7 @@ directly for integrations. Responses are JSON unless noted.
 | GET | `/v1/nodes/{id}/telemetry` | Telemetry history. |
 | GET | `/v1/nodes/{id}/texts` | Chat messages from this node. |
 | GET | `/v1/nodes/{id}/packets` | Raw MQTT messages for this node, keyset-paginated. Query params: `limit` (1–200, default 50), `start`/`end` (unix-epoch seconds), `before` (cursor). Returns `{"packets": [...], "next_cursor": str \| null}`. |
-| GET | `/v1/nodes/{id}/traceroutes` | Traceroutes involving this node. |
+| GET | `/v1/nodes/{id}/traceroutes` | Traceroutes involving this node: as initiator, target, uplink gateway, or relay hop on either leg. Query params: `limit` (1–10000, default 1000). Returns `{"traceroutes": [...]}`. |
 
 ### Chat / Messages
 
@@ -32,14 +32,14 @@ directly for integrations. Responses are JSON unless noted.
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/v1/telemetry` | All recent telemetry. |
-| GET | `/v1/traceroutes` | All recent traceroutes. |
+| GET | `/v1/traceroutes` | Recent traceroutes, newest first. Query params: `from`/`to` (node id; both = pair in either direction), `range` (`1h`/`24h`/`7d`), `limit` (1–10000, default 1000), `slim` (`1` keeps only the fields the SPA reads, adds `packet_id`/`created_at`/`route_back_ids`), `envelope` (`1` wraps the response as `{"traceroutes": [...], "next_cursor": str \| null}` for keyset pagination — pass `next_cursor` back as `before`). Without `envelope` the response is a bare array and cannot page. Payload semantics: `snr_towards`/`snr_back` are dB ×4 with `-128` = unknown; a row whose `snr_towards` length equals `route` length + 1 is a REPLY packet, whose travel path reads header `to` → route → header `from`. `packet_id` on replies carries the request's packet id. Rows may be upgraded in place for up to 1h after first insert as richer gateway copies arrive (`created_at` never changes). |
 | GET | `/v1/stats` | Mesh totals (counts, top nodes, modem preset, etc.). |
 
 ### Live events (SSE)
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/v1/events` | Server-Sent Events stream of live updates, one multiplexed connection per client. Each frame's `event:` type is `node`, `chat`, `telemetry`, or `coverage`; `: ...` comment frames are keep-alive heartbeats. Served unbuffered through Caddy (`flush_interval -1`); the SPA reaches it as `/api/v1/events`. |
+| GET | `/v1/events` | Server-Sent Events stream of live updates, one multiplexed connection per client. Each frame's `event:` type is `node`, `chat`, `telemetry`, `coverage`, `packet`, or `traceroute`; `: ...` comment frames are keep-alive heartbeats. `packet` mirrors the archived message (keys like `rssi`/`snr` are omitted when unmeasured). `traceroute` mirrors a full `/v1/traceroutes` row (plus `route_back_ids`/`created_at`) and fires once per stored insert/upgrade, not per gateway copy; rows over ~4 KB degrade to a skinny `{from, to, route_ids, id}` frame — refetch on receipt. Served unbuffered through Caddy (`flush_interval -1`); the SPA reaches it as `/api/v1/events`. |
 
 ### Static map / Server
 

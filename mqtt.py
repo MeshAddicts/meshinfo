@@ -133,17 +133,9 @@ class MQTT:
                             logger.debug("Decryption failed: %s", e)
                             continue
 
-                # rx_rssi/rx_snr are proto3 no-presence fields: a 0/0.0 pair
-                # means "no RF measurement" (typical when the gateway uplinks
-                # its own packet), not a perfect reading. rssi==0 dBm is
-                # physically implausible; snr alone can legitimately be 0.0 dB,
-                # so drop snr only when rssi is also zero (snr-only legacy
-                # gateways keep their reading). Omit the keys entirely rather
-                # than storing None: a no-reading COPY then diffs to an empty
-                # dedup extras patch (None would patch every one). When the
-                # no-reading copy is itself the CANONICAL, later real readings
-                # still cost a small set-patch each — inherent, reconstruction
-                # stays lossless.
+                # A 0/0.0 rssi/snr pair means "no RF measurement" (proto3 no-presence);
+                # snr alone can legitimately be 0.0 dB. Omit keys (not None) so a
+                # no-reading copy diffs to an empty dedup extras patch.
                 if mp.rx_rssi != 0:
                     outs['rssi'] = mp.rx_rssi
                 if mp.rx_rssi != 0 or mp.rx_snr != 0.0:
@@ -159,8 +151,7 @@ class MQTT:
                 outs['topic'] = msg.topic.value
                 outs["qos"] = getattr(msg, "qos", None)
                 outs["retain"] = getattr(msg, "retain", None)
-                # Channel index straight from the packet: MessageToJson omits
-                # the zero value, silently hiding the primary channel (0).
+                # MessageToJson omits channel 0 (primary); read it off mp.
                 outs.setdefault('channel', mp.channel)
 
                 # Fallback: extract gateway from topic suffix if gateway_id was empty
@@ -169,13 +160,8 @@ class MQTT:
                     if topic_parts and topic_parts[-1].startswith('!'):
                         outs['sender'] = topic_parts[-1].replace('!', '')
 
-                # hops_away from the protobuf header, read directly off mp:
-                # proto3 zero-omission hides hop_limit==0 (a packet that used
-                # ALL its hops — exactly the rows that used to lose their hop
-                # count) and hop_start==0 from MessageToJson's dict.
-                # hop_start==0 means pre-2.3 firmware that never reported it →
-                # genuinely unknown, leave hops_away absent (stored as NULL).
-                # Clamped at 0: hop_limit > hop_start is a firmware anomaly.
+                # Read off mp: MessageToJson hides hop_limit==0. hop_start==0 =
+                # pre-2.3 firmware, hops unknown → leave absent (NULL).
                 if mp.hop_start > 0:
                     outs["hop_start"] = mp.hop_start
                     outs["hop_limit"] = mp.hop_limit
@@ -264,10 +250,8 @@ class MQTT:
                         out = json.loads(MessageToJson(route_msg, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
                         outs["type"] = "traceroute"
                         outs["payload"] = out
-                        # Reply packets carry the REQUEST's packet id in
-                        # Data.request_id (proto3: 0 = unset, i.e. a request).
-                        # Stored in the packet_id column so request/reply rows
-                        # of one exchange pair exactly instead of by heuristic.
+                        # Replies carry the request's packet id in Data.request_id
+                        # (0 = unset, i.e. this is a request).
                         outs["packet_id"] = mp.decoded.request_id or None
                         logger.debug("Decoded protobuf message: traceroute: %s", outs)
                     except UnicodeDecodeError as e:
@@ -348,13 +332,8 @@ class MQTT:
                 logger.debug("Processed message: %s", outs)
                 await self.handle_log(outs)
 
-        # The JSON decoder is EXCLUSIVE with the protobuf decoder, by design:
-        # the topic namespaces are disjoint (/2/e/ + /2/map/ vs /2/json), but
-        # the PACKETS are not — a gateway with JSON output publishes the same
-        # mesh packet to both, so running both decoders would double-fire
-        # every SSE event and record a duplicate packet_receptions row per
-        # such gateway. With protobuf enabled, /2/json copies are skipped;
-        # enable the JSON decoder alone for meshes that only publish JSON.
+        # Exclusive with protobuf: gateways publish the same packet to both
+        # namespaces; running both decoders double-fires events.
         if (
             self.config['broker']['decoders']['json']['enabled']
             and not self.config['broker']['decoders']['protobuf']['enabled']
@@ -702,15 +681,9 @@ class MQTT:
 
 
     async def _resolve_route_entries(self, route):
-        """Resolve RouteDiscovery hop entries to canonical node ids.
-
-        Known nodes resolve to their stored id. Unknown protobuf ints store
-        the canonical 8-hex form so consumers can group/resolve them once the
-        node is seen (normalize_node_id rejects out-of-uint32 garbage, falling
-        back to the raw echo). Strings stay verbatim — JSON-path entries are
-        longnames, and a hex-looking "cafe" must not be minted into an id;
-        bools are excluded so a hostile `true` can't become node 00000001.
-        """
+        """Resolve RouteDiscovery hop entries to canonical node ids. Unknown ints
+        fall back to 8-hex; strings stay verbatim (never minted into ids); bools
+        are excluded so `true` can't become node 00000001."""
         resolved = []
         for r in route:
             if isinstance(r, str):
@@ -743,8 +716,6 @@ class MQTT:
 
         msg['route'] = route
         msg['route_ids'] = await self._resolve_route_entries(route)
-        # Reply rows accumulate the return path too; resolve it the same way
-        # so the return leg is displayable without re-resolving client-side.
         route_back = payload.get('route_back') if isinstance(payload, dict) else None
         msg['route_back_ids'] = (
             await self._resolve_route_entries(route_back)
@@ -760,13 +731,8 @@ class MQTT:
         # BIGINT column) so clients can upsert it into their cached list
         # instead of refetching. `sender` is normalized the same way the DB
         # write is, so the event matches a later REST fetch of the row.
-        # Gated on the richer-wins upsert outcome so the live feed mirrors
-        # storage: 'inserted' and 'upgraded' broadcast (clients replace their
-        # cached copy with the richer row); 'duplicate' stays silent — that
-        # covers poorer/equal copies AND the ~1-in-2^32 stale id collision,
-        # where a genuinely new packet is dropped like DO NOTHING always did;
-        # None (write skipped or buffered on a DB outage) still broadcasts so
-        # the live view survives the outage.
+        # 'duplicate' stays silent; None (write buffered on DB outage) still
+        # broadcasts so the live view survives the outage.
         if outcome != "duplicate" and self.data.broadcaster.subscriber_count:
             try:
                 # The broker payload is publisher-controlled: forward only the
@@ -798,10 +764,8 @@ class MQTT:
                         "route": msg.get("route", []),
                         "route_ids": msg["route_ids"],
                         "route_back_ids": msg.get("route_back_ids", []),
-                        # write_traceroute surfaces the row's REAL created_at
-                        # (first-heard, which upgrades preserve); the now()
-                        # fallback covers the outage path where the row hasn't
-                        # landed yet and NOW() is what it will get on insert.
+                        # First-heard created_at from write_traceroute; now() covers
+                        # the outage path where the row hasn't landed yet.
                         "created_at": msg.get("created_at") or int(time.time()),
                         "payload": payload,
                     }

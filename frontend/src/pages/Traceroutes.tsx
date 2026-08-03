@@ -119,8 +119,7 @@ export const Traceroutes = () => {
     const legacySel = searchParams.get("sel") ?? "";
     const legacyRange = searchParams.get("range") ?? "";
 
-    // Directed pair keys from old share links (pair:B|A) canonicalize to the
-    // sorted undirected key so they keep resolving after the orientation fix.
+    // Old share links may carry directed pair keys (pair:B|A); canonicalize to the sorted key.
     const selPair = legacySel.startsWith("pair:") ? legacySel.slice(5) : "";
     const selPairParts = selPair.split("|");
     const selPairCanonical =
@@ -241,9 +240,8 @@ export const Traceroutes = () => {
   // URL state
   const range = clampRange(searchParams.get("range"));
   const urlQ = searchParams.get("q") || "";
-  // Canonicalize directed legacy pair keys at READ time — the URL-rewrite
-  // effect above is cosmetic and loses a race against the missing-key reset
-  // below, so the lookup key must already be canonical here.
+  // Canonicalize legacy directed pair keys at read time — the URL-rewrite
+  // effect above races the missing-key reset below.
   const selRawParam = searchParams.get("sel") || DEFAULT_SEL;
   const selectedKey = useMemo(() => {
     if (!selRawParam.startsWith("pair:")) return selRawParam;
@@ -256,9 +254,7 @@ export const Traceroutes = () => {
   // Live polling (simple: on/off)
   const [liveEnabled, setLiveEnabled] = useState(true);
 
-  // Server-side range + explicit limit: the server's silent default cap made
-  // the page aggregate the newest 1000 packets while labeling it "all"; the
-  // cap still exists (pagination is cursor-based, not auto-walked) but is now
+  // The server caps the window (cursor pagination, not auto-walked);
   // surfaced via the truncation notice below.
   const PAGE_LIMIT = 1000;
   const {
@@ -432,8 +428,7 @@ export const Traceroutes = () => {
     return arr;
   }, [filteredEvents]);
 
-  // One traceroute exchange can be captured as two packets (request + reply);
-  // runs/routes/pair stats count exchanges, packet totals stay visible beside.
+  // Stats count exchanges (request+reply packets collapsed); packet totals shown beside.
   const exchangesSorted: TracerouteEvent[] = useMemo(() => {
     return dedupeExchangeEvents(filteredEventsSorted);
   }, [filteredEventsSorted]);
@@ -444,9 +439,7 @@ export const Traceroutes = () => {
   }, [exchangesSorted]);
 
   // ---- Build pair summaries + events-by-pair
-  // Keyed on the undirected canonical pairKey so request/reply captures and
-  // A→B / B→A initiations of one pair share a single entry. Stats count
-  // EXCHANGES; raw packet counts ride along for visibility.
+  // Keyed on the undirected pairKey so A→B and B→A initiations share one entry.
   const { pairItems, eventsByPairKey, listItems } = useMemo(() => {
     const byPair = new Map<
       string,
@@ -615,9 +608,8 @@ export const Traceroutes = () => {
 
   useEffect(() => {
     if (!selectedItem) return;
-    // Don't judge a deep-linked pair against an empty/stale list: before the
-    // data lands, listItems holds only the overview item and the reset would
-    // wipe every share link's selection.
+    // Before data lands listItems holds only the overview item — resetting
+    // then would wipe deep-linked selections.
     if (!traceroutesRaw || !nodes) return;
     if (selectedKey && !listItems.find((it) => it.key === selectedKey)) {
       setParam("sel", DEFAULT_SEL, "replace");
@@ -647,8 +639,7 @@ export const Traceroutes = () => {
 
   const totalEvents = exchangesSorted.length;
   const totalPackets = filteredEventsSorted.length;
-  // A full page means the server window is capped, not exhausted — say so
-  // instead of presenting the truncated window as the complete range.
+  // A full page means the server window is capped, not exhausted.
   const truncated = eventsAll.length >= PAGE_LIMIT;
 
   const totalLabel = `${totalPairs.toLocaleString()} pair${
@@ -706,8 +697,7 @@ export const Traceroutes = () => {
       selection: selectedPairKey ? { pair: selectedPairKey } : { all: true },
       params: Object.fromEntries(searchParams.entries()),
       count: packetsSelected.length,
-      // One row per received packet; from/to/route_ids are travel-oriented,
-      // raw packet headers ride along as header_from/header_to.
+      // from/to/route_ids are travel-oriented; raw headers in header_from/header_to.
       rows: packetsSelected.map((e) => {
 
         const { __idx, ...rest } = e as any;
@@ -725,8 +715,7 @@ export const Traceroutes = () => {
   const doExportCsv = () => {
     if (!nodes) return;
 
-    // from/to/route are travel-oriented (initiator → target); header_from/
-    // header_to are the raw packet header (swapped on reply packets).
+    // from/to/route are travel-oriented; header_from/header_to are the raw packet header.
     const cols = [
       "timestamp",
       "direction",
@@ -783,8 +772,7 @@ export const Traceroutes = () => {
         message_id: e.id ?? "",
         header_from: e.header_from,
         header_to: e.header_to,
-        // The timestamp column falls back to ingest time for clock-less
-        // gateways; this column makes the substitution auditable.
+        // Makes the ingest-time fallback in the timestamp column auditable.
         time_source: e.timestamp_source ?? "",
         created_at: e.created_at ? new Date(safeTsMs(e.created_at)).toISOString() : "",
       };
