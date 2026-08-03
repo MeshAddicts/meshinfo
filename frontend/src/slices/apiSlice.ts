@@ -144,12 +144,15 @@ export const apiSlice = createApi({
         if (params && params.to) sp.set("to", params.to);
         if (params && params.range && params.range !== "all") sp.set("range", params.range);
         if (params && params.limit) sp.set("limit", String(params.limit));
-        // slim=1: server drops the legacy `route` field and unused payload keys,
-        // keeping id/from/to/route_ids/timestamp/snr/rssi + payload.snr_towards
-        // that the map's path analysis reads (ignored by older backends).
+        // slim=1: drops payload.route + legacy `route` (ignored by older backends);
+        // payload.snr_towards must survive — orientTraceroute derives reply orientation from it.
         sp.set("slim", "1");
+        // envelope=1: opt-in {traceroutes, next_cursor} wrap; older backends return the bare array.
+        sp.set("envelope", "1");
         return `traceroutes?${sp.toString()}`;
       },
+      transformResponse: (resp: any): ITraceroutesResponse[] =>
+        Array.isArray(resp) ? resp : (resp?.traceroutes ?? []),
       providesTags: [{ type: "Traceroutes", id: "LIST" }],
     }),
     getNodePackets: builder.query<

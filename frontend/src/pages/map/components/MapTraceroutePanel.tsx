@@ -104,6 +104,8 @@ function MapTraceroutePanelInner({
   const isLatest = selected != null && selected === paths[0];
   // Dossier rows only apply to the path they were computed for
   const legRows = analysis && selected && analysis.sig === selected.hops.join(">") ? analysis.legs : null;
+  // Ungraded dossiers mark every leg "gap" — badge verdicts only when grading ran.
+  const legsGraded = legRows != null && !!analysis?.graded;
 
   const [minimized, setMinimized] = useState(false);
   const sheet = useBottomSheetGesture({
@@ -324,7 +326,19 @@ function MapTraceroutePanelInner({
                 </div>
                 <div className="text-gray-200">
                   {selected.hopCount} {selected.hopCount === 1 ? "hop" : "hops"}
-                  {totalKm != null && totalKm > 0 && <span className="text-gray-500 ml-2">{totalKm.toFixed(1)} km</span>}
+                  {totalKm != null && totalKm > 0 && (
+                    <span
+                      className="text-gray-500 ml-2"
+                      title={
+                        legRows?.some((l) => l.distanceKm == null)
+                          ? "Legs touching unpositioned hops are not included"
+                          : undefined
+                      }
+                    >
+                      {legRows?.some((l) => l.distanceKm == null) ? "≥ " : ""}
+                      {totalKm.toFixed(1)} km
+                    </span>
+                  )}
                   {runsList.length > 1 ? (
                     <span className="text-gray-500 ml-2">
                       {selected.count}/{runsList.length} runs · {Math.round((selected.count / runsList.length) * 100)}%
@@ -355,7 +369,7 @@ function MapTraceroutePanelInner({
                     )}
                   </div>
                 )}
-                {terrain3D && isComputing && !legRows && (
+                {terrain3D && isComputing && !legsGraded && (
                   <div className="mt-1.5 text-[10px] text-cyan-300/80 animate-pulse">
                     Grading route against terrain…
                   </div>
@@ -384,7 +398,7 @@ function MapTraceroutePanelInner({
                             {leg.distanceKm != null && (
                               <span className="text-gray-400">{leg.distanceKm.toFixed(1)} km</span>
                             )}
-                            <VerdictBadge v={leg.verdict} />
+                            {legsGraded && <VerdictBadge v={leg.verdict} />}
                             {leg.verdict === "blocked" && leg.worstObstructionM > 0 && (
                               <span className="text-red-300/90">+{Math.round(leg.worstObstructionM)} m</span>
                             )}
@@ -471,15 +485,15 @@ function MapTraceroutePanelInner({
                           onSelectPath(run.sig);
                         }}
                         onMouseEnter={() => onHighlight?.(toCoords(run.hops))}
-                        title={`${observedAgo(run.timestamp) ?? "age unknown"} · ${run.hopCount} ${run.hopCount === 1 ? "hop" : "hops"}${changed ? " · route changed" : ""}`}
-                        aria-label={`Run ${i + 1} of ${displayRuns.length}, ${run.hopCount} hops${changed ? ", route changed" : ""}`}
+                        title={`${observedAgo(run.timestamp) ?? "age unknown"} · ${run.hopCount} ${run.hopCount === 1 ? "hop" : "hops"}${changed ? " · route changed" : ""}${run.provisional ? " · no reply" : ""}`}
+                        aria-label={`Run ${i + 1} of ${displayRuns.length}, ${run.hopCount} hops${changed ? ", route changed" : ""}${run.provisional ? ", no reply" : ""}`}
                         className={`flex-1 min-w-0.75 rounded-[1px] transition-colors ${
                           isSel
                             ? "bg-cyan-400/90"
                             : changed
                               ? "bg-amber-400/60 hover:bg-amber-300/80"
                               : "bg-white/15 hover:bg-white/35"
-                        }`}
+                        }${run.provisional ? " opacity-50 outline outline-1 outline-dashed outline-white/40 -outline-offset-1" : ""}`}
                       />
                     );
                   })}

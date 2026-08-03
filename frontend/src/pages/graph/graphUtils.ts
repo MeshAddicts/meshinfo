@@ -41,7 +41,11 @@ export type GraphEdge = {
   b: string;
   w: number;
   kind: EdgeKind;
+  /** undefined = no reading (0 dB is a real value). */
   snr?: number;
+  // Evidence flags survive merging so kind filters keep dual-source links.
+  hasNeighbor?: boolean;
+  hasTraceroute?: boolean;
 };
 
 export const ROLE_LABELS: Record<string, string> = {

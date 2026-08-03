@@ -4,7 +4,7 @@ import { Virtuoso } from "react-virtuoso";
 
 import { formatTimestamp } from "../../utils/formatTimestamp";
 import { type TraceroutesListItem } from "./traceroutesTypes";
-import { type NodesById } from "./traceroutesUtils";
+import { hopChipLabel, isHopLinkable, type NodesById } from "./traceroutesUtils";
 
 type GetNode = (id: string) => NodesById[string] | undefined;
 
@@ -51,11 +51,17 @@ function RouteInline({
     <div className="flex items-center gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
       {routeIds.map((id, i) => {
         const n = getNode(id);
-        const label = n?.shortname || "UNK";
+        const label = n?.shortname || hopChipLabel({}, id);
         return (
           <span key={`${id}-${i}`} className="inline-flex items-center gap-2">
             <span className="inline-flex items-center rounded-full border border-gray-300/60 dark:border-gray-700 px-2 py-0.5 text-xs text-gray-700 dark:text-gray-200 bg-white/60 dark:bg-gray-950/40">
-              <NodeLink id={id} label={label} />
+              {isHopLinkable(id) ? (
+                <NodeLink id={id} label={label} />
+              ) : (
+                <span className="text-gray-500 italic" title={id}>
+                  {label}
+                </span>
+              )}
             </span>
             {i < routeIds.length - 1 ? (
               <span className="text-gray-300 dark:text-gray-700">›</span>
@@ -102,7 +108,8 @@ const TracerouteRow = memo(function TracerouteRow({
               </div>
               <div className="text-xs text-gray-500 mt-1">
                 {item.totalPairs.toLocaleString()} pairs •{" "}
-                {item.totalEvents.toLocaleString()} runs •{" "}
+                {item.totalEvents.toLocaleString()} runs (
+                {item.totalPackets.toLocaleString()} pkts) •{" "}
                 {item.uniqueRoutes.toLocaleString()} unique routes
               </div>
             </div>
@@ -142,7 +149,16 @@ const TracerouteRow = memo(function TracerouteRow({
           <div className="min-w-0">
             <div className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
               <NodeLink id={item.from} label={fromLabel} />
-              <span className="mx-2 text-gray-400">→</span>
+              <span
+                className="mx-2 text-gray-400"
+                title={
+                  item.summary.bidirectional
+                    ? "Both nodes have initiated traceroutes"
+                    : "Initiator → target"
+                }
+              >
+                {item.summary.bidirectional ? "⇄" : "→"}
+              </span>
               <NodeLink id={item.to} label={toLabel} />
             </div>
 
@@ -155,6 +171,9 @@ const TracerouteRow = memo(function TracerouteRow({
               Runs:{" "}
               <span className="text-gray-700 dark:text-gray-200">
                 {item.summary.count.toLocaleString()}
+                {item.summary.packetCount > item.summary.count
+                  ? ` (${item.summary.packetCount.toLocaleString()} pkts)`
+                  : ""}
               </span>
               {" • "}
               Unique routes:{" "}
@@ -168,6 +187,13 @@ const TracerouteRow = memo(function TracerouteRow({
                 <>
                   <div className="text-[11px] text-gray-500 mb-1">
                     Most common route ({item.summary.topRouteCount.toLocaleString()}×)
+                    {item.summary.bidirectional ? (
+                      <span className="ml-1 text-gray-400">
+                        {getNode(item.summary.topRouteFrom)?.shortname || "UNK"}
+                        {" → "}
+                        {getNode(item.summary.topRouteTo)?.shortname || "UNK"}
+                      </span>
+                    ) : null}
                   </div>
                   <RouteInline getNode={getNode} routeIds={item.summary.topRouteIds} />
                 </>
@@ -182,7 +208,7 @@ const TracerouteRow = memo(function TracerouteRow({
               Pair
             </div>
             <div className="text-[11px] text-gray-400 tabular-nums mt-1">
-              {item.from} → {item.to}
+              {item.from} {item.summary.bidirectional ? "⇄" : "→"} {item.to}
             </div>
           </div>
         </div>

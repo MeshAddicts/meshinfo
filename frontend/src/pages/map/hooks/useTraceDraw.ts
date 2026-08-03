@@ -75,6 +75,38 @@ export function useTraceDraw({
     const features: GeoJSON.Feature[] = [];
     clearGhostMarkers();
 
+    // Ghost marker: shortname chip over a dashed '?' ring, so you can tell
+    // WHICH node's placement is estimated, not just that one is.
+    const addGhostMarker = (hopId: string, lngLat: [number, number], offset: [number, number]) => {
+      const ghostNode = nodesRef.current[hopId] ?? nodesRef.current[`!${hopId}`];
+      const label =
+        ghostNode?.shortname?.trim() ||
+        (hopId.startsWith("?") ? hopId.slice(1, 11) : hopId.slice(0, 8));
+      const el = document.createElement("div");
+      el.setAttribute("aria-hidden", "true");
+      el.title = `${label} — position unknown, placement estimated`;
+      el.style.cssText =
+        "display:flex;flex-direction:column;align-items:center;gap:2px;pointer-events:auto;";
+      const chip = document.createElement("div");
+      chip.textContent = label;
+      // max-width + ellipsis: stacked chips sit on a fixed pitch; a long label would overlap neighbors.
+      chip.style.cssText =
+        "padding:1px 6px;border-radius:9999px;background:rgba(17,24,39,0.88);" +
+        "border:1px dashed rgba(156,163,175,0.6);color:#d1d5db;font-size:10px;" +
+        "font-weight:600;white-space:nowrap;max-width:52px;overflow:hidden;" +
+        "text-overflow:ellipsis;";
+      const ring = document.createElement("div");
+      ring.textContent = "?";
+      ring.style.cssText =
+        "width:18px;height:18px;border-radius:50%;border:2px dashed #9ca3af;" +
+        "background:rgba(17,24,39,0.85);color:#d1d5db;font-size:11px;" +
+        "line-height:14px;text-align:center;font-weight:600;";
+      el.append(chip, ring);
+      traceGhostMarkersRef.current.push(
+        new maplibregl.Marker({ element: el, offset }).setLngLat(lngLat).addTo(mb),
+      );
+    };
+
     // Selected path: one feature per drawn segment so legs spanning ghost hops
     // render dashed, with '?' markers spread across each gap run.
     if (primary) {
@@ -90,47 +122,46 @@ export function useTraceDraw({
         const bLng = unwrapLngTo(aLng, B.pos[0]);
         prevLng = bLng;
         const isGap = B.i - A.i > 1;
+        // A request-only path's unobserved leg draws dashed/faded.
+        // This segment spans hop-legs A.i..B.i-1.
+        const provisionalLeg =
+          primary.provisionalLegIndex != null &&
+          A.i <= primary.provisionalLegIndex &&
+          primary.provisionalLegIndex < B.i;
         features.push({
           type: "Feature",
-          properties: { primary: true, gap: isGap, sort: 1000, opacity: 0.95, width: 4 },
+          properties: {
+            primary: true,
+            gap: isGap || provisionalLeg,
+            sort: 1000,
+            opacity: provisionalLeg ? 0.5 : 0.95,
+            width: provisionalLeg ? 3 : 4,
+          },
           geometry: { type: "LineString", coordinates: [[aLng, A.pos[1]], [bLng, B.pos[1]]] },
         });
         if (isGap) {
-          // Ghost markers evenly spread along the estimated connector:
-          // shortname chip over a dashed '?' ring, so you can tell WHICH
-          // node's placement is estimated, not just that one is.
+          // Ghost markers evenly spread along the estimated connector.
           for (let g = A.i + 1; g < B.i; g++) {
             const t = (g - A.i) / (B.i - A.i);
             const lng = normalizeLng(aLng + (bLng - aLng) * t);
             const lat = A.pos[1] + (B.pos[1] - A.pos[1]) * t;
-            const hopId = primary.hops[g];
-            const ghostNode = nodesRef.current[hopId] ?? nodesRef.current[`!${hopId}`];
-            const label =
-              ghostNode?.shortname?.trim() ||
-              (hopId.startsWith("?") ? hopId.slice(1, 11) : hopId.slice(0, 8));
-            const el = document.createElement("div");
-            el.setAttribute("aria-hidden", "true");
-            el.title = `${label} — position unknown, placement estimated`;
-            el.style.cssText =
-              "display:flex;flex-direction:column;align-items:center;gap:2px;pointer-events:auto;";
-            const chip = document.createElement("div");
-            chip.textContent = label;
-            chip.style.cssText =
-              "padding:1px 6px;border-radius:9999px;background:rgba(17,24,39,0.88);" +
-              "border:1px dashed rgba(156,163,175,0.6);color:#d1d5db;font-size:10px;" +
-              "font-weight:600;white-space:nowrap;";
-            const ring = document.createElement("div");
-            ring.textContent = "?";
-            ring.style.cssText =
-              "width:18px;height:18px;border-radius:50%;border:2px dashed #9ca3af;" +
-              "background:rgba(17,24,39,0.85);color:#d1d5db;font-size:11px;" +
-              "line-height:14px;text-align:center;font-weight:600;";
-            el.append(chip, ring);
-            traceGhostMarkersRef.current.push(
-              // Offset keeps the '?' ring (not the stack's center) on the point
-              new maplibregl.Marker({ element: el, offset: [0, -10] }).setLngLat([lng, lat]).addTo(mb),
-            );
+            // Offset keeps the '?' ring (not the stack's center) on the point
+            addGhostMarker(primary.hops[g], [lng, lat], [0, -10]);
           }
+        }
+      }
+
+      // Hops outside the positioned span have no gap run to interpolate into;
+      // stack their chips beside the nearest positioned hop.
+      if (positioned.length > 0) {
+        // Far-to-near add order: the hop nearest the anchor paints on top of an overlap.
+        const first = positioned[0];
+        for (let g = 0; g < first.i; g++) {
+          addGhostMarker(primary.hops[g], first.pos, [-(first.i - g) * 60, -10]);
+        }
+        const last = positioned[positioned.length - 1];
+        for (let g = primary.hops.length - 1; g > last.i; g--) {
+          addGhostMarker(primary.hops[g], last.pos, [(g - last.i) * 60, -10]);
         }
       }
     }
@@ -143,54 +174,74 @@ export function useTraceDraw({
       .filter((p) => p.hops.join(">") !== primarySig)
       .slice(0, 5)
       .forEach((p, rank) => {
-        const coords: [number, number][] = [];
+        // Split the strand at unpositioned hops — splicing across a gap would
+        // draw an RF link that was never observed.
+        const runs: [number, number][][] = [];
+        let cur: [number, number][] = [];
         for (const hop of p.hops) {
           const pos = posOf(hop);
-          if (!pos) continue; // hop with unknown position — skip (honest gap)
-          const prev = coords[coords.length - 1];
+          if (!pos) {
+            if (cur.length >= 2) runs.push(cur);
+            cur = [];
+            continue;
+          }
+          const prev = cur[cur.length - 1];
           // Chain-unwrap so seam-crossing legs draw the short way
-          coords.push(prev ? [unwrapLngTo(prev[0], pos[0]), pos[1]] : pos);
+          cur.push(prev ? [unwrapLngTo(prev[0], pos[0]), pos[1]] : pos);
         }
-        if (coords.length < 2) return;
-        features.push({
-          type: "Feature",
-          properties: {
-            primary: false,
-            gap: false,
-            sort: -rank,
-            opacity: Math.min(0.55, 0.55 * recencyOpacityFromAgeMs(now - tsToMs(p.timestamp))),
-            // Capped below the primary's 4 so a dominant alternate can't outweigh it
-            width: Math.min(3.4, 1.4 + 3.2 * Math.min(1, p.count / totalCount)),
-          },
-          geometry: { type: "LineString", coordinates: coords },
-        });
+        if (cur.length >= 2) runs.push(cur);
+        for (const coords of runs) {
+          features.push({
+            type: "Feature",
+            properties: {
+              primary: false,
+              gap: false,
+              sort: -rank,
+              opacity: Math.min(0.55, 0.55 * recencyOpacityFromAgeMs(now - tsToMs(p.timestamp))),
+              // Capped below the primary's 4 so a dominant alternate can't outweigh it
+              width: Math.min(3.4, 1.4 + 3.2 * Math.min(1, p.count / totalCount)),
+            },
+            geometry: { type: "LineString", coordinates: coords },
+          });
+        }
       });
     src.setData({ type: "FeatureCollection", features });
 
+    // Endpoint markers are placed independently: one unknown endpoint must not hide the other.
     const fromPos = posOf(toolFromId);
     const toPos = posOf(toolToId);
-    if (!fromPos || !toPos) {
-      clearTraceMarkers();
-      return;
+    if (fromPos) {
+      if (traceFromMarkerRef.current) traceFromMarkerRef.current.setLngLat(fromPos);
+      else traceFromMarkerRef.current = new maplibregl.Marker({ color: "#06b6d4", scale: 0.75 }).setLngLat(fromPos).addTo(mb);
+    } else {
+      traceFromMarkerRef.current?.remove();
+      traceFromMarkerRef.current = null;
     }
-    if (traceFromMarkerRef.current) traceFromMarkerRef.current.setLngLat(fromPos);
-    else traceFromMarkerRef.current = new maplibregl.Marker({ color: "#06b6d4", scale: 0.75 }).setLngLat(fromPos).addTo(mb);
-    if (traceToMarkerRef.current) traceToMarkerRef.current.setLngLat(toPos);
-    else traceToMarkerRef.current = new maplibregl.Marker({ color: "#d946ef", scale: 0.75 }).setLngLat(toPos).addTo(mb);
+    if (toPos) {
+      if (traceToMarkerRef.current) traceToMarkerRef.current.setLngLat(toPos);
+      else traceToMarkerRef.current = new maplibregl.Marker({ color: "#d946ef", scale: 0.75 }).setLngLat(toPos).addTo(mb);
+    } else {
+      traceToMarkerRef.current?.remove();
+      traceToMarkerRef.current = null;
+    }
 
     // Fit once per pair, not on every data refresh — but not before the
     // pair-scoped history lands, or the fit would exclude the actual routes.
     const fitKey = `${toolFromId}-${toolToId}`;
     if (!pairTraceroutesLoading && traceFitKeyRef.current !== fitKey) {
-      traceFitKeyRef.current = fitKey;
       const bounds = new maplibregl.LngLatBounds();
-      bounds.extend(fromPos);
+      if (fromPos) bounds.extend(fromPos);
       // Unwrap so an antimeridian-crossing pair frames the short way
-      bounds.extend([unwrapLngTo(fromPos[0], toPos[0]), toPos[1]]);
+      if (toPos) bounds.extend(fromPos ? [unwrapLngTo(fromPos[0], toPos[0]), toPos[1]] : toPos);
       for (const f of features) {
         for (const c of (f.geometry as GeoJSON.LineString).coordinates) bounds.extend(c as [number, number]);
       }
-      mb.fitBounds(bounds, { padding: 120, duration: 600, maxZoom: 12 });
+      if (!bounds.isEmpty()) {
+        // Consume the one-shot key only on a real fit: an empty first pass
+        // (positions still loading on a cold deep link) must keep retrying.
+        traceFitKeyRef.current = fitKey;
+        mb.fitBounds(bounds, { padding: 120, duration: 600, maxZoom: 12 });
+      }
     }
     // styleEpoch: setStyle recreates the path-analysis source empty — redraw after style.load
   }, [activeTool, toolStep, toolFromId, toolToId, tracePaths, traceSelectedPath, pairTraceroutesLoading, styleEpoch, mbMapRef, nodesRef]);

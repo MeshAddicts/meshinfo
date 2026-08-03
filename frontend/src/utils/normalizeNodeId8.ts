@@ -1,14 +1,18 @@
-/** Normalize a node ID (int or hex string) to lowercase hex. */
+/** Normalize a node ID (int or hex string) to lowercase hex. Numeric ids and >8-digit
+ *  decimal strings zero-pad to 8 chars (matches backend keys); ≤8-char all-digit strings
+ *  are hex verbatim; non-hex strings (longnames) pass through lowercased, unpadded. */
 export function normNodeId(raw: unknown): string {
   if (raw == null) return "";
   if (typeof raw === "number") {
     if (!Number.isFinite(raw) || raw <= 0) return "";
-    return (raw >>> 0).toString(16).toLowerCase();
+    return (raw >>> 0).toString(16).toLowerCase().padStart(8, "0");
   }
   let s = String(raw).trim();
-  if (/^\d+$/.test(s) && s.length > 6) {
+  if (/^\d+$/.test(s) && s.length > 8) {
     const n = parseInt(s, 10);
-    if (Number.isFinite(n) && n > 0) return (n >>> 0).toString(16).toLowerCase();
+    if (Number.isFinite(n) && n > 0) {
+      return (n >>> 0).toString(16).toLowerCase().padStart(8, "0");
+    }
   }
   if (s.startsWith("!")) s = s.slice(1);
   if (s.startsWith("0x") || s.startsWith("0X")) s = s.slice(2);

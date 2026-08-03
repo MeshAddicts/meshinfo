@@ -4,12 +4,16 @@ prevent a malformed packet from crashing the handler and killing the MQTT
 loop (which would drop other in-flight messages including corrective NODEINFOs).
 """
 
+import json
+
+from meshtastic import mesh_pb2, portnums_pb2
+
 from mqtt import MQTT, normalize_node_id  # noqa: F401  (re-exported via from utils)
 
-from _helpers import FakeDataStore, run
+from _helpers import FakeDataStore, FakeMqttMessage, build_envelope, run
 
 
-def make_mqtt(nodes=None):
+def make_mqtt(nodes=None, json_decoder=False, protobuf_decoder=True):
     """Build an MQTT instance wired up with fakes — no broker, no DB."""
     config = {
         "broker": {
@@ -18,6 +22,12 @@ def make_mqtt(nodes=None):
             "client_id": "test",
             "username": "",
             "password": "",
+            # channels.encryption is only read in the encrypted branch,
+            # which these tests never enter — deliberately absent.
+            "decoders": {
+                "protobuf": {"enabled": protobuf_decoder},
+                "json": {"enabled": json_decoder},
+            },
         },
         "server": {
             "timezone": "UTC",
@@ -418,6 +428,9 @@ class TestHandleTraceroute:
             "payload": payload,
         }))
         _, event = q.get_nowait()
+        # created_at is the handler's now() approximation of the DB default
+        created_at = event.pop("created_at")
+        assert isinstance(created_at, int) and created_at > 1753500000
         assert event == {
             "from": "67ea9400",
             "to": "abcd1234",
@@ -432,6 +445,7 @@ class TestHandleTraceroute:
             "timestamp": 1753500000,
             "route": [0x67EA9400],
             "route_ids": ["67ea9400"],
+            "route_back_ids": [],
             "payload": payload,
         }
 
@@ -457,6 +471,253 @@ class TestHandleTraceroute:
         mqtt, data = make_mqtt()
         run(mqtt.handle_traceroute({"payload": {"route": [1, 2]}}))
         assert data.pg_storage.traceroute_writes == []
+
+    def test_unknown_int_hop_stored_as_canonical_hex(self):
+        """Raw ints never re-resolve and fragment route grouping."""
+        mqtt, data = make_mqtt(nodes={
+            "67ea9400": {"id": "67ea9400", "longname": "A"},
+        })
+        run(mqtt.handle_traceroute({
+            "from": 0x67EA9400,
+            "payload": {"route": [0x67EA9400, 0xDEADBEEF, 0x0165EC15]},
+        }))
+        _, written = data.pg_storage.traceroute_writes[0]
+        # Known node resolves; unknown ints become padded 8-hex
+        assert written["route_ids"] == ["67ea9400", "deadbeef", "0165ec15"]
+
+    def test_out_of_uint32_int_hop_kept_raw(self):
+        mqtt, data = make_mqtt()
+        run(mqtt.handle_traceroute({
+            "from": 0x67EA9400,
+            "payload": {"route": [2**40]},
+        }))
+        _, written = data.pg_storage.traceroute_writes[0]
+        assert written["route_ids"] == [2**40]
+
+    def test_route_back_resolved_like_forward_route(self):
+        mqtt, data = make_mqtt(nodes={
+            "67ea9400": {"id": "67ea9400", "longname": "A"},
+        })
+        run(mqtt.handle_traceroute({
+            "from": 0x67EA9400,
+            "to": 0xABCD1234,
+            "id": 900,
+            "payload": {
+                "route": [0x67EA9400],
+                "snr_towards": [4, 8],
+                "route_back": [0xDEADBEEF, 0x67EA9400],
+                "snr_back": [3, 5],
+            },
+        }))
+        _, written = data.pg_storage.traceroute_writes[0]
+        # Known node resolves, unknown int becomes canonical hex
+        assert written["route_back_ids"] == ["deadbeef", "67ea9400"]
+
+    def test_bool_hop_not_minted_into_node_id(self):
+        """bool subclasses int: `true` must echo verbatim, never become node 00000001."""
+        mqtt, data = make_mqtt()
+        run(mqtt.handle_traceroute({
+            "from": 0x67EA9400,
+            "payload": {"route": [True]},
+        }))
+        _, written = data.pg_storage.traceroute_writes[0]
+        assert written["route_ids"] == [True]
+
+    def test_sse_event_carries_hex_fallback(self):
+        mqtt, data = make_mqtt()
+        q = data.broadcaster.subscribe()
+        run(mqtt.handle_traceroute({
+            "from": 0x67EA9400,
+            "to": 0xABCD1234,
+            "payload": {"route": [0xDEADBEEF]},
+        }))
+        _, event = q.get_nowait()
+        assert event["route_ids"] == ["deadbeef"]
+
+    def test_duplicate_copy_broadcasts_no_second_event(self):
+        """A poorer/equal gateway copy stays silent — live feed mirrors storage."""
+        mqtt, data = make_mqtt()
+        q = data.broadcaster.subscribe()
+        msg = {
+            "from": 0x67EA9400,
+            "to": 0xABCD1234,
+            "id": 555,
+            "payload": {"route": [1], "snr_towards": [4]},
+        }
+        run(mqtt.handle_traceroute(dict(msg)))
+        run(mqtt.handle_traceroute(dict(msg)))  # identical second copy
+        assert q.qsize() == 1
+        assert len(data.pg_storage.traceroute_writes) == 1
+
+    def test_richer_copy_broadcasts_upgraded_event(self):
+        mqtt, data = make_mqtt()
+        q = data.broadcaster.subscribe()
+        run(mqtt.handle_traceroute({
+            "from": 0x67EA9400,
+            "to": 0xABCD1234,
+            "id": 556,
+            "payload": {"route": [1, 2], "snr_towards": [4, 8, 12], "route_back": []},
+        }))
+        run(mqtt.handle_traceroute({
+            "from": 0x67EA9400,
+            "to": 0xABCD1234,
+            "id": 556,
+            "payload": {
+                "route": [1, 2],
+                "snr_towards": [4, 8, 12],
+                "route_back": [3, 4],
+                "snr_back": [9, 10],
+            },
+        }))
+        assert q.qsize() == 2
+        q.get_nowait()
+        _, upgraded = q.get_nowait()
+        assert upgraded["payload"]["route_back"] == [3, 4]
+        _, written = data.pg_storage.traceroute_writes[0]
+        assert written["payload"]["route_back"] == [3, 4]
+
+    def test_outage_none_outcome_still_broadcasts(self):
+        """DB down (outcome None): the live feed must not go dark."""
+        mqtt, data = make_mqtt()
+
+        async def down(node_id, msg):
+            return None
+
+        data.pg_storage.write_traceroute = down
+        q = data.broadcaster.subscribe()
+        run(mqtt.handle_traceroute({
+            "from": 0x67EA9400,
+            "to": 0xABCD1234,
+            "id": 557,
+            "payload": {"route": [1]},
+        }))
+        assert q.qsize() == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# process_mqtt_msg — envelope decode; pins the proto3 zero-omission fixes
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestProcessEnvelope:
+    def _archived(self, msg, nodes=None):
+        mqtt, data = make_mqtt(nodes=nodes)
+        run(mqtt.process_mqtt_msg(None, msg))
+        assert len(data.pg_storage.mqtt_writes) == 1
+        return data.pg_storage.mqtt_writes[0], data
+
+    def test_exhausted_hops_get_real_hops_away(self):
+        """hop_limit==0 (all hops used) vanishes from MessageToJson; hops_away must still compute."""
+        archived, _ = self._archived(build_envelope(hop_start=3, hop_limit=0))
+        assert archived["hops_away"] == 3
+        assert archived["hop_start"] == 3
+        assert archived["hop_limit"] == 0
+
+    def test_pre23_firmware_leaves_hops_away_unknown(self):
+        # hop_start==0: firmware that never reports it — unknown, not 0
+        archived, _ = self._archived(build_envelope(hop_start=0, hop_limit=3))
+        assert "hops_away" not in archived
+
+    def test_hops_away_clamped_at_zero(self):
+        # hop_limit > hop_start is a firmware anomaly; store 0, not negative
+        archived, _ = self._archived(build_envelope(hop_start=2, hop_limit=5))
+        assert archived["hops_away"] == 0
+
+    def test_self_gateway_zero_pair_omits_rssi_and_snr(self):
+        archived, _ = self._archived(build_envelope(rx_rssi=0, rx_snr=0.0))
+        assert "rssi" not in archived
+        assert "snr" not in archived
+
+    def test_real_reception_kept_verbatim(self):
+        archived, _ = self._archived(build_envelope(rx_rssi=-95, rx_snr=-7.25))
+        assert archived["rssi"] == -95
+        assert archived["snr"] == -7.25
+
+    def test_snr_only_legacy_gateway_keeps_snr(self):
+        archived, _ = self._archived(build_envelope(rx_rssi=0, rx_snr=5.5))
+        assert "rssi" not in archived
+        assert archived["snr"] == 5.5
+
+    def test_primary_channel_zero_archived(self):
+        archived, _ = self._archived(build_envelope(channel=0))
+        assert archived["channel"] == 0
+
+    def test_nonzero_channel_unchanged(self):
+        archived, _ = self._archived(build_envelope(channel=2))
+        assert archived["channel"] == 2
+
+    def test_zero_hop_traceroute_not_dropped(self):
+        """Empty route (direct neighbor) still reaches write_traceroute;
+        the decode yields route=[], not absent."""
+        rd = mesh_pb2.RouteDiscovery(route=[], snr_towards=[-128])
+        msg = build_envelope(
+            portnum=portnums_pb2.TRACEROUTE_APP,
+            payload=rd.SerializeToString(),
+        )
+        mqtt, data = make_mqtt()
+        run(mqtt.process_mqtt_msg(None, msg))
+        assert len(data.pg_storage.traceroute_writes) == 1
+        _, written = data.pg_storage.traceroute_writes[0]
+        assert written["payload"]["route"] == []
+        assert written["payload"]["snr_towards"] == [-128]
+
+    def test_traceroute_reply_request_id_captured_as_packet_id(self):
+        rd = mesh_pb2.RouteDiscovery(route=[], snr_towards=[8])
+        msg = build_envelope(
+            portnum=portnums_pb2.TRACEROUTE_APP,
+            payload=rd.SerializeToString(),
+            request_id=424242,
+        )
+        mqtt, data = make_mqtt()
+        run(mqtt.process_mqtt_msg(None, msg))
+        _, written = data.pg_storage.traceroute_writes[0]
+        assert written["packet_id"] == 424242
+
+    def test_traceroute_request_has_null_packet_id(self):
+        rd = mesh_pb2.RouteDiscovery(route=[], snr_towards=[])
+        msg = build_envelope(
+            portnum=portnums_pb2.TRACEROUTE_APP,
+            payload=rd.SerializeToString(),
+            request_id=0,  # proto3 unset — a request packet
+        )
+        mqtt, data = make_mqtt()
+        run(mqtt.process_mqtt_msg(None, msg))
+        _, written = data.pg_storage.traceroute_writes[0]
+        assert written["packet_id"] is None
+
+    def test_json_decoder_processes_when_protobuf_disabled(self):
+        mqtt, data = make_mqtt(json_decoder=True, protobuf_decoder=False)
+        payload = json.dumps({"type": "text", "from": 123}).encode("utf-8")
+        msg = FakeMqttMessage("msh/US/2/json/LongFast/!abcd1234", payload)
+        run(mqtt.process_mqtt_msg(None, msg))
+        assert len(data.pg_storage.mqtt_writes) == 1
+        assert data.pg_storage.mqtt_writes[0]["topic"] == "msh/US/2/json/LongFast/!abcd1234"
+
+    def test_json_decoder_exclusive_with_protobuf(self):
+        """Both enabled: /2/json copies are skipped — gateways publish the
+        same packet to both namespaces."""
+        mqtt, data = make_mqtt(json_decoder=True, protobuf_decoder=True)
+        payload = json.dumps({"type": "text", "from": 123}).encode("utf-8")
+        msg = FakeMqttMessage("msh/US/2/json/LongFast/!abcd1234", payload)
+        run(mqtt.process_mqtt_msg(None, msg))
+        assert data.pg_storage.mqtt_writes == []
+
+    def test_packet_sse_event_omits_unmeasured_keys(self):
+        """A zero rssi/snr pair arrives absent (not null) on the live 'packet' event."""
+        mqtt, data = make_mqtt()
+        q = data.broadcaster.subscribe()
+        run(mqtt.process_mqtt_msg(
+            None, build_envelope(rx_rssi=0, rx_snr=0.0, hop_start=3, hop_limit=0)
+        ))
+        # A text envelope also emits a 'chat' event; find the 'packet' one.
+        events = {}
+        while not q.empty():
+            event_type, event = q.get_nowait()
+            events[event_type] = event
+        packet = events["packet"]
+        assert "rssi" not in packet
+        assert "snr" not in packet
+        assert packet["hops_away"] == 3
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -133,8 +133,13 @@ class MQTT:
                             logger.debug("Decryption failed: %s", e)
                             continue
 
-                outs['rssi'] = mp.rx_rssi
-                outs['snr'] = mp.rx_snr
+                # A 0/0.0 rssi/snr pair means "no RF measurement" (proto3 no-presence);
+                # snr alone can legitimately be 0.0 dB. Omit keys (not None) so a
+                # no-reading copy diffs to an empty dedup extras patch.
+                if mp.rx_rssi != 0:
+                    outs['rssi'] = mp.rx_rssi
+                if mp.rx_rssi != 0 or mp.rx_snr != 0.0:
+                    outs['snr'] = mp.rx_snr
                 # Clamp rx_time to current time if node clock is ahead
                 rx_time = mp.rx_time
                 now_epoch = int(time.time())
@@ -146,6 +151,8 @@ class MQTT:
                 outs['topic'] = msg.topic.value
                 outs["qos"] = getattr(msg, "qos", None)
                 outs["retain"] = getattr(msg, "retain", None)
+                # MessageToJson omits channel 0 (primary); read it off mp.
+                outs.setdefault('channel', mp.channel)
 
                 # Fallback: extract gateway from topic suffix if gateway_id was empty
                 if not outs.get('sender'):
@@ -153,14 +160,12 @@ class MQTT:
                     if topic_parts and topic_parts[-1].startswith('!'):
                         outs['sender'] = topic_parts[-1].replace('!', '')
 
-                # Calculate hops_away from hop_start and hop_limit
-                hop_start = outs.get("hop_start")
-                hop_limit = outs.get("hop_limit")
-                if hop_start is not None and hop_limit is not None:
-                    try:
-                        outs["hops_away"] = int(hop_start) - int(hop_limit)
-                    except (ValueError, TypeError):
-                        pass
+                # Read off mp: MessageToJson hides hop_limit==0. hop_start==0 =
+                # pre-2.3 firmware, hops unknown → leave absent (NULL).
+                if mp.hop_start > 0:
+                    outs["hop_start"] = mp.hop_start
+                    outs["hop_limit"] = mp.hop_limit
+                    outs["hops_away"] = max(mp.hop_start - mp.hop_limit, 0)
 
                 if mp.decoded.portnum == portnums_pb2.TEXT_MESSAGE_APP:
                     payload_bytes = bytes(mp.decoded.payload)
@@ -245,6 +250,9 @@ class MQTT:
                         out = json.loads(MessageToJson(route_msg, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
                         outs["type"] = "traceroute"
                         outs["payload"] = out
+                        # Replies carry the request's packet id in Data.request_id
+                        # (0 = unset, i.e. this is a request).
+                        outs["packet_id"] = mp.decoded.request_id or None
                         logger.debug("Decoded protobuf message: traceroute: %s", outs)
                     except UnicodeDecodeError as e:
                         logger.debug("Unicode decoding error: text: %s", e)
@@ -324,7 +332,12 @@ class MQTT:
                 logger.debug("Processed message: %s", outs)
                 await self.handle_log(outs)
 
-        elif self.config['broker']['decoders']['json']['enabled']:
+        # Exclusive with protobuf: gateways publish the same packet to both
+        # namespaces; running both decoders double-fires events.
+        if (
+            self.config['broker']['decoders']['json']['enabled']
+            and not self.config['broker']['decoders']['protobuf']['enabled']
+        ):
             if '/2/json' in msg.topic.value:
                 logger.debug("Received a JSON message: %s %s", msg.topic, msg.payload)
                 try:
@@ -667,6 +680,29 @@ class MQTT:
             self._record_discord_drop('text')
 
 
+    async def _resolve_route_entries(self, route):
+        """Resolve RouteDiscovery hop entries to canonical node ids. Unknown ints
+        fall back to 8-hex; strings stay verbatim (never minted into ids); bools
+        are excluded so `true` can't become node 00000001."""
+        resolved = []
+        for r in route:
+            if isinstance(r, str):
+                # JSON publisher path: route entries arrive as longnames.
+                node = await self.data.pg_storage.find_node_by_longname(r)
+            elif isinstance(r, int) and not isinstance(r, bool):
+                # Protobuf path: route entries are uint32 node ids.
+                node = await self.data.pg_storage.get_node_cached(utils.convert_node_id_from_int_to_hex(r))
+            else:
+                node = None
+
+            if node:
+                resolved.append(node['id'])
+            elif isinstance(r, int) and not isinstance(r, bool):
+                resolved.append(normalize_node_id(r) or r)
+            else:
+                resolved.append(r)
+        return resolved
+
     async def handle_traceroute(self, msg):
         id = self._normalize_msg_addrs(msg)
         if id is None:
@@ -679,23 +715,15 @@ class MQTT:
             return
 
         msg['route'] = route
-        msg['route_ids'] = []
-        for r in route:
-            if isinstance(r, str):
-                # JSON publisher path: route entries arrive as longnames.
-                node = await self.data.pg_storage.find_node_by_longname(r)
-            elif isinstance(r, int):
-                # Protobuf path: route entries are uint32 node ids.
-                node = await self.data.pg_storage.get_node_cached(utils.convert_node_id_from_int_to_hex(r))
-            else:
-                node = None
+        msg['route_ids'] = await self._resolve_route_entries(route)
+        route_back = payload.get('route_back') if isinstance(payload, dict) else None
+        msg['route_back_ids'] = (
+            await self._resolve_route_entries(route_back)
+            if isinstance(route_back, list)
+            else []
+        )
 
-            if node:
-                msg['route_ids'].append(node['id'])
-            else:
-                msg['route_ids'].append(r)
-
-        await self.data.pg_storage.write_traceroute(id, msg)
+        outcome = await self.data.pg_storage.write_traceroute(id, msg)
 
         # Live push: resolved multi-hop path for the map's traceroute tracer.
         # The event mirrors a full non-slim /v1/traceroutes row (same field
@@ -703,7 +731,9 @@ class MQTT:
         # BIGINT column) so clients can upsert it into their cached list
         # instead of refetching. `sender` is normalized the same way the DB
         # write is, so the event matches a later REST fetch of the row.
-        if self.data.broadcaster.subscriber_count:
+        # 'duplicate' stays silent; None (write buffered on DB outage) still
+        # broadcasts so the live view survives the outage.
+        if outcome != "duplicate" and self.data.broadcaster.subscriber_count:
             try:
                 # The broker payload is publisher-controlled: forward only the
                 # keys the REST row actually mirrors, never the dict verbatim,
@@ -733,6 +763,10 @@ class MQTT:
                         "timestamp": msg.get("timestamp"),
                         "route": msg.get("route", []),
                         "route_ids": msg["route_ids"],
+                        "route_back_ids": msg.get("route_back_ids", []),
+                        # First-heard created_at from write_traceroute; now() covers
+                        # the outage path where the row hasn't landed yet.
+                        "created_at": msg.get("created_at") or int(time.time()),
                         "payload": payload,
                     }
                 )

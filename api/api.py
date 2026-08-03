@@ -239,7 +239,13 @@ class API:
         @app.get("/v1/nodes/{id}/traceroutes")
         async def node_traceroutes(request: Request, id: str) -> JSONResponse:
             node_id = self._coerce_node_id(id)
-            traceroutes = await self.data.pg_storage.query_node_traceroutes(node_id)
+            try:
+                limit = int(request.query_params.get("limit", 1000))
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "limit must be an integer"}, status_code=400)
+            traceroutes = await self.data.pg_storage.query_node_traceroutes(
+                node_id, limit=max(1, min(limit, 10000))
+            )
             return JSONResponse(jsonable_encoder({ "traceroutes": traceroutes }))
 
         @app.get("/v1/chat")
@@ -276,16 +282,21 @@ class API:
                 limit = int(request.query_params.get("limit", 1000))
             except (TypeError, ValueError):
                 return JSONResponse({"error": "limit must be an integer"}, status_code=400)
-            # ?slim=1 keeps only the row fields the SPA reads and drops the
-            # rest (legacy `route`, duplicate payload arrays). Default stays
+            # ?slim=1 keeps only the row fields the SPA reads; default stays
             # byte-identical for third-party consumers.
             slim = request.query_params.get("slim", "").lower() in ("1", "true", "yes")
+            # Pagination opt-in via ?envelope=1 ({traceroutes, next_cursor}); NOT
+            # implied by slim — already-open tabs request slim=1 and expect a bare array.
+            envelope = request.query_params.get("envelope", "").lower() in ("1", "true", "yes")
+            before = request.query_params.get("before")
             traceroutes_data = await self.data.pg_storage.query_all_traceroutes(
                 limit=max(1, min(limit, 10000)),
                 from_node_id=self._coerce_node_id(from_param) if from_param else None,
                 to_node_id=self._coerce_node_id(to_param) if to_param else None,
                 range_seconds=range_seconds,
                 slim=slim,
+                before=before if envelope else None,
+                with_cursor=envelope,
             )
             return JSONResponse(jsonable_encoder(traceroutes_data))
 

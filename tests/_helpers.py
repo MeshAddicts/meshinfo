@@ -9,6 +9,7 @@ import mode.
 
 import asyncio
 
+from meshtastic import mesh_pb2, mqtt_pb2
 from broadcaster import Broadcaster
 
 
@@ -45,8 +46,30 @@ class FakePgStorage:
     async def write_telemetry(self, node_id: str, msg) -> None:
         self.telemetry_writes.append((node_id, dict(msg)))
 
-    async def write_traceroute(self, node_id: str, msg) -> None:
+    async def write_traceroute(self, node_id: str, msg) -> str:
+        # Mirrors the real upsert's outcome contract ('inserted' | 'upgraded'
+        # | 'duplicate'); id-less messages always insert.
+        def richness(m):
+            p = m.get("payload") or {}
+            return sum(
+                len(p[k])
+                for k in ("route", "route_back", "snr_towards", "snr_back")
+                if isinstance(p.get(k), list)
+            )
+
+        msg_id = msg.get("id")
+        if msg_id is not None:
+            for i, (nid, prev) in enumerate(self.traceroute_writes):
+                if nid == node_id and prev.get("id") == msg_id:
+                    if richness(msg) > richness(prev):
+                        # Upgrades keep the original row's created_at.
+                        msg["created_at"] = prev.get("created_at")
+                        self.traceroute_writes[i] = (node_id, dict(msg))
+                        return "upgraded"
+                    return "duplicate"
+        msg["created_at"] = 1753600000
         self.traceroute_writes.append((node_id, dict(msg)))
+        return "inserted"
 
     async def find_node_by_longname(self, name: str):
         for nid, n in self._nodes.items():
@@ -72,3 +95,54 @@ class FakeDataStore:
 def run(coro):
     """Drive an async function without pytest-asyncio (not in requirements-dev)."""
     return asyncio.run(coro)
+
+
+class _FakeTopic:
+    def __init__(self, value: str):
+        self.value = value
+
+
+class FakeMqttMessage:
+    """Minimal aiomqtt message stand-in for driving process_mqtt_msg."""
+
+    def __init__(self, topic: str, payload: bytes, qos: int = 0, retain: bool = False):
+        self.topic = _FakeTopic(topic)
+        self.payload = payload
+        self.qos = qos
+        self.retain = retain
+
+
+def build_envelope(
+    from_=0x67EA9400,
+    to=0xABCD1234,
+    packet_id=123456,
+    portnum=1,  # TEXT_MESSAGE_APP
+    payload=b"hi",
+    hop_start=0,
+    hop_limit=0,
+    rx_rssi=0,
+    rx_snr=0.0,
+    rx_time=1753500000,
+    channel=0,
+    gateway_id="!abcd1234",
+    topic="msh/US/2/e/LongFast/!abcd1234",
+    request_id=0,
+) -> FakeMqttMessage:
+    """Serialize a real ServiceEnvelope wrapping an unencrypted MeshPacket, so
+    proto3 zero-omission (hop_limit==0, rx_rssi==0, channel==0) is exercised."""
+    mp = mesh_pb2.MeshPacket(
+        **{"from": from_},
+        to=to,
+        id=packet_id,
+        hop_start=hop_start,
+        hop_limit=hop_limit,
+        rx_rssi=rx_rssi,
+        rx_snr=rx_snr,
+        rx_time=rx_time,
+        channel=channel,
+    )
+    mp.decoded.portnum = portnum
+    mp.decoded.payload = payload
+    mp.decoded.request_id = request_id
+    se = mqtt_pb2.ServiceEnvelope(packet=mp, gateway_id=gateway_id, channel_id="LongFast")
+    return FakeMqttMessage(topic, se.SerializeToString())

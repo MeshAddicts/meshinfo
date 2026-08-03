@@ -1,27 +1,68 @@
+import { normNodeId } from "../../utils/normalizeNodeId8";
+import {
+  canonicalPairKey,
+  exchangeKeepMask,
+  isResolvedHop,
+  orientTraceroute,
+} from "../../utils/traceroute";
+
 export type NodesById = Record<
   string,
   { shortname?: string; longname?: string; id?: string }
 >;
 
+/** Row normalized into TRAVEL orientation: from = initiator, to = target, route_ids =
+ *  travel-ordered hops, even on reply rows; raw headers kept in header_from/header_to. */
 export type TracerouteEvent = {
   __idx: number; // stable key helper
   timestamp: any;
+  /** "ingest" = server ingest time substituted for a clock-less gateway's timestamp 0. */
+  timestamp_source: "packet" | "ingest" | null;
+  /** Initiator (requester) — travel orientation, not the packet header. */
   from: string;
+  /** Target (traced node) — travel orientation, not the packet header. */
   to: string;
-  hops_away: number;
-  route_ids?: string[];
+  hops_away: number | null;
+  /** Travel-ordered intermediate hops, 8-hex where resolvable; else `?<raw>` placeholders. */
+  route_ids: string[];
+  /** Return-path hops in return-travel order; empty for requests and pre-column rows. */
+  route_back_ids: string[];
   route?: any;
+  id?: number | string;
+  /** Reply rows: the request's packet id (exact exchange pairing). */
+  packet_id?: number | string | null;
+  /** Server ingest time (epoch s) — dates rows whose packet timestamp is 0. */
+  created_at?: number | null;
+  snr?: number | null;
+  rssi?: number | null;
+  payload?: {
+    route?: (string | number)[];
+    snr_towards?: number[];
+    route_back?: (string | number)[];
+    snr_back?: number[];
+  };
+  /** Reply packet (complete route; snr_towards = route + 1). */
+  isReply: boolean;
+  /** Mid-flight request: final leg implied, reply not (yet) observed. */
+  provisional: boolean;
+  /** Undirected canonical pair key (sorted `${min}|${max}`). */
+  pairKey: string;
+  /** Raw packet-header endpoints as received (swapped on reply rows). */
+  header_from: string;
+  header_to: string;
 };
 
 export type TracerouteGroup = {
-  key: string; // from|to|routeIdsCsv
+  key: string; // `${from}|${to}|${routeIdsCsv}` — travel-oriented values
   from: string;
   to: string;
   route_ids: string[];
-  hops_away: number;
+  hops_away: number | null;
   count: number;
   firstTsMs: number;
   lastTsMs: number;
+  /** True when every observation of this route was a mid-flight request. */
+  provisional: boolean;
 };
 
 export type TraceroutesListItem =
@@ -55,16 +96,80 @@ export function routeHopsOf(e: Pick<TracerouteEvent, "route_ids" | "route">): nu
   return 0;
 }
 
+/** Hop chip label; UNK only for resolvable-but-unnamed ids. Non-resolvable
+ *  labels must not render as node links (guard with isHopLinkable). */
+export function hopChipLabel(nodes: NodesById, id: string): string {
+  const named = nodes[id]?.shortname;
+  if (named) return named;
+  if (id === "ffffffff") return "unknown";
+  if (id.startsWith("?")) return "unknown";
+  if (!isResolvedHop(id)) return id; // longname text is more honest than UNK
+  return "UNK";
+}
+
+/** Only resolvable hop ids may render as /nodes/<id> links. */
+export function isHopLinkable(id: string): boolean {
+  return isResolvedHop(id);
+}
+
+/** Return-path hops in return-travel order; falls back to normalizing raw
+ *  payload.route_back for rows predating the route_back_ids column. */
+export function returnRouteIdsOf(e: TracerouteEvent): string[] {
+  if (e.route_back_ids.length > 0) return e.route_back_ids;
+  const raw = e.payload?.route_back;
+  if (!Array.isArray(raw)) return [];
+  return raw.map((r) => normNodeId(r) || `?${String(r)}`);
+}
+
 export function coerceEvent(raw: any, idx: number): TracerouteEvent {
+  const o = orientTraceroute(raw);
+  const headerFrom = raw?.from ?? "";
+  const headerTo = raw?.to ?? "";
   return {
     __idx: idx,
-    timestamp: raw?.timestamp,
-    from: raw?.from,
-    to: raw?.to,
-    hops_away: raw?.hops_away ?? 0,
-    route_ids: raw?.route_ids ?? [],
-    route: raw?.route ?? [],
+    // Fall back to ingest time for clock-less gateways (timestamp 0 would sort to 1970).
+    timestamp: raw?.timestamp || raw?.created_at,
+    timestamp_source: raw?.timestamp ? "packet" : raw?.created_at ? "ingest" : null,
+    from: o ? o.initiator : headerFrom,
+    to: o ? o.target : headerTo,
+    hops_away: raw?.hops_away ?? null,
+    route_ids: o
+      ? o.orderedPath.slice(1, -1)
+      : ((raw?.route_ids ?? []) as any[]).map((r) => String(r)),
+    route: raw?.route,
+    route_back_ids: ((raw?.route_back_ids ?? []) as any[]).map((r) => String(r)),
+    id: raw?.id,
+    packet_id: raw?.packet_id ?? null,
+    created_at: raw?.created_at ?? null,
+    snr: raw?.snr ?? null,
+    rssi: raw?.rssi ?? null,
+    payload: raw?.payload,
+    isReply: o?.isReply ?? false,
+    provisional: o?.provisional ?? true,
+    pairKey: o ? o.pairKey : canonicalPairKey(headerFrom, headerTo),
+    header_from: headerFrom,
+    header_to: headerTo,
   };
+}
+
+/** Collapse request+reply of one exchange to the reply; events are already travel-oriented. */
+export function dedupeExchangeEvents(events: TracerouteEvent[]): TracerouteEvent[] {
+  const mask = exchangeKeepMask(
+    events.map((e) =>
+      e.from && e.to
+        ? {
+            initiator: e.from,
+            target: e.to,
+            isReply: e.isReply,
+            orderedPath: [e.from, ...e.route_ids, e.to],
+            ms: safeTsMs(e.timestamp),
+            id: e.id,
+            replyTo: e.packet_id,
+          }
+        : null,
+    ),
+  );
+  return events.filter((_, i) => mask[i]);
 }
 
 export function groupTracerouteEvents(events: TracerouteEvent[]): TracerouteGroup[] {
@@ -82,15 +187,18 @@ export function groupTracerouteEvents(events: TracerouteEvent[]): TracerouteGrou
         from: e.from,
         to: e.to,
         route_ids: rids,
-        hops_away: e.hops_away ?? 0,
+        hops_away: e.hops_away ?? null,
         count: 1,
         firstTsMs: ts,
         lastTsMs: ts,
+        provisional: e.provisional,
       });
     } else {
       existing.count += 1;
       existing.firstTsMs = Math.min(existing.firstTsMs, ts || existing.firstTsMs);
       existing.lastTsMs = Math.max(existing.lastTsMs, ts || existing.lastTsMs);
+      // Any confirmed (reply) observation clears the provisional flag.
+      existing.provisional = existing.provisional && e.provisional;
       // Keep a simple representative hops_away (it should be stable anyway)
       if (typeof e.hops_away === "number") existing.hops_away = e.hops_away;
     }

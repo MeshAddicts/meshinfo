@@ -1,5 +1,13 @@
 import type { ITraceroutesResponse } from "../../../types";
+import {
+  dedupeExchanges,
+  isResolvedHop,
+  orientTraceroute,
+} from "../../../utils/traceroute";
 import { normNodeId } from "./linkFeatures";
+
+// Re-exported from utils/traceroute so existing map imports keep working.
+export { decodeSnr, tsToMs } from "../../../utils/traceroute";
 
 export interface AnalyzedPath {
   /** Normalized IDs: [from, ...intermediates, to]. Unresolvable hops are kept
@@ -17,6 +25,12 @@ export interface AnalyzedPath {
   legSnrDb?: (number | null)[];
   /** True when the SNR was measured opposite to the displayed a→b orientation. */
   legSnrReversed?: boolean;
+  /** Only request packets observed this sequence; the final (…→target) leg
+   *  is implied by the header, not observed. */
+  provisional: boolean;
+  /** Displayed index of the unobserved leg (leg i = hops[i]→hops[i+1]), or
+   *  null. NOT always last: a reversed a→b extraction puts it at index 0. */
+  provisionalLegIndex: number | null;
 }
 
 /** One observed traceroute run between the pair, oriented a → b. */
@@ -25,14 +39,10 @@ export interface TraceRun {
   hops: string[];
   hopCount: number;
   timestamp: number;
-}
-
-const SNR_UNKNOWN_SENTINEL = -128;
-
-/** Decode a firmware ×4-scaled SNR value; -128 sentinel → null (unknown). */
-export function decodeSnr(raw: number | null | undefined): number | null {
-  if (raw == null || !Number.isFinite(raw) || raw === SNR_UNKNOWN_SENTINEL) return null;
-  return raw / 4;
+  /** Request-only observation — awaiting reply (exchange status). */
+  provisional: boolean;
+  /** See AnalyzedPath.provisionalLegIndex. */
+  provisionalLegIndex: number | null;
 }
 
 interface ExtractedPath {
@@ -43,40 +53,17 @@ interface ExtractedPath {
   rssi?: number;
   legSnrDb?: (number | null)[];
   forward: boolean;
-}
-
-/** Travel-ordered full path for one row. Reply rows (the only ones carrying
- *  the full per-leg SNR: the destination appends its own reading, so
- *  snr_towards = route + 1) keep the REQUEST's route order but swap the header
- *  endpoints — the towards path is to → route → from, matching the official
- *  client. EVERY consumer of a row's hop sequence must route through here: a
- *  header swap is NOT a path reversal, so an ad-hoc [from,...route,to] walk
- *  attributes endpoint-adjacent legs to the wrong nodes on reply rows. */
-function orientRow(
-  tr: ITraceroutesResponse,
-  tFrom: string,
-  tTo: string,
-  route: string[],
-): { fullPath: string[]; isReply: boolean } {
-  const snrTow = tr?.payload?.snr_towards;
-  const isReply = Array.isArray(snrTow) && snrTow.length === route.length + 1;
-  return { fullPath: isReply ? [tTo, ...route, tFrom] : [tFrom, ...route, tTo], isReply };
+  provisional: boolean;
+  provisionalLegIndex: number | null;
 }
 
 /** Extract the a→b sub-path of one traceroute row, or null if it doesn't
- *  contain both nodes. Shared by the dedup (paths) and chronological (runs)
- *  views so orientation semantics can never drift apart. */
+ *  contain both nodes. Hop ordering and reply detection come from
+ *  orientTraceroute — the mandatory entry point for walking a row's hops. */
 function extractPathFromRow(a: string, b: string, tr: ITraceroutesResponse): ExtractedPath | null {
-  const tFrom = normNodeId(tr?.from);
-  const tTo = normNodeId(tr?.to);
-  if (!tFrom || !tTo) return null;
-  // Keep unresolvable hops as placeholders instead of dropping them — a drop
-  // would shrink the hop count and shift per-leg SNR alignment.
-  const route: string[] = ((tr?.route_ids ?? tr?.route ?? []) as (string | number)[])
-    .map((r) => normNodeId(r) || `?${String(r)}`);
-
-  const snrTow = tr?.payload?.snr_towards;
-  const { fullPath, isReply } = orientRow(tr, tFrom, tTo, route);
+  const o = orientTraceroute(tr);
+  if (!o) return null;
+  const fullPath = o.orderedPath;
 
   const idxA = fullPath.indexOf(a);
   const idxB = fullPath.indexOf(b);
@@ -88,28 +75,37 @@ function extractPathFromRow(a: string, b: string, tr: ITraceroutesResponse): Ext
   // Orient a → b
   const hops = forward ? sub : sub.slice().reverse();
 
-  // snr_towards has one entry per leg of the request-oriented full path;
-  // slice the legs covering [lo, hi] and flip them when we flipped the hops.
+  // legSnrDb[i] covers the fullPath[i]→fullPath[i+1] leg; slice the legs
+  // covering [lo, hi] and flip them when we flipped the hops.
   let legSnrDb: (number | null)[] | undefined;
-  if (isReply && Array.isArray(snrTow)) {
-    const legs = snrTow.slice(lo, hi).map(decodeSnr);
+  if (o.legSnrDb) {
+    const legs = o.legSnrDb.slice(lo, hi);
     legSnrDb = forward ? legs : legs.slice().reverse();
+  }
+
+  // The unobserved leg is fullPath's last; it lands in this sub-path only when
+  // the slice reaches the target — last leg when forward, leg 0 when reversed.
+  let provisionalLegIndex: number | null = null;
+  if (o.provisional && hi === fullPath.length - 1) {
+    provisionalLegIndex = forward ? hops.length - 2 : 0;
   }
 
   return {
     hops,
     sig: hops.join(">"),
     timestamp: tr.timestamp ?? 0,
-    snr: tr.snr,
-    rssi: tr.rssi,
+    snr: tr.snr ?? undefined,
+    rssi: tr.rssi ?? undefined,
     legSnrDb,
     forward,
+    provisional: o.provisional,
+    provisionalLegIndex,
   };
 }
 
 /** Unique traceroute paths between two nodes (either direction), newest first.
- *  Freshness outranks hop count: a stale one-hop fluke must not beat the route
- *  the mesh is actually using now. */
+ *  Freshness outranks hop count; request+reply rows of one exchange collapse
+ *  to the reply before analysis. */
 export function findPathsBetween(
   fromId: string,
   toId: string,
@@ -121,13 +117,16 @@ export function findPathsBetween(
 
   const bySig = new Map<string, AnalyzedPath>();
 
-  for (const tr of traceroutes) {
+  for (const tr of dedupeExchanges(traceroutes)) {
     const ex = extractPathFromRow(a, b, tr);
     if (!ex) continue;
 
     const existing = bySig.get(ex.sig);
     if (existing) {
       existing.count += 1;
+      // Any confirmed (reply) observation clears the provisional flag.
+      existing.provisional = existing.provisional && ex.provisional;
+      if (!existing.provisional) existing.provisionalLegIndex = null;
       if (ex.timestamp > existing.timestamp) {
         existing.timestamp = ex.timestamp;
         existing.snr = ex.snr;
@@ -152,6 +151,8 @@ export function findPathsBetween(
       count: 1,
       legSnrDb: ex.legSnrDb,
       legSnrReversed: ex.legSnrDb ? !ex.forward : undefined,
+      provisional: ex.provisional,
+      provisionalLegIndex: ex.provisionalLegIndex,
     });
   }
 
@@ -161,7 +162,8 @@ export function findPathsBetween(
 }
 
 /** Every observed run between the pair, oldest first — the time-machine view.
- *  No dedup: repeated signatures are the point (stability over time). */
+ *  No dedup of repeated signatures, but request+reply packets of one exchange
+ *  collapse to the reply so a single traceroute never counts as two runs. */
 export function findRunsBetween(
   fromId: string,
   toId: string,
@@ -172,7 +174,7 @@ export function findRunsBetween(
   if (!a || !b || a === b) return [];
 
   const runs: TraceRun[] = [];
-  for (const tr of traceroutes) {
+  for (const tr of dedupeExchanges(traceroutes)) {
     const ex = extractPathFromRow(a, b, tr);
     if (!ex) continue;
     runs.push({
@@ -180,6 +182,8 @@ export function findRunsBetween(
       hops: ex.hops,
       hopCount: ex.hops.length - 1,
       timestamp: ex.timestamp,
+      provisional: ex.provisional,
+      provisionalLegIndex: ex.provisionalLegIndex,
     });
   }
   runs.sort((x, y) => x.timestamp - y.timestamp);
@@ -196,29 +200,23 @@ export interface TraceEdgeStat {
   lastTimestamp: number;
 }
 
-/** Resolved node ids normalize to bare lowercase hex; longnames and `?<raw>`
- *  placeholders don't, and their edges can't be positioned or clicked. */
-const RESOLVED_ID = /^[0-9a-f]{1,8}$/;
-
 /** Count how often each adjacent hop pair appears across runs — the mesh's
- *  busiest links. Edges touching an unresolved hop are skipped, and reply
- *  rows are travel-ordered via orientRow (endpoint-adjacent edges would
- *  otherwise be attributed to the wrong nodes). */
+ *  busiest links. Skips unresolved/sentinel hops and a mid-flight request's
+ *  speculative final leg; request+reply exchanges collapse to one run. */
 export function computeTraceEdgeStats(traceroutes: ITraceroutesResponse[]): TraceEdgeStat[] {
   const byKey = new Map<string, TraceEdgeStat>();
-  for (const tr of traceroutes) {
-    const tFrom = normNodeId(tr?.from);
-    const tTo = normNodeId(tr?.to);
-    if (!tFrom || !tTo) continue;
-    const route = ((tr?.route_ids ?? tr?.route ?? []) as (string | number)[])
-      .map((r) => normNodeId(r) || `?${String(r)}`);
-    const { fullPath } = orientRow(tr, tFrom, tTo, route);
+  for (const tr of dedupeExchanges(traceroutes)) {
+    const o = orientTraceroute(tr);
+    if (!o) continue;
+    const fullPath = o.orderedPath;
     const ts = tr.timestamp ?? 0;
+    const lastLegIdx = fullPath.length - 2;
     const seenInRun = new Set<string>();
     for (let i = 0; i + 1 < fullPath.length; i++) {
+      if (o.provisional && i === lastLegIdx) continue;
       const a = fullPath[i];
       const b = fullPath[i + 1];
-      if (a === b || !RESOLVED_ID.test(a) || !RESOLVED_ID.test(b)) continue;
+      if (a === b || !isResolvedHop(a) || !isResolvedHop(b)) continue;
       const [ka, kb] = a < b ? [a, b] : [b, a];
       const key = `${ka}|${kb}`;
       if (seenInRun.has(key)) continue;
@@ -233,9 +231,4 @@ export function computeTraceEdgeStats(traceroutes: ITraceroutesResponse[]): Trac
     }
   }
   return [...byKey.values()];
-}
-
-/** Epoch that may be seconds or milliseconds → milliseconds. */
-export function tsToMs(ts: number): number {
-  return ts > 1e12 ? ts : ts * 1000;
 }

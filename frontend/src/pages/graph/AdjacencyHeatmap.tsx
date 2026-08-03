@@ -172,7 +172,7 @@ export const AdjacencyHeatmap: React.FC<Props> = ({ nodes, edges, nodeById: _nod
       const nodeB = matrixNodes[hoverCell.col];
       const edge = edgeMap.get(`${nodeA.id}~${nodeB.id}`);
       const text = edge
-        ? `${nodeA.label} \u2194 ${nodeB.label}: ${edge.kind}${edge.snr != null && edge.snr !== 0 ? ` (${edge.snr}dB)` : ""} w=${edge.w}`
+        ? `${nodeA.label} \u2194 ${nodeB.label}: ${edge.kind}${edge.snr != null ? ` (${edge.snr}dB)` : ""} w=${edge.w}`
         : `${nodeA.label} \u2194 ${nodeB.label}: no link`;
 
       ctx.font = "12px ui-sans-serif, system-ui, sans-serif";

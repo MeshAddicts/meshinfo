@@ -17,6 +17,11 @@ import { store } from "../../../store";
 import type { ITraceroutesResponse } from "../../../types";
 import { normalizeNodeId8 } from "../../../utils/normalizeNodeId8";
 import { prefersReducedMotion } from "../../../utils/reducedMotion";
+import {
+  hasFullTraceroutePayload,
+  orientTraceroute,
+  tracerouteRichness,
+} from "../../../utils/traceroute";
 import type { ActivityLayer } from "../layers/activityLayer";
 import type { ClusterDonutLayer } from "../layers/clusterDonutLayer";
 import { samePoint } from "../lib/geo";
@@ -92,9 +97,8 @@ export function useTraceLiveEvents({
   // behind a 300 s full-row backstop timer).
   const traceRefetchDueAtRef = useRef(0);
 
-  // Resolve a traceroute's hops to positions and draw one sequential comet along
-  // [from, ...route, to], snapping each hop to its cluster and skipping hops with
-  // no known position.
+  // Draw one sequential comet along the hops in travel order (skinny events
+  // without payload fall back to header order), snapping each hop to its cluster.
   const animateTraceroute = useCallback((t: TraceEv) => {
     const layer = activityLayerRef.current;
     if (!layer) return;
@@ -118,7 +122,8 @@ export function useTraceLiveEvents({
       return best ?? pos;
     };
     const pts: [number, number][] = [];
-    for (const raw of [t.from, ...(t.route_ids ?? []), t.to]) {
+    const walk = orientTraceroute(t)?.orderedPath ?? [t.from, ...(t.route_ids ?? []), t.to];
+    for (const raw of walk) {
       const id = normalizeNodeId8(raw);
       const pos = id ? liveNodes[id]?.map_position : undefined;
       if (!pos) continue; // hop with unknown position — skip (honest gap)
@@ -178,11 +183,19 @@ export function useTraceLiveEvents({
       const row = t as unknown as ITraceroutesResponse;
       const key = `${row.id}:${row.from}`; // Map.tsx's merge key
       const upsert = (max: number) => (draft: ITraceroutesResponse[]) => {
-        // Key collision = another gateway's copy of a row we already hold.
-        // Keep the FIRST copy, matching the DB's ON CONFLICT DO NOTHING — a
-        // later refetch would return the first-written copy, and replacing it
-        // here would let per-gateway rssi/snr diverge from REST.
-        if (draft.some((tr) => `${tr.id}:${tr.from}` === key)) return;
+        // Mirror the DB's richer-wins upsert: any full row replaces a held
+        // slim row; between two full rows replace only strictly richer.
+        const held = draft.findIndex((tr) => `${tr.id}:${tr.from}` === key);
+        if (held !== -1) {
+          const heldRow = draft[held];
+          if (
+            !hasFullTraceroutePayload(heldRow) ||
+            tracerouteRichness(row) > tracerouteRichness(heldRow)
+          ) {
+            draft[held] = row;
+          }
+          return;
+        }
         // Cache is newest-first (ORDER BY created_at DESC); a live row is
         // almost always the newest, so this loop exits at index 0.
         let i = 0;

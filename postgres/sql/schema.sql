@@ -181,6 +181,17 @@ CREATE INDEX IF NOT EXISTS idx_traceroutes_from_node_id ON traceroutes(from_node
 CREATE INDEX IF NOT EXISTS idx_traceroutes_to_node_id ON traceroutes(to_node_id);
 CREATE INDEX IF NOT EXISTS idx_traceroutes_created_at ON traceroutes(created_at DESC);
 
+-- Resolved return-path hop ids (reply rows only; NULL = not resolved).
+-- Fresh-install copies: existing databases get these from the ensure_schema
+-- migrations block, which runs with a long timeout.
+ALTER TABLE traceroutes ADD COLUMN IF NOT EXISTS route_back_ids JSONB;
+CREATE INDEX IF NOT EXISTS idx_traceroutes_sender_node_id ON traceroutes(sender_node_id);
+-- Containment lookups for "traceroutes involving node X as a relay".
+CREATE INDEX IF NOT EXISTS idx_traceroutes_route_ids_gin
+    ON traceroutes USING gin (route_ids jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS idx_traceroutes_route_back_ids_gin
+    ON traceroutes USING gin (route_back_ids jsonb_path_ops);
+
 -- MQTT messages: the raw packet archive. Partitioned by month on created_at
 -- so it stays manageable as it grows. This block only fires on a fresh install
 -- (the table does not yet exist); existing non-partitioned installs are

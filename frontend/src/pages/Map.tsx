@@ -234,12 +234,16 @@ export function Map() {
   // window that makes most pairs come back empty. Merged with the global cache
   // so routes crossing the pair as intermediate hops still count.
   const tracePairActive = activeTool === "traceroute" && !!toolFromId && !!toolToId;
-  // isLoading (not isFetching): true only on a pair's first fetch, so throttled
-  // background refetches neither flicker the panel nor re-gate the fitBounds.
-  const { data: pairTraceroutes = EMPTY_TRACEROUTES, isLoading: pairTraceroutesLoading } = useGetTraceroutesQuery(
+  // currentData (not data): `data` retains the previous pair's rows across an
+  // arg switch; currentData is undefined until this pair's own fetch lands.
+  const { currentData: pairTraceroutesRaw, isError: pairTraceroutesError } = useGetTraceroutesQuery(
     { from: toolFromId ?? "", to: toolToId ?? "", limit: 500 },
     { skip: !tracePairActive },
   );
+  const pairTraceroutes = pairTraceroutesRaw ?? EMPTY_TRACEROUTES;
+  // isError escape: a failed fetch never sets currentData; degrade to the global window.
+  const pairTraceroutesLoading =
+    tracePairActive && pairTraceroutesRaw === undefined && !pairTraceroutesError;
   const traceData = useMemo(() => {
     if (pairTraceroutes.length === 0) return rawTraceroutes;
     // globalThis: the component name shadows the Map constructor
@@ -790,6 +794,7 @@ export function Map() {
     setActiveTool, setToolStep, setToolFromId, setToolToId,
     losState, tracePendingPlayRef, traceSelectedPath, tracePosKey, styleEpoch,
     startFlyover: traceFlyover.startFlyover,
+    traceSelectedSig, setTraceSelectedSig,
   });
 
   // Observed paths + candidate rings on the map (owns endpoint/ghost markers)
@@ -815,8 +820,14 @@ export function Map() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const handleToggleFlyover = useCallback(() => {
-    if (traceFlyover.isFlying) traceFlyover.cancelFlyover();
-    else if (traceSelectedPath) traceFlyover.startFlyover(traceSelectedPath);
+    if (traceFlyover.isFlying) {
+      traceFlyover.cancelFlyover();
+    } else if (traceSelectedPath) {
+      // Pin the toured path: without an explicit sig, a live row arriving
+      // mid-tour re-points the panel/primary while the camera flies the old path.
+      setTraceSelectedSig(traceSelectedPath.hops.join(">"));
+      traceFlyover.startFlyover(traceSelectedPath);
+    }
     // start/cancel are identity-stable; only the data deps matter
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [traceFlyover.isFlying, traceSelectedPath]);

@@ -46,7 +46,8 @@ export interface TraceLeg {
   index: number;
   fromId: string;
   toId: string;
-  /** null when either end lacks a position (verdict "gap"). */
+  /** null when either end lacks a position — not implied by verdict "gap":
+   *  ungraded analyses mark every leg "gap" yet still carry real distances. */
   distanceKm: number | null;
   verdict: TraceLegVerdict;
   /** Worst first-Fresnel clearance along the leg as a ratio of F₁ (≥0.6 = clear enough). */
@@ -70,6 +71,9 @@ export interface TraceDirect {
 export interface TraceAnalysis {
   /** Path signature this analysis belongs to (hops.join(">")). */
   sig: string;
+  /** False for ungraded dossiers (no terrain/token/positions): their legs all
+   *  read verdict "gap" regardless of real obstruction state. */
+  graded: boolean;
   legs: TraceLeg[];
   direct: TraceDirect | null;
   /** Hops in the path with no known position. */
@@ -134,14 +138,6 @@ export function useTraceCompute(params: TraceComputeParams) {
       setIsComputingTrace(false);
       return;
     }
-    if (!terrain3D) {
-      // Panel shows the enable-terrain hint; the 2D path stays useful.
-      setTraceAnalysis(null);
-      setTraceError(null);
-      setTraceWarning(null);
-      setIsComputingTrace(false);
-      return;
-    }
     // A different path was selected — drop the previous path's artifacts now,
     // not when the new grade lands (the push effect renders whatever is set).
     setTraceAnalysis((prev) => (prev && prev.sig !== pathKey ? null : prev));
@@ -165,24 +161,44 @@ export function useTraceCompute(params: TraceComputeParams) {
       .filter((x): x is { pos: [number, number]; i: number } => x.pos != null);
     const ghostHops = hops.length - positioned.length;
 
-    if (positioned.length < 2) {
-      setTraceAnalysis({
-        sig: pathKey,
-        legs: hops.slice(0, -1).map((id, i) => ({
-          index: i, fromId: id, toId: hops[i + 1], distanceKm: null, verdict: "gap" as const,
+    // Ungraded dossier: distances/measured SNR need neither terrain nor a
+    // token; verdicts stay "gap" and the tube/obstruction artifacts null.
+    const ungradedAnalysis = (): TraceAnalysis => ({
+      sig: pathKey,
+      graded: false,
+      legs: hops.slice(0, -1).map((id, i) => {
+        const a = positions[i];
+        const b = positions[i + 1];
+        return {
+          index: i, fromId: id, toId: hops[i + 1],
+          distanceKm: a && b ? haversineKm(a, b) : null,
+          verdict: "gap" as const,
           minClearanceRatio: null, worstObstructionM: 0, diffractionLossDb: 0,
-        })),
-        direct: null, ghostHops, tubeData: null, obstructions: [], directCoords: null,
-      });
+        };
+      }),
+      direct: null, ghostHops, tubeData: null, obstructions: [], directCoords: null,
+    });
+
+    if (positioned.length < 2) {
+      setTraceAnalysis(ungradedAnalysis());
       setTraceError(null);
       setTraceWarning("Too few hops have known positions to grade this route.");
       setIsComputingTrace(false);
       return;
     }
 
+    if (!terrain3D) {
+      // Panel shows the enable-terrain hint; distances + measured SNR stay.
+      setTraceAnalysis(ungradedAnalysis());
+      setTraceError(null);
+      setTraceWarning(null);
+      setIsComputingTrace(false);
+      return;
+    }
+
     const token = env.MAPBOX_TOKEN;
     if (!token) {
-      setTraceAnalysis(null);
+      setTraceAnalysis(ungradedAnalysis());
       setTraceError("Terrain elevation source unavailable (Mapbox token not configured).");
       setTraceWarning(null);
       setIsComputingTrace(false);
@@ -416,7 +432,7 @@ export function useTraceCompute(params: TraceComputeParams) {
         for (const o of topObs) o.severity = Math.min(1, o.violationM / worstV);
 
         const geometric: TraceAnalysis = {
-          sig: pathKey, legs, direct, ghostHops,
+          sig: pathKey, graded: true, legs, direct, ghostHops,
           tubeData: tubePoints.length >= 2 ? { points: tubePoints } : null,
           obstructions: topObs,
           directCoords,
