@@ -8,7 +8,7 @@ import { normNodeId } from "./linkFeatures";
 import type { IMapNode } from "./types";
 import { calculateGeodesicDistance } from "./utils";
 // Role-color expression now lives in the shared palette; re-export for existing importers.
-export { mbRoleColorExpr } from "../../../palette";
+export { mbNodeColorExpr } from "../../../palette";
 
 // 1×1 transparent PNG placeholder for the coverage-raster source
 export const TRANSPARENT_1PX_PNG =

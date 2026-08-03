@@ -12,8 +12,9 @@ import type {
 } from "geojson";
 import type { GeoJSONSource as MlGeoJSONSource, Map as MlMap } from "maplibre-gl";
 
-import { mbRoleColorExpr } from "../../../palette";
+import { mbNodeColorExpr } from "../../../palette";
 import { prefersReducedMotion } from "../../../utils/reducedMotion";
+import { pixelRadiusForCount } from "./clusterDonutLayer";
 
 export const SPIDERFY_SOURCE_NODES = "spiderfy-nodes";
 export const SPIDERFY_SOURCE_LEGS = "spiderfy-legs";
@@ -30,6 +31,9 @@ const AUTO_SPIDERFY_MIN_ZOOM = 14;
 interface SpiderfyGroup {
   center: [number, number];
   leaves: GeoFeature<GeoPoint, GeoJsonProperties>[];
+  /** Leg start offset (px) so legs begin at the edge of whatever marks the
+   *  center — the cluster donut, or the stacked plain-node circle. */
+  centerGapPx: number;
 }
 
 interface SpiderfyState {
@@ -138,6 +142,8 @@ function composeData(
   groups.forEach((group, gi) => {
     const targets = fanPositions(group.center, group.leaves.length, zoom);
     const positions = t >= 1 ? targets : interpolatePositions(group.center, targets, t);
+    const kx = lngScaleAt(group.center[1]);
+    const gapDeg = pixelsToDegrees(group.centerGapPx, zoom);
 
     group.leaves.forEach((leaf, i) => {
       nodeFeatures.push({
@@ -146,10 +152,21 @@ function composeData(
         properties: { ...leaf.properties, _spiderfied: true },
         geometry: { type: "Point", coordinates: positions[i] },
       });
+      // Legs start at the edge of the center marker (donut/stack), not its
+      // middle. Fan motion is radial, so the animated position gives the
+      // direction; a dot still inside the gap gets no leg yet.
+      const sx = (positions[i][0] - group.center[0]) / kx;
+      const sy = positions[i][1] - group.center[1];
+      const len = Math.hypot(sx, sy);
+      if (len <= gapDeg) return;
+      const start: [number, number] = [
+        group.center[0] + (sx / len) * gapDeg * kx,
+        group.center[1] + (sy / len) * gapDeg,
+      ];
       legFeatures.push({
         type: "Feature",
         properties: { index: i, centerLng: group.center[0], centerLat: group.center[1] },
-        geometry: { type: "LineString", coordinates: [group.center, positions[i]] },
+        geometry: { type: "LineString", coordinates: [start, positions[i]] },
       });
     });
   });
@@ -299,7 +316,7 @@ function addSpiderfyLayers(map: MlMap): void {
         12,
         8,
       ],
-      "circle-color": mbRoleColorExpr,
+      "circle-color": mbNodeColorExpr,
       "circle-stroke-width": 2.5,
       "circle-stroke-color": [
         "case",
@@ -395,15 +412,17 @@ export async function spiderfy(
 
   if (leaves.length === 0) return;
 
+  const group: SpiderfyGroup = { center, leaves, centerGapPx: pixelRadiusForCount(leaves.length) + 2 };
+
   if (origin === "auto") {
     // A fan opened (or a dismissal started) during the async lookup wins.
     if (activeState || collapsing) return;
     // Don't re-fan the set the user just dismissed.
-    if (groupsSignature([{ center, leaves }]) === dismissedSignature) return;
+    if (groupsSignature([group]) === dismissedSignature) return;
   }
 
   removeSpiderfyLayers(map);
-  return renderSpiderfy(map, [{ center, leaves }], map.getZoom(), animate, origin);
+  return renderSpiderfy(map, [group], map.getZoom(), animate, origin);
 }
 
 /** Spiderfy an explicit set of co-located features. Used when clustering is OFF
@@ -417,7 +436,7 @@ export async function spiderfyFeatures(
 ): Promise<void> {
   if (leaves.length === 0) return;
   removeSpiderfyLayers(map);
-  return renderSpiderfy(map, [{ center, leaves }], map.getZoom(), animate, "click");
+  return renderSpiderfy(map, [{ center, leaves, centerGapPx: PLAIN_STACK_GAP_PX }], map.getZoom(), animate, "click");
 }
 
 export async function unspiderfy(map: MlMap): Promise<void> {
@@ -568,6 +587,9 @@ export async function autoSpiderfyVisibleClusters(
 
 // Plain-node circle radius (px) — must match the "plain-nodes" layer paint.
 const PLAIN_NODE_RADIUS_PX = 8;
+// Leg gap for plain-node fans: stacked-circle edge (radius + half the 2.5px
+// stroke) plus breathing room.
+const PLAIN_STACK_GAP_PX = PLAIN_NODE_RADIUS_PX + 4;
 
 /** Build a centered group from member feature indices into `pts`. */
 function groupFromIndices(
@@ -581,7 +603,7 @@ function groupFromIndices(
     lng += c[0];
     lat += c[1];
   }
-  return { center: [lng / leaves.length, lat / leaves.length], leaves };
+  return { center: [lng / leaves.length, lat / leaves.length], leaves, centerGapPx: PLAIN_STACK_GAP_PX };
 }
 
 /** Clustering-OFF analogue of autoSpiderfyVisibleClusters: there is no cluster

@@ -72,9 +72,8 @@ import type { IMapNode, LinkMode, MapProvider, NodeDetailsData, NodeLike } from 
 import {
   applyClusterVisibility,
   createNodesGeoJSONBuilder,
-  DEFAULT_NODE_COLOR,
   emptyLineFeatureCollection,
-  ROLE_COLORS,
+  nodeColor,
 } from "./map/lib/utils";
 import { CoverageLookupCard } from "./map/live/CoverageLookupCard";
 import { type CoverageParam, nextCoverageSearch, parseCoverageParam } from "./map/live/coverageUrlParam";
@@ -1823,13 +1822,12 @@ export function Map() {
         const coverageSrc = map.getSource("coverage") as MlGeoJSONSource | undefined;
         if (coverageSrc) {
           if (maxRangeKm) {
-            const roleColor = ROLE_COLORS[(node as any).role] ?? DEFAULT_NODE_COLOR;
             const circle = geodesicCircleCoords([nodeLike.position[0], nodeLike.position[1]], maxRangeKm);
             coverageSrc.setData({
               type: "FeatureCollection",
               features: [{
                 type: "Feature",
-                properties: { color: roleColor },
+                properties: { color: nodeColor(nodeLike.role, nodeLike.online) },
                 geometry: { type: "Polygon", coordinates: [circle] },
               }],
             });

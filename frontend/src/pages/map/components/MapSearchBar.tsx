@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { type NodeRole,roleTitles } from "../../../types";
 import type { IMapNode } from "../lib/types";
-import { DEFAULT_NODE_COLOR,ROLE_COLORS } from "../lib/utils";
+import { nodeColor } from "../lib/utils";
 
 export function MapSearchBar({
   nodes,
@@ -181,7 +181,7 @@ export function MapSearchBar({
           {results.map(({ id, node }, i) => {
             const roleVal = (node as any).role as number | undefined;
             const roleName = roleVal != null ? roleTitles[roleVal as NodeRole]?.title : null;
-            const roleColor = roleVal != null ? ROLE_COLORS[roleVal] : DEFAULT_NODE_COLOR;
+            const dotColor = nodeColor(roleVal, Boolean(node.online));
             return (
               <button
                 key={id}
@@ -199,9 +199,7 @@ export function MapSearchBar({
               >
                 <span
                   className="w-2 h-2 rounded-full shrink-0"
-                  style={{
-                    backgroundColor: node.online ? roleColor : "rgba(107,114,128,0.5)",
-                  }}
+                  style={{ backgroundColor: dotColor }}
                   aria-hidden="true"
                 />
                 <span className="truncate font-medium text-gray-200">

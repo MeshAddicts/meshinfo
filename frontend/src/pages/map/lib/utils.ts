@@ -12,7 +12,7 @@ import type { IMapNode } from "./types";
 
 // Canonical palette lives in src/palette.ts; re-exported so the map's many
 // `from "./utils"` call sites keep working unchanged.
-export { DEFAULT_NODE_COLOR, OFFLINE_NODE_COLOR, ROLE_COLORS } from "../../../palette";
+export { DEFAULT_NODE_COLOR, nodeColor, OFFLINE_NODE_COLOR, ROLE_COLORS } from "../../../palette";
 
 const HTML_ESCAPES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;" };
 export function escapeHtml(text: string): string {
