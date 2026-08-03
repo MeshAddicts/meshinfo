@@ -29,6 +29,10 @@ export type TracerouteRowLike = {
   };
   timestamp?: number;
   id?: number | string;
+  /** Reply rows: the REQUEST's packet id (backend Data.request_id, stored in
+   *  the packet_id column) — enables exact request/reply exchange pairing.
+   *  Null/absent on request rows and rows written before it was captured. */
+  packet_id?: number | string | null;
 };
 
 export interface OrientedTraceroute {
@@ -174,8 +178,10 @@ export function tracerouteRichness(tr: TracerouteRowLike): number {
 }
 
 /** True when the row carries the full RouteDiscovery payload (SSE rows, non-
- *  slim REST rows). Slim rows strip payload.route/route_back/snr_back, making
- *  their richness incomparable against full rows. */
+ *  slim REST rows). Current-backend slim rows strip only payload.route (the
+ *  back arrays now survive), older-backend slim rows stripped the back arrays
+ *  too — either way payload.route is the reliable discriminator, and held
+ *  rows lacking it are replaced by any full copy rather than richness-raced. */
 export function hasFullTraceroutePayload(tr: TracerouteRowLike): boolean {
   return Array.isArray(tr.payload?.route);
 }
@@ -196,24 +202,35 @@ export interface ExchangeView {
   orderedPath: string[];
   /** Timestamp in milliseconds. */
   ms: number;
+  /** The row's own packet id, when known. */
+  id?: number | string | null;
+  /** Reply rows: the request's packet id (exact pairing key), when known. */
+  replyTo?: number | string | null;
 }
 
 /** Core exchange pairing: returns a keep-mask over `items` (false = this row
  *  is the request half of a matched exchange and should collapse into its
- *  reply). Pairs exactly ONE request with ONE reply: same initiator/target,
- *  request within EXCHANGE_WINDOW_MS before the reply, and the request's
- *  observed hops (its orderedPath minus the speculative final target hop) a
- *  prefix of the reply's orderedPath. Never merges two same-role rows — two
- *  requests are two attempts. null items (unorientable rows) are always kept.
- *  Heuristic by necessity: request_id is not persisted for historical rows;
- *  once the backend exposes it (fix-plan Batch 4) exact pairing takes over
- *  with this as fallback. */
+ *  reply). Pairs exactly ONE request with ONE reply.
+ *
+ *  EXACT pairing: a reply carrying `replyTo` (the request's packet id, from
+ *  the backend's packet_id capture) matches only the request whose own id
+ *  equals it — no window, no path comparison, and no heuristic fallback for
+ *  that reply (its request either exists or was never heard).
+ *
+ *  HEURISTIC fallback (historical rows without replyTo): same
+ *  initiator/target, request within EXCHANGE_WINDOW_MS before the reply, and
+ *  the request's observed hops (its orderedPath minus the speculative final
+ *  target hop) a prefix of the reply's orderedPath.
+ *
+ *  Never merges two same-role rows — two requests are two attempts. null
+ *  items (unorientable rows) are always kept. */
 export function exchangeKeepMask(items: (ExchangeView | null)[]): boolean[] {
   interface Entry {
     v: ExchangeView;
     matched: boolean;
   }
   const requests = new Map<string, Entry[]>(); // keyed initiator→target (directed)
+  const requestsById = new Map<string, Entry>();
   const entries: (Entry | null)[] = items.map((v) => {
     if (!v) return null;
     const e: Entry = { v, matched: false };
@@ -222,12 +239,27 @@ export function exchangeKeepMask(items: (ExchangeView | null)[]): boolean[] {
       const list = requests.get(key);
       if (list) list.push(e);
       else requests.set(key, [e]);
+      if (v.id != null) requestsById.set(String(v.id), e);
     }
     return e;
   });
 
   for (const e of entries) {
     if (!e || !e.v.isReply) continue;
+
+    if (e.v.replyTo != null) {
+      const exact = requestsById.get(String(e.v.replyTo));
+      if (
+        exact &&
+        !exact.matched &&
+        exact.v.initiator === e.v.initiator &&
+        exact.v.target === e.v.target
+      ) {
+        exact.matched = true;
+      }
+      continue; // exact-keyed replies never fall back to the heuristic
+    }
+
     const candidates = requests.get(`${e.v.initiator}>${e.v.target}`);
     if (!candidates) continue;
     let best: Entry | null = null;
@@ -260,6 +292,8 @@ export function dedupeExchanges<T extends TracerouteRowLike>(rows: T[]): T[] {
         isReply: o.isReply,
         orderedPath: o.orderedPath,
         ms: tsToMs(row.timestamp ?? 0),
+        id: row.id,
+        replyTo: row.packet_id,
       };
     }),
   );

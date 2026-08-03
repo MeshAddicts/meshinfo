@@ -1,3 +1,4 @@
+import { normNodeId } from "../../utils/normalizeNodeId8";
 import {
   canonicalPairKey,
   exchangeKeepMask,
@@ -19,6 +20,9 @@ export type NodesById = Record<
 export type TracerouteEvent = {
   __idx: number; // stable key helper
   timestamp: any;
+  /** Where `timestamp` came from: the packet itself, or the server ingest
+   *  time substituted for clock-less gateways (timestamp 0). */
+  timestamp_source: "packet" | "ingest" | null;
   /** Initiator (requester) — travel orientation, not the packet header. */
   from: string;
   /** Target (traced node) — travel orientation, not the packet header. */
@@ -27,8 +31,15 @@ export type TracerouteEvent = {
   /** Travel-ordered intermediate hops, normalized to 8-hex where resolvable;
    *  unresolvable entries kept as-is / `?<raw>` placeholders. */
   route_ids: string[];
+  /** Return-path hops in return-travel order (target → … → initiator),
+   *  server-resolved; empty for requests and pre-column rows. */
+  route_back_ids: string[];
   route?: any;
   id?: number | string;
+  /** Reply rows: the request's packet id (exact exchange pairing). */
+  packet_id?: number | string | null;
+  /** Server ingest time (epoch s) — dates rows whose packet timestamp is 0. */
+  created_at?: number | null;
   snr?: number | null;
   rssi?: number | null;
   /** RouteDiscovery payload (snr_towards etc.) as served by the API. */
@@ -111,13 +122,27 @@ export function isHopLinkable(id: string): boolean {
   return isResolvedHop(id);
 }
 
+/** Return-path intermediate hops in return-travel order (target → … →
+ *  initiator). Prefers the server-resolved route_back_ids; falls back to
+ *  normalizing the raw payload.route_back for rows predating the column.
+ *  Empty for requests and replies whose return leg wasn't recorded. */
+export function returnRouteIdsOf(e: TracerouteEvent): string[] {
+  if (e.route_back_ids.length > 0) return e.route_back_ids;
+  const raw = e.payload?.route_back;
+  if (!Array.isArray(raw)) return [];
+  return raw.map((r) => normNodeId(r) || `?${String(r)}`);
+}
+
 export function coerceEvent(raw: any, idx: number): TracerouteEvent {
   const o = orientTraceroute(raw);
   const headerFrom = raw?.from ?? "";
   const headerTo = raw?.to ?? "";
   return {
     __idx: idx,
-    timestamp: raw?.timestamp,
+    // Packet timestamp, falling back to server ingest time for rows from
+    // clock-less gateways (timestamp 0 used to sort them to 1970).
+    timestamp: raw?.timestamp || raw?.created_at,
+    timestamp_source: raw?.timestamp ? "packet" : raw?.created_at ? "ingest" : null,
     from: o ? o.initiator : headerFrom,
     to: o ? o.target : headerTo,
     hops_away: raw?.hops_away ?? null,
@@ -125,7 +150,10 @@ export function coerceEvent(raw: any, idx: number): TracerouteEvent {
       ? o.orderedPath.slice(1, -1)
       : ((raw?.route_ids ?? []) as any[]).map((r) => String(r)),
     route: raw?.route,
+    route_back_ids: ((raw?.route_back_ids ?? []) as any[]).map((r) => String(r)),
     id: raw?.id,
+    packet_id: raw?.packet_id ?? null,
+    created_at: raw?.created_at ?? null,
     snr: raw?.snr ?? null,
     rssi: raw?.rssi ?? null,
     payload: raw?.payload,
@@ -149,6 +177,8 @@ export function dedupeExchangeEvents(events: TracerouteEvent[]): TracerouteEvent
             isReply: e.isReply,
             orderedPath: [e.from, ...e.route_ids, e.to],
             ms: safeTsMs(e.timestamp),
+            id: e.id,
+            replyTo: e.packet_id,
           }
         : null,
     ),

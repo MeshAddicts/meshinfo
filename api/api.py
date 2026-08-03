@@ -239,7 +239,13 @@ class API:
         @app.get("/v1/nodes/{id}/traceroutes")
         async def node_traceroutes(request: Request, id: str) -> JSONResponse:
             node_id = self._coerce_node_id(id)
-            traceroutes = await self.data.pg_storage.query_node_traceroutes(node_id)
+            try:
+                limit = int(request.query_params.get("limit", 1000))
+            except (TypeError, ValueError):
+                return JSONResponse({"error": "limit must be an integer"}, status_code=400)
+            traceroutes = await self.data.pg_storage.query_node_traceroutes(
+                node_id, limit=max(1, min(limit, 10000))
+            )
             return JSONResponse(jsonable_encoder({ "traceroutes": traceroutes }))
 
         @app.get("/v1/chat")
@@ -277,15 +283,26 @@ class API:
             except (TypeError, ValueError):
                 return JSONResponse({"error": "limit must be an integer"}, status_code=400)
             # ?slim=1 keeps only the row fields the SPA reads and drops the
-            # rest (legacy `route`, duplicate payload arrays). Default stays
-            # byte-identical for third-party consumers.
+            # rest (legacy `route`). Default stays byte-identical for
+            # third-party consumers: bare array, no cursor, legacy fields.
             slim = request.query_params.get("slim", "").lower() in ("1", "true", "yes")
+            # Keyset pagination is opt-in via ?envelope=1 ONLY: the response
+            # becomes {traceroutes, next_cursor}; pass next_cursor back as
+            # ?before= to walk older pages. Deliberately NOT implied by slim —
+            # already-open tabs run the previous bundle, which requests slim=1
+            # and expects a bare array; forcing the envelope onto slim would
+            # crash every open dashboard at deploy. Bare-array responses
+            # (default and slim-without-envelope) cannot carry a cursor.
+            envelope = request.query_params.get("envelope", "").lower() in ("1", "true", "yes")
+            before = request.query_params.get("before")
             traceroutes_data = await self.data.pg_storage.query_all_traceroutes(
                 limit=max(1, min(limit, 10000)),
                 from_node_id=self._coerce_node_id(from_param) if from_param else None,
                 to_node_id=self._coerce_node_id(to_param) if to_param else None,
                 range_seconds=range_seconds,
                 slim=slim,
+                before=before if envelope else None,
+                with_cursor=envelope,
             )
             return JSONResponse(jsonable_encoder(traceroutes_data))
 

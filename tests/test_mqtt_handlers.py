@@ -429,6 +429,9 @@ class TestHandleTraceroute:
             "payload": payload,
         }))
         _, event = q.get_nowait()
+        # created_at is the handler's now() approximation of the DB default
+        created_at = event.pop("created_at")
+        assert isinstance(created_at, int) and created_at > 1753500000
         assert event == {
             "from": "67ea9400",
             "to": "abcd1234",
@@ -443,6 +446,7 @@ class TestHandleTraceroute:
             "timestamp": 1753500000,
             "route": [0x67EA9400],
             "route_ids": ["67ea9400"],
+            "route_back_ids": [],
             "payload": payload,
         }
 
@@ -492,6 +496,25 @@ class TestHandleTraceroute:
         }))
         _, written = data.pg_storage.traceroute_writes[0]
         assert written["route_ids"] == [2**40]
+
+    def test_route_back_resolved_like_forward_route(self):
+        mqtt, data = make_mqtt(nodes={
+            "67ea9400": {"id": "67ea9400", "longname": "A"},
+        })
+        run(mqtt.handle_traceroute({
+            "from": 0x67EA9400,
+            "to": 0xABCD1234,
+            "id": 900,
+            "payload": {
+                "route": [0x67EA9400],
+                "snr_towards": [4, 8],
+                "route_back": [0xDEADBEEF, 0x67EA9400],
+                "snr_back": [3, 5],
+            },
+        }))
+        _, written = data.pg_storage.traceroute_writes[0]
+        # Known node resolves, unknown int becomes canonical hex
+        assert written["route_back_ids"] == ["deadbeef", "67ea9400"]
 
     def test_bool_hop_not_minted_into_node_id(self):
         """bool subclasses int: a hostile JSON `true` route entry must echo
@@ -647,6 +670,32 @@ class TestProcessEnvelope:
         _, written = data.pg_storage.traceroute_writes[0]
         assert written["payload"]["route"] == []
         assert written["payload"]["snr_towards"] == [-128]
+
+    def test_traceroute_reply_request_id_captured_as_packet_id(self):
+        """Data.request_id (the request's packet id, set on replies) must land
+        in the stored row's packet_id for exact exchange pairing."""
+        rd = mesh_pb2.RouteDiscovery(route=[], snr_towards=[8])
+        msg = build_envelope(
+            portnum=portnums_pb2.TRACEROUTE_APP,
+            payload=rd.SerializeToString(),
+            request_id=424242,
+        )
+        mqtt, data = make_mqtt()
+        run(mqtt.process_mqtt_msg(None, msg))
+        _, written = data.pg_storage.traceroute_writes[0]
+        assert written["packet_id"] == 424242
+
+    def test_traceroute_request_has_null_packet_id(self):
+        rd = mesh_pb2.RouteDiscovery(route=[], snr_towards=[])
+        msg = build_envelope(
+            portnum=portnums_pb2.TRACEROUTE_APP,
+            payload=rd.SerializeToString(),
+            request_id=0,  # proto3 unset — a request packet
+        )
+        mqtt, data = make_mqtt()
+        run(mqtt.process_mqtt_msg(None, msg))
+        _, written = data.pg_storage.traceroute_writes[0]
+        assert written["packet_id"] is None
 
     def test_json_decoder_processes_when_protobuf_disabled(self):
         mqtt, data = make_mqtt(json_decoder=True, protobuf_decoder=False)

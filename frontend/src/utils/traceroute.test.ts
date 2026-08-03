@@ -207,6 +207,22 @@ describe("dedupeExchanges", () => {
     expect(dedupeExchanges([bad, rep])).toEqual([bad, rep]);
   });
 
+  it("pairs exactly via packet_id, ignoring window and path", () => {
+    // Request stored 10 minutes before the reply (heuristic window is 60s)
+    // via a DIFFERENT first hop (heuristic prefix rule would also fail)
+    const req = requestRow({ id: 424242, timestamp: 400, route_ids: ["000000c9"], payload: { route: [0xc9], snr_towards: [4] } });
+    const rep = replyRow({ timestamp: 1010, packet_id: 424242 });
+    expect(dedupeExchanges([req, rep])).toEqual([rep]);
+  });
+
+  it("exact-keyed replies never heuristically merge a different request", () => {
+    // The reply names its request (never stored/heard); the same-pair request
+    // within the window belongs to another attempt and must survive.
+    const otherReq = requestRow({ id: 111, timestamp: 1000 });
+    const rep = replyRow({ timestamp: 1010, packet_id: 999999 });
+    expect(dedupeExchanges([otherReq, rep])).toEqual([otherReq, rep]);
+  });
+
   it("collapses a zero-hop exchange to the reply", () => {
     const req: TracerouteRowLike = {
       from: "000000aa",

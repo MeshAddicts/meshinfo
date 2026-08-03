@@ -12,6 +12,7 @@ import {
   hopChipLabel,
   isHopLinkable,
   type NodesById,
+  returnRouteIdsOf,
   routeIdsOf,
   safeTsMs,
   type TracerouteEvent,
@@ -534,6 +535,21 @@ export function TracerouteDetailsPanel({
                       <div className="mt-2">
                         <RouteChips nodes={nodes} routeIds={rids} />
                       </div>
+
+                      {(() => {
+                        // Return leg travels target → … → initiator; only
+                        // reply rows that recorded it have one to show.
+                        const back = returnRouteIdsOf(e);
+                        if (!back.length) return null;
+                        return (
+                          <div className="mt-2">
+                            <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">
+                              Return path ({(nodes[e.to]?.shortname || "UNK") + " → " + (nodes[e.from]?.shortname || "UNK")})
+                            </div>
+                            <RouteChips nodes={nodes} routeIds={back} />
+                          </div>
+                        );
+                      })()}
 
                       {selectedItem.kind !== "pair" ? (
                         <div className="mt-2 text-[11px] text-gray-500 tabular-nums">

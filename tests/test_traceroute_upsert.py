@@ -21,12 +21,17 @@ real server, not a fake.
 import asyncio
 import json
 import os
+from urllib.parse import urlparse
 
 import pytest
 
 asyncpg = pytest.importorskip("asyncpg")
 
-from storage.db.postgres import TRACEROUTE_UPGRADE_WINDOW_S, TRACEROUTE_UPSERT_SQL
+from storage.db.postgres import (
+    PostgresStorage,
+    TRACEROUTE_UPGRADE_WINDOW_S,
+    TRACEROUTE_UPSERT_SQL,
+)
 
 DSN = os.environ.get("TRACEROUTE_PG_DSN")
 
@@ -71,7 +76,7 @@ async def _conn():
     return conn
 
 
-async def _upsert(conn, message_id, payload, rssi=None, snr=None, sender=None):
+async def _upsert(conn, message_id, payload, rssi=None, snr=None, sender=None, packet_id=None):
     """Execute the production statement; returns 'inserted'/'upgraded'/'duplicate'."""
     row = await conn.fetchrow(
         TRACEROUTE_UPSERT_SQL,
@@ -80,7 +85,7 @@ async def _upsert(conn, message_id, payload, rssi=None, snr=None, sender=None):
         sender,
         message_id,
         None,  # channel
-        None,  # packet_id
+        packet_id,
         None,  # hops_away
         rssi,
         snr,
@@ -89,6 +94,7 @@ async def _upsert(conn, message_id, payload, rssi=None, snr=None, sender=None):
         json.dumps(payload.get("route", [])),
         json.dumps([]),
         json.dumps(payload),
+        json.dumps([]),  # route_back_ids
         float(TRACEROUTE_UPGRADE_WINDOW_S),
     )
     if row is None:
@@ -232,6 +238,7 @@ class TestRicherWinsUpsert:
                     FROM_ID, TO_ID, None, 8, None, None, None, None, None,
                     1753500000, None,
                     json.dumps(POOR["route"]), json.dumps([]), json.dumps(POOR),
+                    json.dumps([]),
                     float(TRACEROUTE_UPGRADE_WINDOW_S),
                 )
                 assert row0["inserted"]
@@ -241,6 +248,7 @@ class TestRicherWinsUpsert:
                     FROM_ID, TO_ID, None, 8, None, None, None, None, None,
                     0, None,
                     json.dumps(RICH["route"]), json.dumps([]), json.dumps(RICH),
+                    json.dumps([]),
                     float(TRACEROUTE_UPGRADE_WINDOW_S),
                 )
                 assert row1 is not None and not row1["inserted"]  # upgraded
@@ -297,5 +305,128 @@ class TestRicherWinsUpsert:
             finally:
                 await c1.close()
                 await c2.close()
+
+        run(body())
+
+
+def _storage_config():
+    u = urlparse(DSN)
+    return {
+        "storage": {
+            "postgres": {
+                "enabled": True,
+                "host": u.hostname,
+                "port": u.port or 5432,
+                "database": (u.path or "/meshinfo").lstrip("/"),
+                "username": u.username or "postgres",
+                "password": u.password or "",
+            }
+        },
+        "server": {"timezone": "UTC"},
+    }
+
+
+SEED_SQL = """
+    INSERT INTO traceroutes (
+        from_node_id, to_node_id, message_id, timestamp,
+        route_ids, route_back_ids, payload, created_at
+    )
+    VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, to_timestamp($8))
+"""
+
+
+class TestKeysetPaginationAndShapes:
+    """Drives the real query functions (not just the SQL constants) so the
+    param-assembly around cursors, containment, and slim projection is pinned
+    against a live server."""
+
+    async def _seeded_storage(self):
+        conn = await _conn()  # tripwire + node stubs + clean slate
+        # 7 rows; created_at PAIRS share a second so the id tiebreak matters.
+        for i in range(7):
+            await conn.execute(
+                SEED_SQL,
+                FROM_ID,
+                TO_ID,
+                1000 + i,
+                1753500000 + i,
+                json.dumps(["cccccccc"] if i == 2 else []),
+                json.dumps(["cccccccc"] if i == 5 else []),
+                json.dumps({"route": [], "snr_towards": [4]}),
+                1753500000 + (i // 2),
+            )
+        await conn.close()
+        storage = PostgresStorage(_storage_config())
+        assert await storage.connect()
+        return storage
+
+    def test_cursor_walk_has_no_gaps_or_overlap(self):
+        async def body():
+            storage = await self._seeded_storage()
+            try:
+                pages = []
+                before = None
+                for _ in range(5):
+                    result = await storage.query_all_traceroutes(
+                        limit=3, slim=True, before=before, with_cursor=True
+                    )
+                    pages.append([r["id"] for r in result["traceroutes"]])
+                    before = result["next_cursor"]
+                    if before is None:
+                        break
+                # DESC created_at with DESC id tiebreak inside each shared second
+                assert pages == [[1006, 1005, 1004], [1003, 1002, 1001], [1000]]
+            finally:
+                await storage.close()
+
+        run(body())
+
+    def test_malformed_cursor_serves_first_page(self):
+        async def body():
+            storage = await self._seeded_storage()
+            try:
+                result = await storage.query_all_traceroutes(
+                    limit=3, slim=True, before="garbage", with_cursor=True
+                )
+                assert [r["id"] for r in result["traceroutes"]] == [1006, 1005, 1004]
+            finally:
+                await storage.close()
+
+        run(body())
+
+    def test_slim_and_default_row_shapes(self):
+        async def body():
+            storage = await self._seeded_storage()
+            try:
+                slim_rows = await storage.query_all_traceroutes(limit=1, slim=True)
+                assert sorted(slim_rows[0].keys()) == sorted(
+                    [
+                        "from", "to", "id", "packet_id", "hops_away", "rssi",
+                        "snr", "timestamp", "created_at", "route_ids",
+                        "route_back_ids", "payload",
+                    ]
+                )
+                assert isinstance(slim_rows[0]["created_at"], int)
+                # Default (third-party) rows must carry NO new keys
+                full_rows = await storage.query_all_traceroutes(limit=1, slim=False)
+                assert "route_back_ids" not in full_rows[0]
+                assert "created_at" not in full_rows[0]
+            finally:
+                await storage.close()
+
+        run(body())
+
+    def test_node_involvement_containment(self):
+        async def body():
+            storage = await self._seeded_storage()
+            try:
+                rows = await storage.query_node_traceroutes("cccccccc")
+                # Relay on the forward leg (row 1002) and return leg (1005)
+                assert sorted(r["id"] for r in rows) == [1002, 1005]
+                # Initiator/target arms still work
+                rows = await storage.query_node_traceroutes(FROM_ID, limit=3)
+                assert len(rows) == 3
+            finally:
+                await storage.close()
 
         run(body())

@@ -65,9 +65,13 @@ class FakePgStorage:
             for i, (nid, prev) in enumerate(self.traceroute_writes):
                 if nid == node_id and prev.get("id") == msg_id:
                     if richness(msg) > richness(prev):
+                        # Upgrades keep the original row's created_at (mirrors
+                        # RETURNING created_at surfacing it onto the msg).
+                        msg["created_at"] = prev.get("created_at")
                         self.traceroute_writes[i] = (node_id, dict(msg))
                         return "upgraded"
                     return "duplicate"
+        msg["created_at"] = 1753600000
         self.traceroute_writes.append((node_id, dict(msg)))
         return "inserted"
 
@@ -126,6 +130,7 @@ def build_envelope(
     channel=0,
     gateway_id="!abcd1234",
     topic="msh/US/2/e/LongFast/!abcd1234",
+    request_id=0,
 ) -> FakeMqttMessage:
     """Serialize a real ServiceEnvelope wrapping an unencrypted MeshPacket —
     the exact wire shape process_mqtt_msg decodes, so proto3 zero-omission
@@ -143,5 +148,6 @@ def build_envelope(
     )
     mp.decoded.portnum = portnum
     mp.decoded.payload = payload
+    mp.decoded.request_id = request_id
     se = mqtt_pb2.ServiceEnvelope(packet=mp, gateway_id=gateway_id, channel_id="LongFast")
     return FakeMqttMessage(topic, se.SerializeToString())

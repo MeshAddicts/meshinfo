@@ -264,6 +264,11 @@ class MQTT:
                         out = json.loads(MessageToJson(route_msg, preserving_proto_field_name=True, ensure_ascii=False, indent=2, sort_keys=True, use_integers_for_enums=True, always_print_fields_with_no_presence=True))
                         outs["type"] = "traceroute"
                         outs["payload"] = out
+                        # Reply packets carry the REQUEST's packet id in
+                        # Data.request_id (proto3: 0 = unset, i.e. a request).
+                        # Stored in the packet_id column so request/reply rows
+                        # of one exchange pair exactly instead of by heuristic.
+                        outs["packet_id"] = mp.decoded.request_id or None
                         logger.debug("Decoded protobuf message: traceroute: %s", outs)
                     except UnicodeDecodeError as e:
                         logger.debug("Unicode decoding error: text: %s", e)
@@ -696,6 +701,35 @@ class MQTT:
             self._record_discord_drop('text')
 
 
+    async def _resolve_route_entries(self, route):
+        """Resolve RouteDiscovery hop entries to canonical node ids.
+
+        Known nodes resolve to their stored id. Unknown protobuf ints store
+        the canonical 8-hex form so consumers can group/resolve them once the
+        node is seen (normalize_node_id rejects out-of-uint32 garbage, falling
+        back to the raw echo). Strings stay verbatim — JSON-path entries are
+        longnames, and a hex-looking "cafe" must not be minted into an id;
+        bools are excluded so a hostile `true` can't become node 00000001.
+        """
+        resolved = []
+        for r in route:
+            if isinstance(r, str):
+                # JSON publisher path: route entries arrive as longnames.
+                node = await self.data.pg_storage.find_node_by_longname(r)
+            elif isinstance(r, int) and not isinstance(r, bool):
+                # Protobuf path: route entries are uint32 node ids.
+                node = await self.data.pg_storage.get_node_cached(utils.convert_node_id_from_int_to_hex(r))
+            else:
+                node = None
+
+            if node:
+                resolved.append(node['id'])
+            elif isinstance(r, int) and not isinstance(r, bool):
+                resolved.append(normalize_node_id(r) or r)
+            else:
+                resolved.append(r)
+        return resolved
+
     async def handle_traceroute(self, msg):
         id = self._normalize_msg_addrs(msg)
         if id is None:
@@ -708,30 +742,15 @@ class MQTT:
             return
 
         msg['route'] = route
-        msg['route_ids'] = []
-        for r in route:
-            if isinstance(r, str):
-                # JSON publisher path: route entries arrive as longnames.
-                node = await self.data.pg_storage.find_node_by_longname(r)
-            elif isinstance(r, int) and not isinstance(r, bool):
-                # Protobuf path: route entries are uint32 node ids.
-                node = await self.data.pg_storage.get_node_cached(utils.convert_node_id_from_int_to_hex(r))
-            else:
-                node = None
-
-            if node:
-                msg['route_ids'].append(node['id'])
-            elif isinstance(r, int) and not isinstance(r, bool):
-                # Unknown protobuf hop: store the canonical 8-hex id, not the
-                # raw int, so consumers can group/resolve it once the node is
-                # seen (normalize_node_id also rejects out-of-uint32 garbage,
-                # falling back to the raw echo). The else branch stays
-                # verbatim on purpose — JSON-path strings are longnames (a
-                # hex-looking "cafe" must not be minted into an id), and bools
-                # are excluded so a hostile `true` can't become node 00000001.
-                msg['route_ids'].append(normalize_node_id(r) or r)
-            else:
-                msg['route_ids'].append(r)
+        msg['route_ids'] = await self._resolve_route_entries(route)
+        # Reply rows accumulate the return path too; resolve it the same way
+        # so the return leg is displayable without re-resolving client-side.
+        route_back = payload.get('route_back') if isinstance(payload, dict) else None
+        msg['route_back_ids'] = (
+            await self._resolve_route_entries(route_back)
+            if isinstance(route_back, list)
+            else []
+        )
 
         outcome = await self.data.pg_storage.write_traceroute(id, msg)
 
@@ -778,6 +797,12 @@ class MQTT:
                         "timestamp": msg.get("timestamp"),
                         "route": msg.get("route", []),
                         "route_ids": msg["route_ids"],
+                        "route_back_ids": msg.get("route_back_ids", []),
+                        # write_traceroute surfaces the row's REAL created_at
+                        # (first-heard, which upgrades preserve); the now()
+                        # fallback covers the outage path where the row hasn't
+                        # landed yet and NOW() is what it will get on insert.
+                        "created_at": msg.get("created_at") or int(time.time()),
                         "payload": payload,
                     }
                 )

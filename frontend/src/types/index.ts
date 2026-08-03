@@ -47,6 +47,13 @@ export interface ITraceroutesResponse {
   from: string;
   hop_start?: number;
   id: number;
+  /** Reply rows: the request's packet id (exact exchange pairing); null on
+   *  requests and rows written before the backend captured it. */
+  packet_id?: number | null;
+  /** Server ingest time, epoch seconds (slim rows + SSE events). */
+  created_at?: number | null;
+  /** Server-resolved return-path hops, return-travel order. */
+  route_back_ids?: (string | number)[];
   /** Full RouteDiscovery. SNR arrays are firmware-scaled ×4 with -128 = unknown.
    *  Rows carrying the full snr_towards (length = route + 1) are REPLY packets:
    *  their towards path reads header `to` → route → header `from` (the route

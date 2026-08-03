@@ -256,11 +256,16 @@ export const Traceroutes = () => {
   // Live polling (simple: on/off)
   const [liveEnabled, setLiveEnabled] = useState(true);
 
+  // Server-side range + explicit limit: the server's silent default cap made
+  // the page aggregate the newest 1000 packets while labeling it "all"; the
+  // cap still exists (pagination is cursor-based, not auto-walked) but is now
+  // surfaced via the truncation notice below.
+  const PAGE_LIMIT = 1000;
   const {
     data: traceroutesRaw,
     isFetching,
     refetch,
-  } = useGetTraceroutesQuery(undefined as any, {
+  } = useGetTraceroutesQuery({ range, limit: PAGE_LIMIT } as any, {
     pollingInterval: liveEnabled ? 5000 : 0,
     skipPollingIfUnfocused: true,
     refetchOnFocus: liveEnabled,
@@ -642,12 +647,17 @@ export const Traceroutes = () => {
 
   const totalEvents = exchangesSorted.length;
   const totalPackets = filteredEventsSorted.length;
+  // A full page means the server window is capped, not exhausted — say so
+  // instead of presenting the truncated window as the complete range.
+  const truncated = eventsAll.length >= PAGE_LIMIT;
 
   const totalLabel = `${totalPairs.toLocaleString()} pair${
     totalPairs === 1 ? "" : "s"
   } • ${totalEvents.toLocaleString()} traceroute${
     totalEvents === 1 ? "" : "s"
-  } (${totalPackets.toLocaleString()} packet${totalPackets === 1 ? "" : "s"})`;
+  } (${totalPackets.toLocaleString()} packet${totalPackets === 1 ? "" : "s"})${
+    truncated ? ` • newest ${PAGE_LIMIT.toLocaleString()} only` : ""
+  }`;
 
   const liveUiMode = liveEnabled ? ("live" as const) : ("off" as const);
   const livePillTitle = liveEnabled
@@ -728,12 +738,15 @@ export const Traceroutes = () => {
       "route_hops",
       "route_ids",
       "route_short",
+      "return_route_ids",
       "leg_snr_db",
       "snr",
       "rssi",
       "message_id",
       "header_from",
       "header_to",
+      "time_source",
+      "created_at",
     ] as const;
 
     const lines: string[] = [];
@@ -763,12 +776,17 @@ export const Traceroutes = () => {
         route_hops: rids.length,
         route_ids: rids.join(" "),
         route_short: routeShort,
+        return_route_ids: e.route_back_ids.join(" "),
         leg_snr_db: legSnr,
         snr: e.snr ?? "",
         rssi: e.rssi ?? "",
         message_id: e.id ?? "",
         header_from: e.header_from,
         header_to: e.header_to,
+        // The timestamp column falls back to ingest time for clock-less
+        // gateways; this column makes the substitution auditable.
+        time_source: e.timestamp_source ?? "",
+        created_at: e.created_at ? new Date(safeTsMs(e.created_at)).toISOString() : "",
       };
 
       lines.push(cols.map((c) => csvEscape(row[c])).join(","));

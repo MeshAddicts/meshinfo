@@ -134,14 +134,14 @@ def _traceroute_prefix_guard_sql(key: str) -> str:
 # means the guard refused the copy: poorer/equal, prefix-violating, or a
 # STALE id collision (row older than the window — such packets are genuinely
 # new but indistinguishable from history rewrites, so they are dropped, as
-# the old DO NOTHING always did). $15 = upgrade window (s).
+# the old DO NOTHING always did). $16 = upgrade window (s).
 TRACEROUTE_UPSERT_SQL = f"""
     INSERT INTO traceroutes (
         from_node_id, to_node_id, sender_node_id, message_id, channel,
         packet_id, hops_away, rssi, snr, timestamp, rx_time,
-        route, route_ids, payload
+        route, route_ids, payload, route_back_ids
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14::jsonb)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14::jsonb, $15::jsonb)
     ON CONFLICT (from_node_id, message_id) DO UPDATE SET
         to_node_id     = EXCLUDED.to_node_id,
         sender_node_id = EXCLUDED.sender_node_id,
@@ -156,13 +156,14 @@ TRACEROUTE_UPSERT_SQL = f"""
         rx_time        = COALESCE(EXCLUDED.rx_time, traceroutes.rx_time),
         route          = EXCLUDED.route,
         route_ids      = EXCLUDED.route_ids,
-        payload        = EXCLUDED.payload
-    WHERE traceroutes.created_at > now() - make_interval(secs => $15)
+        payload        = EXCLUDED.payload,
+        route_back_ids = EXCLUDED.route_back_ids
+    WHERE traceroutes.created_at > now() - make_interval(secs => $16)
       AND ({_traceroute_richness_sql("EXCLUDED.payload")})
         > ({_traceroute_richness_sql("traceroutes.payload")})
       AND {_traceroute_prefix_guard_sql("route")}
       AND {_traceroute_prefix_guard_sql("route_back")}
-    RETURNING (xmax = 0) AS inserted
+    RETURNING (xmax = 0) AS inserted, created_at
 """
 
 # True while the current *task* is the retry drain replaying a buffered write —
@@ -529,6 +530,24 @@ class PostgresStorage:
                     CREATE INDEX IF NOT EXISTS idx_mqtt_messages_packet
                         ON mqtt_messages(from_node_id, packet_id, created_at DESC)
                         WHERE packet_id IS NOT NULL;
+                """, timeout=600)
+                # Traceroute return-path column + involvement indexes. The
+                # ALTER is instant; the index builds scan the whole table on
+                # first run, hence the explicit timeout (schema.sql also
+                # carries copies for fresh installs, but its single implicit
+                # transaction runs under the pool's 10s command_timeout — a
+                # timeout there would roll the ALTER back with it, so the
+                # migrations block is the authoritative path for upgrades).
+                await conn.execute("""
+                    ALTER TABLE traceroutes ADD COLUMN IF NOT EXISTS route_back_ids JSONB;
+                """)
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_traceroutes_sender_node_id
+                        ON traceroutes(sender_node_id);
+                    CREATE INDEX IF NOT EXISTS idx_traceroutes_route_ids_gin
+                        ON traceroutes USING gin (route_ids jsonb_path_ops);
+                    CREATE INDEX IF NOT EXISTS idx_traceroutes_route_back_ids_gin
+                        ON traceroutes USING gin (route_back_ids jsonb_path_ops);
                 """, timeout=600)
         except Exception as e:
             logger.error(f"Failed to run migrations: {e}")
@@ -1341,6 +1360,7 @@ class PostgresStorage:
                 payload_json = json.dumps(traceroute_msg.get("payload", {}), default=_json_default)
                 route_json = json.dumps(traceroute_msg.get("route", []), default=_json_default)
                 route_ids_json = json.dumps(traceroute_msg.get("route_ids", []), default=_json_default)
+                route_back_ids_json = json.dumps(traceroute_msg.get("route_back_ids", []), default=_json_default)
 
                 rx_time = self._ts_to_dt(traceroute_msg.get("timestamp"))
 
@@ -1370,10 +1390,16 @@ class PostgresStorage:
                     route_json,
                     route_ids_json,
                     payload_json,
+                    route_back_ids_json,
                     float(TRACEROUTE_UPGRADE_WINDOW_S),
                 )
                 if row is None:
                     return "duplicate"
+                # The row's REAL created_at (first-heard — upgrades keep it),
+                # surfaced on the msg so the SSE event matches a later REST
+                # fetch instead of stamping upgrade-time.
+                if row["created_at"] is not None:
+                    traceroute_msg["created_at"] = int(row["created_at"].timestamp())
                 return "inserted" if row["inserted"] else "upgraded"
 
         except Exception as e:
@@ -2316,8 +2342,10 @@ class PostgresStorage:
             logger.error(f"Failed to query texts from PostgreSQL: {e}")
             return []
 
-    async def query_node_traceroutes(self, node_id: str) -> List[Dict[str, Any]]:
-        """Query traceroutes for a specific node."""
+    async def query_node_traceroutes(self, node_id: str, limit: int = 1000) -> List[Dict[str, Any]]:
+        """Query traceroutes INVOLVING a node: as initiator, target, uplink
+        gateway, or relay hop on either leg (containment over the resolved
+        hop arrays, GIN-indexed)."""
         if not self.enabled or not self.pool:
             return []
 
@@ -2327,10 +2355,14 @@ class PostgresStorage:
                     """
                     SELECT * FROM traceroutes
                     WHERE from_node_id = $1 OR to_node_id = $1
+                       OR sender_node_id = $1
+                       OR route_ids @> jsonb_build_array($1::text)
+                       OR route_back_ids @> jsonb_build_array($1::text)
                     ORDER BY created_at DESC
-                    LIMIT 1000
+                    LIMIT $2
                     """,
                     node_id,
+                    limit,
                 )
 
                 traceroutes = []
@@ -2349,6 +2381,7 @@ class PostgresStorage:
                             "timestamp": row["timestamp"],
                             "route": self._jsonb(row["route"], []),
                             "route_ids": self._jsonb(row["route_ids"], []),
+                            "route_back_ids": self._jsonb(row["route_back_ids"], []),
                             "payload": self._jsonb(row["payload"], {}),
                         }
                     )
@@ -2566,21 +2599,30 @@ class PostgresStorage:
         to_node_id: Optional[str] = None,
         range_seconds: Optional[int] = None,
         slim: bool = False,
-    ) -> List[Dict[str, Any]]:
+        before: Optional[str] = None,
+        with_cursor: bool = False,
+    ) -> Any:
         """Query traceroutes, newest first, optionally filtered.
 
         With both endpoints given, the pair matches in either direction
         (consumers orient the path client-side). A single endpoint filters
         just that column. `range_seconds` windows on created_at.
 
-        With `slim`, each row keeps only what the SPA reads (from, to, id,
-        hops_away, rssi, snr, timestamp, route_ids, payload.snr_towards) —
-        the full rows triple-carry the path via `route`, `route_ids` AND the
-        payload's route/route_back arrays. Default False keeps the full
-        shape for third-party consumers.
+        With `slim`, each row keeps what the SPA reads: from, to, id,
+        packet_id (the reply's request_id — exact exchange pairing),
+        hops_away, rssi, snr, timestamp, created_at (epoch; dates rows whose
+        packet timestamp is 0), route_ids, route_back_ids, and the payload's
+        snr_towards/route_back/snr_back. Default False keeps the legacy full
+        shape byte-identical for third-party consumers.
+
+        Keyset pagination: `before` is an opaque cursor (from a previous
+        page's next_cursor) over (created_at, id) — stable because upgrades
+        never touch created_at. With `with_cursor` the return value is
+        {"traceroutes": rows, "next_cursor": str | None} instead of a bare
+        list; next_cursor is present only when the page filled `limit`.
         """
         if not self.enabled or not self.pool:
-            return []
+            return {"traceroutes": [], "next_cursor": None} if with_cursor else []
 
         where = []
         params: List[Any] = []
@@ -2599,6 +2641,12 @@ class PostgresStorage:
         if range_seconds:
             params.append(range_seconds)
             where.append(f"created_at >= NOW() - make_interval(secs => ${len(params)})")
+        cursor = _decode_cursor(before) if before else None
+        if cursor:
+            params += [cursor[0], cursor[1]]
+            where.append(
+                f"(created_at, id) < (${len(params) - 1}, ${len(params)})"
+            )
         where_sql = f"WHERE {' AND '.join(where)}" if where else ""
         params.append(limit)
 
@@ -2608,7 +2656,7 @@ class PostgresStorage:
                     f"""
                     SELECT * FROM traceroutes
                     {where_sql}
-                    ORDER BY created_at DESC
+                    ORDER BY created_at DESC, id DESC
                     LIMIT ${len(params)}
                     """,
                     *params,
@@ -2617,23 +2665,30 @@ class PostgresStorage:
                 traceroutes = []
                 for row in rows:
                     if slim:
-                        # payload still has to be parsed: snr_towards lives in
-                        # it (per-leg SNR + reply-orientation detection). Only
-                        # that key survives — route/route_back/snr_back don't.
+                        # payload still has to be parsed: snr_towards drives
+                        # reply-orientation detection + per-leg SNR, and the
+                        # back arrays carry the return leg. The legacy `route`
+                        # stays dropped (route_ids duplicates it resolved).
                         payload = self._jsonb(row["payload"], {})
                         slim_payload = {}
-                        if isinstance(payload, dict) and "snr_towards" in payload:
-                            slim_payload["snr_towards"] = payload["snr_towards"]
+                        if isinstance(payload, dict):
+                            for key in ("snr_towards", "route_back", "snr_back"):
+                                if key in payload:
+                                    slim_payload[key] = payload[key]
+                        created = row["created_at"]
                         traceroutes.append(
                             {
                                 "from": row["from_node_id"],
                                 "to": row["to_node_id"],
                                 "id": row["message_id"],
+                                "packet_id": row["packet_id"],
                                 "hops_away": row["hops_away"],
                                 "rssi": row["rssi"],
                                 "snr": row["snr"],
                                 "timestamp": row["timestamp"],
+                                "created_at": int(created.timestamp()) if created else None,
                                 "route_ids": self._jsonb(row["route_ids"], []),
+                                "route_back_ids": self._jsonb(row["route_back_ids"], []),
                                 "payload": slim_payload,
                             }
                         )
@@ -2656,11 +2711,17 @@ class PostgresStorage:
                         }
                     )
 
-                return traceroutes
+                if not with_cursor:
+                    return traceroutes
+                next_cursor = None
+                if len(rows) >= limit and rows:
+                    last = rows[-1]
+                    next_cursor = _encode_cursor(last["created_at"], last["id"])
+                return {"traceroutes": traceroutes, "next_cursor": next_cursor}
 
         except Exception as e:
             logger.error(f"Failed to query traceroutes from PostgreSQL: {e}")
-            return []
+            return {"traceroutes": [], "next_cursor": None} if with_cursor else []
 
     async def query_stats(self) -> Dict[str, Any]:
         """Query statistics from PostgreSQL."""

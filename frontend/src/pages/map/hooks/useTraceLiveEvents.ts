@@ -186,14 +186,15 @@ export function useTraceLiveEvents({
       const key = `${row.id}:${row.from}`; // Map.tsx's merge key
       const upsert = (max: number) => (draft: ITraceroutesResponse[]) => {
         // Key collision = another copy of a row we already hold. Mirror the
-        // DB's richer-wins upsert: a held SLIM row (refetch snapshot; its
-        // payload strips route_back/snr_back, so richness is incomparable)
-        // is replaced by any full incoming row — a full row carries
-        // everything slim does plus the payload arrays, and a rare poorer
-        // outage-copy self-heals on the next refetch. Between two FULL rows
-        // the richness compare is exact: replace only strictly richer
-        // ('upgraded' broadcasts), keep the held row otherwise (no churn on
-        // identical fan-out copies, no regression on reordered delivery).
+        // DB's richer-wins upsert: a held SLIM row (refetch snapshot — lacks
+        // payload.route; older backends also stripped the back arrays, so
+        // richness against it isn't trustworthy) is replaced by any full
+        // incoming row — a full row carries everything slim does plus the
+        // payload arrays, and a rare poorer outage-copy self-heals on the
+        // next refetch. Between two FULL rows the richness compare is exact:
+        // replace only strictly richer ('upgraded' broadcasts), keep the held
+        // row otherwise (no churn on identical fan-out copies, no regression
+        // on reordered delivery).
         const held = draft.findIndex((tr) => `${tr.id}:${tr.from}` === key);
         if (held !== -1) {
           const heldRow = draft[held];
