@@ -1,7 +1,7 @@
-/** Shareable tool deep links: keeps ?tool=los|traceroute&from&to(&fh&th&fq / &play)
- *  in sync with the active analysis, restores once from the URL on mount, and
- *  fires a play=1 tour when the restored path is ready. LOS and traceroute share
- *  one URL snapshot — the tools are mutually exclusive. */
+/** Shareable tool deep links: keeps ?tool=los|traceroute&from&to(&fh&th&fq /
+ *  &sel&play) in sync with the active analysis, restores once from the URL on
+ *  mount, and fires a play=1 tour when the restored path is ready. LOS and
+ *  traceroute share one URL snapshot — the tools are mutually exclusive. */
 import { useEffect, useRef } from "react";
 
 import { prefersReducedMotion } from "../../../utils/reducedMotion";
@@ -44,13 +44,18 @@ export type ToolUrlSyncParams = {
   tracePosKey: string;
   styleEpoch: number;
   startFlyover: (path: AnalyzedPath) => boolean;
+  /** Explicitly selected path signature (alternate / history run) — carried
+   *  in the URL so a shared link reproduces the route being looked at, not
+   *  just the pair (which silently showed the recipient the newest path). */
+  traceSelectedSig: string | null;
+  setTraceSelectedSig: (sig: string | null) => void;
 };
 
 export function useToolUrlSync({
   activeTool, toolStep, toolFromId, toolToId,
   setActiveTool, setToolStep, setToolFromId, setToolToId,
   losState, tracePendingPlayRef, traceSelectedPath, tracePosKey, styleEpoch,
-  startFlyover,
+  startFlyover, traceSelectedSig, setTraceSelectedSig,
 }: ToolUrlSyncParams): void {
   // Snapshot the URL at first render: the write effect rewrites the real URL
   // synchronously (loader-less router), so the restore effect must never read
@@ -143,13 +148,17 @@ export function useToolUrlSync({
         sp.set("tool", "traceroute");
         sp.set("from", toolFromId);
         sp.set("to", toolToId);
+        // The explicitly selected alternate/run — without it, "Copy link"
+        // while inspecting an alternate handed the recipient the newest path.
+        if (traceSelectedSig) sp.set("sel", traceSelectedSig);
+        else sp.delete("sel");
         // play=1 is a one-shot request from a shared link — never persist it
         sp.delete("play");
       } else {
-        for (const k of ["tool", "from", "to", "play"]) sp.delete(k);
+        for (const k of ["tool", "from", "to", "sel", "play"]) sp.delete(k);
       }
     });
-  }, [activeTool, toolStep, toolFromId, toolToId]);
+  }, [activeTool, toolStep, toolFromId, toolToId, traceSelectedSig]);
 
   // Restore a shared traceroute analysis from the URL snapshot (once, on mount)
   useEffect(() => {
@@ -165,12 +174,18 @@ export function useToolUrlSync({
       // Invalid share link: the write effect never re-runs (no state changed),
       // so strip the stale params here or they linger in the URL forever.
       writeToolParams((spx) => {
-        for (const k of ["tool", "from", "to", "play"]) spx.delete(k);
+        for (const k of ["tool", "from", "to", "sel", "play"]) spx.delete(k);
       });
       return;
     }
     setToolFromId(f);
     setToolToId(t);
+    // Restore the shared alternate/run selection. The sig is only ever
+    // compared against locally computed path signatures (find-by-equality;
+    // an unknown sig falls back to the newest path), so a bounded length is
+    // the only sanitation it needs.
+    const sel = sp.get("sel");
+    if (sel && sel.length <= 512) setTraceSelectedSig(sel);
     setActiveTool("traceroute");
     setToolStep("result");
     if (sp.get("play") === "1") tracePendingPlayRef.current = true;
@@ -188,8 +203,21 @@ export function useToolUrlSync({
       return;
     }
     if (!traceSelectedPath) return; // traceroutes still loading — retry on next change
-    if (startFlyover(traceSelectedPath)) tracePendingPlayRef.current = false;
+    // A restored &sel alternate usually arrives with the pair-scoped history
+    // (after the global window): starting the tour on the newest-path
+    // fallback would fly — and then PIN — the wrong route. Wait for the
+    // sel'd path; the effect retries as data/positions land. If the sig has
+    // aged out of history entirely, the tour simply doesn't autostart (the
+    // recipient still sees the pair and can press Play) — better than
+    // silently touring a different route than the one that was shared.
+    if (traceSelectedSig && traceSelectedPath.hops.join(">") !== traceSelectedSig) return;
+    if (startFlyover(traceSelectedPath)) {
+      // Pin the toured path so a live row arriving mid-tour can't re-point
+      // the panel/primary at a newer path while the camera flies this one.
+      setTraceSelectedSig(traceSelectedPath.hops.join(">"));
+      tracePendingPlayRef.current = false;
+    }
     // tracePosKey: retries as hop positions stream in after a cold deep-link load
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTool, toolStep, traceSelectedPath, tracePosKey, styleEpoch]);
+  }, [activeTool, toolStep, traceSelectedPath, traceSelectedSig, tracePosKey, styleEpoch]);
 }

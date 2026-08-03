@@ -234,12 +234,24 @@ export function Map() {
   // window that makes most pairs come back empty. Merged with the global cache
   // so routes crossing the pair as intermediate hops still count.
   const tracePairActive = activeTool === "traceroute" && !!toolFromId && !!toolToId;
-  // isLoading (not isFetching): true only on a pair's first fetch, so throttled
-  // background refetches neither flicker the panel nor re-gate the fitBounds.
-  const { data: pairTraceroutes = EMPTY_TRACEROUTES, isLoading: pairTraceroutesLoading } = useGetTraceroutesQuery(
+  // currentData (not data/isLoading): `data` retains the PREVIOUS pair's rows
+  // across an arg switch — which both leaked the old pair's 500 rows into
+  // traceData until the new fetch settled AND made isLoading useless as a
+  // fit gate (it's per-hook-lifetime, false forever after the first pair).
+  // currentData is undefined until THIS arg's fetch lands, and stays present
+  // through same-arg background refetches, so the gate below is true exactly
+  // while the selected pair's history is genuinely missing.
+  const { currentData: pairTraceroutesRaw, isError: pairTraceroutesError } = useGetTraceroutesQuery(
     { from: toolFromId ?? "", to: toolToId ?? "", limit: 500 },
     { skip: !tracePairActive },
   );
+  const pairTraceroutes = pairTraceroutesRaw ?? EMPTY_TRACEROUTES;
+  // isError escape: a failed pair fetch leaves currentData undefined forever
+  // (RTKQ doesn't auto-retry) — without it the fit gate and the panel's
+  // loading state would wedge; on error the tool degrades to the global
+  // window, exactly like the pre-currentData behavior.
+  const pairTraceroutesLoading =
+    tracePairActive && pairTraceroutesRaw === undefined && !pairTraceroutesError;
   const traceData = useMemo(() => {
     if (pairTraceroutes.length === 0) return rawTraceroutes;
     // globalThis: the component name shadows the Map constructor
@@ -790,6 +802,7 @@ export function Map() {
     setActiveTool, setToolStep, setToolFromId, setToolToId,
     losState, tracePendingPlayRef, traceSelectedPath, tracePosKey, styleEpoch,
     startFlyover: traceFlyover.startFlyover,
+    traceSelectedSig, setTraceSelectedSig,
   });
 
   // Observed paths + candidate rings on the map (owns endpoint/ghost markers)
@@ -815,8 +828,17 @@ export function Map() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const handleToggleFlyover = useCallback(() => {
-    if (traceFlyover.isFlying) traceFlyover.cancelFlyover();
-    else if (traceSelectedPath) traceFlyover.startFlyover(traceSelectedPath);
+    if (traceFlyover.isFlying) {
+      traceFlyover.cancelFlyover();
+    } else if (traceSelectedPath) {
+      // Pin the flown path: with no explicit selection, traceSelectedPath is
+      // tracePaths[0] (newest), and a live row arriving mid-tour would
+      // silently re-point the panel + drawn primary at the new path while
+      // the camera keeps flying the old one. An explicit sig keeps them on
+      // the toured path for the duration (and after — the user chose it).
+      setTraceSelectedSig(traceSelectedPath.hops.join(">"));
+      traceFlyover.startFlyover(traceSelectedPath);
+    }
     // start/cancel are identity-stable; only the data deps matter
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [traceFlyover.isFlying, traceSelectedPath]);

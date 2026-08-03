@@ -104,6 +104,10 @@ function MapTraceroutePanelInner({
   const isLatest = selected != null && selected === paths[0];
   // Dossier rows only apply to the path they were computed for
   const legRows = analysis && selected && analysis.sig === selected.hops.join(">") ? analysis.legs : null;
+  // Verdicts exist only when the grading pass produced this analysis —
+  // ungraded dossiers (terrain off, token missing, grade in flight) mark
+  // every leg "gap" and badging that would be pure noise.
+  const legsGraded = legRows != null && !!analysis?.graded;
 
   const [minimized, setMinimized] = useState(false);
   const sheet = useBottomSheetGesture({
@@ -324,7 +328,19 @@ function MapTraceroutePanelInner({
                 </div>
                 <div className="text-gray-200">
                   {selected.hopCount} {selected.hopCount === 1 ? "hop" : "hops"}
-                  {totalKm != null && totalKm > 0 && <span className="text-gray-500 ml-2">{totalKm.toFixed(1)} km</span>}
+                  {totalKm != null && totalKm > 0 && (
+                    <span
+                      className="text-gray-500 ml-2"
+                      title={
+                        legRows?.some((l) => l.distanceKm == null)
+                          ? "Legs touching unpositioned hops are not included"
+                          : undefined
+                      }
+                    >
+                      {legRows?.some((l) => l.distanceKm == null) ? "≥ " : ""}
+                      {totalKm.toFixed(1)} km
+                    </span>
+                  )}
                   {runsList.length > 1 ? (
                     <span className="text-gray-500 ml-2">
                       {selected.count}/{runsList.length} runs · {Math.round((selected.count / runsList.length) * 100)}%
@@ -355,7 +371,7 @@ function MapTraceroutePanelInner({
                     )}
                   </div>
                 )}
-                {terrain3D && isComputing && !legRows && (
+                {terrain3D && isComputing && !legsGraded && (
                   <div className="mt-1.5 text-[10px] text-cyan-300/80 animate-pulse">
                     Grading route against terrain…
                   </div>
@@ -384,7 +400,7 @@ function MapTraceroutePanelInner({
                             {leg.distanceKm != null && (
                               <span className="text-gray-400">{leg.distanceKm.toFixed(1)} km</span>
                             )}
-                            <VerdictBadge v={leg.verdict} />
+                            {legsGraded && <VerdictBadge v={leg.verdict} />}
                             {leg.verdict === "blocked" && leg.worstObstructionM > 0 && (
                               <span className="text-red-300/90">+{Math.round(leg.worstObstructionM)} m</span>
                             )}
