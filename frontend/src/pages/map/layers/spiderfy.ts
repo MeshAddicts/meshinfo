@@ -12,7 +12,7 @@ import type {
 } from "geojson";
 import type { GeoJSONSource as MlGeoJSONSource, Map as MlMap } from "maplibre-gl";
 
-import { mbRoleColorExpr } from "../../../palette";
+import { mbNodeColorExpr } from "../../../palette";
 import { prefersReducedMotion } from "../../../utils/reducedMotion";
 
 export const SPIDERFY_SOURCE_NODES = "spiderfy-nodes";
@@ -299,7 +299,7 @@ function addSpiderfyLayers(map: MlMap): void {
         12,
         8,
       ],
-      "circle-color": mbRoleColorExpr,
+      "circle-color": mbNodeColorExpr,
       "circle-stroke-width": 2.5,
       "circle-stroke-color": [
         "case",

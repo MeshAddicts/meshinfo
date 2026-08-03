@@ -2,7 +2,9 @@ import type { ExpressionSpecification } from "maplibre-gl";
 
 import { NodeRole } from "./types";
 
-/** Node-role → color. Single source for map, graph, legend, and role badges. */
+/** Node-role → color. Used only where the role is named next to the swatch:
+ *  role badges, the role filter menu, graph views. The map does not color
+ *  individual nodes by role — see {@link nodeColor}. */
 export const ROLE_COLORS: Record<number, string> = {
   [NodeRole.CLIENT]: "#32f032",        // green (default)
   [NodeRole.CLIENT_MUTE]: "#6b7280",   // gray
@@ -26,13 +28,27 @@ export const OFFLINE_NODE_COLOR = "#72798a";
 /** Origin marker color shared by LoS, coverage, and scan. */
 export const ORIGIN_COLOR = "#06b6d4";
 
-/** MapLibre circle-color expression: offline → gray, else role color. */
-export const mbRoleColorExpr = [
+/** Router-family roles keep their blue on the map; every other role renders as
+ *  a plain online node, so gray means offline and nothing else. */
+export const MAP_ROUTER_COLORS: Record<number, string> = {
+  [NodeRole.ROUTER]: ROLE_COLORS[NodeRole.ROUTER],
+  [NodeRole.ROUTER_CLIENT]: ROLE_COLORS[NodeRole.ROUTER_CLIENT],
+  [NodeRole.ROUTER_LATE]: ROLE_COLORS[NodeRole.ROUTER_LATE],
+};
+
+/** Map node fill: offline → gray, online router → blue, online → green. */
+export function nodeColor(role: number | null | undefined, online: boolean): string {
+  if (!online) return OFFLINE_NODE_COLOR;
+  return (role != null && MAP_ROUTER_COLORS[role]) || DEFAULT_NODE_COLOR;
+}
+
+/** MapLibre form of {@link nodeColor}. */
+export const mbNodeColorExpr = [
   "case",
   ["!", ["boolean", ["get", "online"], false]],
   OFFLINE_NODE_COLOR,
   ["match", ["get", "role"],
-    ...Object.entries(ROLE_COLORS).flatMap(([k, v]) => [Number(k), v]),
+    ...Object.entries(MAP_ROUTER_COLORS).flatMap(([k, v]) => [Number(k), v]),
     DEFAULT_NODE_COLOR,
   ],
 ] as unknown as ExpressionSpecification;

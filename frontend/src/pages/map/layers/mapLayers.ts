@@ -2,7 +2,7 @@
 import type { FeatureCollection, GeoJsonProperties, Point as GeoPoint } from "geojson";
 import type { Map as MlMap } from "maplibre-gl";
 
-import { mbRoleColorExpr, TRANSPARENT_1PX_PNG } from "../lib/helpers";
+import { mbNodeColorExpr, TRANSPARENT_1PX_PNG } from "../lib/helpers";
 import { emptyLineFeatureCollection } from "../lib/utils";
 import { ActivityLayer } from "./activityLayer";
 import { ClusterDonutLayer } from "./clusterDonutLayer";
@@ -566,7 +566,7 @@ export function ensureMapSourcesAndLayers(map: MlMap, ctx: EnsureLayersCtx): voi
       filter: ["all", ["!", ["has", "point_count"]], ["==", ["get", "online"], true]],
       paint: {
         "circle-radius": 16,
-        "circle-color": mbRoleColorExpr,
+        "circle-color": mbNodeColorExpr,
         "circle-opacity": 0.28,
         "circle-stroke-width": 0,
       },
@@ -582,7 +582,7 @@ export function ensureMapSourcesAndLayers(map: MlMap, ctx: EnsureLayersCtx): voi
       filter: ["!", ["has", "point_count"]],
       paint: {
         "circle-radius": ["case", ["boolean", ["feature-state", "selected"], false], 12, 8],
-        "circle-color": mbRoleColorExpr,
+        "circle-color": mbNodeColorExpr,
         // Recency brightness via `dim`; selected stays full-bright.
         "circle-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 1, ["coalesce", ["get", "dim"], 1]],
         "circle-stroke-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 1, ["coalesce", ["get", "dim"], 1]],
@@ -628,7 +628,7 @@ export function ensureMapSourcesAndLayers(map: MlMap, ctx: EnsureLayersCtx): voi
       filter: ["==", ["get", "online"], true],
       paint: {
         "circle-radius": 16,
-        "circle-color": mbRoleColorExpr,
+        "circle-color": mbNodeColorExpr,
         "circle-opacity": 0.28,
         "circle-stroke-width": 0,
       },
@@ -643,7 +643,7 @@ export function ensureMapSourcesAndLayers(map: MlMap, ctx: EnsureLayersCtx): voi
       source: "nodes_plain",
       paint: {
         "circle-radius": ["case", ["boolean", ["feature-state", "selected"], false], 12, 8],
-        "circle-color": mbRoleColorExpr,
+        "circle-color": mbNodeColorExpr,
         // Recency brightness via `dim`; selected stays full-bright.
         "circle-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 1, ["coalesce", ["get", "dim"], 1]],
         "circle-stroke-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 1, ["coalesce", ["get", "dim"], 1]],

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useReducer } from "react";
 
 import { NodeRole, roleTitles } from "../../../types";
 import { relativeTime } from "../lib/helpers";
-import { DEFAULT_NODE_COLOR, OFFLINE_NODE_COLOR, ROLE_COLORS } from "../lib/utils";
+import { DEFAULT_NODE_COLOR, nodeColor, OFFLINE_NODE_COLOR } from "../lib/utils";
 
 export type ClusterHover = {
   ids: string[]; // leaf node ids, captured at hover (empty while resolving)
@@ -25,11 +25,6 @@ export interface ClusterHoverLeaf {
 }
 
 const LEADERBOARD_MAX = 6;
-
-function roleColor(role: number | null | undefined, online: boolean): string {
-  if (!online) return OFFLINE_NODE_COLOR;
-  return (role != null && ROLE_COLORS[role]) || DEFAULT_NODE_COLOR;
-}
 
 /** Display-only card anchored beside a hovered cluster. Counts come from the
  *  cluster aggregate; the member breakdown/leaderboard render from the leaf
@@ -99,7 +94,6 @@ export function ClusterHoverCard({
                 key={role}
                 className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] bg-white/5"
               >
-                <span className="w-1.5 h-1.5 rounded-full" style={{ background: ROLE_COLORS[role] ?? DEFAULT_NODE_COLOR }} />
                 {n} {roleTitles[role as NodeRole]?.title ?? "Node"}
               </span>
             ))}
@@ -112,7 +106,7 @@ export function ClusterHoverCard({
             <ul className="space-y-0.5">
               {topHeard.map((n) => (
                 <li key={n.id} className="flex items-center gap-1.5 text-[11px]">
-                  <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: roleColor(n.role, !!n.online) }} />
+                  <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: nodeColor(n.role, !!n.online) }} />
                   <span className="truncate flex-1">{n.shortname || n.longname || n.id}</span>
                   <span className="text-gray-500 tabular-nums shrink-0">{relativeTime(n.last_seen)}</span>
                 </li>

@@ -32,14 +32,12 @@ export function MapLegend({
           <span>Online node</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-2.5 h-2.5 rounded-full shadow-sm shrink-0" style={{ backgroundColor: "#72798a" }} />
-          <span>Offline node</span>
+          <div className="w-2.5 h-2.5 rounded-full shadow-sm shrink-0" style={{ backgroundColor: "#3b82f6" }} />
+          <span>Online router</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-3.5 h-3.5 flex items-center justify-center shrink-0">
-            <div className="w-2.5 h-2.5 rounded-full ring-2 ring-orange-400 shadow-sm" style={{ backgroundColor: "#32f032" }} />
-          </div>
-          <span>Selected node</span>
+          <div className="w-2.5 h-2.5 rounded-full shadow-sm shrink-0" style={{ backgroundColor: "#72798a" }} />
+          <span>Offline node (any role)</span>
         </div>
         <div className="flex items-center gap-2">
           <svg viewBox="0 0 24 4" preserveAspectRatio="none" className="w-4 h-0.5 shrink-0" aria-hidden="true">
