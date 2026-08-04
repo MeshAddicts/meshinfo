@@ -8,7 +8,8 @@ A real-time web application for visualizing and monitoring Meshtastic mesh netwo
 
 MeshInfo connects to one or more MQTT brokers receiving Meshtastic traffic and provides a modern web UI for exploring your mesh. It decodes protobuf and JSON messages in real time, stores everything in PostgreSQL, and serves it through a FastAPI backend and React frontend.
 
-See a live instance at [Central Valley Mesh](https://meshinfo.cvme.sh).
+See live instances at [Central Valley Mesh](https://meshinfo.cvme.sh), 
+[Georgia State Mesh](https://meshinfo.gamesh.net)
 
 ## Features
 
