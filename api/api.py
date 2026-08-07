@@ -250,7 +250,10 @@ class API:
 
         @app.get("/v1/chat")
         async def chat(request: Request) -> JSONResponse:
-            channel = request.query_params.get("channel") or "0"  # e.g. "8", "0"
+            # Omitted = every channel (counts always, messages too). Defaulting
+            # to "0" predates channel ids being (name, PSK) hashes — bucket "0"
+            # is a gateway slot index and is empty on most meshes.
+            channel = request.query_params.get("channel") or None  # e.g. "8", "31"
             range_param = request.query_params.get("range", "24h")  # "1h","24h","7d","all"
 
             range_map = {
@@ -262,9 +265,18 @@ class API:
             # Membership check, not `.get() is None` — "all" maps to None on purpose.
             range_seconds = range_map[range_param] if range_param in range_map else 86400
 
+            # Per channel, so asking for every channel multiplies the payload.
+            # Default is high on purpose: range=all should mean all.
+            try:
+                limit = max(1, min(int(request.query_params.get("limit", 10000)), 50000))
+            except (TypeError, ValueError):
+                # Same contract as /v1/traceroutes: reject, don't silently default.
+                return JSONResponse({"error": "limit must be an integer"}, status_code=400)
+
             chat_data = await self.data.pg_storage.query_chat_filtered(
                 channel_id=channel,
                 range_seconds=range_seconds,
+                limit=limit,
             )
             return JSONResponse(jsonable_encoder(chat_data))
 

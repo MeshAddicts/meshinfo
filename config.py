@@ -65,7 +65,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
         },
         "channels": {
             "encryption": [],
-            "display": ["0"],
+            # Which channels the UI shows. Ingest always stores every channel;
+            # this is display only. `meta` is annotation, not curation, and is
+            # honored in every mode.
+            #   presets — stock modem-preset channels only (LongFast, ...)
+            #   all     — presets plus channels someone named
+            #   manual  — the hand-curated display/views lists below
+            "mode": "presets",
+            # Only used when mode = "manual". Empty = no allowlist. Channel ids
+            # are (name, PSK) hashes, so a hardcoded default cannot be right for
+            # an arbitrary mesh.
+            "display": [],
             "meta": {},
             "views": [],
         },
@@ -320,6 +330,27 @@ def _warn_placeholder(config: dict, path: str, placeholders: list[str]) -> str |
     return None
 
 
+def _warn_stale_channel_lists(user_config: dict) -> None:
+    """Pre-merge upgrade check: display/views used to be honored unconditionally;
+    now they need mode = "manual". A config that has them but never mentions
+    `mode` predates the setting — its owner would silently flip to auto pills.
+    An explicit mode alongside the lists is a deliberate stash; stay quiet.
+    """
+    try:
+        uc = user_config.get("broker", {}).get("channels", {})
+    except AttributeError:
+        return
+    if not isinstance(uc, dict) or "mode" in uc:
+        return
+    if uc.get("display") or uc.get("views"):
+        logger.warning(
+            "broker.channels display/views are configured but broker.channels.mode "
+            'is not set; they are now only honored when mode = "manual". The Chat '
+            'page currently shows automatic preset pills instead. Set mode = '
+            '"manual" to keep your curated tabs, or delete the lists.'
+        )
+
+
 def validate(config: dict) -> list[str]:
     """
     Validate the merged config and return a list of warning messages.
@@ -378,6 +409,38 @@ def validate(config: dict) -> list[str]:
 
     check(_validate_type(config, "broker.decoders", dict))
     check(_validate_type(config, "broker.channels", dict))
+
+    # Display-mode settings have silent failure modes, so check them properly.
+    # Guard the whole block: a wrong-shaped broker.channels (e.g. a list) is a
+    # warning above, and must not crash the deeper checks.
+    channels = config.get("broker", {}).get("channels", {})
+    if isinstance(channels, dict):
+        check(_validate_type(config, "broker.channels.display", list))
+        check(_validate_type(config, "broker.channels.views", list))
+        # A single-bracket typo ([broker.channels.encryption] instead of
+        # [[...]]) makes this a dict — decryption silently finds no keys, and
+        # cleanse() must still be able to redact it (see below).
+        check(_validate_type(config, "broker.channels.encryption", list))
+        check(
+            _validate_one_of(
+                config, "broker.channels.mode", ["presets", "all", "manual"]
+            )
+        )
+        # Shapes from the pre-release iterations of this setting; nothing
+        # shipped with them, but a stale working copy could still carry one.
+        for old_key in ("show", "custom_views"):
+            if old_key in channels:
+                warn(
+                    f"broker.channels.{old_key} is not a setting; use "
+                    f'broker.channels.mode = "presets" | "all" | "manual".'
+                )
+        if isinstance(channels.get("display"), list) and not all(
+            isinstance(x, str) for x in channels["display"]
+        ):
+            warn(
+                "broker.channels.display should hold quoted strings "
+                '(e.g. ["8", "31"]); unquoted numbers never match a channel id.'
+            )
 
     # ── server section ────────────────────────────────────────────────
     _validate_type(config, "server", dict, required=True)
@@ -528,6 +591,8 @@ class Config:
                 "Copy config.toml.sample to config.toml and edit it for your deployment."
             )
 
+        _warn_stale_channel_lists(user_config)
+
         # Merge: defaults first, user overrides on top
         config = _deep_merge(DEFAULT_CONFIG, user_config)
 
@@ -625,5 +690,22 @@ class Config:
             # redact sensitive keys in dicts
             if isinstance(d, dict) and path[-1] in d:
                 d[path[-1]] = "***REDACTED***"
+
+        # Channel PSKs live in a list of tables, which the path walk above
+        # can't reach. /v1/server/config is unauthenticated — a private mesh's
+        # keys must not be readable by every visitor. key_name stays. Also
+        # covers the single-bracket typo that makes `encryption` a dict: the
+        # keys are then unusable for decryption, but must still never leak.
+        try:
+            enc = config_clean["broker"]["channels"]["encryption"]
+            entries = (
+                list(enc.values()) + [enc] if isinstance(enc, dict)
+                else enc if isinstance(enc, list) else []
+            )
+            for entry in entries:
+                if isinstance(entry, dict) and "key" in entry:
+                    entry["key"] = "***REDACTED***"
+        except (KeyError, TypeError):
+            pass
 
         return config_clean

@@ -14,6 +14,7 @@ import { HeardBy } from "../components/HeardBy";
 import { LivePill } from "../components/LivePill";
 import { MobileSheet } from "../components/MobileSheet";
 import { useAppSelector } from "../hooks/redux";
+import { isFirmwarePreset } from "../meshtasticPresets";
 import {
   REMEMBERED_CH_KEYS,
   useRememberedChannel,
@@ -46,6 +47,12 @@ type ViewDef = {
   aliases: string[]; // ["mf","0","MediumFast",...]
   tooltip?: string;
   isDefault?: boolean;
+  group?: "presets" | "custom"; // absent in curated mode — no grouping there
+};
+
+const GROUP_LABELS: Record<string, string> = {
+  presets: "Modem presets",
+  custom: "Custom channels",
 };
 
 const normalizeKey = (s: string) => {
@@ -146,6 +153,16 @@ export const Chat = () => {
     () => (config?.broker?.channels as any)?.meta ?? {},
     [config]
   );
+
+  // broker.channels.mode — which channels the UI renders. Ingest stores
+  // everything regardless; this is display only.
+  //   "presets" — stock modem-preset channels only (the default)
+  //   "all"     — presets plus human-named channels
+  //   "manual"  — the hand-curated display/views config
+  const channelMode = useMemo((): "presets" | "all" | "manual" => {
+    const m = (config?.broker?.channels as any)?.mode;
+    return m === "all" || m === "manual" ? m : "presets";
+  }, [config]);
   const rawChannelLabel = useCallback(
     (id: string) =>
       channelMeta?.[id]?.label ? String(channelMeta[id].label) : `Channel ${id}`,
@@ -179,16 +196,43 @@ export const Chat = () => {
     [channelMeta, rawChannelLabel, rawChannelShort]
   );
 
+  // Post-fetch snapshot of the channels map, declared ABOVE the query chain so
+  // resolvedChannelId can consult it without a circular declaration. Written by
+  // an effect after each fetch (see below the query).
+  const [dataChannels, setDataChannels] = useState<
+    Record<string, unknown> | undefined
+  >(undefined);
+
   // ── 4. Resolve channel ID from config + raw URL ──
   // This lets the chat query fire immediately using only config
   // data, without waiting for chat data to build the full views.
   const resolvedChannelId = useMemo(() => {
+    // Auto mode: honor an explicit ?ch= but otherwise send no channel at all,
+    // so the API returns every channel rather than guessing one here.
+    if (channelMode !== "manual") {
+      return rawCh && /^[0-9]+$/.test(rawCh) ? rawCh : undefined;
+    }
     const viewsConfig = (config?.broker?.channels as any)?.views;
+
+    // Manual-mode stuck-state heal: once chat data exists, scoping the query to
+    // a channel the data says is empty renders "total N / showing 0" forever
+    // (clicking the default pill deletes ?ch, so it never self-corrects). An
+    // unscoped query returns strictly more data, so falling back converges.
+    // `dataChannels` is a post-fetch snapshot (declared above the query on
+    // purpose); undefined on first render means "can't judge yet — keep id".
+    const emptyPerData = (id: string): boolean => {
+      const ch = dataChannels?.[id] as { totalMessages?: number } | undefined;
+      return !!dataChannels && (!ch || !Number(ch.totalMessages));
+    };
+    const scoped = (id: string): string | undefined =>
+      emptyPerData(id) ? undefined : id;
+
     if (!Array.isArray(viewsConfig) || viewsConfig.length === 0) {
-      // No views config — fall back to the raw URL channel if it looks
-      // like a numeric channel id, otherwise default to "0".
-      if (rawCh && /^[0-9]+$/.test(rawCh)) return rawCh;
-      return "0";
+      // No views config — honor an explicit numeric ?ch=, otherwise send no
+      // channel. Naming one here would diverge from the tab the UI actually
+      // selects (which comes from the data), rendering a count over an empty list.
+      if (rawCh && /^[0-9]+$/.test(rawCh)) return scoped(rawCh);
+      return undefined;
     }
 
     // Try matching the raw URL ch param against config views
@@ -210,7 +254,7 @@ export const Chat = () => {
           rawCh === short ||
           rawCh === channelId
         ) {
-          return channelId;
+          return scoped(channelId);
         }
       }
     }
@@ -218,11 +262,11 @@ export const Chat = () => {
     // Fall back to the default view's channel
     const def =
       viewsConfig.find((v: any) => v.default) ?? viewsConfig[0];
-    if (def?.channels?.[0]) return String(def.channels[0]);
+    if (def?.channels?.[0]) return scoped(String(def.channels[0]));
     // Views exist but no channel resolved — still scope the query
-    if (rawCh && /^[0-9]+$/.test(rawCh)) return rawCh;
-    return "0";
-  }, [config, rawCh]);
+    if (rawCh && /^[0-9]+$/.test(rawCh)) return scoped(rawCh);
+    return undefined;
+  }, [config, rawCh, channelMode, dataChannels]);
 
   // Live / auto-follow toggle (declared before query so polling can reference it)
   const [liveEnabled, setLiveEnabled] = useState(true);
@@ -269,15 +313,92 @@ export const Chat = () => {
   if (chat) prevChatRef.current = chat;
   const effectiveChat = chat ?? prevChatRef.current;
 
+  // Feed the pre-query snapshot used by resolvedChannelId's stuck-state heal.
+  useEffect(() => {
+    const chs = (chat as { channels?: Record<string, unknown> } | undefined)
+      ?.channels;
+    if (chs) setDataChannels(chs);
+  }, [chat]);
+
   // ── 7. Channel entries from chat data (now below query) ──
+  // Two display filters, both exempting the currently-selected channel so an
+  // explicit ?ch= can always render what it names:
+  //  * manual mode's display allowlist;
+  //  * range scoping — recentMessages counts the selected 1h/24h/7d window
+  //    (== totalMessages at "all"), so a channel silent for the whole window
+  //    drops out of the bar until it speaks again. That IS the stale-pill
+  //    filter: the range selector doubles as it, no extra knob.
   const channelEntries = useMemo(() => {
-    const entries = Object.entries(effectiveChat?.channels ?? {});
-    const allow = config?.broker?.channels?.display;
+    let entries = Object.entries(effectiveChat?.channels ?? {});
+    const allow =
+      channelMode === "manual" ? config?.broker?.channels?.display : undefined;
     if (Array.isArray(allow) && allow.length > 0) {
-      return entries.filter(([id]) => allow.includes(id));
+      entries = entries.filter(
+        ([id]) => allow.includes(id) || id === resolvedChannelId
+      );
     }
-    return entries;
-  }, [effectiveChat?.channels, config?.broker?.channels?.display]);
+    return entries.filter(([id, ch]) => {
+      const recent = Number((ch as { recentMessages?: number })?.recentMessages ?? NaN);
+      // Older API without recentMessages: fall back to all-time behavior.
+      if (Number.isNaN(recent)) return true;
+      return recent > 0 || id === resolvedChannelId;
+    });
+  }, [
+    effectiveChat?.channels,
+    config?.broker?.channels?.display,
+    channelMode,
+    resolvedChannelId,
+  ]);
+
+  // Channel names as the gateway published them, stored by ingest. Placeholders
+  // are filtered out so they never win over `Channel <id>`.
+  const wireNames = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const [id, ch] of Object.entries(effectiveChat?.channels ?? {})) {
+      const n = (ch as any)?.name;
+      if (typeof n === "string" && n && !/^(General|Channel \d+)$/.test(n)) {
+        out[id] = n;
+      }
+    }
+    return out;
+  }, [effectiveChat?.channels]);
+
+  // Label priority: configured meta > name off the wire > bare channel id.
+  const labelFor = useCallback(
+    (id: string) =>
+      channelMeta?.[id]?.label
+        ? String(channelMeta[id].label)
+        : wireNames[id] ?? `Channel ${id}`,
+    [channelMeta, wireNames]
+  );
+
+  // Busiest channel (by the range-scoped count), used as the default tab when
+  // no view is configured. Latched per range: live count updates must not flip
+  // the default tab under the user mid-session — only an explicit range change
+  // re-evaluates it.
+  const busiestLatchRef = useRef<{ range: string; id: string } | null>(null);
+  const busiestChannelId = useMemo(() => {
+    if (busiestLatchRef.current?.range === rawRange) {
+      return busiestLatchRef.current.id;
+    }
+    let best: string | undefined;
+    let bestCount = -1;
+    for (const [id, ch] of channelEntries) {
+      const c = ch as { recentMessages?: number; totalMessages?: number };
+      const n = Number(c?.recentMessages ?? c?.totalMessages ?? 0);
+      if (n > bestCount) {
+        bestCount = n;
+        best = String(id);
+      }
+    }
+    // Only latch from a settled response: right after a range change the
+    // entries still hold the PREVIOUS range's counts, and latching those would
+    // pin a wrong default tab until the next range change.
+    if (best !== undefined && !isFetching) {
+      busiestLatchRef.current = { range: rawRange, id: best };
+    }
+    return best;
+  }, [channelEntries, rawRange, isFetching]);
 
   // null = chat hasn't loaded yet, allow all views through
   const availableChannelIds = useMemo(
@@ -290,7 +411,8 @@ export const Chat = () => {
 
   // ── 8. Build "views" from broker.channels.views (single-channel ones) ──
   const views: ViewDef[] = useMemo(() => {
-    const vraw = (config?.broker?.channels as any)?.views;
+    const vraw =
+      channelMode === "manual" ? (config?.broker?.channels as any)?.views : undefined;
     const out: ViewDef[] = [];
 
     if (Array.isArray(vraw) && vraw.length > 0) {
@@ -300,7 +422,7 @@ export const Chat = () => {
         const channelId = chans[0];
         if (availableChannelIds && !availableChannelIds.has(channelId)) continue;
 
-        const label = String(v?.label ?? v?.id ?? rawChannelLabel(channelId));
+        const label = String(v?.label ?? v?.id ?? labelFor(channelId));
         const short = v?.short ? String(v.short) : rawChannelShort(channelId);
 
         const key =
@@ -337,27 +459,110 @@ export const Chat = () => {
       }
     }
 
-    // Fallback: if no views config, present channels as-is (canonical key = channel id)
+    // Auto mode: one tab per channel with traffic in the selected range,
+    // filtered by class. Channel ids are hashes, so the API's id order is
+    // arbitrary — group the stock modem presets ahead of channels someone
+    // named, each busiest first. Also the manual-mode fallback when the
+    // configured views all matched nothing: everything with data, ungrouped
+    // (the class toggles don't apply to a hand-curated config).
     if (out.length === 0) {
-      for (const [id] of channelEntries) {
-        const channelId = String(id);
+      const manual = channelMode === "manual";
+      const wantGroup = (g: "presets" | "custom") =>
+        manual || channelMode === "all" || g === "presets";
+
+      const ordered = channelEntries
+        .map(([id, ch]) => {
+          const c = ch as { recentMessages?: number; totalMessages?: number };
+          return {
+            channelId: String(id),
+            count: Number(c?.recentMessages ?? c?.totalMessages ?? 0),
+            // Classify on the WIRE name: what firmware actually put on air.
+            // meta labels are display-only — an operator relabeling a preset
+            // bucket must not hide it from presets mode (or smuggle a custom
+            // channel into it).
+            group: (isFirmwarePreset(wireNames[String(id)])
+              ? "presets"
+              : "custom") as "presets" | "custom",
+          };
+        })
+        // The selected channel always keeps its pill, even class-hidden —
+        // an explicit ?ch= link must render what it names.
+        .filter(
+          ({ channelId, group }) =>
+            wantGroup(group) || channelId === resolvedChannelId
+        )
+        .sort((a, b) =>
+          a.group !== b.group ? (a.group === "presets" ? -1 : 1) : b.count - a.count
+        );
+
+      // Curated-era bookmarks carry ?ch=<label-slug>; give auto pills the same
+      // alias surface. First-wins on collisions (build order = busiest first),
+      // so two channels sharing a name ("Test" is live on two buckets here)
+      // resolve the contested alias to the busier one. Every channel ID is
+      // pre-claimed: a channel wire-NAMED "8" must never steal ?ch=8 from
+      // bucket 8 (the alias map downstream is last-wins).
+      const takenAliases = new Set<string>(ordered.map((o) => o.channelId));
+      for (const { channelId, group } of ordered) {
+        const aliases = [channelId];
+        for (const cand of [
+          normalizeKey(labelFor(channelId)),
+          normalizeKey(rawChannelShort(channelId)),
+        ]) {
+          if (cand && cand !== channelId && !takenAliases.has(cand)) {
+            takenAliases.add(cand);
+            aliases.push(cand);
+          }
+        }
         out.push({
           key: channelId,
-          label: rawChannelLabel(channelId),
+          label: labelFor(channelId),
           short: rawChannelShort(channelId),
           channelId,
-          aliases: [channelId],
-          tooltip: rawChannelTooltip(channelId),
-          isDefault: channelId === "0",
+          aliases,
+          tooltip: [
+            rawChannelTooltip(channelId),
+            group === "presets" ? "Stock modem preset" : "Custom channel",
+          ].join("\n"),
+          isDefault: channelId === busiestChannelId,
+          group: manual ? undefined : group,
+        });
+      }
+
+      // Never render an empty page: if the class filters excluded everything
+      // that has traffic, fall back to the busiest channel rather than nothing.
+      if (out.length === 0 && busiestChannelId) {
+        out.push({
+          key: busiestChannelId,
+          label: labelFor(busiestChannelId),
+          short: rawChannelShort(busiestChannelId),
+          channelId: busiestChannelId,
+          aliases: [busiestChannelId],
+          tooltip: rawChannelTooltip(busiestChannelId),
+          isDefault: true,
         });
       }
     }
 
     return out;
-  }, [config, channelEntries, availableChannelIds, rawChannelLabel, rawChannelShort, rawChannelTooltip]);
+  }, [config, channelMode, channelEntries, availableChannelIds, labelFor,
+      wireNames, resolvedChannelId, rawChannelShort, rawChannelTooltip,
+      busiestChannelId]);
 
   const defaultViewKey =
     views.find((v) => v.isDefault)?.key ?? views[0]?.key ?? "";
+
+  // Consecutive runs of the same class. `views` is already ordered by group in
+  // auto mode; curated views carry no group and collapse into a single run.
+  const viewGroups = useMemo(() => {
+    const groups: Array<{ key: string; items: ViewDef[] }> = [];
+    for (const v of views) {
+      const key = v.group ?? "all";
+      const last = groups[groups.length - 1];
+      if (last && last.key === key) last.items.push(v);
+      else groups.push({ key, items: [v] });
+    }
+    return groups;
+  }, [views]);
 
   // Stable identity: a fresh array here would defeat useChatSearchParams'
   // internal memos on every render.
@@ -394,10 +599,22 @@ export const Chat = () => {
   });
 
   // Land returning visitors on the channel they last had selected.
+  // `urlHasCh` demands the raw ?ch actually RESOLVE to a known view: a link to
+  // a hidden/unknown channel falls back to the default, and adopting that
+  // fallback would overwrite the remembered selection with "" — a shared bad
+  // link must not erase where the user left off.
+  const rawChParam = normalizeKey(searchParams.get("ch") ?? "");
+  const rawChResolves =
+    !!rawChParam &&
+    views.some(
+      (v) =>
+        v.key.toLowerCase() === rawChParam ||
+        v.aliases.some((a) => a.toLowerCase() === rawChParam)
+    );
   useRememberedChannel({
     storageKey: REMEMBERED_CH_KEYS.chat,
     value: urlCh === defaultViewKey ? "" : urlCh,
-    urlHasCh: !!searchParams.get("ch")?.trim(),
+    urlHasCh: rawChResolves,
     suppressRestore: [...searchParams.keys()].some((k) => k !== "ch"),
     ready: views.length > 0,
     isValid: (stored) => views.some((v) => v.key === stored),
@@ -415,7 +632,7 @@ export const Chat = () => {
   // ── View-based label helpers ──
   const channelLabel = (id: string) => {
     const v = views.find((x) => x.channelId === id);
-    return v?.label ?? rawChannelLabel(id);
+    return v?.label ?? labelFor(id);
   };
 
   const channelTooltip = (id: string) => {
@@ -1376,12 +1593,27 @@ export const Chat = () => {
             </div>
           </div>
 
-          {/* Preset pills (canonical ch=mediumfast/longfast) */}
-          <div className="mt-3 flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
-            {views.map((v) => {
+          {/* Channel pills. In auto mode these come grouped by class, each
+              group on its own row under a header; curated mode is one row. */}
+          {viewGroups.map((grp) => (
+            <div key={`grp-${grp.key}`}>
+              {viewGroups.length > 1 && GROUP_LABELS[grp.key] && (
+                <div className="mt-3 mb-1 text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  {GROUP_LABELS[grp.key]}
+                </div>
+              )}
+              <div
+                className={[
+                  viewGroups.length > 1 ? "mt-1" : "mt-3",
+                  "flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]",
+                ].join(" ")}
+              >
+            {grp.items.map((v) => {
               const active = v.key === selectedView?.key;
               const chObj: any = (effectiveChat?.channels as any)?.[v.channelId];
-              const count = chObj?.totalMessages ?? 0;
+              // Badge counts the selected range (== all-time at range "all"),
+              // so it matches what clicking the pill will actually show.
+              const count = chObj?.recentMessages ?? chObj?.totalMessages ?? 0;
 
               return (
                 <button
@@ -1418,7 +1650,9 @@ export const Chat = () => {
                 </button>
               );
             })}
-          </div>
+              </div>
+            </div>
+          ))}
 
           {/* Toolbar row: mobile keeps ONLY search; desktop keeps full controls */}
           <div className="mt-3 flex flex-col lg:flex-row gap-2 lg:items-center lg:justify-between">

@@ -1227,19 +1227,53 @@ class PostgresStorage:
                     sender_id = await self._ensure_node_stub(conn, chat_msg.get("sender"))
                     to_id = await self._ensure_node_stub(conn, chat_msg.get("to"))
 
-                    # Ensure channel exists
+                    # Ensure channel exists. The wire name (from the gateway's
+                    # ServiceEnvelope/topic) is authoritative and heals rows
+                    # created before it was available; the synthesized label is
+                    # only a placeholder for packets that carried no name.
+                    # Postgres text can't hold NUL: one would abort the whole
+                    # transaction below, dropping the message entirely.
                     channel_id = str(chat_msg.get("channel", "0"))
-                    channel_name = f"Channel {channel_id}" if channel_id != "0" else "General"
-
-                    await conn.execute(
-                        """
-                        INSERT INTO chat_channels (id, name)
-                        VALUES ($1, $2)
-                        ON CONFLICT (id) DO NOTHING
-                        """,
-                        channel_id,
-                        channel_name,
+                    wire_name = (
+                        (chat_msg.get("channel_name") or "").replace("\x00", "").strip()[:100]
                     )
+
+                    # PKI is a pseudo-channel for direct messages, not a name.
+                    # And an 8-bit hash collides: two names can share a bucket
+                    # (live: 129 = MeshSnark/Homestuff). Only ever fill in a
+                    # placeholder, never overwrite a name already off the wire,
+                    # so the label can't flap between colliding channels.
+                    #
+                    # Index-range buckets (0-7) get no wire name at all: they are
+                    # the slot-index namespace, so any name arriving with such a
+                    # row belongs to whatever channel a glitching gateway relayed
+                    # — healing them poisoned bucket 0 into "MediumFast" live.
+                    bucket_can_have_name = not (
+                        channel_id.isdigit() and int(channel_id) <= 7
+                    )
+                    if wire_name and wire_name != "PKI" and bucket_can_have_name:
+                        await conn.execute(
+                            """
+                            INSERT INTO chat_channels (id, name)
+                            VALUES ($1, $2)
+                            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name
+                            WHERE chat_channels.name IS DISTINCT FROM EXCLUDED.name
+                              AND (chat_channels.name = 'General'
+                                   OR chat_channels.name ~ '^Channel [0-9]+$')
+                            """,
+                            channel_id,
+                            wire_name,
+                        )
+                    else:
+                        await conn.execute(
+                            """
+                            INSERT INTO chat_channels (id, name)
+                            VALUES ($1, $2)
+                            ON CONFLICT (id) DO NOTHING
+                            """,
+                            channel_id,
+                            f"Channel {channel_id}" if channel_id != "0" else "General",
+                        )
 
                     rx_time = self._ts_to_dt(chat_msg.get("timestamp"))
 
@@ -1257,7 +1291,7 @@ class PostgresStorage:
                         to_id,
                         sender_id,
                         channel_id,
-                        chat_msg.get("text"),
+                        (chat_msg.get("text") or "").replace("\x00", ""),
                         chat_msg.get("timestamp"),
                         rx_time,
                         chat_msg.get("hops_away"),
@@ -1267,6 +1301,38 @@ class PostgresStorage:
 
         except Exception as e:
             self._handle_write_failure("chat message", "chat_message", (node_id, chat_msg), e)
+
+    async def get_wire_channel_names(self) -> Dict[str, int]:
+        """name -> hash for every wire-confirmed channel, to seed the ingest
+        resolver at startup.
+
+        Only hash-namespace buckets qualify (id > 7 — slot indices carry no
+        identity), only names healed off the wire (placeholders excluded), and
+        only names that map to exactly one bucket: a name seen on two hashes
+        (re-keyed channel, or colliding meshes) is skipped rather than guessed.
+        """
+        if not self.enabled or not self.pool:
+            return {}
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT name, MAX(id::int) AS hash
+                    FROM chat_channels
+                    WHERE id ~ '^[0-9]+$'
+                      AND id::int > 7
+                      AND id::int <= 255
+                      AND name IS NOT NULL
+                      AND name <> 'PKI'
+                      AND name !~ '^(General|Channel [0-9]+)$'
+                    GROUP BY name
+                    HAVING COUNT(DISTINCT id) = 1
+                    """
+                )
+                return {r["name"]: r["hash"] for r in rows}
+        except Exception as e:
+            logger.warning(f"get_wire_channel_names failed: {e}")
+            return {}
 
     async def write_traceroute(self, node_id: str, traceroute_msg: Dict[str, Any]) -> Optional[str]:
         """Richer-wins traceroute upsert. Returns 'inserted' | 'upgraded' |
@@ -2422,21 +2488,38 @@ class PostgresStorage:
             async with self.pool.acquire() as conn:
                 chat: Dict[str, Any] = {"channels": {}}
 
-                # ── 1. Load ALL channels with their total message counts ──
+                # Range window, shared by the per-channel counts and the
+                # message query below. None (= "all") degenerates to 0, so
+                # recent_messages == total_messages in that case.
+                import time
+                threshold = (
+                    int(time.time()) - range_seconds if range_seconds is not None else 0
+                )
+
+                # ── 1. Load ALL channels with their message counts ──
+                # recentMessages/newestTimestamp drive range-scoped pills: a
+                # channel silent for the selected range hides, and the badge
+                # counts what the range actually contains instead of all time.
                 channel_rows = await conn.fetch(
                     """
-                    SELECT cc.id, cc.name, COUNT(cm.id) AS total_messages
+                    SELECT cc.id, cc.name,
+                           COUNT(cm.id) AS total_messages,
+                           COUNT(cm.id) FILTER (WHERE cm.timestamp >= $1) AS recent_messages,
+                           MAX(cm.timestamp) AS newest_timestamp
                     FROM chat_channels cc
                     LEFT JOIN chat_messages cm ON cc.id = cm.channel_id
                     GROUP BY cc.id, cc.name
                     ORDER BY cc.id
-                    """
+                    """,
+                    threshold,
                 )
 
                 for row in channel_rows:
                     chat["channels"][row["id"]] = {
                         "name": row["name"],
                         "totalMessages": row["total_messages"],
+                        "recentMessages": row["recent_messages"],
+                        "newestTimestamp": row["newest_timestamp"],
                         "messages": [],
                     }
 
@@ -2451,26 +2534,43 @@ class PostgresStorage:
                     param_num += 1
 
                 if range_seconds is not None:
-                    import time
-                    threshold = int(time.time()) - range_seconds
                     where_parts.append(f"timestamp >= ${param_num}")
                     params.append(threshold)
                     param_num += 1
 
                 where_clause = " AND ".join(where_parts) if where_parts else "TRUE"
 
+                # `limit` is per channel either way, so range=all really does
+                # return every message of every channel. That multiplies the
+                # payload by the channel count; callers that care can ask for
+                # less with ?limit=.
                 params.append(limit)
                 limit_param = f"${param_num}"
 
-                message_rows = await conn.fetch(
-                    f"""
-                    SELECT * FROM chat_messages
-                    WHERE {where_clause}
-                    ORDER BY timestamp DESC
-                    LIMIT {limit_param}
-                    """,
-                    *params,
-                )
+                if channel_id is not None:
+                    # One channel: a plain LIMIT lets the index short-circuit.
+                    sql = f"""
+                        SELECT * FROM chat_messages
+                        WHERE {where_clause}
+                        ORDER BY timestamp DESC
+                        LIMIT {limit_param}
+                    """
+                else:
+                    # Every channel: cap per channel rather than across them, so
+                    # a busy channel can't starve a quiet one out of the response.
+                    sql = f"""
+                        SELECT * FROM (
+                            SELECT *, ROW_NUMBER() OVER (
+                                PARTITION BY channel_id ORDER BY timestamp DESC
+                            ) AS rn
+                            FROM chat_messages
+                            WHERE {where_clause}
+                        ) ranked
+                        WHERE rn <= {limit_param}
+                        ORDER BY timestamp DESC
+                    """
+
+                message_rows = await conn.fetch(sql, *params)
 
                 for row in message_rows:
                     ch_id = row["channel_id"] or "0"
@@ -2478,6 +2578,8 @@ class PostgresStorage:
                         chat["channels"][ch_id] = {
                             "name": f"Channel {ch_id}",
                             "totalMessages": 0,
+                            "recentMessages": 0,
+                            "newestTimestamp": None,
                             "messages": [],
                         }
 
@@ -2679,7 +2781,9 @@ class PostgresStorage:
                 stats["active_nodes"] = await conn.fetchval("SELECT COUNT(*) FROM nodes WHERE active = TRUE")
 
                 # Count messages
-                stats["total_chat"] = await conn.fetchval("SELECT COUNT(*) FROM chat_messages WHERE channel_id = '0'")
+                # All channels: '0' used to mean "primary", but channel ids are
+                # now resolved to channel hashes, so filtering on it froze this.
+                stats["total_chat"] = await conn.fetchval("SELECT COUNT(*) FROM chat_messages")
                 stats["total_telemetry"] = await conn.fetchval("SELECT COUNT(*) FROM telemetry")
                 stats["total_traceroutes"] = await conn.fetchval("SELECT COUNT(*) FROM traceroutes")
 

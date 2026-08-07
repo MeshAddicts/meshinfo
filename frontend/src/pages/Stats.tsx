@@ -516,9 +516,9 @@ export const Stats = () => {
                 <KpiCard
                   title="Chat messages"
                   value={derived.chat}
-                  subtitle="channel 0"
+                  subtitle="all channels"
                   icon={<Icon name="chat" />}
-                  hint="Persisted chat messages, channel 0."
+                  hint="Persisted chat messages across every channel."
                 />
                 <KpiCard
                   title="Telemetry samples"

@@ -129,19 +129,46 @@ enabled = true
 # ─────────────────────────────────────────────────────────────────────────────
 # Channel Configuration
 # ─────────────────────────────────────────────────────────────────────────────
-# Meshtastic firmware 2.5+ identifies channels by a hash value derived from
-# the channel name and PSK — not a slot index (0-7). The hashes below are
-# computed for the default PSK (1PG7OiApB1nwvP+rz05pAQ==). If your network
-# uses a custom PSK, your channel hashes will differ.
+# A channel id is a hash of the channel name and its PSK, not a slot number.
+# The hashes below are computed for the default PSK (1PG7OiApB1nwvP+rz05pAQ==);
+# a custom PSK, or a renamed channel, produces different ones.
 #
-# To discover which channel hashes are active on your network, query your DB:
-#   SELECT channel_id, COUNT(*) as msgs FROM chat_messages
-#   GROUP BY channel_id ORDER BY msgs DESC;
+# Caveat worth knowing: MeshPacket.channel carries that hash only on encrypted
+# uplinks. A gateway running with mqtt.encryption_enabled = false republishes
+# packets it already decoded, and firmware has overwritten the field with that
+# gateway's local slot index (0-7) by then. MeshInfo resolves those back to the
+# hash at ingest using the channel name, so both land in one bucket — but rows
+# ingested before that existed may still sit in a 0-7 bucket. See
+# scripts/backfill_channel_buckets.py to re-file them.
+#
+# To see which channels are actually active, query your DB — the name column is
+# populated from the wire:
+#   SELECT cm.channel_id, cc.name, COUNT(*) AS msgs
+#   FROM chat_messages cm LEFT JOIN chat_channels cc ON cc.id = cm.channel_id
+#   GROUP BY 1, 2 ORDER BY msgs DESC;
 # ─────────────────────────────────────────────────────────────────────────────
 
 [broker.channels]
-# Channel hashes to show in the UI. Channels with no data are hidden
-# automatically — it is safe to list all presets here.
+# Which channels the Chat page shows. Ingest always stores every channel it
+# receives — this is display only, so no setting here ever loses data.
+#
+#   "presets" (default) — only stock modem-preset channels (LongFast,
+#             MediumFast, ShortTurbo, ...). A channel's name is half of its id,
+#             and firmware fills the name in with the preset string when nobody
+#             has renamed the channel — so a preset-named channel is a stock
+#             channel, and anything else was named by a human.
+#   "all"     — presets plus those human-named channels (regional, club, ...).
+#   "manual"  — hand-curated: only what `display` below and the
+#             [[broker.channels.views]] blocks say.
+#
+# Pills are also scoped to the time range selected in the UI: a channel with no
+# traffic in the selected range drops out of the bar until it speaks again.
+mode = "presets"
+
+# Only used when mode = "manual". Channel hashes to show; everything else is
+# hidden. Channels with no data are hidden regardless. These hashes assume the
+# default PSK — a custom PSK or a renamed channel produces different ones, so a
+# curated list copied from here will not match a mesh it was not written for.
 display = ["8", "31", "24", "15", "55", "119", "112", "9", "14"]
 
 # Encryption keys for decoding channel traffic (base64-encoded)
@@ -152,7 +179,7 @@ key_name = "Default"
 # ─────────────────────────────────────────────────────────────────────────────
 # Standard Meshtastic Preset Channel Hashes
 # Computed from: XOR_bytes(channel_name) ^ XOR_bytes(PSK)
-# These values assume the default PSK above. Verified against live traffic.
+# These values assume the default PSK above.
 # ─────────────────────────────────────────────────────────────────────────────
 
 [broker.channels.meta.8]
@@ -224,6 +251,10 @@ description = "ShortTurbo modem preset (default PSK hash: 14)"
 # ─────────────────────────────────────────────────────────────────────────────
 # Channel Views — tabs shown in the Chat UI
 # Only single-channel views are supported. Views with no data are hidden.
+# The Chat page uses these only when broker.channels.mode = "manual"; in
+# presets/all mode it builds one tab per active channel — presets and custom
+# channels on their own rows — defaulting to the busiest. The Nodes and Log
+# pages still read these views unconditionally for their channel pills.
 # ─────────────────────────────────────────────────────────────────────────────
 
 [[broker.channels.views]]

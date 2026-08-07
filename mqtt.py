@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from fastapi.encoders import jsonable_encoder
 
+import channels
 from encoders import _JSONDecoder
 from models.node import Node
 import utils
@@ -41,6 +42,10 @@ class MQTT:
         # Track drops so the warning at every Nth surfaces a stalled consumer.
         self._discord_drops_total: int = 0
 
+        # Learns name -> channel-hash from encrypted uplinks so decoded ones
+        # (which carry a gateway slot index instead) can be mapped back.
+        self._channel_resolver = channels.ChannelResolver()
+
     def _record_discord_drop(self, event_type: str) -> None:
         self._discord_drops_total += 1
         if self._discord_drops_total % self._DISCORD_DROP_LOG_EVERY == 0:
@@ -53,6 +58,16 @@ class MQTT:
 
     async def connect(self):
         # Single attempt; main.py's supervise() owns reconnect + exponential backoff.
+        # Seed the resolver from names already healed off the wire so a restart
+        # doesn't reopen the learning window (a rare channel's first post-restart
+        # decoded packet would misfile permanently — first copy wins in the DB).
+        # Idempotent across supervise() reconnects; failure is non-fatal.
+        try:
+            seedable = await self.data.pg_storage.get_wire_channel_names()
+            self._channel_resolver.seed(seedable)
+        except Exception as e:
+            logger.warning("Channel resolver seeding skipped: %s", e)
+
         logger.info("Connecting to MQTT broker at %s:%d", self.config['broker']['host'], self.config['broker']['port'])
         try:
             async with aiomqtt.Client(
@@ -140,10 +155,15 @@ class MQTT:
                     outs['rssi'] = mp.rx_rssi
                 if mp.rx_rssi != 0 or mp.rx_snr != 0.0:
                     outs['snr'] = mp.rx_snr
-                # Clamp rx_time to current time if node clock is ahead
+                # Clamp rx_time to current time if node clock is ahead, and floor
+                # it at arrival: an unset rx_time (proto3 zero) would otherwise
+                # store epoch 0, which renders as 1969 and is invisible to every
+                # range filter. Arrival is within seconds of send for live MQTT.
                 rx_time = mp.rx_time
                 now_epoch = int(time.time())
-                if rx_time and rx_time > now_epoch + 300:  # 5 min tolerance
+                if not rx_time:
+                    rx_time = now_epoch
+                elif rx_time > now_epoch + 300:  # 5 min tolerance
                     node_id = utils.convert_node_id_from_int_to_hex(getattr(mp, "from", 0))
                     logger.warning("Node %s has future clock: rx_time=%s (%.0f min ahead), clamping to now", node_id, rx_time, (rx_time - now_epoch) / 60)
                     rx_time = now_epoch
@@ -152,7 +172,22 @@ class MQTT:
                 outs["qos"] = getattr(msg, "qos", None)
                 outs["retain"] = getattr(msg, "retain", None)
                 # MessageToJson omits channel 0 (primary); read it off mp.
-                outs.setdefault('channel', mp.channel)
+                # mp.channel is the (name,PSK) hash on encrypted uplinks but a
+                # gateway-local slot index once a gateway with
+                # mqtt.encryption_enabled=false has decoded it — resolve indices
+                # back to the hash so one channel lands in one bucket.
+                channel_name = se.channel_id or channels.name_from_topic(msg.topic.value)
+                outs['channel'] = self._channel_resolver.resolve(
+                    raw_channel=mp.channel,
+                    is_encrypted=is_encrypted,
+                    channel_name=channel_name,
+                    is_pki=mp.pki_encrypted,
+                    # Distinguishes a re-key (new hash on distinct packets) from
+                    # one flapped packet published twice by the same gateway.
+                    packet_id=mp.id or None,
+                )
+                if channel_name:
+                    outs['channel_name'] = channel_name
 
                 # Fallback: extract gateway from topic suffix if gateway_id was empty
                 if not outs.get('sender'):
@@ -643,6 +678,7 @@ class MQTT:
             'from': from_id,
             'to': msg.get('to'),
             'channel': str(msg['channel']),
+            'channel_name': msg.get('channel_name'),
             'text': text,
             'timestamp': timestamp,
             'hops_away': msg.get('hops_away'),
