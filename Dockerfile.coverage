@@ -3,7 +3,7 @@
 # Node via tsx + sharp. Writes tiles to a shared volume that meshinfo serves.
 
 # Stage 1: compile NTIA ITM to WASM (same as the SPA image).
-FROM --platform=linux/amd64 emscripten/emsdk:6.0.5 AS wasm-build
+FROM --platform=linux/amd64 emscripten/emsdk:6.0.6 AS wasm-build
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /itm

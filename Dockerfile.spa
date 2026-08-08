@@ -1,7 +1,7 @@
 # Compile NTIA ITM to WASM. Pinned to same emsdk as frontend/wasm/itm/Dockerfile.
 # --platform=linux/amd64: emsdk only publishes amd64; WASM output is arch-neutral
 # so QEMU-emulating this stage on arm64 runners is fine.
-FROM --platform=linux/amd64 emscripten/emsdk:6.0.5 AS wasm-build
+FROM --platform=linux/amd64 emscripten/emsdk:6.0.6 AS wasm-build
 
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
