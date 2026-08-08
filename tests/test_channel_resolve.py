@@ -51,7 +51,8 @@ class TestHash:
     def test_sample_preset_names_that_firmware_never_emits(self):
         """Older sample configs shipped meta.9 "LongModerate" and meta.55
         "VeryLongSlow". The arithmetic is right but the names are not firmware
-        preset strings, so those buckets can never populate — the sample now
+        preset strings, so firmware never fills those buckets (only a channel
+        literally named that way would) — the sample now
         ships the real ones, LongMod (110) and LongTurbo (118). Pinned so the
         legacy hashes stay documented for operator configs that still carry
         the old spellings."""

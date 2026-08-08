@@ -166,37 +166,10 @@ export const Chat = () => {
     () => channelModeFrom(config?.broker?.channels),
     [config]
   );
-  const rawChannelLabel = useCallback(
-    (id: string) =>
-      channelMeta?.[id]?.label ? String(channelMeta[id].label) : `Channel ${id}`,
-    [channelMeta]
-  );
   const rawChannelShort = useCallback(
     (id: string) =>
       channelMeta?.[id]?.short ? String(channelMeta[id].short) : id,
     [channelMeta]
-  );
-  const rawChannelTooltip = useCallback(
-    (id: string) => {
-      const meta = channelMeta?.[id] ?? {};
-      const label = rawChannelLabel(id);
-      const short = rawChannelShort(id);
-      const desc =
-        meta.description ??
-        meta.desc ??
-        meta.tooltip ??
-        meta.notes ??
-        meta.presetDescription ??
-        "";
-      const preset = meta.preset ?? meta.modemPreset ?? meta.profile ?? "";
-      const parts = [
-        `${label} (ch ${id}${short ? ` • ${short}` : ""})`,
-        preset ? `Preset: ${preset}` : "",
-        desc ? String(desc) : "",
-      ].filter(Boolean);
-      return parts.join("\n");
-    },
-    [channelMeta, rawChannelLabel, rawChannelShort]
   );
 
   // Post-fetch snapshot of the channels map, declared ABOVE the query chain so
@@ -213,6 +186,12 @@ export const Chat = () => {
     // Auto mode: honor an explicit ?ch= but otherwise send no channel at all,
     // so the API returns every channel rather than guessing one here.
     if (channelMode !== "manual") {
+      // Numeric ?ch= only, BY DESIGN: this runs pre-data so the first query
+      // can fire from config alone, and a label slug can't resolve until the
+      // data that defines it arrives. Consequence (accepted): a slug link to
+      // a class-hidden channel lands on the default tab instead of pinning
+      // the hidden pill; numeric links pin it. Resolving slugs here would
+      // mean a second query round-trip on every load.
       return rawCh && /^[0-9]+$/.test(rawCh) ? rawCh : undefined;
     }
     const viewsConfig = (config?.broker?.channels as any)?.views;
@@ -367,6 +346,32 @@ export const Chat = () => {
     [channelMeta, wireNames]
   );
 
+  // Tooltip built from the SAME label chain as the pill (meta > wire >
+  // Channel N) — the old meta-only chain made a wire-named bucket render pill
+  // "Test" over tooltip "Channel 120".
+  const rawChannelTooltip = useCallback(
+    (id: string) => {
+      const meta = channelMeta?.[id] ?? {};
+      const label = labelFor(id);
+      const short = rawChannelShort(id);
+      const desc =
+        meta.description ??
+        meta.desc ??
+        meta.tooltip ??
+        meta.notes ??
+        meta.presetDescription ??
+        "";
+      const preset = meta.preset ?? meta.modemPreset ?? meta.profile ?? "";
+      const parts = [
+        `${label} (ch ${id}${short ? ` • ${short}` : ""})`,
+        preset ? `Preset: ${preset}` : "",
+        desc ? String(desc) : "",
+      ].filter(Boolean);
+      return parts.join("\n");
+    },
+    [channelMeta, labelFor, rawChannelShort]
+  );
+
   // Busiest channel (by the range-scoped count), used as the default tab when
   // no view is configured. Latched per range: live count updates must not flip
   // the default tab under the user mid-session — only an explicit range change
@@ -374,6 +379,12 @@ export const Chat = () => {
   const busiestLatchRef = useRef<{ range: string; id: string } | null>(null);
   const busiestChannelId = useMemo(() => {
     if (busiestLatchRef.current?.range === rawRange) {
+      return busiestLatchRef.current.id;
+    }
+    // Mid range-switch the entries still hold the OLD range's counts; hold the
+    // previous latch steady instead of computing a default from data that is
+    // about to be replaced (visible as a one-render default-tab flicker).
+    if (isFetching && busiestLatchRef.current) {
       return busiestLatchRef.current.id;
     }
     let best: string | undefined;

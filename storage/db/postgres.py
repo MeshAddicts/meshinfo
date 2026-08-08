@@ -34,6 +34,21 @@ from storage.db.write_retry import WriteRetryQueue, WriteStillFailing
 
 logger = logging.getLogger(__name__)
 
+# Per-channel display facts, shared by query_chat_filtered (which adds messages
+# on top) and query_channels (which serves them bare via /v1/channels). One
+# constant so the two can't drift. $1 = the range threshold (0 = all time).
+_CHANNEL_ROWS_SQL = """
+    SELECT cc.id, cc.name,
+           COUNT(cm.id) AS total_messages,
+           COUNT(cm.id) FILTER (WHERE cm.timestamp >= $1) AS recent_messages,
+           MAX(cm.timestamp) AS newest_timestamp
+    FROM chat_channels cc
+    LEFT JOIN chat_messages cm ON cc.id = cm.channel_id
+    GROUP BY cc.id, cc.name
+    ORDER BY cc.id
+"""
+
+
 
 def _json_default(obj: Any) -> Any:
     """json.dumps fallback for JSONB writes. The JSON-decoder path coerces
@@ -1313,7 +1328,9 @@ class PostgresStorage:
         pages that label/filter by channel (Nodes, Log, Map) without wanting
         chat payloads. Same shape per entry: name (wire-healed or placeholder),
         totalMessages, recentMessages (within range_seconds; == total when
-        None), newestTimestamp.
+        None — assuming rows carry timestamps, which ingest guarantees for new
+        rows; a NULL timestamp would be counted in total but never in recent),
+        newestTimestamp.
         """
         if not self.enabled or not self.pool:
             return {}
@@ -1323,19 +1340,7 @@ class PostgresStorage:
         )
         try:
             async with self.pool.acquire() as conn:
-                rows = await conn.fetch(
-                    """
-                    SELECT cc.id, cc.name,
-                           COUNT(cm.id) AS total_messages,
-                           COUNT(cm.id) FILTER (WHERE cm.timestamp >= $1) AS recent_messages,
-                           MAX(cm.timestamp) AS newest_timestamp
-                    FROM chat_channels cc
-                    LEFT JOIN chat_messages cm ON cc.id = cm.channel_id
-                    GROUP BY cc.id, cc.name
-                    ORDER BY cc.id
-                    """,
-                    threshold,
-                )
+                rows = await conn.fetch(_CHANNEL_ROWS_SQL, threshold)
                 return {
                     row["id"]: {
                         "name": row["name"],
@@ -2506,19 +2511,7 @@ class PostgresStorage:
                 # recentMessages/newestTimestamp drive range-scoped pills: a
                 # channel silent for the selected range hides, and the badge
                 # counts what the range actually contains instead of all time.
-                channel_rows = await conn.fetch(
-                    """
-                    SELECT cc.id, cc.name,
-                           COUNT(cm.id) AS total_messages,
-                           COUNT(cm.id) FILTER (WHERE cm.timestamp >= $1) AS recent_messages,
-                           MAX(cm.timestamp) AS newest_timestamp
-                    FROM chat_channels cc
-                    LEFT JOIN chat_messages cm ON cc.id = cm.channel_id
-                    GROUP BY cc.id, cc.name
-                    ORDER BY cc.id
-                    """,
-                    threshold,
-                )
+                channel_rows = await conn.fetch(_CHANNEL_ROWS_SQL, threshold)
 
                 for row in channel_rows:
                     chat["channels"][row["id"]] = {

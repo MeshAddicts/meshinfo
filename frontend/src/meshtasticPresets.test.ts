@@ -44,9 +44,10 @@ describe("isFirmwarePreset", () => {
   });
 
   it("excludes the two historical names no firmware emits", () => {
-    // Neither appears in any firmware build; both hash to buckets that can
-    // never populate. Pinned so a future edit does not quietly reintroduce
-    // them — they live in PRESET_ALIASES instead.
+    // Neither string is emitted by any firmware build, so their buckets only
+    // populate if someone literally NAMES a channel that way. Pinned so a
+    // future edit does not quietly reintroduce them — they live in
+    // PRESET_ALIASES instead.
     expect(FIRMWARE_PRESET_NAMES.has("LongModerate")).toBe(false);
     expect(FIRMWARE_PRESET_NAMES.has("VeryLongSlow")).toBe(false);
   });

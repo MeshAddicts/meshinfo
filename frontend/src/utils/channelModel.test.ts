@@ -120,6 +120,29 @@ describe("buildChannelModel", () => {
     expect(m.defaultId).toBe("31");
   });
 
+  it("arbitrates duplicate labels by count even for zero-count union members", () => {
+    // The Nodes resolve model feeds a union of in-window buckets and every
+    // known bucket; an out-of-window twin (count 0) must not steal the slug
+    // from the in-window channel, but must still resolve by its id.
+    const m = buildChannelModel({
+      ids: ["120", "2"], mode: "all", meta: undefined,
+      wireNames: { "120": "Test", "2": "Test" },
+      counts: { "120": 40 }, // "2" absent -> 0
+    });
+    expect(m.resolveKey("test")).toBe("120");
+    expect(m.resolveKey("2")).toBe("2");
+  });
+
+  it("presets-mode defaultId is the busiest VISIBLE entry, not the global busiest", () => {
+    const m = buildChannelModel({
+      ids: ["8", "120"], mode: "presets", meta: undefined,
+      wireNames: { "8": "LongFast", "120": "Test" },
+      counts: { "8": 10, "120": 900 }, // custom out-busies every preset
+    });
+    expect(m.entries.map((e) => e.id)).toEqual(["8"]);
+    expect(m.defaultId).toBe("8");
+  });
+
   it("empty input yields an empty model", () => {
     const m = buildChannelModel({
       ids: [], mode: "presets", meta: undefined, wireNames: {}, counts: {},

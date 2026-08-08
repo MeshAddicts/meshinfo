@@ -10,7 +10,7 @@ from discord.ext import commands
 from meshtastic import mesh_pb2, config_pb2
 
 import utils
-from bot.embeds import _resolve_channel_name
+from bot.embeds import resolve_channel_name
 from data_store import DataStore
 
 logger = logging.getLogger(__name__)
@@ -330,7 +330,7 @@ class MainCommands(commands.Cog):
             if str(disc_ch) == discord_ch_id:
                 mesh_channel = mesh_ch
                 # Resolve a friendly label from channel meta
-                channel_label = _resolve_channel_name(mesh_ch, self.config)
+                channel_label = resolve_channel_name(mesh_ch, self.config)
                 break
 
         stats = await self.data.pg_storage.query_top_nodes(hours=hours, limit=5, channel_id=mesh_channel)

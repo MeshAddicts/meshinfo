@@ -18,6 +18,7 @@ import {
   ChannelMode,
   channelLabel,
   channelShort,
+  channelVisibleInMode,
   classifyChannel,
   normalizeKey,
 } from "./channelDisplay";
@@ -72,11 +73,7 @@ export function buildChannelModel(args: BuildChannelModelArgs): ChannelModel {
 
   const visible = candidates
     .filter(
-      ({ id, group }) =>
-        id === selectedId ||
-        mode === "manual" ||
-        mode === "all" ||
-        group === "presets"
+      ({ id, group }) => id === selectedId || channelVisibleInMode(mode, group)
     )
     // Presets before custom, busiest first within a group, id as a stable
     // tiebreak so live count ties can't shuffle pills under the cursor.

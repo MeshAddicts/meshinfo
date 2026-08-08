@@ -30,9 +30,10 @@ export interface FirmwareModemPreset {
 /**
  * The canonical modem-preset table, verified against firmware source:
  * names from `DisplayFormatters.cpp`, RF parameters from `MeshRadio.h`'s
- * `modemPresetToParams()`. Sensitivities follow the Semtech ladder anchored to
- * the long-standing tool values (−3 dB per SF step, +3 dB per BW halving;
- * LongSlow's −134 is the tools' historical anchor, kept as-is).
+ * `modemPresetToParams()`. Sensitivities follow the Semtech ladder (−3 dB per
+ * SF step, +3 dB per BW halving) anchored at LongFast −130; LongSlow −134 is a
+ * deliberate +2 dB historical exception off that ladder, kept because the
+ * interactive tools have always used it.
  *
  * Every other preset list in the app derives from this one — the live-coverage
  * sensitivity table and the interactive tool presets both import it. Do not

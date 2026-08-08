@@ -328,13 +328,22 @@ export const Nodes = () => {
   const channelResolveModel = useMemo(
     () =>
       buildChannelModel({
-        ids: dataChannels.keys(),
+        // Union of window buckets and every bucket /v1/channels knows: a slug
+        // link to an out-of-window channel (?ch=svcomm after a quiet week)
+        // must still resolve — the selected-exemption then renders its pill
+        // at count 0 instead of silently dropping the filter. First-wins
+        // arbitration on duplicate labels is count-ordered, so an in-window
+        // busier bucket always beats an out-of-window twin for the slug.
+        ids: new Set([
+          ...dataChannels.keys(),
+          ...Object.keys(channelsData?.channels ?? {}),
+        ]),
         mode: "all",
         meta: channelMeta,
         wireNames,
         counts: (id) => dataChannels.get(id) ?? 0,
       }),
-    [dataChannels, channelMeta, wireNames],
+    [dataChannels, channelsData, channelMeta, wireNames],
   );
 
   // Resolve urlCh to a channel ID. Manual mode keeps the legacy views-only

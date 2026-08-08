@@ -186,8 +186,9 @@ key_name = "Default"
 # emits, and `preset =` still accepts them as aliases:
 #   "LongModerate" — firmware displays "LongMod" (hash 110, below).
 #   "VeryLongSlow" — removed upstream; a node still set to it transmits with
-#   the default (LongFast) parameters, so the alias maps there. Its old
-#   hash 55 never occurs on air.
+#   the default (LongFast) parameters, so the alias maps there. No firmware
+#   emits the string anymore, though a channel someone literally NAMES
+#   "VeryLongSlow" would still hash to its old bucket 55.
 # ─────────────────────────────────────────────────────────────────────────────
 
 [broker.channels.meta.8]

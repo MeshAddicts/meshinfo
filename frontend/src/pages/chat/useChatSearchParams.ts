@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo } from "react";
+import { normalizeKey } from "../../utils/channelDisplay";
 import { useSearchParams } from "react-router";
 
 export type FocusMode = "endpoints" | "any";
@@ -53,15 +54,18 @@ export function useChatSearchParams(args?: {
   }, [args?.defaultCh, views]);
 
   const aliasToKey = useMemo(() => {
+    // normalizeKey, not bare toLowerCase: the page normalizes its raw ?ch=
+    // the same way, and a lowercase-only map missed aliases differing in
+    // punctuation/spacing ("Sac Valley" vs ?ch=sacvalley).
     const m = new Map<string, string>();
     for (const v of views) {
-      const k = (v.key ?? "").trim();
+      const k = normalizeKey(v.key ?? "");
       if (!k) continue;
-      m.set(k.toLowerCase(), k);
+      m.set(k, v.key);
       for (const a of v.aliases ?? []) {
-        const aa = (a ?? "").trim();
+        const aa = normalizeKey(a ?? "");
         if (!aa) continue;
-        m.set(aa.toLowerCase(), k);
+        m.set(aa, v.key);
       }
     }
     return m;
@@ -72,7 +76,7 @@ export function useChatSearchParams(args?: {
     if (!defaultCh) return rawCh; // fallback (shouldn’t happen)
     if (!rawCh) return defaultCh;
 
-    const mapped = aliasToKey.get(rawCh.toLowerCase());
+    const mapped = aliasToKey.get(normalizeKey(rawCh));
     return mapped ?? defaultCh;
   }, [rawCh, aliasToKey, defaultCh]);
 

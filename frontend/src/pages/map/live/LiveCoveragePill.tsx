@@ -198,12 +198,12 @@ export function LiveCoveragePill({
           </label>
 
           <p className="text-[10px] text-gray-600 leading-snug">
-            Coverage assumes a stock handheld at chest height. 
-            Every positioned node heard recently contributes (ITM model). Router-class TX
-            33 dBm, others 22 dBm; antenna height from reported altitude (min 6 m). Estimate only. 
-            Inclusion requires position data. Does not include shipping and handling. 
-            No CODs. Offer not valid in all states. No purchase necessary. Terms and conditions may apply. 
-            Objects in mirror are closer than they appear. Please mesh responsibly. 
+            Coverage assumes a stock handheld at chest height. Every
+            positioned node heard recently contributes (ITM model).
+            Router-class TX 33 dBm, others 22 dBm; antenna height from
+            reported altitude (min 6 m). Nodes without position data are not
+            included. Estimate only — terrain and clutter models have limits;
+            real RF will surprise you.
           </p>
         </div>
       )}

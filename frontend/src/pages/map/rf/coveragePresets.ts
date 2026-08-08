@@ -4,6 +4,7 @@
  * so presets survive catalog reordering; unresolvable entries fall back to
  * the Custom slot or closest-gain antenna.
  */
+import { canonicalPresetName } from "../../../meshtasticPresets";
 import { LS_KEYS, readJson, writeJson } from "../lib/storage";
 import { AGGRESSION_STOPS, COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, DEFAULT_AGGRESSION_IDX, MESHTASTIC_PRESETS, modemPresetIdx, RELIABILITY_PRESETS } from "./coverageAnalysis";
 import { COVERAGE_DETAIL_SIZE, type CoverageDetail } from "./coverageDetail";
@@ -112,7 +113,16 @@ export function resolveAntenna(label: string, dbi: number): number {
 export function resolvePreset(p: CoveragePreset): CoveragePanelSettings {
   const hw = resolveHardware(p.tx.hardware);
   const rxHw = resolveHardware(p.rx.hardware);
-  // Alias-aware: an old payload's "VeryLongSlow" restores as LongFast, not Custom
+  // Alias-aware: an old payload's "VeryLongSlow" restores as LongFast, not
+  // Custom. Say so out loud — the substitution shifts sensitivity 7 dB
+  // (−137 → −130), which visibly shrinks a restored coverage estimate.
+  const canonicalId = canonicalPresetName(p.modem.id);
+  if (canonicalId !== p.modem.id) {
+    console.info(
+      `[coverage] preset "${p.modem.id}" is no longer a firmware preset; ` +
+        `restored as "${canonicalId}" (sensitivity differs).`
+    );
+  }
   const modemIdx = modemPresetIdx(p.modem.id);
   const customModemIdx = MESHTASTIC_PRESETS.findIndex((m) => m.isCustom);
   const modemIsCustom = modemIdx < 0 || (MESHTASTIC_PRESETS[modemIdx]?.isCustom ?? false);
