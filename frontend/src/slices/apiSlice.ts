@@ -2,6 +2,7 @@ import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 
 import { env } from "../env";
 import {
+  IChannelsResponse,
   IChatResponse,
   IMqttMessagesResponse,
   INodesResponse,
@@ -60,6 +61,15 @@ export const apiSlice = createApi({
       transformResponse: (response: { config: IConfigResponse }) =>
         response.config,
       providesTags: [{ type: "Config", id: "LIST" }],
+    }),
+    // Message-free channel facts (names, counts) for pages that label or
+    // filter by channel bucket without wanting chat payloads.
+    getChannels: builder.query<IChannelsResponse, { range?: string } | void>({
+      query: (params) => {
+        const r = params && params.range ? `?range=${params.range}` : "";
+        return `channels${r}`;
+      },
+      providesTags: [{ type: "Chat", id: "CHANNELS" }],
     }),
     getChats: builder.query<
         IChatResponse,
@@ -191,6 +201,7 @@ export const apiSlice = createApi({
 });
 
 export const {
+  useGetChannelsQuery,
   useGetChatsQuery,
   useGetNodesQuery,
   useGetConfigQuery,

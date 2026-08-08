@@ -2,12 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { clampAggressionIdx } from "../lib/helpers";
 import { LS_KEYS, readJson, writeJson } from "../lib/storage";
-import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, DEFAULT_AGGRESSION_IDX, effectiveSensitivityDbm, MESHTASTIC_PRESETS } from "../rf/coverageAnalysis";
+import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, DEFAULT_AGGRESSION_IDX, effectiveSensitivityDbm, MESHTASTIC_PRESETS, modemPresetIdx } from "../rf/coverageAnalysis";
 import type { CoverageDetail } from "../rf/coverageDetail";
 import { type CoveragePanelSettings, resolvePreset, sanitizePreset, snapshotPreset } from "../rf/coveragePresets";
 import type { DemSource } from "../terrain/terrainRgb";
 
 type ClutterStatus = { tilesPresent: number; tilesTotal: number } | null;
+
+// Resolved by id — the catalog order is not load-bearing
+const DEFAULT_PRESET_IDX = Math.max(0, modemPresetIdx("MediumFast"));
 
 /** Coverage RF settings state + derived helpers. Owns persistence for
  *  aggression/clutter/canopy/buildings toggles. */
@@ -99,7 +102,7 @@ export function useCoverageState() {
     setCoverageBuildingsEnabledRaw(v);
     writeJson(LS_KEYS.coverageBuildingsEnabled, v);
   }, []);
-  const [coveragePresetIdx, setCoveragePresetIdx] = useState(restored?.presetIdx ?? 0); // MediumFast
+  const [coveragePresetIdx, setCoveragePresetIdx] = useState(restored?.presetIdx ?? DEFAULT_PRESET_IDX);
   const [coverageCustomSensDbm, setCoverageCustomSensDbm] = useState(restored?.customSensitivityDbm ?? -133);
   const coverageSensitivityDbm = MESHTASTIC_PRESETS[coveragePresetIdx]?.isCustom
     ? coverageCustomSensDbm

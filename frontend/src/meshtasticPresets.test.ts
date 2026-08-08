@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { FIRMWARE_PRESET_NAMES, isFirmwarePreset } from "./meshtasticPresets";
+import {
+  FIRMWARE_MODEM_PRESETS,
+  FIRMWARE_PRESET_NAMES,
+  canonicalPresetName,
+  isFirmwarePreset,
+} from "./meshtasticPresets";
 
 describe("isFirmwarePreset", () => {
   it("recognizes every name firmware emits", () => {
@@ -38,11 +43,45 @@ describe("isFirmwarePreset", () => {
     expect(isFirmwarePreset("")).toBe(false);
   });
 
-  it("excludes the two names liveCoveragePresets wrongly carries", () => {
+  it("excludes the two historical names no firmware emits", () => {
     // Neither appears in any firmware build; both hash to buckets that can
-    // never populate. Pinned so a future "sync with the RF table" does not
-    // quietly reintroduce them.
+    // never populate. Pinned so a future edit does not quietly reintroduce
+    // them — they live in PRESET_ALIASES instead.
     expect(FIRMWARE_PRESET_NAMES.has("LongModerate")).toBe(false);
     expect(FIRMWARE_PRESET_NAMES.has("VeryLongSlow")).toBe(false);
+  });
+});
+
+describe("FIRMWARE_MODEM_PRESETS (canonical RF table)", () => {
+  it("carries firmware MeshRadio.h parameters", () => {
+    const by = Object.fromEntries(FIRMWARE_MODEM_PRESETS.map((p) => [p.name, p]));
+    // Spot-pins from modemPresetToParams(): the two easy-to-fork entries.
+    expect(by.LongTurbo).toMatchObject({ sf: 11, bwKhz: 500, cr: 8, sensitivityDbm: -127 });
+    expect(by.LongMod).toMatchObject({ sf: 11, bwKhz: 125, cr: 8, sensitivityDbm: -133 });
+    expect(by.LongFast).toMatchObject({ sf: 11, bwKhz: 250, cr: 5, sensitivityDbm: -130 });
+  });
+
+  it("keeps datasheet sensitivity exactly 3 dB below typical", () => {
+    for (const p of FIRMWARE_MODEM_PRESETS) {
+      expect(p.datasheetSensitivityDbm).toBe(p.sensitivityDbm - 3);
+    }
+  });
+
+  it("covers every firmware preset name exactly once", () => {
+    expect(FIRMWARE_MODEM_PRESETS.length).toBe(FIRMWARE_PRESET_NAMES.size);
+  });
+});
+
+describe("canonicalPresetName", () => {
+  it("maps historical config spellings to firmware names", () => {
+    expect(canonicalPresetName("LongModerate")).toBe("LongMod");
+    // VeryLongSlow was removed upstream; firmware falls back to default
+    // (LongFast) params for a node still configured with it.
+    expect(canonicalPresetName("VeryLongSlow")).toBe("LongFast");
+  });
+
+  it("passes firmware names and unknowns through", () => {
+    expect(canonicalPresetName("LongTurbo")).toBe("LongTurbo");
+    expect(canonicalPresetName("SacValley")).toBe("SacValley");
   });
 });

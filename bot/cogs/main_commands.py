@@ -10,6 +10,7 @@ from discord.ext import commands
 from meshtastic import mesh_pb2, config_pb2
 
 import utils
+from bot.embeds import _resolve_channel_name
 from data_store import DataStore
 
 logger = logging.getLogger(__name__)
@@ -329,8 +330,7 @@ class MainCommands(commands.Cog):
             if str(disc_ch) == discord_ch_id:
                 mesh_channel = mesh_ch
                 # Resolve a friendly label from channel meta
-                meta = self.config.get('broker', {}).get('channels', {}).get('meta', {}).get(mesh_ch, {})
-                channel_label = meta.get('label') or f"Channel {mesh_ch}"
+                channel_label = _resolve_channel_name(mesh_ch, self.config)
                 break
 
         stats = await self.data.pg_storage.query_top_nodes(hours=hours, limit=5, channel_id=mesh_channel)
@@ -411,7 +411,8 @@ class MainCommands(commands.Cog):
 
         footer_parts = [f"Timeframe: {label}"]
         if mesh_channel:
-            footer_parts.append(f"Channel: {mesh_channel}")
+            # Meta label, not the raw bucket hash — hashes mean nothing to users.
+            footer_parts.append(f"Channel: {channel_label}")
         footer_parts.append("Use /topnodes 7d for weekly")
         embed.set_footer(text=" | ".join(footer_parts))
         await interaction.followup.send(embed=embed)

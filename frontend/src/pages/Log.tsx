@@ -21,12 +21,25 @@ import {
   useRememberedChannel,
 } from "../hooks/useRememberedChannel";
 import {
+  REMEMBERED_RANGE_KEYS,
+  useRememberedRange,
+} from "../hooks/useRememberedRange";
+import { canonicalPresetName, isFirmwarePreset } from "../meshtasticPresets";
+import {
   IPacketMessage,
   IPacketsArg,
+  useGetChannelsQuery,
   useGetConfigQuery,
   useGetPacketQuery,
   useGetPacketsInfiniteQuery,
 } from "../slices/apiSlice";
+import {
+  channelLabel,
+  channelModeFrom,
+  normalizeKey,
+  wireNamesFrom,
+} from "../utils/channelDisplay";
+import { buildChannelModel } from "../utils/channelModel";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { csvEscape, downloadBlob } from "../utils/export";
 import { formatTimestamp } from "../utils/formatTimestamp";
@@ -42,11 +55,6 @@ const LIVE_FLUSH_MS = 350; // coalesce a burst of packets into one state update
 const AT_TOP_THRESHOLD_PX = 60; // freeze as soon as the user scrolls down this far
 
 hljs.registerLanguage("json", json);
-
-const normalizeKey = (s: string) => {
-  const k = String(s ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
-  return k.startsWith("all") ? "all" : k;
-};
 
 const toUnixSeconds = (ts: unknown): number => {
   const n = Number(ts);
@@ -116,6 +124,8 @@ function JsonBlock({ code }: { code: string }) {
 
 type PacketRowProps = {
   m: IPacketMessage;
+  /** Resolved channel chip text; absent when the row carries no channel info. */
+  channel?: string;
   highlighted?: boolean;
   selected?: boolean;
   copiedJson: boolean;
@@ -127,6 +137,7 @@ type PacketRowProps = {
 
 const PacketRow = React.memo(function PacketRow({
   m,
+  channel,
   highlighted,
   selected,
   copiedJson,
@@ -165,6 +176,14 @@ const PacketRow = React.memo(function PacketRow({
             {type ? (
               <span className="ml-2 rounded-full px-2 py-0.5 border border-gray-300/60 dark:border-gray-700 text-[11px] text-gray-600 dark:text-gray-300">
                 {type}
+              </span>
+            ) : null}
+            {channel ? (
+              <span
+                className="ml-2 rounded-full px-2 py-0.5 border border-sky-400/50 dark:border-sky-800 text-[11px] text-sky-700 dark:text-sky-300"
+                title="Channel"
+              >
+                {channel}
               </span>
             ) : null}
             {Number.isFinite(id) ? (
@@ -274,43 +293,140 @@ export const Log = () => {
     [setParams],
   );
 
-  // ---- preset views (from broker config) ----------------------------------
-  // Each view maps to a topic substring (the modem-preset channel name), which
-  // the API filters server-side so pagination stays correct.
-  const views = useMemo(() => {
-    const out: Array<{ key: string; label: string; topicMatch: string }> = [
-      { key: "all", label: "All", topicMatch: "" },
-    ];
-    // `views` is operator-defined and not in the typed Channels shape.
-    const vraw = (config?.broker?.channels as { views?: unknown[] } | undefined)
-      ?.views as
-      | Array<{ label?: string; id?: string; channels?: unknown[] }>
-      | undefined;
-    if (Array.isArray(vraw)) {
-      for (const v of vraw) {
-        const chans = Array.isArray(v?.channels) ? v.channels.map(String) : [];
-        if (chans.length !== 1) continue;
-        const label = String(v?.label ?? v?.id ?? "");
-        const key = normalizeKey(label) || normalizeKey(String(v?.id ?? ""));
-        if (!key) continue;
-        out.push({ key, label: label || key, topicMatch: chans[0] });
-      }
-    }
-    return out;
-  }, [config]);
-
-  const selectedView = useMemo(
-    () => views.find((v) => v.key === urlCh) ?? views[0],
-    [views, urlCh],
+  // ---- channel pills -------------------------------------------------------
+  // The server filters by topic SUBSTRING (ILIKE), and topics carry the
+  // channel NAME — msh/<region>/2/e/<name>/!<gw> — never the 8-bit bucket
+  // hash. So a pill must send a name, pinned to the "/2/e/<name>/" segment so
+  // it can't match node-id hex or a region prefix.
+  const { data: channelsData } = useGetChannelsQuery({ range: "all" });
+  const channelMeta = config?.broker?.channels?.meta;
+  const channelMode = channelModeFrom(config?.broker?.channels);
+  const wireNames = useMemo(
+    () => wireNamesFrom(channelsData?.channels),
+    [channelsData],
   );
 
+  // The name a bucket's topics actually carry: the gateway-published wire name
+  // when known, else the configured preset (validated via its canonical form),
+  // else a meta label that IS a firmware preset name. Undefined = no pill —
+  // an unfilterable pill is worse than none.
+  const topicNameFor = useCallback(
+    (id: string, wire: string | undefined): string | undefined => {
+      if (wire) return wire;
+      const m = channelMeta?.[id];
+      const preset = m?.preset;
+      if (preset && isFirmwarePreset(canonicalPresetName(preset))) {
+        // Match the WIRE form: "LongModerate" configs always aired as
+        // "LongMod", but VeryLongSlow topics really say "VeryLongSlow" (its
+        // alias models the RF fallback, not the on-air string).
+        return preset === "LongModerate" ? "LongMod" : preset;
+      }
+      if (isFirmwarePreset(m?.label)) return m?.label;
+      return undefined;
+    },
+    [channelMeta],
+  );
+
+  // Auto modes: ordering, grouping, class filtering, labels, and the ?ch=
+  // alias set all come from the shared channel model. No selectedId: Log
+  // resolves ?ch= only against its own pill set (below), so a resolved
+  // selection is visible by construction and the exemption can never fire.
+  const channelModel = useMemo(() => {
+    const channels = channelsData?.channels ?? {};
+    return buildChannelModel({
+      ids: Object.keys(channels),
+      mode: channelMode,
+      meta: channelMeta,
+      wireNames,
+      counts: (id) =>
+        Number(channels[id]?.recentMessages ?? channels[id]?.totalMessages ?? 0),
+    });
+  }, [channelsData, channelMode, channelMeta, wireNames]);
+
+  const views = useMemo(() => {
+    const out: Array<{
+      key: string;
+      label: string;
+      topicMatch: string;
+      /** Model entry id (auto modes only) — resolveKey's currency. */
+      id?: string;
+    }> = [{ key: "all", label: "All", topicMatch: "" }];
+    const matchFor = (name: string) => `/2/e/${name}/`;
+
+    if (channelMode === "manual") {
+      // Manual mode keeps the operator's hand-curated views; buckets whose
+      // name can't be resolved (e.g. a Legacy catch-all) get no pill.
+      const seen = new Set(["all"]);
+      for (const v of config?.broker?.channels?.views ?? []) {
+        const chans = Array.isArray(v?.channels) ? v.channels.map(String) : [];
+        if (chans.length !== 1) continue;
+        const name = topicNameFor(chans[0], wireNames[chans[0]]);
+        if (!name) continue;
+        const label = String(v?.label ?? v?.id ?? "");
+        const key = normalizeKey(label) || normalizeKey(String(v?.id ?? ""));
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push({ key, label: label || key, topicMatch: matchFor(name) });
+      }
+      return out;
+    }
+
+    // Auto modes: the model's entries verbatim, minus Log's own rule — a
+    // bucket with no derivable topic name gets no pill (unfilterable pills
+    // are worse than none), applied AFTER the model so nothing else drifts.
+    for (const e of channelModel.entries) {
+      const name = topicNameFor(e.id, e.wireName);
+      if (!name) continue;
+      // Label slugs keep old bookmarks working; the model already arbitrated
+      // slug ownership, so a denied label falls back to the id as key.
+      const labelSlug = normalizeKey(e.label);
+      const key = e.aliases.includes(labelSlug) ? labelSlug : e.id;
+      out.push({ key, label: e.label, topicMatch: matchFor(name), id: e.id });
+    }
+    return out;
+  }, [channelMode, config, channelModel, wireNames, topicNameFor]);
+
+  // Auto modes resolve ?ch= through the model's alias set (id / label /
+  // meta.short); a resolved bucket whose pill was dropped (no topic name)
+  // falls back to All. Manual keeps legacy key matching.
+  const selectedView = useMemo(() => {
+    if (channelMode === "manual") {
+      return views.find((v) => v.key === urlCh) ?? views[0];
+    }
+    const id = urlCh ? channelModel.resolveKey(urlCh) : undefined;
+    return (id ? views.find((v) => v.id === id) : undefined) ?? views[0];
+  }, [channelMode, views, urlCh, channelModel]);
+
   // Land returning visitors on the channel pill they last had selected.
+  // `urlHasCh` demands the raw ?ch actually RESOLVE to a rendered pill: a link
+  // to a pill-less/unknown bucket falls back to All, and adopting that
+  // fallback would overwrite the remembered selection with "" (same guard as
+  // Chat's rawChResolves).
+  const rawChParam = (searchParams.get("ch") ?? "").trim();
+  const rawChResolves =
+    !!rawChParam &&
+    (channelMode === "manual"
+      ? views.some((v) => v.key === urlCh && v.key !== "all")
+      : channelModel.resolveKey(rawChParam) !== undefined &&
+        selectedView.key !== "all");
+  // Remember the time range the same way (default "all"; URL wins).
+  useRememberedRange({
+    storageKey: REMEMBERED_RANGE_KEYS.logs,
+    value: urlRange,
+    urlHasR: !!searchParams.get("r")?.trim(),
+    suppressRestore: [...searchParams.keys()].some((k) => k !== "r"),
+    apply: (stored) => setParam("r", stored, "replace"),
+  });
+
   useRememberedChannel({
     storageKey: REMEMBERED_CH_KEYS.logs,
     value: selectedView.key === "all" ? "" : selectedView.key,
-    urlHasCh: !!searchParams.get("ch")?.trim(),
+    urlHasCh: rawChResolves,
     suppressRestore: [...searchParams.keys()].some((k) => k !== "ch"),
-    ready: views.length > 1,
+    // Config must be present before validating: mode defaults to "presets"
+    // pre-config, and a restore decided under the wrong mode can removeStored
+    // a perfectly valid key.
+    ready: !!config && views.length > 1,
     isValid: (stored) => views.some((v) => v.key === stored),
     apply: (stored) => setParam("ch", stored, "replace"),
   });
@@ -496,6 +612,23 @@ export const Log = () => {
     virtuosoRef.current?.scrollToIndex({ index: 0, align: "start", behavior: "smooth" });
   }, []);
 
+  // Chip text for a packet's channel: post-fix archive rows carry the
+  // gateway-published name; older rows may only carry the numeric channel
+  // (bucket hash, or a raw 0-7 slot index on historical rows), which the
+  // shared label chain turns into the operator's label or "Channel <n>".
+  const channelChipFor = useCallback(
+    (m: IPacketMessage): string | undefined => {
+      const name = m["channel_name"];
+      if (typeof name === "string" && name.trim()) return name;
+      const id = m["channel"];
+      if (typeof id === "number" && Number.isFinite(id)) {
+        return channelLabel(channelMeta, wireNames, String(id));
+      }
+      return undefined;
+    },
+    [channelMeta, wireNames],
+  );
+
   // ---- deeplinked packet ---------------------------------------------------
   const packetId = Number(urlPacket);
   const hasPacketLink = !!urlPacket && Number.isFinite(packetId);
@@ -504,6 +637,7 @@ export const Log = () => {
     { skip: !hasPacketLink },
   );
   const linkedPacket = linkedData?.packet;
+  const linkedChannel = linkedPacket ? channelChipFor(linkedPacket) : undefined;
 
   // ---- search input (deferred -> URL) -------------------------------------
   const [qInput, setQInput] = useState(urlQ);
@@ -640,12 +774,15 @@ export const Log = () => {
   // ---- filter helpers ------------------------------------------------------
   const activeFilterCount = useMemo(() => {
     let n = 0;
-    if (urlCh && urlCh !== "all") n += 1;
+    // Only count the channel as an active filter when it actually filters —
+    // a ?ch= that fell back to All (pill-less bucket) must not claim "1 filter"
+    // over an unfiltered list.
+    if (urlCh && urlCh !== "all" && selectedView.key !== "all") n += 1;
     if (useAbsolute) n += 1;
     else if (urlRange !== DEFAULT_RANGE) n += 1;
     if (urlQ.trim()) n += 1;
     return n;
-  }, [urlCh, useAbsolute, urlRange, urlQ]);
+  }, [urlCh, selectedView.key, useAbsolute, urlRange, urlQ]);
   const hasFilters = activeFilterCount > 0;
 
   const clearFilters = useCallback(() => {
@@ -869,6 +1006,14 @@ export const Log = () => {
               <div className="px-4 py-2 flex items-center justify-between border-b border-indigo-200/70 dark:border-indigo-900/60">
                 <div className="text-sm font-semibold text-indigo-900 dark:text-indigo-200">
                   Linked packet #{packetId}
+                  {linkedChannel ? (
+                    <span
+                      className="ml-2 rounded-full px-2 py-0.5 border border-sky-400/50 dark:border-sky-800 text-[11px] font-normal text-sky-700 dark:text-sky-300"
+                      title="Channel"
+                    >
+                      {linkedChannel}
+                    </span>
+                  ) : null}
                 </div>
                 <button
                   type="button"
@@ -957,6 +1102,7 @@ export const Log = () => {
                     return (
                       <PacketRow
                         m={m}
+                        channel={channelChipFor(m)}
                         highlighted={hasPacketLink && id === packetId}
                         selected={id === selectedId}
                         copiedJson={

@@ -169,7 +169,7 @@ mode = "presets"
 # hidden. Channels with no data are hidden regardless. These hashes assume the
 # default PSK — a custom PSK or a renamed channel produces different ones, so a
 # curated list copied from here will not match a mesh it was not written for.
-display = ["8", "31", "24", "15", "55", "119", "112", "9", "14"]
+display = ["8", "31", "24", "15", "118", "119", "112", "110", "14"]
 
 # Encryption keys for decoding channel traffic (base64-encoded)
 [[broker.channels.encryption]]
@@ -180,6 +180,14 @@ key_name = "Default"
 # Standard Meshtastic Preset Channel Hashes
 # Computed from: XOR_bytes(channel_name) ^ XOR_bytes(PSK)
 # These values assume the default PSK above.
+#
+# Names match the firmware's display strings — the strings unnamed channels
+# hash on the wire. Older MeshInfo samples used two spellings firmware never
+# emits, and `preset =` still accepts them as aliases:
+#   "LongModerate" — firmware displays "LongMod" (hash 110, below).
+#   "VeryLongSlow" — removed upstream; a node still set to it transmits with
+#   the default (LongFast) parameters, so the alias maps there. Its old
+#   hash 55 never occurs on air.
 # ─────────────────────────────────────────────────────────────────────────────
 
 [broker.channels.meta.8]
@@ -206,11 +214,11 @@ short = "LS"
 preset = "LongSlow"
 description = "LongSlow modem preset (default PSK hash: 15)"
 
-[broker.channels.meta.55]
-label = "VeryLongSlow"
-short = "VLS"
-preset = "VeryLongSlow"
-description = "VeryLongSlow modem preset (default PSK hash: 55)"
+[broker.channels.meta.118]
+label = "LongTurbo"
+short = "LT"
+preset = "LongTurbo"
+description = "LongTurbo modem preset (default PSK hash: 118)"
 
 [broker.channels.meta.119]
 label = "ShortSlow"
@@ -224,11 +232,11 @@ short = "SF"
 preset = "ShortFast"
 description = "ShortFast modem preset (default PSK hash: 112)"
 
-[broker.channels.meta.9]
-label = "LongModerate"
+[broker.channels.meta.110]
+label = "LongMod"
 short = "LM"
-preset = "LongModerate"
-description = "LongModerate modem preset (default PSK hash: 9)"
+preset = "LongMod"
+description = "LongMod modem preset (default PSK hash: 110)"
 
 [broker.channels.meta.14]
 label = "ShortTurbo"

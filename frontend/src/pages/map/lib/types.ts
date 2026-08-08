@@ -52,7 +52,7 @@ export type NodeDetailsData = {
   displayName: string;
   elsewhereLinks?: ElsewhereLink[];
   traceroutes?: ITraceroutesResponse[];
-  channelLabel?: string | null;
+  channelLabel?: string;
   heardBy: string[];
   maxRangeKm?: number | null;
 };

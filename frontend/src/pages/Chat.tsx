@@ -14,16 +14,27 @@ import { HeardBy } from "../components/HeardBy";
 import { LivePill } from "../components/LivePill";
 import { MobileSheet } from "../components/MobileSheet";
 import { useAppSelector } from "../hooks/redux";
-import { isFirmwarePreset } from "../meshtasticPresets";
 import {
   REMEMBERED_CH_KEYS,
   useRememberedChannel,
 } from "../hooks/useRememberedChannel";
 import {
+  REMEMBERED_RANGE_KEYS,
+  useRememberedRange,
+} from "../hooks/useRememberedRange";
+import {
   useGetChatsQuery,
   useGetConfigQuery,
   useGetNodesQuery,
 } from "../slices/apiSlice";
+import type { IChannel } from "../types";
+import {
+  channelLabel as channelBucketLabel,
+  channelModeFrom,
+  normalizeKey,
+  wireNamesFrom,
+} from "../utils/channelDisplay";
+import { buildChannelModel } from "../utils/channelModel";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { csvEscape, downloadBlob } from "../utils/export";
 import {
@@ -53,14 +64,6 @@ type ViewDef = {
 const GROUP_LABELS: Record<string, string> = {
   presets: "Modem presets",
   custom: "Custom channels",
-};
-
-const normalizeKey = (s: string) => {
-  const raw = String(s ?? "").trim().toLowerCase();
-  const k = raw.replace(/[^a-z0-9]+/g, "");
-  if (!k) return "";
-  if (k.startsWith("all")) return "all";
-  return k;
 };
 
 type MobileSheetKey = "controls" | "focus" | "details";
@@ -146,7 +149,7 @@ export const Chat = () => {
   // → chat query → channelEntries).
   const [searchParamsRaw] = useSearchParams();
   const rawCh = normalizeKey(searchParamsRaw.get("ch") || "");
-  const rawRange = (searchParamsRaw.get("r") || "24h") as string;
+  const rawRange = (searchParamsRaw.get("r") || "all") as string;
 
   // ── 3. Channel metadata helpers (from broker config) ──
   const channelMeta = useMemo(
@@ -159,10 +162,10 @@ export const Chat = () => {
   //   "presets" — stock modem-preset channels only (the default)
   //   "all"     — presets plus human-named channels
   //   "manual"  — the hand-curated display/views config
-  const channelMode = useMemo((): "presets" | "all" | "manual" => {
-    const m = (config?.broker?.channels as any)?.mode;
-    return m === "all" || m === "manual" ? m : "presets";
-  }, [config]);
+  const channelMode = useMemo(
+    () => channelModeFrom(config?.broker?.channels),
+    [config]
+  );
   const rawChannelLabel = useCallback(
     (id: string) =>
       channelMeta?.[id]?.label ? String(channelMeta[id].label) : `Channel ${id}`,
@@ -329,7 +332,8 @@ export const Chat = () => {
   //    drops out of the bar until it speaks again. That IS the stale-pill
   //    filter: the range selector doubles as it, no extra knob.
   const channelEntries = useMemo(() => {
-    let entries = Object.entries(effectiveChat?.channels ?? {});
+    const channels: Record<string, IChannel> = effectiveChat?.channels ?? {};
+    let entries = Object.entries(channels);
     const allow =
       channelMode === "manual" ? config?.broker?.channels?.display : undefined;
     if (Array.isArray(allow) && allow.length > 0) {
@@ -338,7 +342,7 @@ export const Chat = () => {
       );
     }
     return entries.filter(([id, ch]) => {
-      const recent = Number((ch as { recentMessages?: number })?.recentMessages ?? NaN);
+      const recent = Number(ch.recentMessages ?? NaN);
       // Older API without recentMessages: fall back to all-time behavior.
       if (Number.isNaN(recent)) return true;
       return recent > 0 || id === resolvedChannelId;
@@ -352,23 +356,14 @@ export const Chat = () => {
 
   // Channel names as the gateway published them, stored by ingest. Placeholders
   // are filtered out so they never win over `Channel <id>`.
-  const wireNames = useMemo(() => {
-    const out: Record<string, string> = {};
-    for (const [id, ch] of Object.entries(effectiveChat?.channels ?? {})) {
-      const n = (ch as any)?.name;
-      if (typeof n === "string" && n && !/^(General|Channel \d+)$/.test(n)) {
-        out[id] = n;
-      }
-    }
-    return out;
-  }, [effectiveChat?.channels]);
+  const wireNames = useMemo(
+    () => wireNamesFrom(effectiveChat?.channels),
+    [effectiveChat?.channels]
+  );
 
   // Label priority: configured meta > name off the wire > bare channel id.
   const labelFor = useCallback(
-    (id: string) =>
-      channelMeta?.[id]?.label
-        ? String(channelMeta[id].label)
-        : wireNames[id] ?? `Channel ${id}`,
+    (id: string) => channelBucketLabel(channelMeta, wireNames, id),
     [channelMeta, wireNames]
   );
 
@@ -384,8 +379,7 @@ export const Chat = () => {
     let best: string | undefined;
     let bestCount = -1;
     for (const [id, ch] of channelEntries) {
-      const c = ch as { recentMessages?: number; totalMessages?: number };
-      const n = Number(c?.recentMessages ?? c?.totalMessages ?? 0);
+      const n = Number(ch.recentMessages ?? ch.totalMessages ?? 0);
       if (n > bestCount) {
         bestCount = n;
         best = String(id);
@@ -459,72 +453,43 @@ export const Chat = () => {
       }
     }
 
-    // Auto mode: one tab per channel with traffic in the selected range,
-    // filtered by class. Channel ids are hashes, so the API's id order is
-    // arbitrary — group the stock modem presets ahead of channels someone
-    // named, each busiest first. Also the manual-mode fallback when the
-    // configured views all matched nothing: everything with data, ungrouped
-    // (the class toggles don't apply to a hand-curated config).
+    // Auto mode: one tab per channel with traffic in the selected range.
+    // Ordering (presets first, busiest first), class filtering with the
+    // selected-channel exemption, and the ?ch= alias set all come from the
+    // shared channel model. Also the manual-mode fallback when the configured
+    // views all matched nothing: the model doesn't class-filter manual mode,
+    // and dropping `group` below collapses the pills into one ungrouped row.
     if (out.length === 0) {
       const manual = channelMode === "manual";
-      const wantGroup = (g: "presets" | "custom") =>
-        manual || channelMode === "all" || g === "presets";
+      const model = buildChannelModel({
+        ids: channelEntries.map(([id]) => String(id)),
+        mode: channelMode,
+        meta: channelMeta,
+        wireNames,
+        counts: Object.fromEntries(
+          channelEntries.map(([id, ch]) => [
+            String(id),
+            Number(ch.recentMessages ?? ch.totalMessages ?? 0),
+          ])
+        ),
+        selectedId: resolvedChannelId,
+      });
 
-      const ordered = channelEntries
-        .map(([id, ch]) => {
-          const c = ch as { recentMessages?: number; totalMessages?: number };
-          return {
-            channelId: String(id),
-            count: Number(c?.recentMessages ?? c?.totalMessages ?? 0),
-            // Classify on the WIRE name: what firmware actually put on air.
-            // meta labels are display-only — an operator relabeling a preset
-            // bucket must not hide it from presets mode (or smuggle a custom
-            // channel into it).
-            group: (isFirmwarePreset(wireNames[String(id)])
-              ? "presets"
-              : "custom") as "presets" | "custom",
-          };
-        })
-        // The selected channel always keeps its pill, even class-hidden —
-        // an explicit ?ch= link must render what it names.
-        .filter(
-          ({ channelId, group }) =>
-            wantGroup(group) || channelId === resolvedChannelId
-        )
-        .sort((a, b) =>
-          a.group !== b.group ? (a.group === "presets" ? -1 : 1) : b.count - a.count
-        );
-
-      // Curated-era bookmarks carry ?ch=<label-slug>; give auto pills the same
-      // alias surface. First-wins on collisions (build order = busiest first),
-      // so two channels sharing a name ("Test" is live on two buckets here)
-      // resolve the contested alias to the busier one. Every channel ID is
-      // pre-claimed: a channel wire-NAMED "8" must never steal ?ch=8 from
-      // bucket 8 (the alias map downstream is last-wins).
-      const takenAliases = new Set<string>(ordered.map((o) => o.channelId));
-      for (const { channelId, group } of ordered) {
-        const aliases = [channelId];
-        for (const cand of [
-          normalizeKey(labelFor(channelId)),
-          normalizeKey(rawChannelShort(channelId)),
-        ]) {
-          if (cand && cand !== channelId && !takenAliases.has(cand)) {
-            takenAliases.add(cand);
-            aliases.push(cand);
-          }
-        }
+      for (const e of model.entries) {
         out.push({
-          key: channelId,
-          label: labelFor(channelId),
-          short: rawChannelShort(channelId),
-          channelId,
-          aliases,
+          key: e.id,
+          label: e.label,
+          short: e.short,
+          channelId: e.id,
+          aliases: e.aliases,
           tooltip: [
-            rawChannelTooltip(channelId),
-            group === "presets" ? "Stock modem preset" : "Custom channel",
+            rawChannelTooltip(e.id),
+            e.group === "presets" ? "Stock modem preset" : "Custom channel",
           ].join("\n"),
-          isDefault: channelId === busiestChannelId,
-          group: manual ? undefined : group,
+          // Latched page-side busiest, not model.defaultId: the latch (and
+          // the fallback pill below) needs the pre-class-filter busiest.
+          isDefault: e.id === busiestChannelId,
+          group: manual ? undefined : e.group,
         });
       }
 
@@ -545,8 +510,8 @@ export const Chat = () => {
 
     return out;
   }, [config, channelMode, channelEntries, availableChannelIds, labelFor,
-      wireNames, resolvedChannelId, rawChannelShort, rawChannelTooltip,
-      busiestChannelId]);
+      channelMeta, wireNames, resolvedChannelId, rawChannelShort,
+      rawChannelTooltip, busiestChannelId]);
 
   const defaultViewKey =
     views.find((v) => v.isDefault)?.key ?? views[0]?.key ?? "";
@@ -611,6 +576,15 @@ export const Chat = () => {
         v.key.toLowerCase() === rawChParam ||
         v.aliases.some((a) => a.toLowerCase() === rawChParam)
     );
+  // Remember the time range the same way (default "all"; URL wins).
+  useRememberedRange({
+    storageKey: REMEMBERED_RANGE_KEYS.chat,
+    value: rawRange,
+    urlHasR: !!searchParamsRaw.get("r")?.trim(),
+    suppressRestore: [...searchParamsRaw.keys()].some((k) => k !== "r"),
+    apply: (stored) => setParam("r", stored, "replace"),
+  });
+
   useRememberedChannel({
     storageKey: REMEMBERED_CH_KEYS.chat,
     value: urlCh === defaultViewKey ? "" : urlCh,
@@ -877,7 +851,7 @@ export const Chat = () => {
   const activeFilterCount = useMemo(() => {
     let n = 0;
     if (urlQ.trim()) n += 1;
-    if (urlRange !== "24h") n += 1;
+    if (urlRange !== "all") n += 1;
     if (urlType !== "all") n += 1;
     if (typeof urlHopsMin === "number") n += 1;
     if (typeof urlHopsMax === "number") n += 1;
@@ -913,7 +887,7 @@ export const Chat = () => {
   const activeChips = useMemo(() => {
     const chips: Array<{ label: string; clear: () => void }> = [];
 
-    if (urlRange !== "24h")
+    if (urlRange !== "all")
       chips.push({
         label: `Range: ${urlRange}`,
         clear: () => setParam("r", undefined, "push"),
@@ -1610,7 +1584,7 @@ export const Chat = () => {
               >
             {grp.items.map((v) => {
               const active = v.key === selectedView?.key;
-              const chObj: any = (effectiveChat?.channels as any)?.[v.channelId];
+              const chObj = effectiveChat?.channels?.[v.channelId];
               // Badge counts the selected range (== all-time at range "all"),
               // so it matches what clicking the pill will actually show.
               const count = chObj?.recentMessages ?? chObj?.totalMessages ?? 0;
@@ -1794,7 +1768,7 @@ export const Chat = () => {
           <div className="mt-2 hidden lg:flex items-center gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch] min-h-7.5">
             <StatusChip
               label={`Range: ${urlRange}`}
-              active={urlRange !== "24h"}
+              active={urlRange !== "all"}
               title="Click to reset range to 24h"
               onClick={() => setParam("r", undefined, "push")}
             />

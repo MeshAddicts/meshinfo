@@ -217,7 +217,7 @@ class TestHandleText:
         assert payload["text"] == "hello mesh"
         assert payload["id"] == 1234
         assert payload["from"] == "67ea9400"
-        assert payload["channel"] == "0"  # defaulted when absent
+        assert "channel" not in payload  # no minted default; bucket-0 fallback lives in write_chat_message
 
     def test_no_sse_event_when_text_invalid(self):
         mqtt, data = make_mqtt()

@@ -1,47 +1,51 @@
 /**
  * Modem-preset RX profiles for the live coverage layer.
  *
- * Kept separate from MESHTASTIC_PRESETS on purpose: the tool panels persist
- * `presetIdx` (an array index) in localStorage, so that array's order is
- * load-bearing and can't grow the presets this table needs. Keyed by preset id.
+ * Derived from the canonical firmware table in `meshtasticPresets.ts` — this
+ * file deliberately holds no preset list of its own (it used to, and drifted:
+ * it carried "LongModerate"/"VeryLongSlow", names no firmware emits, while
+ * missing LongTurbo, which is live on air).
  *
  * A node's preset comes from its `last_channel` hash via the operator's
  * `[broker.channels.meta.<hash>] preset = "..."` config — channels are NOT
- * presets (a future regional channel like "SacValley" maps to a preset by
- * adding one meta entry), so this file never guesses from channel names.
+ * presets (a regional channel like "SacValley" maps to a preset by adding one
+ * meta entry), so this file never guesses from channel names. Historical
+ * preset spellings in operator configs are honored via PRESET_ALIASES.
  */
 
-/** Typical real-world SX1262 sensitivity (dBm) per Meshtastic modem preset —
- *  datasheet + 3 dB, anchored to MESHTASTIC_PRESETS' values (MediumFast −124,
- *  LongFast −130, LongSlow −134, VeryLongSlow −137) and extended along the
- *  Semtech ladder: ~3 dB per SF step, +3 dB per bandwidth halving. */
-export const LIVE_PRESET_SENSITIVITY_DBM: Record<string, number> = {
-  ShortTurbo: -115, // SF7 / 500 kHz
-  ShortFast: -118, // SF7 / 250 kHz
-  ShortSlow: -121, // SF8 / 250 kHz
-  MediumFast: -124, // SF9 / 250 kHz
-  MediumSlow: -127, // SF10 / 250 kHz
-  LongFast: -130, // SF11 / 250 kHz
-  LongModerate: -133, // SF11 / 125 kHz
-  LongSlow: -134, // SF12 / 125 kHz
-  VeryLongSlow: -137, // SF12 / 62.5 kHz
-};
+import {
+  FIRMWARE_MODEM_PRESETS,
+  canonicalPresetName,
+} from "../../../meshtasticPresets";
+
+/** Typical real-world SX1262 sensitivity (dBm) per firmware modem preset. */
+export const LIVE_PRESET_SENSITIVITY_DBM: Record<string, number> =
+  Object.fromEntries(
+    FIRMWARE_MODEM_PRESETS.map((p) => [p.name, p.sensitivityDbm])
+  );
 
 /** Meshtastic's worldwide default preset — the area-agnostic fallback for
  *  nodes whose channel hash has no meta mapping (override per deployment
  *  with COVERAGE_DEFAULT_PRESET). */
 export const DEFAULT_LIVE_PRESET = "LongFast";
 
+/** Accepts firmware names and historical config spellings (via aliases). */
 export function isKnownPreset(preset: string): boolean {
-  return preset in LIVE_PRESET_SENSITIVITY_DBM;
+  return canonicalPresetName(preset) in LIVE_PRESET_SENSITIVITY_DBM;
 }
 
 export function presetSensitivityDbm(preset: string): number {
-  return LIVE_PRESET_SENSITIVITY_DBM[preset] ?? LIVE_PRESET_SENSITIVITY_DBM[DEFAULT_LIVE_PRESET];
+  return (
+    LIVE_PRESET_SENSITIVITY_DBM[canonicalPresetName(preset)] ??
+    LIVE_PRESET_SENSITIVITY_DBM[DEFAULT_LIVE_PRESET]
+  );
 }
 
-/** "MediumFast" → "MF", "VeryLongSlow" → "VLS" — chip labels for the pill. */
+/** "MediumFast" → "MF", "LongTurbo" → "LT" — chip labels for the pill. */
 export function presetShortLabel(preset: string): string {
-  const caps = preset.replace(/[^A-Z]/g, "");
-  return caps.length >= 2 ? caps : preset.slice(0, 2).toUpperCase();
+  const canonical = canonicalPresetName(preset);
+  const known = FIRMWARE_MODEM_PRESETS.find((p) => p.name === canonical);
+  if (known) return known.short;
+  const caps = canonical.replace(/[^A-Z]/g, "");
+  return caps.length >= 2 ? caps : canonical.slice(0, 2).toUpperCase();
 }

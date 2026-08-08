@@ -271,12 +271,15 @@ export function NodeDetailsPanel({
   node,
   nodes,
   serverNode,
+  channelLabelFor,
   onClearSelection,
   onSelectNode,
 }: {
   node: INode;
   nodes: Record<string, INode>;
   serverNode: INode | null;
+  /** Shared bucket-label resolver from Nodes.tsx (meta > wire name > id). */
+  channelLabelFor?: (id: string) => string;
   onClearSelection: () => void;
   onSelectNode?: (id: string) => void;
 }) {
@@ -289,6 +292,15 @@ export function NodeDetailsPanel({
 
   const ll = getLatLon(node);
   const telem = getTelemetrySnapshot(node);
+
+  // Channel hash bucket the node last spoke on (exact-string id).
+  const lastCh =
+    typeof n?.last_channel === "string" && n.last_channel
+      ? String(n.last_channel)
+      : null;
+  const lastChLabel = lastCh
+    ? channelLabelFor?.(lastCh) ?? `Channel ${lastCh}`
+    : null;
 
   // ll is a fresh array each render; depend on its primitives instead.
   const lng = ll?.[0] ?? null;
@@ -425,6 +437,26 @@ export function NodeDetailsPanel({
                 v={n?.hardware != null ? <HardwareImg model={n.hardware} showLabel /> : "Unknown"}
               />
               <KV k="Role" v={n?.role != null ? <Role role={n.role} /> : "Unknown"} />
+              <KV
+                k="Channel"
+                v={
+                  lastCh && lastChLabel ? (
+                    // Skip the id suffix when the label IS the bare fallback.
+                    lastChLabel === `Channel ${lastCh}` ? (
+                      lastChLabel
+                    ) : (
+                      <span>
+                        {lastChLabel}{" "}
+                        <span className="font-mono opacity-70">
+                          (ch {lastCh})
+                        </span>
+                      </span>
+                    )
+                  ) : (
+                    "—"
+                  )
+                }
+              />
               <KV
                 k="Last seen"
                 v={

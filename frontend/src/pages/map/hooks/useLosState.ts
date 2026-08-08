@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 
 import { LS_KEYS, readJson, writeJson } from "../lib/storage";
-import { COMMON_ANTENNAS, COMMON_HARDWARE, MESHTASTIC_PRESETS } from "../rf/coverageAnalysis";
+import { COMMON_ANTENNAS, COMMON_HARDWARE, MESHTASTIC_PRESETS, modemPresetIdx } from "../rf/coverageAnalysis";
 import { resolveAntenna, resolveHardware } from "../rf/coveragePresets";
 import type { LoSResult } from "../rf/losAnalysis";
 import type { DemSource } from "../terrain/terrainRgb";
 
 const DEFAULT_ANT_IDX = 3; // Rokland 5.8 dBi
-const DEFAULT_PRESET_IDX = Math.max(0, MESHTASTIC_PRESETS.findIndex((p) => p.id === "LongFast"));
+const DEFAULT_PRESET_IDX = Math.max(0, modemPresetIdx("LongFast"));
 
 /** Semantic (label-based) persisted shape so catalog reordering can't corrupt saved choices. */
 interface LosSavedSettings {
@@ -37,7 +37,8 @@ function resolveEnd(e: LosSavedSettings["from"]): { hwIdx: number; antIdx: numbe
 function readSavedLosSettings(): ResolvedLosSettings | null {
   const s = readJson<LosSavedSettings | null>(LS_KEYS.losSettings, null);
   if (!s) return null;
-  const presetIdx = MESHTASTIC_PRESETS.findIndex((p) => p.id === s.modemId);
+  // Alias-aware: a stored "VeryLongSlow" restores as LongFast, never errors
+  const presetIdx = modemPresetIdx(s.modemId);
   const from = resolveEnd(s.from);
   const to = resolveEnd(s.to);
   return {

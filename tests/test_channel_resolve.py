@@ -49,11 +49,12 @@ class TestHash:
             assert channels.channel_hash(name, DEFAULT_PSK) == want, name
 
     def test_sample_preset_names_that_firmware_never_emits(self):
-        """config.toml.sample ships meta.9 "LongModerate" and meta.55
+        """Older sample configs shipped meta.9 "LongModerate" and meta.55
         "VeryLongSlow". The arithmetic is right but the names are not firmware
-        preset strings, so those buckets can never populate — the real ones are
-        LongMod (110) and LongTurbo (118). Pinned so the discrepancy is not
-        silently "fixed" by copying the sample back in."""
+        preset strings, so those buckets can never populate — the sample now
+        ships the real ones, LongMod (110) and LongTurbo (118). Pinned so the
+        legacy hashes stay documented for operator configs that still carry
+        the old spellings."""
         assert channels.channel_hash("LongModerate", DEFAULT_PSK) == 9
         assert channels.channel_hash("VeryLongSlow", DEFAULT_PSK) == 55
         assert channels.channel_hash("LongMod", DEFAULT_PSK) != 9
@@ -434,6 +435,16 @@ class TestIngestEndToEnd:
 
         _, chat = data.pg_storage.chat_writes[-1]
         assert chat["timestamp"] == 1700000000
+
+    def test_pki_dm_does_not_overwrite_last_channel(self):
+        """A PKI DM belongs to no channel; its 0 sentinel must not flip the
+        sender's bucket to Legacy every time they DM someone."""
+        from mqtt import _node_channel
+
+        assert _node_channel({"channel": 0, "channel_name": "PKI"}) is None
+        assert _node_channel({"channel": 8, "channel_name": "LongFast"}) == "8"
+        assert _node_channel({"channel": 0}) == "0"  # no name: keep legacy behavior
+        assert _node_channel({}) is None
 
     def test_channel_name_reaches_the_chat_row(self):
         mqtt, data = make_mqtt_pb([DEFAULT_PSK_B64])

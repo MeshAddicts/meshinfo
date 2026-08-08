@@ -5,7 +5,7 @@
  * the Custom slot or closest-gain antenna.
  */
 import { LS_KEYS, readJson, writeJson } from "../lib/storage";
-import { AGGRESSION_STOPS, COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, DEFAULT_AGGRESSION_IDX, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "./coverageAnalysis";
+import { AGGRESSION_STOPS, COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, DEFAULT_AGGRESSION_IDX, MESHTASTIC_PRESETS, modemPresetIdx, RELIABILITY_PRESETS } from "./coverageAnalysis";
 import { COVERAGE_DETAIL_SIZE, type CoverageDetail } from "./coverageDetail";
 
 /** Panel-native settings bag (catalog indices + numbers). */
@@ -112,7 +112,8 @@ export function resolveAntenna(label: string, dbi: number): number {
 export function resolvePreset(p: CoveragePreset): CoveragePanelSettings {
   const hw = resolveHardware(p.tx.hardware);
   const rxHw = resolveHardware(p.rx.hardware);
-  const modemIdx = MESHTASTIC_PRESETS.findIndex((m) => m.id === p.modem.id);
+  // Alias-aware: an old payload's "VeryLongSlow" restores as LongFast, not Custom
+  const modemIdx = modemPresetIdx(p.modem.id);
   const customModemIdx = MESHTASTIC_PRESETS.findIndex((m) => m.isCustom);
   const modemIsCustom = modemIdx < 0 || (MESHTASTIC_PRESETS[modemIdx]?.isCustom ?? false);
   const aggressionIdx = AGGRESSION_STOPS.findIndex((a) => a.id === p.env.aggression);

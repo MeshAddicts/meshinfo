@@ -63,6 +63,15 @@ class API:
         except (TypeError, ValueError):
             return raw
 
+    # /v1/chat + /v1/channels share this window vocabulary. Membership check,
+    # not .get(): "all" maps to None on purpose; anything unknown means 24h.
+    _CHAT_RANGE_MAP = {"1h": 3600, "24h": 86400, "7d": 604800, "all": None}
+
+    @classmethod
+    def _chat_range_seconds(cls, value: str | None) -> int | None:
+        v = value if value is not None else "24h"
+        return cls._CHAT_RANGE_MAP[v] if v in cls._CHAT_RANGE_MAP else 86400
+
     @staticmethod
     def _parse_range(value: str | None) -> int | None:
         """Convert a range string like '1h', '24h', '7d' to seconds. Returns None for 'all' or missing, defaults invalid values to 24h."""
@@ -254,16 +263,8 @@ class API:
             # to "0" predates channel ids being (name, PSK) hashes — bucket "0"
             # is a gateway slot index and is empty on most meshes.
             channel = request.query_params.get("channel") or None  # e.g. "8", "31"
-            range_param = request.query_params.get("range", "24h")  # "1h","24h","7d","all"
-
-            range_map = {
-                "1h": 3600,
-                "24h": 86400,
-                "7d": 604800,
-                "all": None,
-            }
-            # Membership check, not `.get() is None` — "all" maps to None on purpose.
-            range_seconds = range_map[range_param] if range_param in range_map else 86400
+            # "1h","24h","7d","all" — unknown values mean 24h.
+            range_seconds = self._chat_range_seconds(request.query_params.get("range"))
 
             # Per channel, so asking for every channel multiplies the payload.
             # Default is high on purpose: range=all should mean all.
@@ -279,6 +280,17 @@ class API:
                 limit=limit,
             )
             return JSONResponse(jsonable_encoder(chat_data))
+
+        @app.get("/v1/channels")
+        async def channels_endpoint(request: Request) -> JSONResponse:
+            """Channel buckets with display facts (name, counts), no messages.
+            For pages that label or filter by channel without wanting chat
+            payloads. `range` scopes recentMessages exactly like /v1/chat."""
+            range_seconds = self._chat_range_seconds(request.query_params.get("range"))
+            channels_data = await self.data.pg_storage.query_channels(
+                range_seconds=range_seconds
+            )
+            return JSONResponse(jsonable_encoder({"channels": channels_data}))
 
         @app.get("/v1/telemetry")
         async def telemetry(request: Request) -> JSONResponse:

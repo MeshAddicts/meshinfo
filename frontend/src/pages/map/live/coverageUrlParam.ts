@@ -1,13 +1,14 @@
 /** ?cov= deep link for the live-coverage overlay: on/off plus which preset
  * group is shown. Reads accept 1/0/true/false (legacy on/off with the
- * viewer's own group), "all", a preset short code (mf, lf, vls, …), a full
- * preset id in any case, or — forward-compat for groups we don't know yet —
+ * viewer's own group), "all", a preset short code (mf, lf, lt, …), a full
+ * preset id in any case (historical spellings via PRESET_ALIASES), or — forward-compat for groups we don't know yet —
  * any other string, which passes through as a raw group id (Map.tsx
  * validates it against the server's baked groups and falls back to "all").
  * Writes emit "0" when off and the group's short code ("all" for All) when
  * on, so a shared link reproduces the preset filter too. Pure string
  * helpers so the URL semantics stay unit-testable apart from Map.tsx. */
 
+import { PRESET_ALIASES } from "../../../meshtasticPresets";
 import {
   LIVE_PRESET_SENSITIVITY_DBM,
   presetShortLabel,
@@ -29,6 +30,15 @@ const GROUP_BY_TOKEN: ReadonlyMap<string, string> = (() => {
   for (const id of Object.keys(LIVE_PRESET_SENSITIVITY_DBM)) {
     m.set(presetShortLabel(id).toLowerCase(), id);
     m.set(id.toLowerCase(), id);
+  }
+  // Old shared links carry pre-alias spellings ("verylongslow") and their
+  // short codes ("vls"); resolve them like the config side does. Firmware
+  // tokens win on collision.
+  for (const [legacy, canonical] of Object.entries(PRESET_ALIASES)) {
+    const name = legacy.toLowerCase();
+    if (!m.has(name)) m.set(name, canonical);
+    const code = legacy.replace(/[^A-Z]/g, "").toLowerCase();
+    if (code && !m.has(code)) m.set(code, canonical);
   }
   return m;
 })();

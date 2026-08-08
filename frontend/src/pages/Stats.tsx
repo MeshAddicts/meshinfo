@@ -2,6 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { HeardBy } from "../components/HeardBy";
 import { LivePill } from "../components/LivePill";
+import {
+  FIRMWARE_MODEM_PRESETS,
+  canonicalPresetName,
+  isFirmwarePreset,
+} from "../meshtasticPresets";
 import { useGetStatsQuery } from "../slices/apiSlice";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { downloadBlob } from "../utils/export";
@@ -41,12 +46,43 @@ function safeNum(n: any) {
   return Number.isFinite(v) ? v : 0;
 }
 
-function pickPreset(presets: Record<string, number> | undefined, names: string[]) {
-  if (!presets) return 0;
-  for (const n of names) {
-    if (Number.isFinite(Number((presets as any)[n]))) return Number((presets as any)[n]);
+/** Firmware preset name -> two-letter chip ("MF", "LF", ...). */
+const PRESET_SHORT: Record<string, string> = Object.fromEntries(
+  FIRMWARE_MODEM_PRESETS.map((p) => [p.name, p.short])
+);
+
+/** Bars shown before the remainder collapses into "Other". */
+const PRESET_TOP_N = 4;
+
+type PresetSlice = {
+  name: string;
+  count: number;
+  /** Wire name a human typed rather than a firmware preset (never true for "Other"). */
+  custom: boolean;
+};
+
+/** session_by_modem_preset keys are TOPIC channel-name segments: canonicalize,
+ *  sort busiest-first, keep the top N and fold the rest into "Other". */
+function presetSlicesFrom(presets: Record<string, number> | undefined): PresetSlice[] {
+  const counts = new Map<string, number>();
+  for (const [key, raw] of Object.entries(presets ?? {})) {
+    const n = safeNum(raw);
+    if (n <= 0) continue;
+    const name = canonicalPresetName(key);
+    counts.set(name, (counts.get(name) ?? 0) + n);
   }
-  return 0;
+
+  const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  const slices: PresetSlice[] = sorted
+    .slice(0, PRESET_TOP_N)
+    .map(([name, count]) => ({ name, count, custom: !isFirmwarePreset(name) }));
+
+  const other = sorted
+    .slice(PRESET_TOP_N)
+    .reduce((acc, [, count]) => acc + count, 0);
+  if (other > 0) slices.push({ name: "Other", count: other, custom: false });
+
+  return slices;
 }
 
 export const Stats = () => {
@@ -122,23 +158,8 @@ export const Stats = () => {
     const receptions = safeNum(stats?.total_receptions);
 
     // modem preset split
-    const presetMap = stats?.session_by_modem_preset;
-    const mediumFast = pickPreset(presetMap, [
-      "MediumFast",
-      "mediumfast",
-      "Medium_Fast",
-      "medium_fast",
-    ]);
-    const longFast = pickPreset(presetMap, [
-      "LongFast",
-      "longfast",
-      "Long_Fast",
-      "long_fast",
-    ]);
-    const presetTotal =
-      presetMap && Object.keys(presetMap).length > 0
-        ? Object.values(presetMap).reduce((a, b) => a + safeNum(b), 0)
-        : mediumFast + longFast;
+    const presetSlices = presetSlicesFrom(stats?.session_by_modem_preset);
+    const presetTotal = presetSlices.reduce((acc, s) => acc + s.count, 0);
 
     const persistedTotal = chat + telemetry + traceroutes;
 
@@ -157,8 +178,7 @@ export const Stats = () => {
       session,
       receptions,
 
-      mediumFast,
-      longFast,
+      presetSlices,
       presetTotal,
 
       activeRatio: clamp01(activeRatio),
@@ -198,9 +218,9 @@ export const Stats = () => {
       ["total_receptions", safeNum(stats.total_receptions)],
     ];
 
-    if (derived.hasPresetSplit) {
-      rows.push(["mediumfast_24h", derived.mediumFast]);
-      rows.push(["longfast_24h", derived.longFast]);
+    for (const s of derived.presetSlices) {
+      // custom wire names may hold anything — keep the CSV key plain
+      rows.push([`preset_${s.name.toLowerCase().replace(/[^a-z0-9]+/g, "_")}_24h`, s.count]);
     }
 
     const csv =
@@ -244,14 +264,14 @@ export const Stats = () => {
       }
     }
 
-    // Preset split
+    // Preset split — slices are busiest-first, so [0] is the dominant channel
     if (derived.hasPresetSplit) {
-      const mfPct = Math.round((derived.mediumFast / derived.presetTotal) * 100);
-      const lfPct = Math.round((derived.longFast / derived.presetTotal) * 100);
-      const dominant = derived.mediumFast >= derived.longFast ? "MediumFast" : "LongFast";
+      const parts = derived.presetSlices
+        .slice(0, 3)
+        .map((s) => `${s.name} ${Math.round((s.count / derived.presetTotal) * 100)}%`);
       items.push({
         title: "Traffic split (24h)",
-        detail: `MediumFast ${mfPct}% • LongFast ${lfPct}% (dominant: ${dominant}).`,
+        detail: `${parts.join(" • ")} (dominant: ${derived.presetSlices[0].name}).`,
         tone: "info",
       });
     } else {
@@ -541,15 +561,20 @@ export const Stats = () => {
                     derived.hasPresetSplit ? (
                       <div className="space-y-1">
                         <div className="text-base text-gray-900 dark:text-gray-100">
-                          MF{" "}
-                          <span className="font-semibold">
-                            {Math.round(derived.mediumFast).toLocaleString()}
-                          </span>{" "}
-                          <span className="text-gray-400 dark:text-gray-500">•</span>{" "}
-                          LF{" "}
-                          <span className="font-semibold">
-                            {Math.round(derived.longFast).toLocaleString()}
-                          </span>
+                          {derived.presetSlices.slice(0, 3).map((s, i) => (
+                            <span key={s.name}>
+                              {i > 0 ? (
+                                <span className="text-gray-400 dark:text-gray-500">
+                                  {" "}
+                                  •{" "}
+                                </span>
+                              ) : null}
+                              {PRESET_SHORT[s.name] ?? s.name}{" "}
+                              <span className="font-semibold">
+                                {Math.round(s.count).toLocaleString()}
+                              </span>
+                            </span>
+                          ))}
                         </div>
                         <div className="text-xs text-gray-400 dark:text-gray-500">
                           last 24h (topic preset)
@@ -561,7 +586,7 @@ export const Stats = () => {
                   }
                   subtitle={derived.hasPresetSplit ? undefined : "topic preset split"}
                   icon={<Icon name="signal" />}
-                  hint="MediumFast vs LongFast packets seen on MQTT topics in the last 24 hours."
+                  hint="Busiest modem presets (topic channel-name segment) seen on MQTT in the last 24 hours."
                 />
               </>
             )}
@@ -613,18 +638,15 @@ export const Stats = () => {
 
                       {derived.hasPresetSplit ? (
                         <div className="mt-2 space-y-3">
-                          <BarMeter
-                            label="MediumFast"
-                            value={derived.presetTotal > 0 ? derived.mediumFast / derived.presetTotal : 0}
-                            leftValue={derived.mediumFast}
-                            rightHint="of last 24h"
-                          />
-                          <BarMeter
-                            label="LongFast"
-                            value={derived.presetTotal > 0 ? derived.longFast / derived.presetTotal : 0}
-                            leftValue={derived.longFast}
-                            rightHint="of last 24h"
-                          />
+                          {derived.presetSlices.map((s) => (
+                            <BarMeter
+                              key={s.name}
+                              label={s.custom ? `${s.name} (custom)` : s.name}
+                              value={derived.presetTotal > 0 ? s.count / derived.presetTotal : 0}
+                              leftValue={s.count}
+                              rightHint="of last 24h"
+                            />
+                          ))}
                           <div className="mt-1 text-xs text-gray-400 dark:text-gray-500">
                             Total: {derived.presetTotal.toLocaleString()} packets in 24h
                           </div>

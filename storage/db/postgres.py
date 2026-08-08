@@ -1233,6 +1233,8 @@ class PostgresStorage:
                     # only a placeholder for packets that carried no name.
                     # Postgres text can't hold NUL: one would abort the whole
                     # transaction below, dropping the message entirely.
+                    # Sole default for a channel-less message: legacy bucket 0
+                    # (ingest deliberately no longer mints it upstream).
                     channel_id = str(chat_msg.get("channel", "0"))
                     wire_name = (
                         (chat_msg.get("channel_name") or "").replace("\x00", "").strip()[:100]
@@ -1301,6 +1303,51 @@ class PostgresStorage:
 
         except Exception as e:
             self._handle_write_failure("chat message", "chat_message", (node_id, chat_msg), e)
+
+    async def query_channels(
+        self, range_seconds: Optional[int] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """Every known channel bucket with its display facts, no messages.
+
+        The lightweight sibling of query_chat_filtered's channel block, for
+        pages that label/filter by channel (Nodes, Log, Map) without wanting
+        chat payloads. Same shape per entry: name (wire-healed or placeholder),
+        totalMessages, recentMessages (within range_seconds; == total when
+        None), newestTimestamp.
+        """
+        if not self.enabled or not self.pool:
+            return {}
+        import time
+        threshold = (
+            int(time.time()) - range_seconds if range_seconds is not None else 0
+        )
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT cc.id, cc.name,
+                           COUNT(cm.id) AS total_messages,
+                           COUNT(cm.id) FILTER (WHERE cm.timestamp >= $1) AS recent_messages,
+                           MAX(cm.timestamp) AS newest_timestamp
+                    FROM chat_channels cc
+                    LEFT JOIN chat_messages cm ON cc.id = cm.channel_id
+                    GROUP BY cc.id, cc.name
+                    ORDER BY cc.id
+                    """,
+                    threshold,
+                )
+                return {
+                    row["id"]: {
+                        "name": row["name"],
+                        "totalMessages": row["total_messages"],
+                        "recentMessages": row["recent_messages"],
+                        "newestTimestamp": row["newest_timestamp"],
+                    }
+                    for row in rows
+                }
+        except Exception as e:
+            logger.error(f"Failed to query channels: {e}")
+            return {}
 
     async def get_wire_channel_names(self) -> Dict[str, int]:
         """name -> hash for every wire-confirmed channel, to seed the ingest
@@ -1759,8 +1806,16 @@ class PostgresStorage:
                     idx += 1
 
                 if topic:
-                    conditions.append(f"topic ILIKE '%' || ${idx} || '%'")
-                    params.append(topic)
+                    # The Log page sends channel NAMES here now (was: bare hash
+                    # digits). Names can carry ILIKE metacharacters — "My_Chan"
+                    # must not also match "MyXChan" — so escape the pattern and
+                    # say so with ESCAPE.
+                    conditions.append(
+                        f"topic ILIKE '%' || ${idx} || '%' ESCAPE '\\'"
+                    )
+                    params.append(
+                        topic.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    )
                     idx += 1
 
                 idx = self._append_window_conditions(conditions, params, idx, start, end, before)
@@ -2409,56 +2464,6 @@ class PostgresStorage:
             logger.error(f"Failed to query traceroutes from PostgreSQL: {e}")
             return []
 
-    async def query_all_chat(self, limit: int = 10000) -> Dict[str, Any]:
-        """Query all chat channels and messages."""
-        if not self.enabled or not self.pool:
-            return {"channels": {"0": {"name": "General", "messages": []}}}
-
-        try:
-            async with self.pool.acquire() as conn:
-                chat = {"channels": {}}
-
-                # Load channels
-                channel_rows = await conn.fetch("SELECT * FROM chat_channels ORDER BY id")
-                for row in channel_rows:
-                    chat["channels"][row["id"]] = {"name": row["name"], "messages": []}
-
-                # Load messages
-                message_rows = await conn.fetch(
-                    """
-                    SELECT * FROM chat_messages
-                    ORDER BY created_at DESC
-                    LIMIT $1
-                    """,
-                    limit,
-                )
-
-                for row in message_rows:
-                    channel_id = row["channel_id"] or "0"
-                    if channel_id not in chat["channels"]:
-                        chat["channels"][channel_id] = {"name": f"Channel {channel_id}", "messages": []}
-
-                    chat["channels"][channel_id]["messages"].append(
-                        {
-                            "id": row["id"],
-                            "from": row["from_node_id"],
-                            "to": row["to_node_id"],
-                            "sender": row["sender_node_id"],
-                            "channel": channel_id,
-                            "text": row["text"],
-                            "timestamp": row["timestamp"],
-                            "hops_away": row["hops_away"],
-                            "rssi": row["rssi"],
-                            "snr": row["snr"],
-                        }
-                    )
-
-                return chat
-
-        except Exception as e:
-            logger.error(f"Failed to query chat from PostgreSQL: {e}")
-            return {"channels": {"0": {"name": "General", "messages": []}}}
-
     async def query_chat_filtered(
         self,
         channel_id: Optional[str] = None,
@@ -2482,7 +2487,8 @@ class PostgresStorage:
             Chat structure: { channels: { "<id>": { name, totalMessages, messages[] } } }
         """
         if not self.enabled or not self.pool:
-            return {"channels": {"0": {"name": "General", "totalMessages": 0, "messages": []}}}
+            # Empty, not a fabricated bucket 0 — the UI renders no pills fine.
+            return {"channels": {}}
 
         try:
             async with self.pool.acquire() as conn:
@@ -2602,7 +2608,7 @@ class PostgresStorage:
 
         except Exception as e:
             logger.error(f"Failed to query filtered chat from PostgreSQL: {e}")
-            return {"channels": {"0": {"name": "General", "totalMessages": 0, "messages": []}}}
+            return {"channels": {}}
 
     async def query_all_telemetry(self, limit: int = 1000) -> List[Dict[str, Any]]:
         """Query all telemetry records."""

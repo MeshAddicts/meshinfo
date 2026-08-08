@@ -37,15 +37,15 @@ describe("parseCoverageParam", () => {
 
   it("reads the documented short codes to their presets", () => {
     const cases: Array<[string, string]> = [
+      ["st", "ShortTurbo"],
+      ["sf", "ShortFast"],
+      ["ss", "ShortSlow"],
       ["mf", "MediumFast"],
       ["ms", "MediumSlow"],
       ["lf", "LongFast"],
-      ["lm", "LongModerate"],
+      ["lt", "LongTurbo"],
+      ["lm", "LongMod"],
       ["ls", "LongSlow"],
-      ["sf", "ShortFast"],
-      ["ss", "ShortSlow"],
-      ["st", "ShortTurbo"],
-      ["vls", "VeryLongSlow"],
     ];
     for (const [code, preset] of cases) {
       expect(parseCoverageParam(`?cov=${code}`)).toEqual({ enabled: true, group: preset });
@@ -66,6 +66,13 @@ describe("parseCoverageParam", () => {
         group: preset,
       });
     }
+  });
+
+  it("maps legacy alias tokens to their firmware presets", () => {
+    // Old shared links wrote the pre-alias spellings/codes; keep them working.
+    expect(parseCoverageParam("?cov=vls")).toEqual({ enabled: true, group: "LongFast" });
+    expect(parseCoverageParam("?cov=VeryLongSlow")).toEqual({ enabled: true, group: "LongFast" });
+    expect(parseCoverageParam("?cov=longmoderate")).toEqual({ enabled: true, group: "LongMod" });
   });
 
   it("passes unknown groups through raw for server-side validation", () => {

@@ -11,7 +11,7 @@ export type NavMode = "replace" | "push";
 // Default URL param values (we will *remove* these from the URL for canonical links)
 // NOTE: ch is dynamic (depends on args/views), so it is handled separately.
 const DEFAULT_PARAM: Record<string, string> = {
-  r: "24h",
+  r: "all",
   t: "all",
   s: "desc",
   focus: "endpoints",
@@ -114,7 +114,9 @@ export function useChatSearchParams(args?: {
   const urlRange = parseEnum<RangeKey>(
     searchParams.get("r"),
     ["1h", "24h", "7d", "all"] as const,
-    "24h"
+    // Default widened to "all": the pills are range-scoped, and hiding
+    // channels by default surprised operators more than a bigger first load.
+    "all"
   );
 
   const urlType = parseEnum<MsgType>(

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { clampAggressionIdx } from "../lib/helpers";
 import { LS_KEYS, readJson, writeJson } from "../lib/storage";
-import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, DEFAULT_AGGRESSION_IDX, effectiveSensitivityDbm, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "../rf/coverageAnalysis";
+import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, DEFAULT_AGGRESSION_IDX, effectiveSensitivityDbm, MESHTASTIC_PRESETS, modemPresetIdx, RELIABILITY_PRESETS } from "../rf/coverageAnalysis";
 import { resolveAntenna, resolveHardware } from "../rf/coveragePresets";
 import type { ScanClass, ScanSummary } from "../rf/scanAnalysis";
 import type { DemSource } from "../terrain/terrainRgb";
@@ -12,6 +12,8 @@ type ClutterStatus = { tilesPresent: number; tilesTotal: number } | null;
 const DEFAULT_ANTENNA_IDX = 3; // Rokland 5.8 dBi
 const DEFAULT_RX_HW_IDX = 4;   // Heltec V3
 const DEFAULT_RX_ANT_IDX = 0;  // stock rubber duck
+// Resolved by id — the catalog order is not load-bearing
+const DEFAULT_PRESET_IDX = Math.max(0, modemPresetIdx("LongFast"));
 
 /** Settings copied in from the coverage panel's "Scan from here" button. */
 export interface ScanMirrorSettings {
@@ -58,13 +60,14 @@ const clampHeight = (v: unknown, fallback: number): number =>
 function readSavedScanSettings(): ResolvedScanSettings | null {
   const s = readJson<ScanSavedSettings | null>(LS_KEYS.scanSettings, null);
   if (!s) return null;
-  const presetIdx = MESHTASTIC_PRESETS.findIndex((p) => p.id === s.modemId);
+  // Alias-aware: a stored "VeryLongSlow" restores as LongFast, never errors
+  const presetIdx = modemPresetIdx(s.modemId);
   const tx = s.tx ?? {};
   const rx = s.rx ?? {};
   const env = s.env ?? {};
   return {
     freqMhz: typeof s.freqMhz === "number" && s.freqMhz >= 100 && s.freqMhz <= 2500 ? s.freqMhz : 915,
-    presetIdx: presetIdx >= 0 && !MESHTASTIC_PRESETS[presetIdx].isCustom ? presetIdx : 1,
+    presetIdx: presetIdx >= 0 && !MESHTASTIC_PRESETS[presetIdx].isCustom ? presetIdx : DEFAULT_PRESET_IDX,
     customSensDbm: typeof s.customSensDbm === "number" ? Math.max(-150, Math.min(-100, s.customSensDbm)) : -133,
     hardwareIdx: tx.hardware ? resolveHardware(tx.hardware).idx : 0,
     antennaIdx: tx.antenna ? resolveAntenna(tx.antenna, tx.dbi ?? 0) : DEFAULT_ANTENNA_IDX,
@@ -121,7 +124,7 @@ export function useScanState() {
   const [scanClutterEnabled, setScanClutterEnabled] = useState(saved?.clutterEnabled ?? true);
   const [scanCanopyEnabled, setScanCanopyEnabled] = useState(saved?.canopyEnabled ?? true);
   const [scanBuildingsEnabled, setScanBuildingsEnabled] = useState(saved?.buildingsEnabled ?? true);
-  const [scanPresetIdx, setScanPresetIdx] = useState(saved?.presetIdx ?? 1);
+  const [scanPresetIdx, setScanPresetIdx] = useState(saved?.presetIdx ?? DEFAULT_PRESET_IDX);
   const [scanCustomSensDbm, setScanCustomSensDbm] = useState(saved?.customSensDbm ?? -133);
   const scanSensitivityDbm = MESHTASTIC_PRESETS[scanPresetIdx].isCustom
     ? scanCustomSensDbm
