@@ -65,16 +65,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         },
         "channels": {
             "encryption": [],
-            # Which channels the UI shows. Ingest always stores every channel;
-            # this is display only. `meta` is annotation, not curation, and is
-            # honored in every mode.
-            #   presets — stock modem-preset channels only (LongFast, ...)
-            #   all     — presets plus channels someone named
-            #   manual  — the hand-curated display/views lists below
+            # Display only — ingest stores every channel. `meta` applies in all modes.
+            # presets = stock preset channels | all = + named | manual = display/views lists
             "mode": "presets",
-            # Only used when mode = "manual". Empty = no allowlist. Channel ids
-            # are (name, PSK) hashes, so a hardcoded default cannot be right for
-            # an arbitrary mesh.
+            # mode = "manual" only. Ids are (name, PSK) hashes — no default fits every mesh.
             "display": [],
             "meta": {},
             "views": [],
@@ -331,11 +325,8 @@ def _warn_placeholder(config: dict, path: str, placeholders: list[str]) -> str |
 
 
 def _warn_stale_channel_lists(user_config: dict) -> None:
-    """Pre-merge upgrade check: display/views used to be honored unconditionally;
-    now they need mode = "manual". A config that has them but never mentions
-    `mode` predates the setting — its owner would silently flip to auto pills.
-    An explicit mode alongside the lists is a deliberate stash; stay quiet.
-    """
+    """Warn pre-`mode` configs whose display/views lists would silently stop applying.
+    An explicit mode alongside the lists is deliberate — stay quiet then."""
     try:
         uc = user_config.get("broker", {}).get("channels", {})
     except AttributeError:
@@ -410,24 +401,20 @@ def validate(config: dict) -> list[str]:
     check(_validate_type(config, "broker.decoders", dict))
     check(_validate_type(config, "broker.channels", dict))
 
-    # Display-mode settings have silent failure modes, so check them properly.
-    # Guard the whole block: a wrong-shaped broker.channels (e.g. a list) is a
-    # warning above, and must not crash the deeper checks.
+    # A wrong-shaped broker.channels already warned above; don't crash the deeper checks.
     channels = config.get("broker", {}).get("channels", {})
     if isinstance(channels, dict):
         check(_validate_type(config, "broker.channels.display", list))
         check(_validate_type(config, "broker.channels.views", list))
-        # A single-bracket typo ([broker.channels.encryption] instead of
-        # [[...]]) makes this a dict — decryption silently finds no keys, and
-        # cleanse() must still be able to redact it (see below).
+        # A single-bracket typo ([...] not [[...]]) makes this a dict —
+        # decryption then silently finds no keys.
         check(_validate_type(config, "broker.channels.encryption", list))
         check(
             _validate_one_of(
                 config, "broker.channels.mode", ["presets", "all", "manual"]
             )
         )
-        # Shapes from the pre-release iterations of this setting; nothing
-        # shipped with them, but a stale working copy could still carry one.
+        # Pre-release key names a stale working copy might still carry.
         for old_key in ("show", "custom_views"):
             if old_key in channels:
                 warn(
@@ -691,11 +678,8 @@ class Config:
             if isinstance(d, dict) and path[-1] in d:
                 d[path[-1]] = "***REDACTED***"
 
-        # Channel PSKs live in a list of tables, which the path walk above
-        # can't reach. /v1/server/config is unauthenticated — a private mesh's
-        # keys must not be readable by every visitor. key_name stays. Also
-        # covers the single-bracket typo that makes `encryption` a dict: the
-        # keys are then unusable for decryption, but must still never leak.
+        # PSKs sit in a list of tables the path walk can't reach, and
+        # /v1/server/config is unauthenticated. Dict shape (bracket typo) must not leak either.
         try:
             enc = config_clean["broker"]["channels"]["encryption"]
             entries = (

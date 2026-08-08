@@ -163,10 +163,7 @@ def _snr_color(gateway_entries: Optional[list], msg: dict) -> discord.Color:
 
 def resolve_channel_name(channel_hash: str, config: dict) -> str:
     """Resolve a channel hash to its meta label, else "Channel <hash>".
-
-    Public: main_commands imports it too. `or`-chain, not .get(default) — an
-    empty label in config must fall through, not render "Channel: ".
-    """
+    `or`, not .get(default): an empty label must fall through."""
     meta = config.get("broker", {}).get("channels", {}).get("meta", {})
     channel_meta = meta.get(channel_hash) or {}
     return channel_meta.get("label") or f"Channel {channel_hash}"

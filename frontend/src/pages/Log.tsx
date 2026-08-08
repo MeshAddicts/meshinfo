@@ -294,10 +294,8 @@ export const Log = () => {
   );
 
   // ---- channel pills -------------------------------------------------------
-  // The server filters by topic SUBSTRING (ILIKE), and topics carry the
-  // channel NAME — msh/<region>/2/e/<name>/!<gw> — never the 8-bit bucket
-  // hash. So a pill must send a name, pinned to the "/2/e/<name>/" segment so
-  // it can't match node-id hex or a region prefix.
+  // Topics carry the channel NAME, never the bucket hash; pills filter by
+  // substring pinned to "/2/e/<name>/" so node-id hex/region can't match.
   const { data: channelsData } = useGetChannelsQuery({ range: "all" });
   const channelMeta = config?.broker?.channels?.meta;
   const channelMode = channelModeFrom(config?.broker?.channels);
@@ -306,19 +304,15 @@ export const Log = () => {
     [channelsData],
   );
 
-  // The name a bucket's topics actually carry: the gateway-published wire name
-  // when known, else the configured preset (validated via its canonical form),
-  // else a meta label that IS a firmware preset name. Undefined = no pill —
-  // an unfilterable pill is worse than none.
+  // Topic name for a bucket: wire name > validated preset > preset-named
+  // label; undefined = no pill (an unfilterable pill is worse than none).
   const topicNameFor = useCallback(
     (id: string, wire: string | undefined): string | undefined => {
       if (wire) return wire;
       const m = channelMeta?.[id];
       const preset = m?.preset;
       if (preset && isFirmwarePreset(canonicalPresetName(preset))) {
-        // Match the WIRE form: "LongModerate" configs always aired as
-        // "LongMod", but VeryLongSlow topics really say "VeryLongSlow" (its
-        // alias models the RF fallback, not the on-air string).
+        // "LongModerate" airs as "LongMod"; other presets air as-is.
         return preset === "LongModerate" ? "LongMod" : preset;
       }
       if (isFirmwarePreset(m?.label)) return m?.label;
@@ -327,10 +321,8 @@ export const Log = () => {
     [channelMeta],
   );
 
-  // Auto modes: ordering, grouping, class filtering, labels, and the ?ch=
-  // alias set all come from the shared channel model. No selectedId: Log
-  // resolves ?ch= only against its own pill set (below), so a resolved
-  // selection is visible by construction and the exemption can never fire.
+  // Shared model drives auto-mode pills. No selectedId: ?ch= resolves against
+  // Log's own pill set, so a resolved selection is visible by construction.
   const channelModel = useMemo(() => {
     const channels = channelsData?.channels ?? {};
     return buildChannelModel({
@@ -348,14 +340,13 @@ export const Log = () => {
       key: string;
       label: string;
       topicMatch: string;
-      /** Model entry id (auto modes only) — resolveKey's currency. */
+      /** Model entry id (auto modes only); what resolveKey returns. */
       id?: string;
     }> = [{ key: "all", label: "All", topicMatch: "" }];
     const matchFor = (name: string) => `/2/e/${name}/`;
 
     if (channelMode === "manual") {
-      // Manual mode keeps the operator's hand-curated views; buckets whose
-      // name can't be resolved (e.g. a Legacy catch-all) get no pill.
+      // Manual mode: operator-curated views; unresolvable buckets get no pill.
       const seen = new Set(["all"]);
       for (const v of config?.broker?.channels?.views ?? []) {
         const chans = Array.isArray(v?.channels) ? v.channels.map(String) : [];
@@ -371,14 +362,11 @@ export const Log = () => {
       return out;
     }
 
-    // Auto modes: the model's entries verbatim, minus Log's own rule — a
-    // bucket with no derivable topic name gets no pill (unfilterable pills
-    // are worse than none), applied AFTER the model so nothing else drifts.
+    // Auto modes: model entries verbatim, minus buckets with no topic name.
     for (const e of channelModel.entries) {
       const name = topicNameFor(e.id, e.wireName);
       if (!name) continue;
-      // Label slugs keep old bookmarks working; the model already arbitrated
-      // slug ownership, so a denied label falls back to the id as key.
+      // Label slug as key keeps old bookmarks; denied slugs fall back to id.
       const labelSlug = normalizeKey(e.label);
       const key = e.aliases.includes(labelSlug) ? labelSlug : e.id;
       out.push({ key, label: e.label, topicMatch: matchFor(name), id: e.id });
@@ -386,9 +374,8 @@ export const Log = () => {
     return out;
   }, [channelMode, config, channelModel, wireNames, topicNameFor]);
 
-  // Auto modes resolve ?ch= through the model's alias set (id / label /
-  // meta.short); a resolved bucket whose pill was dropped (no topic name)
-  // falls back to All. Manual keeps legacy key matching.
+  // Auto modes resolve ?ch= via the model's aliases; a resolved bucket with
+  // no pill falls back to All. Manual keeps legacy key matching.
   const selectedView = useMemo(() => {
     if (channelMode === "manual") {
       return views.find((v) => v.key === urlCh) ?? views[0];
@@ -398,10 +385,8 @@ export const Log = () => {
   }, [channelMode, views, urlCh, channelModel]);
 
   // Land returning visitors on the channel pill they last had selected.
-  // `urlHasCh` demands the raw ?ch actually RESOLVE to a rendered pill: a link
-  // to a pill-less/unknown bucket falls back to All, and adopting that
-  // fallback would overwrite the remembered selection with "" (same guard as
-  // Chat's rawChResolves).
+  // `urlHasCh` requires the raw ?ch to resolve to a rendered pill — adopting
+  // an unresolved link's All fallback would wipe the remembered selection.
   const rawChParam = (searchParams.get("ch") ?? "").trim();
   const rawChResolves =
     !!rawChParam &&
@@ -423,9 +408,8 @@ export const Log = () => {
     value: selectedView.key === "all" ? "" : selectedView.key,
     urlHasCh: rawChResolves,
     suppressRestore: [...searchParams.keys()].some((k) => k !== "ch"),
-    // Config must be present before validating: mode defaults to "presets"
-    // pre-config, and a restore decided under the wrong mode can removeStored
-    // a perfectly valid key.
+    // Gate on config: mode defaults to "presets" pre-config, and a restore
+    // under the wrong mode can removeStored a valid key.
     ready: !!config && views.length > 1,
     isValid: (stored) => views.some((v) => v.key === stored),
     apply: (stored) => setParam("ch", stored, "replace"),
@@ -612,10 +596,8 @@ export const Log = () => {
     virtuosoRef.current?.scrollToIndex({ index: 0, align: "start", behavior: "smooth" });
   }, []);
 
-  // Chip text for a packet's channel: post-fix archive rows carry the
-  // gateway-published name; older rows may only carry the numeric channel
-  // (bucket hash, or a raw 0-7 slot index on historical rows), which the
-  // shared label chain turns into the operator's label or "Channel <n>".
+  // Chip text: newer rows carry the gateway-published name; older rows only a
+  // numeric channel, which the shared label chain resolves.
   const channelChipFor = useCallback(
     (m: IPacketMessage): string | undefined => {
       const name = m["channel_name"];
@@ -774,9 +756,7 @@ export const Log = () => {
   // ---- filter helpers ------------------------------------------------------
   const activeFilterCount = useMemo(() => {
     let n = 0;
-    // Only count the channel as an active filter when it actually filters —
-    // a ?ch= that fell back to All (pill-less bucket) must not claim "1 filter"
-    // over an unfiltered list.
+    // A ?ch= that fell back to All must not count as an active filter.
     if (urlCh && urlCh !== "all" && selectedView.key !== "all") n += 1;
     if (useAbsolute) n += 1;
     else if (urlRange !== DEFAULT_RANGE) n += 1;

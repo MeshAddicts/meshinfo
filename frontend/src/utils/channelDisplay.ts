@@ -1,22 +1,13 @@
 /**
- * Shared channel-bucket display logic.
- *
- * A channel id is an 8-bit hash of (name, PSK) — not an index, not stable
- * across meshes, and meaningless to a human. Every page that shows one must
- * resolve it the same way, or the same bucket wears different names on
- * different screens. Chat, Nodes, Log, and the Map all route through here.
- *
- * Label priority: operator meta label > the name the gateway published on the
- * wire > "Channel <id>". Classification (stock preset vs custom channel) uses
- * the WIRE name only: meta labels are display text, and letting them reclass a
- * bucket would hide a busy preset behind a cosmetic rename.
+ * Shared channel-bucket display logic — Chat, Nodes, Log, and the Map all route here.
+ * Label priority: operator meta label > wire name > "Channel <id>". Classification
+ * (preset vs custom) uses the WIRE name only; meta labels are display text.
  */
 
 import { isFirmwarePreset } from "../meshtasticPresets";
 import type { ChannelMeta } from "../types/config";
 
-/** Names ingest synthesizes when no wire name is known. Never treat one as a
- *  real channel identity (postgres.py and the backfill share this shape). */
+/** Placeholder names ingest synthesizes (shape shared with postgres.py); never a real identity. */
 export const PLACEHOLDER_NAME_RE = /^(General|Channel \d+)$/;
 
 export interface ChannelDisplayInfo {
@@ -80,8 +71,7 @@ export function classifyChannel(
   return isFirmwarePreset(wireNames[id]) ? "presets" : "custom";
 }
 
-/** Whether a bucket passes the mode filter. Manual mode does not class-filter
- *  (its allowlist is the display/views config, applied by the caller). */
+/** Mode filter; manual mode does not class-filter (caller applies its allowlist). */
 export function channelVisibleInMode(
   mode: ChannelMode,
   group: "presets" | "custom"
@@ -89,10 +79,8 @@ export function channelVisibleInMode(
   return mode === "manual" || mode === "all" || group === "presets";
 }
 
-/** URL-key normalization shared by every page's `?ch=` handling: lowercase,
- *  alphanumerics only. Anything starting with "all" folds to the reserved
- *  "all" key (long-standing behavior — the All pill answers to any of its
- *  spellings, at the cost of a hypothetical channel named "Allstars"). */
+/** Shared `?ch=` normalization: lowercase alphanumerics only; anything starting
+ *  with "all" folds to the reserved "all" key (long-standing All-pill behavior). */
 export const normalizeKey = (s: string): string => {
   const raw = String(s ?? "").trim().toLowerCase();
   const k = raw.replace(/[^a-z0-9]+/g, "");

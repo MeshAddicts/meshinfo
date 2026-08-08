@@ -489,10 +489,8 @@ export function Map() {
     [config?.server?.node_id, nodes]
   );
 
-  // Shared channel recipe: ordering, mode filtering, and the selected-channel
-  // exemption live in buildChannelModel; the map supplies node counts. Manual
-  // mode keeps the full data-derived list (the map has no views concept),
-  // which is the model's manual behavior too.
+  // Ordering, mode filtering, and the selected-channel exemption live in
+  // buildChannelModel; the map only supplies node counts.
   const channelModel = useMemo(() => {
     const counts = new globalThis.Map<string, number>();
     for (const n of Object.values(rawNodes)) {
@@ -516,9 +514,8 @@ export function Map() {
     [channelModel],
   );
 
-  // Shared label tiers (meta.label > wire name > "Channel <id>") — never
-  // blank. Falls back past the model for ids outside it: the details panel
-  // can show a node whose channel got mode-filtered.
+  // Label tiers: meta.label > wire name > "Channel <id>". Falls back past the
+  // model — the details panel can show a mode-filtered channel.
   const resolveChannelLabel = useCallback(
     (channelId: string): string =>
       channelModel.byId.get(channelId)?.label ?? channelLabel(channelMeta, wireNames, channelId),
@@ -554,8 +551,7 @@ export function Map() {
   const myNodeIdRef = useRef(myNodeId);
   const roleFilterRef = useRef(roleFilter);
   const channelFilterRef = useRef(channelFilter);
-  // Bind-once click handler resolves details-panel labels through this ref so
-  // late-arriving config/channels data isn't stuck behind a stale closure.
+  // Bind-once click handler reads through this ref to dodge stale closures.
   const resolveChannelLabelRef = useRef(resolveChannelLabel);
   const activeToolRef = useRef(activeTool);
   const toolStepRef = useRef(toolStep);

@@ -76,8 +76,7 @@ describe("useRememberedRange", () => {
   });
 
   it("suppresses the restore when the URL carries other state", () => {
-    // A shared ?msg= deeplink must not get the window narrowed under it —
-    // the stored range could hide the very content the link points at.
+    // Restoring a range under a shared ?msg= deeplink could hide its target.
     localStorage.setItem(KEY, "1h");
     const apply = vi.fn();
     render(defaults({ apply, suppressRestore: true }));

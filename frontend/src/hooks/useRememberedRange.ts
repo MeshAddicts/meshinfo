@@ -28,18 +28,8 @@ function writeStored(key: string, value: string) {
 }
 
 /**
- * Remember a page's time-range selection (the `r` URL param) and restore it on
- * the next bare visit — the sibling of useRememberedChannel, with the same
- * URL-wins contract:
- *
- * - An explicit `?r=` is adopted as the new remembered range.
- * - Any other query params (a shared `?msg=`/`?packet=`/`?ch=` link) suppress
- *   the restore: narrowing the window could hide the very content the link
- *   points at. Nothing is recorded either, until the user changes the range.
- * - Values outside the vocabulary are ignored (and never written).
- *
- * Unlike channels there is no validity/readiness dance — the vocabulary is
- * static — so this hook is deliberately simpler.
+ * Remember a page's `?r=` range and restore it on the next bare visit; explicit URL wins.
+ * Any other query param suppresses the restore so shared links aren't narrowed away.
  */
 export function useRememberedRange(opts: {
   storageKey: string;

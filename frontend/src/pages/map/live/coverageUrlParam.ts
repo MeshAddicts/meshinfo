@@ -1,7 +1,8 @@
 /** ?cov= deep link for the live-coverage overlay: on/off plus which preset
  * group is shown. Reads accept 1/0/true/false (legacy on/off with the
  * viewer's own group), "all", a preset short code (mf, lf, lt, …), a full
- * preset id in any case (historical spellings via PRESET_ALIASES), or — forward-compat for groups we don't know yet —
+ * preset id in any case (aliases accepted), or — forward-compat for groups
+ * we don't know yet —
  * any other string, which passes through as a raw group id (Map.tsx
  * validates it against the server's baked groups and falls back to "all").
  * Writes emit "0" when off and the group's short code ("all" for All) when
@@ -31,9 +32,8 @@ const GROUP_BY_TOKEN: ReadonlyMap<string, string> = (() => {
     m.set(presetShortLabel(id).toLowerCase(), id);
     m.set(id.toLowerCase(), id);
   }
-  // Old shared links carry pre-alias spellings ("verylongslow") and their
-  // short codes ("vls"); resolve them like the config side does. Firmware
-  // tokens win on collision.
+  // Old shared links carry pre-alias spellings ("verylongslow") and short
+  // codes ("vls"); firmware tokens win on collision.
   for (const [legacy, canonical] of Object.entries(PRESET_ALIASES)) {
     const name = legacy.toLowerCase();
     if (!m.has(name)) m.set(name, canonical);

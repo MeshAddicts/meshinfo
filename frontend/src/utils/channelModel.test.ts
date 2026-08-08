@@ -88,9 +88,7 @@ describe("buildChannelModel", () => {
   });
 
   it("breaks exact count ties by numeric-aware id order", () => {
-    // Proven unpinned by a mutation run: deleting the localeCompare tiebreak
-    // passed every existing test. Pill order — and which of two tied channels
-    // wins a contested label alias — must be deterministic.
+    // Pill order and tied-label alias winners must be deterministic.
     const m = buildChannelModel({
       ids: ["31", "9", "110"], mode: "all", meta: undefined,
       wireNames: { "31": "MediumFast", "9": "LongFast", "110": "LongMod" },
@@ -121,9 +119,8 @@ describe("buildChannelModel", () => {
   });
 
   it("arbitrates duplicate labels by count even for zero-count union members", () => {
-    // The Nodes resolve model feeds a union of in-window buckets and every
-    // known bucket; an out-of-window twin (count 0) must not steal the slug
-    // from the in-window channel, but must still resolve by its id.
+    // An out-of-window twin (count 0) must not steal the slug from the
+    // in-window channel, but must still resolve by its id.
     const m = buildChannelModel({
       ids: ["120", "2"], mode: "all", meta: undefined,
       wireNames: { "120": "Test", "2": "Test" },

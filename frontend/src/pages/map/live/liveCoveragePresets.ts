@@ -1,17 +1,6 @@
-/**
- * Modem-preset RX profiles for the live coverage layer.
- *
- * Derived from the canonical firmware table in `meshtasticPresets.ts` — this
- * file deliberately holds no preset list of its own (it used to, and drifted:
- * it carried "LongModerate"/"VeryLongSlow", names no firmware emits, while
- * missing LongTurbo, which is live on air).
- *
- * A node's preset comes from its `last_channel` hash via the operator's
- * `[broker.channels.meta.<hash>] preset = "..."` config — channels are NOT
- * presets (a regional channel like "SacValley" maps to a preset by adding one
- * meta entry), so this file never guesses from channel names. Historical
- * preset spellings in operator configs are honored via PRESET_ALIASES.
- */
+/** Modem-preset RX profiles for the live coverage layer, derived from the
+ *  canonical firmware table (never fork a preset list here). Channels are NOT
+ *  presets: mapping comes from `[broker.channels.meta.<hash>] preset` config. */
 
 import {
   FIRMWARE_MODEM_PRESETS,

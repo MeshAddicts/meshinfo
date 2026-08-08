@@ -1,16 +1,7 @@
 /**
- * The channel display model — the ONE place the pill/filter recipe lives.
- *
- * Every page that shows channel buckets (Chat tabs, Nodes/Log pills, the Map
- * dropdown) derives from this builder. Pages differ only in what they count
- * (messages, nodes, packets) and how they render; ordering, grouping, mode
- * filtering, the selected-channel exemption, labels, and `?ch=` alias
- * resolution are decided here, once. Fork this recipe into a page and it WILL
- * drift — that is exactly how the app ended up with three preset lists.
- *
- * Scope: the automatic modes ("presets" / "all"). Manual mode renders the
- * operator's hand-written views config, which is page-legacy territory and
- * stays with the page.
+ * The channel display model — the one place ordering, grouping, mode filtering,
+ * labels, and `?ch=` aliases are decided; pages only supply counts and rendering.
+ * Covers the automatic modes ("presets"/"all"); manual views stay page-side.
  */
 
 import {
@@ -75,8 +66,7 @@ export function buildChannelModel(args: BuildChannelModelArgs): ChannelModel {
     .filter(
       ({ id, group }) => id === selectedId || channelVisibleInMode(mode, group)
     )
-    // Presets before custom, busiest first within a group, id as a stable
-    // tiebreak so live count ties can't shuffle pills under the cursor.
+    // Presets before custom, busiest first; id tiebreak so live count ties can't shuffle pills.
     .sort((a, b) =>
       a.group !== b.group
         ? a.group === "presets"
@@ -85,10 +75,8 @@ export function buildChannelModel(args: BuildChannelModelArgs): ChannelModel {
         : b.count - a.count || a.id.localeCompare(b.id, undefined, { numeric: true })
     );
 
-  // Alias registration: every id is pre-claimed so a channel wire-NAMED "8"
-  // can never steal ?ch=8 from bucket 8; label/short go first-wins in display
-  // order, so the busier of two same-named channels owns the contested slug.
-  // "all" is reserved for the pages' All pill.
+  // Every id is pre-claimed so a channel wire-NAMED "8" can't steal ?ch=8 from
+  // bucket 8; label/short aliases go first-wins in display order. "all" is reserved.
   const taken = new Set<string>(["all", ...visible.map((v) => v.id)]);
   const entries: ChannelModelEntry[] = visible.map(({ id, group, count }) => {
     const label = channelLabel(meta, wireNames, id);

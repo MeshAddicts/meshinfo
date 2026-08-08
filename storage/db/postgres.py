@@ -34,9 +34,8 @@ from storage.db.write_retry import WriteRetryQueue, WriteStillFailing
 
 logger = logging.getLogger(__name__)
 
-# Per-channel display facts, shared by query_chat_filtered (which adds messages
-# on top) and query_channels (which serves them bare via /v1/channels). One
-# constant so the two can't drift. $1 = the range threshold (0 = all time).
+# Per-channel display facts, shared by query_chat_filtered and query_channels
+# so the two can't drift. $1 = range threshold (0 = all time).
 _CHANNEL_ROWS_SQL = """
     SELECT cc.id, cc.name,
            COUNT(cm.id) AS total_messages,
@@ -1242,29 +1241,15 @@ class PostgresStorage:
                     sender_id = await self._ensure_node_stub(conn, chat_msg.get("sender"))
                     to_id = await self._ensure_node_stub(conn, chat_msg.get("to"))
 
-                    # Ensure channel exists. The wire name (from the gateway's
-                    # ServiceEnvelope/topic) is authoritative and heals rows
-                    # created before it was available; the synthesized label is
-                    # only a placeholder for packets that carried no name.
-                    # Postgres text can't hold NUL: one would abort the whole
-                    # transaction below, dropping the message entirely.
-                    # Sole default for a channel-less message: legacy bucket 0
-                    # (ingest deliberately no longer mints it upstream).
+                    # Ensure channel exists; wire name heals placeholder rows. Strip
+                    # NUL (aborts the transaction). Channel-less defaults to bucket 0.
                     channel_id = str(chat_msg.get("channel", "0"))
                     wire_name = (
                         (chat_msg.get("channel_name") or "").replace("\x00", "").strip()[:100]
                     )
 
-                    # PKI is a pseudo-channel for direct messages, not a name.
-                    # And an 8-bit hash collides: two names can share a bucket
-                    # (live: 129 = MeshSnark/Homestuff). Only ever fill in a
-                    # placeholder, never overwrite a name already off the wire,
-                    # so the label can't flap between colliding channels.
-                    #
-                    # Index-range buckets (0-7) get no wire name at all: they are
-                    # the slot-index namespace, so any name arriving with such a
-                    # row belongs to whatever channel a glitching gateway relayed
-                    # — healing them poisoned bucket 0 into "MediumFast" live.
+                    # 8-bit hashes collide: only fill placeholders, never overwrite a
+                    # wire name. Index buckets (0-7) never take one (glitched relays).
                     bucket_can_have_name = not (
                         channel_id.isdigit() and int(channel_id) <= 7
                     )
@@ -1322,16 +1307,8 @@ class PostgresStorage:
     async def query_channels(
         self, range_seconds: Optional[int] = None
     ) -> Dict[str, Dict[str, Any]]:
-        """Every known channel bucket with its display facts, no messages.
-
-        The lightweight sibling of query_chat_filtered's channel block, for
-        pages that label/filter by channel (Nodes, Log, Map) without wanting
-        chat payloads. Same shape per entry: name (wire-healed or placeholder),
-        totalMessages, recentMessages (within range_seconds; == total when
-        None — assuming rows carry timestamps, which ingest guarantees for new
-        rows; a NULL timestamp would be counted in total but never in recent),
-        newestTimestamp.
-        """
+        """Channel buckets with display facts, no messages — light sibling of
+        query_chat_filtered. recentMessages == totalMessages when range is None."""
         if not self.enabled or not self.pool:
             return {}
         import time
@@ -1355,14 +1332,8 @@ class PostgresStorage:
             return {}
 
     async def get_wire_channel_names(self) -> Dict[str, int]:
-        """name -> hash for every wire-confirmed channel, to seed the ingest
-        resolver at startup.
-
-        Only hash-namespace buckets qualify (id > 7 — slot indices carry no
-        identity), only names healed off the wire (placeholders excluded), and
-        only names that map to exactly one bucket: a name seen on two hashes
-        (re-keyed channel, or colliding meshes) is skipped rather than guessed.
-        """
+        """name -> hash for wire-confirmed channels, to seed the ingest resolver.
+        Only hash buckets (id > 7) with unambiguous, wire-healed names qualify."""
         if not self.enabled or not self.pool:
             return {}
         try:
@@ -1811,10 +1782,8 @@ class PostgresStorage:
                     idx += 1
 
                 if topic:
-                    # The Log page sends channel NAMES here now (was: bare hash
-                    # digits). Names can carry ILIKE metacharacters — "My_Chan"
-                    # must not also match "MyXChan" — so escape the pattern and
-                    # say so with ESCAPE.
+                    # Channel names land here and can carry ILIKE metacharacters
+                    # ("My_Chan" must not match "MyXChan") — escape + ESCAPE.
                     conditions.append(
                         f"topic ILIKE '%' || ${idx} || '%' ESCAPE '\\'"
                     )
@@ -2499,18 +2468,15 @@ class PostgresStorage:
             async with self.pool.acquire() as conn:
                 chat: Dict[str, Any] = {"channels": {}}
 
-                # Range window, shared by the per-channel counts and the
-                # message query below. None (= "all") degenerates to 0, so
-                # recent_messages == total_messages in that case.
+                # Range threshold shared by channel counts and the message query;
+                # None ("all") degenerates to 0, so recent == total.
                 import time
                 threshold = (
                     int(time.time()) - range_seconds if range_seconds is not None else 0
                 )
 
                 # ── 1. Load ALL channels with their message counts ──
-                # recentMessages/newestTimestamp drive range-scoped pills: a
-                # channel silent for the selected range hides, and the badge
-                # counts what the range actually contains instead of all time.
+                # recentMessages/newestTimestamp drive range-scoped channel pills.
                 channel_rows = await conn.fetch(_CHANNEL_ROWS_SQL, threshold)
 
                 for row in channel_rows:
@@ -2539,10 +2505,7 @@ class PostgresStorage:
 
                 where_clause = " AND ".join(where_parts) if where_parts else "TRUE"
 
-                # `limit` is per channel either way, so range=all really does
-                # return every message of every channel. That multiplies the
-                # payload by the channel count; callers that care can ask for
-                # less with ?limit=.
+                # `limit` is per channel, so the payload scales with channel count.
                 params.append(limit)
                 limit_param = f"${param_num}"
 
@@ -2780,8 +2743,7 @@ class PostgresStorage:
                 stats["active_nodes"] = await conn.fetchval("SELECT COUNT(*) FROM nodes WHERE active = TRUE")
 
                 # Count messages
-                # All channels: '0' used to mean "primary", but channel ids are
-                # now resolved to channel hashes, so filtering on it froze this.
+                # All channels: ids are hashes now; filtering on '0' froze this stat.
                 stats["total_chat"] = await conn.fetchval("SELECT COUNT(*) FROM chat_messages")
                 stats["total_telemetry"] = await conn.fetchval("SELECT COUNT(*) FROM telemetry")
                 stats["total_traceroutes"] = await conn.fetchval("SELECT COUNT(*) FROM traceroutes")

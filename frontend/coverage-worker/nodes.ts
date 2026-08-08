@@ -64,8 +64,7 @@ async function channelPresetMap(): Promise<Map<string, string>> {
         }
         continue;
       }
-      // Canonical firmware name — pyramid groups must not fork on historical
-      // config spellings ("LongModerate" vs "LongMod").
+      // Canonicalize so pyramid groups don't fork on historical spellings.
       map.set(String(hash), canonicalPresetName(preset));
     }
     presetMap = { at: Date.now(), map };

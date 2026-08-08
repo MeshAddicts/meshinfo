@@ -157,11 +157,8 @@ export const Chat = () => {
     [config]
   );
 
-  // broker.channels.mode — which channels the UI renders. Ingest stores
-  // everything regardless; this is display only.
-  //   "presets" — stock modem-preset channels only (the default)
-  //   "all"     — presets plus human-named channels
-  //   "manual"  — the hand-curated display/views config
+  // Display-only channel mode: "presets" (default) | "all" | "manual" (curated
+  // views). Ingest stores everything regardless.
   const channelMode = useMemo(
     () => channelModeFrom(config?.broker?.channels),
     [config]
@@ -172,9 +169,8 @@ export const Chat = () => {
     [channelMeta]
   );
 
-  // Post-fetch snapshot of the channels map, declared ABOVE the query chain so
-  // resolvedChannelId can consult it without a circular declaration. Written by
-  // an effect after each fetch (see below the query).
+  // Post-fetch snapshot of the channels map, declared above the query so
+  // resolvedChannelId can consult it without a circular declaration.
   const [dataChannels, setDataChannels] = useState<
     Record<string, unknown> | undefined
   >(undefined);
@@ -183,25 +179,17 @@ export const Chat = () => {
   // This lets the chat query fire immediately using only config
   // data, without waiting for chat data to build the full views.
   const resolvedChannelId = useMemo(() => {
-    // Auto mode: honor an explicit ?ch= but otherwise send no channel at all,
-    // so the API returns every channel rather than guessing one here.
+    // Auto mode: honor an explicit ?ch=, else send no channel so the API
+    // returns every channel.
     if (channelMode !== "manual") {
-      // Numeric ?ch= only, BY DESIGN: this runs pre-data so the first query
-      // can fire from config alone, and a label slug can't resolve until the
-      // data that defines it arrives. Consequence (accepted): a slug link to
-      // a class-hidden channel lands on the default tab instead of pinning
-      // the hidden pill; numeric links pin it. Resolving slugs here would
-      // mean a second query round-trip on every load.
+      // Numeric ?ch= only: this runs pre-data, and resolving label slugs here
+      // would cost a second query round-trip on every load.
       return rawCh && /^[0-9]+$/.test(rawCh) ? rawCh : undefined;
     }
     const viewsConfig = (config?.broker?.channels as any)?.views;
 
-    // Manual-mode stuck-state heal: once chat data exists, scoping the query to
-    // a channel the data says is empty renders "total N / showing 0" forever
-    // (clicking the default pill deletes ?ch, so it never self-corrects). An
-    // unscoped query returns strictly more data, so falling back converges.
-    // `dataChannels` is a post-fetch snapshot (declared above the query on
-    // purpose); undefined on first render means "can't judge yet — keep id".
+    // Scoping to a channel the data says is empty renders "showing 0" forever;
+    // fall back to unscoped. dataChannels undefined = can't judge yet, keep id.
     const emptyPerData = (id: string): boolean => {
       const ch = dataChannels?.[id] as { totalMessages?: number } | undefined;
       return !!dataChannels && (!ch || !Number(ch.totalMessages));
@@ -210,9 +198,8 @@ export const Chat = () => {
       emptyPerData(id) ? undefined : id;
 
     if (!Array.isArray(viewsConfig) || viewsConfig.length === 0) {
-      // No views config — honor an explicit numeric ?ch=, otherwise send no
-      // channel. Naming one here would diverge from the tab the UI actually
-      // selects (which comes from the data), rendering a count over an empty list.
+      // No views config — honor numeric ?ch=, else send no channel (naming one
+      // could diverge from the tab the UI actually selects).
       if (rawCh && /^[0-9]+$/.test(rawCh)) return scoped(rawCh);
       return undefined;
     }
@@ -303,13 +290,8 @@ export const Chat = () => {
   }, [chat]);
 
   // ── 7. Channel entries from chat data (now below query) ──
-  // Two display filters, both exempting the currently-selected channel so an
-  // explicit ?ch= can always render what it names:
-  //  * manual mode's display allowlist;
-  //  * range scoping — recentMessages counts the selected 1h/24h/7d window
-  //    (== totalMessages at "all"), so a channel silent for the whole window
-  //    drops out of the bar until it speaks again. That IS the stale-pill
-  //    filter: the range selector doubles as it, no extra knob.
+  // Both display filters exempt the selected channel so an explicit ?ch= always
+  // renders. Range scoping via recentMessages doubles as the stale-pill filter.
   const channelEntries = useMemo(() => {
     const channels: Record<string, IChannel> = effectiveChat?.channels ?? {};
     let entries = Object.entries(channels);
@@ -333,8 +315,7 @@ export const Chat = () => {
     resolvedChannelId,
   ]);
 
-  // Channel names as the gateway published them, stored by ingest. Placeholders
-  // are filtered out so they never win over `Channel <id>`.
+  // Gateway-published channel names; placeholders never win over `Channel <id>`.
   const wireNames = useMemo(
     () => wireNamesFrom(effectiveChat?.channels),
     [effectiveChat?.channels]
@@ -346,9 +327,7 @@ export const Chat = () => {
     [channelMeta, wireNames]
   );
 
-  // Tooltip built from the SAME label chain as the pill (meta > wire >
-  // Channel N) — the old meta-only chain made a wire-named bucket render pill
-  // "Test" over tooltip "Channel 120".
+  // Tooltip uses the same label chain as the pill (meta > wire > Channel N).
   const rawChannelTooltip = useCallback(
     (id: string) => {
       const meta = channelMeta?.[id] ?? {};
@@ -372,18 +351,15 @@ export const Chat = () => {
     [channelMeta, labelFor, rawChannelShort]
   );
 
-  // Busiest channel (by the range-scoped count), used as the default tab when
-  // no view is configured. Latched per range: live count updates must not flip
-  // the default tab under the user mid-session — only an explicit range change
-  // re-evaluates it.
+  // Default tab when no view is configured. Latched per range so live count
+  // updates can't flip the default tab mid-session.
   const busiestLatchRef = useRef<{ range: string; id: string } | null>(null);
   const busiestChannelId = useMemo(() => {
     if (busiestLatchRef.current?.range === rawRange) {
       return busiestLatchRef.current.id;
     }
-    // Mid range-switch the entries still hold the OLD range's counts; hold the
-    // previous latch steady instead of computing a default from data that is
-    // about to be replaced (visible as a one-render default-tab flicker).
+    // While fetching, entries still hold the old range's counts — keep the
+    // previous latch to avoid a default-tab flicker.
     if (isFetching && busiestLatchRef.current) {
       return busiestLatchRef.current.id;
     }
@@ -396,9 +372,7 @@ export const Chat = () => {
         best = String(id);
       }
     }
-    // Only latch from a settled response: right after a range change the
-    // entries still hold the PREVIOUS range's counts, and latching those would
-    // pin a wrong default tab until the next range change.
+    // Latch only from a settled response — stale counts would pin a wrong default.
     if (best !== undefined && !isFetching) {
       busiestLatchRef.current = { range: rawRange, id: best };
     }
@@ -464,12 +438,8 @@ export const Chat = () => {
       }
     }
 
-    // Auto mode: one tab per channel with traffic in the selected range.
-    // Ordering (presets first, busiest first), class filtering with the
-    // selected-channel exemption, and the ?ch= alias set all come from the
-    // shared channel model. Also the manual-mode fallback when the configured
-    // views all matched nothing: the model doesn't class-filter manual mode,
-    // and dropping `group` below collapses the pills into one ungrouped row.
+    // Auto mode: one tab per active channel; ordering, filtering, and aliases
+    // come from the shared model. Also the fallback when no configured view matched.
     if (out.length === 0) {
       const manual = channelMode === "manual";
       const model = buildChannelModel({
@@ -497,15 +467,13 @@ export const Chat = () => {
             rawChannelTooltip(e.id),
             e.group === "presets" ? "Stock modem preset" : "Custom channel",
           ].join("\n"),
-          // Latched page-side busiest, not model.defaultId: the latch (and
-          // the fallback pill below) needs the pre-class-filter busiest.
+          // Latched busiest, not model.defaultId — needs the pre-class-filter busiest.
           isDefault: e.id === busiestChannelId,
           group: manual ? undefined : e.group,
         });
       }
 
-      // Never render an empty page: if the class filters excluded everything
-      // that has traffic, fall back to the busiest channel rather than nothing.
+      // Never render an empty page: fall back to the busiest channel.
       if (out.length === 0 && busiestChannelId) {
         out.push({
           key: busiestChannelId,
@@ -527,8 +495,7 @@ export const Chat = () => {
   const defaultViewKey =
     views.find((v) => v.isDefault)?.key ?? views[0]?.key ?? "";
 
-  // Consecutive runs of the same class. `views` is already ordered by group in
-  // auto mode; curated views carry no group and collapse into a single run.
+  // Consecutive same-group runs; ungrouped curated views collapse into one run.
   const viewGroups = useMemo(() => {
     const groups: Array<{ key: string; items: ViewDef[] }> = [];
     for (const v of views) {
@@ -575,10 +542,8 @@ export const Chat = () => {
   });
 
   // Land returning visitors on the channel they last had selected.
-  // `urlHasCh` demands the raw ?ch actually RESOLVE to a known view: a link to
-  // a hidden/unknown channel falls back to the default, and adopting that
-  // fallback would overwrite the remembered selection with "" — a shared bad
-  // link must not erase where the user left off.
+  // urlHasCh requires the raw ?ch to resolve to a known view — a bad link must
+  // not overwrite the remembered selection with "".
   const rawChParam = normalizeKey(searchParams.get("ch") ?? "");
   const rawChResolves =
     !!rawChParam &&
@@ -1578,8 +1543,7 @@ export const Chat = () => {
             </div>
           </div>
 
-          {/* Channel pills. In auto mode these come grouped by class, each
-              group on its own row under a header; curated mode is one row. */}
+          {/* Channel pills: grouped rows in auto mode, one row in curated mode. */}
           {viewGroups.map((grp) => (
             <div key={`grp-${grp.key}`}>
               {viewGroups.length > 1 && GROUP_LABELS[grp.key] && (
@@ -1596,8 +1560,7 @@ export const Chat = () => {
             {grp.items.map((v) => {
               const active = v.key === selectedView?.key;
               const chObj = effectiveChat?.channels?.[v.channelId];
-              // Badge counts the selected range (== all-time at range "all"),
-              // so it matches what clicking the pill will actually show.
+              // Badge counts the selected range, matching what the pill shows.
               const count = chObj?.recentMessages ?? chObj?.totalMessages ?? 0;
 
               return (

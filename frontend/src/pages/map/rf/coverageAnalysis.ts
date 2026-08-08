@@ -57,9 +57,7 @@ export const MESHTASTIC_PRESETS: ModemPreset[] = [
   { id: "Custom", label: "Custom", sensitivityDbm: -130, datasheetSensitivityDbm: -133, sf: 11, bwKhz: 250, isCustom: true },
 ];
 
-/** Alias-aware preset id → MESHTASTIC_PRESETS index; -1 when unknown. Persisted
- *  ids from older versions ("VeryLongSlow", "LongModerate") land on the firmware
- *  preset the radio actually uses instead of failing the lookup. */
+/** Alias-aware preset id → MESHTASTIC_PRESETS index; -1 when unknown. */
 export function modemPresetIdx(id: string | undefined | null): number {
   if (!id) return -1;
   const canonical = canonicalPresetName(id);

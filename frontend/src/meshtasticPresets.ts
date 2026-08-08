@@ -1,16 +1,7 @@
 /**
- * The channel names Meshtastic firmware itself emits.
- *
- * A channel's name is half of its id: `channel_id = xorHash(name) ^ xorHash(psk)`.
- * Firmware substitutes the modem-preset display string when a channel's name
- * field is blank (`Channels::getName`), so a node that was never renamed
- * reports one of these. Anything else is a name a human typed — a community,
- * regional, or private channel.
- *
- * Source of truth is firmware's `DisplayFormatters.cpp`. Note this list is
- * deliberately NOT taken from `liveCoveragePresets.ts`, whose keys include
- * `LongModerate` and `VeryLongSlow` — strings no firmware emits — and omit
- * `LongTurbo`, which is live on air today.
+ * The channel names Meshtastic firmware itself emits (`DisplayFormatters.cpp`).
+ * Firmware substitutes the modem-preset display string when a channel's name is
+ * blank, so an unrenamed node reports one of these; anything else is human-typed.
  */
 export interface FirmwareModemPreset {
   /** Firmware display string == the wire channel name an unnamed channel hashes. */
@@ -20,24 +11,15 @@ export interface FirmwareModemPreset {
   sf: number;
   bwKhz: number;
   cr: number;
-  /** Typical real-world SX1262 sensitivity (datasheet + 3 dB) — the value
-   *  link-budget math uses. */
+  /** Real-world SX1262 sensitivity (datasheet + 3 dB) — used by link-budget math. */
   sensitivityDbm: number;
   /** SX1262 datasheet spec sensitivity. */
   datasheetSensitivityDbm: number;
 }
 
 /**
- * The canonical modem-preset table, verified against firmware source:
- * names from `DisplayFormatters.cpp`, RF parameters from `MeshRadio.h`'s
- * `modemPresetToParams()`. Sensitivities follow the Semtech ladder (−3 dB per
- * SF step, +3 dB per BW halving) anchored at LongFast −130; LongSlow −134 is a
- * deliberate +2 dB historical exception off that ladder, kept because the
- * interactive tools have always used it.
- *
- * Every other preset list in the app derives from this one — the live-coverage
- * sensitivity table and the interactive tool presets both import it. Do not
- * fork a new copy.
+ * Names from firmware `DisplayFormatters.cpp`, RF params from `MeshRadio.h`; LongSlow
+ * −134 is a deliberate +2 dB off the Semtech ladder. All preset lists derive from here — do not fork.
  */
 export const FIRMWARE_MODEM_PRESETS: readonly FirmwareModemPreset[] = [
   { name: "ShortTurbo", short: "ST", sf: 7,  bwKhz: 500, cr: 5, sensitivityDbm: -115, datasheetSensitivityDbm: -118 },
@@ -56,16 +38,8 @@ export const FIRMWARE_PRESET_NAMES: ReadonlySet<string> = new Set(
 );
 
 /**
- * Historical preset names -> the firmware name to treat them as. Operator
- * configs written against older MeshInfo docs carry these in
- * `broker.channels.meta.<hash>.preset`; they must keep working.
- *
- *  - "LongModerate": the enum's long name; firmware's display string (and
- *    therefore the wire channel name) has always been "LongMod". Same RF.
- *  - "VeryLongSlow": removed upstream — current firmware has neither a display
- *    case nor a modemPresetToParams case for it, so a node still configured
- *    with it transmits with the DEFAULT (LongFast) parameters. Mapping it to
- *    LongFast matches what the radio actually does.
+ * Historical config preset names -> firmware names. "LongModerate" is LongMod's enum
+ * long name; "VeryLongSlow" was removed upstream and such radios actually run LongFast params.
  */
 export const PRESET_ALIASES: Readonly<Record<string, string>> = {
   LongModerate: "LongMod",
@@ -77,9 +51,8 @@ export function canonicalPresetName(name: string): string {
   return PRESET_ALIASES[name] ?? name;
 }
 
-/** True when `name` is a stock modem-preset channel rather than a custom one.
- *  Exact wire-string match on purpose — aliases are config-side only and never
- *  appear on air, so they do not count. */
+/** True when `name` is a stock modem-preset channel. Exact wire-string match on
+ *  purpose — aliases are config-side only and never appear on air. */
 export function isFirmwarePreset(name: string | undefined | null): boolean {
   return !!name && FIRMWARE_PRESET_NAMES.has(name);
 }

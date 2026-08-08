@@ -113,9 +113,7 @@ export function resolveAntenna(label: string, dbi: number): number {
 export function resolvePreset(p: CoveragePreset): CoveragePanelSettings {
   const hw = resolveHardware(p.tx.hardware);
   const rxHw = resolveHardware(p.rx.hardware);
-  // Alias-aware: an old payload's "VeryLongSlow" restores as LongFast, not
-  // Custom. Say so out loud — the substitution shifts sensitivity 7 dB
-  // (−137 → −130), which visibly shrinks a restored coverage estimate.
+  // Aliased ids restore as a different-sensitivity preset — log the swap.
   const canonicalId = canonicalPresetName(p.modem.id);
   if (canonicalId !== p.modem.id) {
     console.info(

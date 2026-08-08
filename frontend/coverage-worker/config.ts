@@ -43,8 +43,7 @@ export const CLIENT_REACH_KM = Number(process.env.COVERAGE_CLIENT_REACH_KM ?? 80
 export const RECENCY_HOURS = Number(process.env.COVERAGE_RECENCY_HOURS ?? 4);
 
 /** Modem preset for channel hashes with no `[broker.channels.meta.<hash>]`
- *  mapping. Must be a known preset id — it doubles as a group directory name,
- *  so historical spellings canonicalize to the firmware name. */
+ *  mapping. Canonicalized — it doubles as a group directory name. */
 export const DEFAULT_PRESET = (() => {
   const raw = process.env.COVERAGE_DEFAULT_PRESET;
   if (!raw) return DEFAULT_LIVE_PRESET;

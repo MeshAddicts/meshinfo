@@ -91,8 +91,7 @@ export interface IChannel {
   name: string;
 }
 
-/** /v1/channels — the message-free sibling of IChatResponse for pages that
- *  only label or filter by channel. */
+/** /v1/channels — the message-free sibling of IChatResponse. */
 export interface IChannelsResponse {
   channels: Record<string, Omit<IChannel, "messages">>;
 }

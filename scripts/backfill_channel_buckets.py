@@ -1,30 +1,12 @@
 #!/usr/bin/env python3
-"""One-time, idempotent backfill: re-file historical chat rows that were bucketed
-by a gateway slot index instead of a channel hash.
-
-`MeshPacket.channel` carries the (name, PSK) hash on encrypted uplinks but the
-uplinking gateway's local slot index (0-7) once a gateway running with
-`mqtt.encryption_enabled = false` has decoded the packet. Before the ingest fix
-both were stored verbatim in chat_messages.channel_id, so one logical channel
-split across buckets and slot indices from unrelated gateways collided.
-
-Which bucket a row landed in is recoverable because the gateway also published
-the channel name, in the MQTT topic (`.../2/e/<name>/<gateway>`), archived in
-mqtt_messages.topic and joinable on packet id.
-
-The canonical hash per name is LEARNED FROM OBSERVATION, never computed from a
-PSK. Computing needs the channel's key, which we do not have for a decoded
-packet, and a wrong key yields a plausible bucket that cannot be distinguished
-from a real one. Observed live: `Test` computes to 52 under the default PSK but
-its encrypted copies carry 120 — a computed backfill would have moved 563 rows
-into a bucket that never existed. A name with no hash ever observed is skipped,
-not guessed.
-
-Only chat_messages is rewritten. mqtt_messages is left strictly alone: every
-packet_receptions.extras patch was computed as a diff against the stored
-canonical payload, so rewriting it would corrupt reconstruct_copy().
-
-Dry-run by default. Safe to interrupt and re-run.
+"""One-time, idempotent backfill: re-file historical chat rows bucketed by a
+gateway slot index (0-7, stamped on gateway-decoded uplinks) instead of the
+(name, PSK) channel hash. The right bucket is recovered from the channel name
+in the archived MQTT topic (`.../2/e/<name>/<gateway>`), joinable on packet id.
+Canonical hash per name is LEARNED FROM OBSERVATION, never computed from a PSK —
+a wrong key yields a plausible-looking bucket. Unobserved names are skipped.
+Only chat_messages is rewritten; touching mqtt_messages would corrupt
+reconstruct_copy(). Dry-run by default. Safe to interrupt and re-run.
 """
 from __future__ import annotations
 
@@ -52,10 +34,8 @@ def _dsn_from_config(path: Path) -> str:
     )
 
 
-# name -> hash, straight off the wire: ingest writes the gateway-supplied name
-# onto the bucket the encrypted copies carry. No join needed, and no PSK.
-# Buckets still holding a synthesized placeholder never saw post-fix traffic and
-# are deliberately not trusted.
+# name -> hash from observed traffic: ingest stamps the gateway-supplied name on
+# the hash bucket. Placeholder-named buckets saw no post-fix traffic; not trusted.
 OBSERVE_SQL = """
 SELECT id AS bucket, name
 FROM chat_channels
@@ -64,18 +44,8 @@ WHERE id ~ '^[0-9]+$'
   AND name !~ '^(General|Channel [0-9]+)$'
 """
 
-# Only index-range rows need the archive join. mqtt_messages has no standalone
-# index on packet_id, so each probe scans the partitions — keep this set small
-# (it is: these are exactly the mis-bucketed rows).
-#
-# Two correctness details, both learned the hard way:
-#  * Mesh packet ids are 32-bit and DO collide across nodes (180 chat rows match
-#    more than one archived row here). Matching on from_node_id as well, and
-#    ordering deterministically, stops the answer depending on the query plan.
-#  * packet_id is NULL for every archived row before 2026-07-11, so a join on it
-#    alone reports "no archive" for rows whose topic is sitting right there.
-#    Fall back to reading the id out of the payload. A regex, not ::jsonb —
-#    undecryptable payloads contain \\u0000 and break the cast.
+# Unindexed join; 32-bit packet ids collide across nodes — match from_node_id too, order deterministically.
+# packet_id is NULL pre-2026-07-11: fall back to a payload regex, not ::jsonb (\\u0000 breaks the cast).
 INDEX_ROWS_SQL = """
 SELECT c.id,
        c.channel_id AS bucket,
@@ -96,12 +66,8 @@ ORDER BY c.id
 """
 
 
-# nodes.last_channel shares the dual-namespace history: values 0-7 are stale
-# slot indices stamped before ingest resolution existed (or by paths that keep
-# raw values by design). A node's own archived traffic is the best evidence of
-# its real bucket: any packet whose payload channel is >7 carries a hash by
-# definition. Latest such packet wins (a node that genuinely moved channels
-# gets its current one).
+# last_channel 0-7 = stale slot indices. A payload channel >7 is a hash by
+# definition; the node's latest such packet wins (handles genuine channel moves).
 NODE_EVIDENCE_SQL = """
 SELECT n.id, n.last_channel AS old_bucket, ev.hash::text AS new_bucket
 FROM nodes n
@@ -119,11 +85,8 @@ ORDER BY n.id
 
 
 def canonical_hashes(rows):
-    """name -> canonical bucket, plus notes on anything ambiguous.
-
-    A bucket above the index range cannot be a slot index, so it is a real hash.
-    If one name somehow holds two, it is not safe to pick — skip and report.
-    """
+    """name -> canonical bucket; a name holding two buckets is unsafe to pick —
+    skipped and noted."""
     seen = defaultdict(list)
     for r in rows:
         seen[r["name"]].append(r["bucket"])

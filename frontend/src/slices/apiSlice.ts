@@ -62,8 +62,7 @@ export const apiSlice = createApi({
         response.config,
       providesTags: [{ type: "Config", id: "LIST" }],
     }),
-    // Message-free channel facts (names, counts) for pages that label or
-    // filter by channel bucket without wanting chat payloads.
+    // Message-free channel facts (names, counts) — no chat payloads.
     getChannels: builder.query<IChannelsResponse, { range?: string } | void>({
       query: (params) => {
         const r = params && params.range ? `?range=${params.range}` : "";

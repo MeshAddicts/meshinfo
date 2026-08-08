@@ -28,10 +28,7 @@ logger = logging.getLogger(__name__)
 
 def _node_channel(msg) -> Optional[str]:
     """Channel to stamp on the sending node, or None to leave it alone.
-
-    PKI DMs are excluded: they belong to no channel, and their 0 sentinel would
-    overwrite the node's real bucket with "Legacy" every time someone DMs it.
-    """
+    PKI DMs carry no channel; don't stamp last_channel."""
     if 'channel' not in msg or msg.get('channel_name') == channels.PKI_CHANNEL:
         return None
     return str(msg['channel'])
@@ -54,8 +51,7 @@ class MQTT:
         # Track drops so the warning at every Nth surfaces a stalled consumer.
         self._discord_drops_total: int = 0
 
-        # Learns name -> channel-hash from encrypted uplinks so decoded ones
-        # (which carry a gateway slot index instead) can be mapped back.
+        # Learns name -> hash from encrypted uplinks so decoded slot indices remap.
         self._channel_resolver = channels.ChannelResolver()
 
     def _record_discord_drop(self, event_type: str) -> None:
@@ -70,10 +66,8 @@ class MQTT:
 
     async def connect(self):
         # Single attempt; main.py's supervise() owns reconnect + exponential backoff.
-        # Seed the resolver from names already healed off the wire so a restart
-        # doesn't reopen the learning window (a rare channel's first post-restart
-        # decoded packet would misfile permanently — first copy wins in the DB).
-        # Idempotent across supervise() reconnects; failure is non-fatal.
+        # Seed from wire-healed names so a restart doesn't reopen the learning
+        # window (first decoded copy would misfile permanently). Non-fatal.
         try:
             seedable = await self.data.pg_storage.get_wire_channel_names()
             self._channel_resolver.seed(seedable)
@@ -167,10 +161,8 @@ class MQTT:
                     outs['rssi'] = mp.rx_rssi
                 if mp.rx_rssi != 0 or mp.rx_snr != 0.0:
                     outs['snr'] = mp.rx_snr
-                # Clamp rx_time to current time if node clock is ahead, and floor
-                # it at arrival: an unset rx_time (proto3 zero) would otherwise
-                # store epoch 0, which renders as 1969 and is invisible to every
-                # range filter. Arrival is within seconds of send for live MQTT.
+                # Clamp rx_time to now if the node clock is ahead; floor unset
+                # (proto3 zero) at arrival — epoch 0 evades every range filter.
                 rx_time = mp.rx_time
                 now_epoch = int(time.time())
                 if not rx_time:
@@ -185,17 +177,14 @@ class MQTT:
                 outs["retain"] = getattr(msg, "retain", None)
                 # MessageToJson omits channel 0 (primary); read it off mp.
                 # mp.channel is the (name,PSK) hash on encrypted uplinks but a
-                # gateway-local slot index once a gateway with
-                # mqtt.encryption_enabled=false has decoded it — resolve indices
-                # back to the hash so one channel lands in one bucket.
+                # gateway-local slot index on decoded ones — resolve to one bucket.
                 channel_name = se.channel_id or channels.name_from_topic(msg.topic.value)
                 outs['channel'] = self._channel_resolver.resolve(
                     raw_channel=mp.channel,
                     is_encrypted=is_encrypted,
                     channel_name=channel_name,
                     is_pki=mp.pki_encrypted,
-                    # Distinguishes a re-key (new hash on distinct packets) from
-                    # one flapped packet published twice by the same gateway.
+                    # Lets observe() tell a re-key from one packet published twice.
                     packet_id=mp.id or None,
                 )
                 if channel_name:
@@ -698,8 +687,7 @@ class MQTT:
             'rssi': msg.get('rssi'),
             'snr': msg.get('snr'),
         }
-        # A message without a channel stays channel-less: write_chat_message owns
-        # the bucket-0 fallback, and minting "0" here would fake a real bucket.
+        # Channel-less stays channel-less; write_chat_message owns the bucket-0 fallback.
         if 'channel' in msg:
             chat['channel'] = str(msg['channel'])
         if 'sender' in msg:

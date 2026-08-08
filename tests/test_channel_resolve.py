@@ -1,16 +1,7 @@
 """
-Tests for channel-bucket resolution (channels.py + its use in process_mqtt_msg).
-
-`MeshPacket.channel` is two namespaces in one field: an 8-bit (name, PSK) hash
-on encrypted uplinks, and the gateway's local slot index (0-7) once a gateway
-running with `mqtt.encryption_enabled = false` has decoded the packet. Storing
-both verbatim scattered one logical channel across buckets, with the winning
-bucket decided by whichever gateway's copy was ingested first.
-
-Two tests exist specifically to kill mutants that an earlier version of this
-file let through — see test_assignment_not_setdefault and
-test_encrypted_is_not_treated_as_index. Both pin behaviour that is otherwise
-invisible because most packets resolve to the value they came in with.
+Channel-bucket resolution tests (channels.py + its use in process_mqtt_msg).
+MeshPacket.channel is a (name, PSK) hash on encrypted uplinks but a gateway
+slot index (0-7) after decode; ingest must merge both into one bucket.
 """
 
 import base64
@@ -29,11 +20,7 @@ DEFAULT_PSK = base64.b64decode(DEFAULT_PSK_B64)
 
 class TestHash:
     def test_reproduces_firmware_preset_hashes(self):
-        """Pinned against the preset names Meshtastic firmware actually emits
-        (DisplayFormatters.cpp), NOT against config.toml.sample — the sample is
-        partly wrong and a test sourced from it would just re-derive its errors.
-        Every name here has been corroborated by live archive traffic.
-        """
+        """Pinned against firmware's preset names (DisplayFormatters.cpp), not the sample config."""
         expected = {
             "ShortTurbo": 14,
             "ShortSlow": 119,
@@ -49,13 +36,7 @@ class TestHash:
             assert channels.channel_hash(name, DEFAULT_PSK) == want, name
 
     def test_sample_preset_names_that_firmware_never_emits(self):
-        """Older sample configs shipped meta.9 "LongModerate" and meta.55
-        "VeryLongSlow". The arithmetic is right but the names are not firmware
-        preset strings, so firmware never fills those buckets (only a channel
-        literally named that way would) — the sample now
-        ships the real ones, LongMod (110) and LongTurbo (118). Pinned so the
-        legacy hashes stay documented for operator configs that still carry
-        the old spellings."""
+        """Legacy sample spellings hash to 9/55; documented for configs still carrying them."""
         assert channels.channel_hash("LongModerate", DEFAULT_PSK) == 9
         assert channels.channel_hash("VeryLongSlow", DEFAULT_PSK) == 55
         assert channels.channel_hash("LongMod", DEFAULT_PSK) != 9
@@ -65,8 +46,7 @@ class TestHash:
         assert channels.xor_hash(DEFAULT_PSK) == 2
 
     def test_empty_name_is_not_a_preset(self):
-        """Firmware substitutes the preset string for a blank name, so the empty
-        string is never hashed on real hardware — 2 is not 'unconfigured'."""
+        """Firmware never hashes a blank name — 2 is not 'unconfigured'."""
         assert channels.channel_hash("", DEFAULT_PSK) == 2
 
     def test_case_folding_is_parity_not_equality(self):
@@ -112,12 +92,10 @@ class TestNameFromTopic:
 class TestResolver:
     def test_encrypted_passes_through_and_teaches(self):
         r = channels.ChannelResolver()
-        # Whatever an encrypted uplink claims is returned verbatim — it is the
-        # hash by definition, including values that look like slot indices.
+        # Encrypted claims are the hash by definition, even index-looking ones.
         for raw in (0, 6, 8, 19, 31, 255):
             assert r.resolve(raw_channel=raw, is_encrypted=True, channel_name="C") == raw
-        # But none of those conflicting sightings repeated, so the first one
-        # learned still stands (see the corroboration tests below).
+        # No conflicting sighting repeated, so the first learned hash stands.
         assert r.resolve(raw_channel=3, is_encrypted=False, channel_name="C") == 0
 
     def test_decoded_index_remaps_to_learned_hash(self):
@@ -171,9 +149,7 @@ class TestResolver:
         assert r.resolve(raw_channel=0, is_encrypted=False, channel_name="c") == 30
 
     def test_single_conflicting_sighting_does_not_move_a_learned_hash(self):
-        """Observed in production: a gateway intermittently uplinks encrypted
-        packets carrying channel 0 on a MediumFast topic. Under last-writer-wins
-        that re-taught MediumFast -> 0 for ~84 ms."""
+        """Gateways can flap stray channel bytes; one sighting must not re-teach a hash."""
         r = channels.ChannelResolver()
         r.resolve(raw_channel=31, is_encrypted=True, channel_name="MediumFast")
         r.resolve(raw_channel=0, is_encrypted=True, channel_name="MediumFast")
@@ -195,8 +171,7 @@ class TestResolver:
         assert r.resolve(raw_channel=1, is_encrypted=False, channel_name="MediumFast") == 77
 
     def test_first_sighting_of_a_low_hash_is_still_trusted(self):
-        """'ares' hashes to 7 — a real hash inside the index range. The
-        corroboration rule must not block establishing it in the first place."""
+        """'ares' hashes to 7 — a real hash inside the index range must still be learnable."""
         r = channels.ChannelResolver()
         r.resolve(raw_channel=7, is_encrypted=True, channel_name="ares")
         assert r.resolve(raw_channel=2, is_encrypted=False, channel_name="ares") == 7
@@ -207,8 +182,7 @@ class TestResolver:
         assert r.resolve(raw_channel=0, is_encrypted=False, channel_name="x") == 0
 
     def test_seed_preloads_learned_names(self):
-        """Startup seeding from chat_channels closes the cold-start window: a
-        rare channel's first post-restart decoded packet must not misfile."""
+        """Seeding from chat_channels closes the post-restart cold-start misfile window."""
         r = channels.ChannelResolver()
         loaded = r.seed({"MediumFast": 31, "SVComm": 43, "PKI": 80, "junk": 999})
         assert loaded == 2  # PKI and out-of-range skipped
@@ -235,8 +209,7 @@ class TestResolver:
         assert r.resolve(raw_channel=2, is_encrypted=False, channel_name="MediumFast") == 31
 
     def test_encrypted_flap_copy_returns_learned_bucket(self):
-        """Unit-level S1: an encrypted copy claiming an index-range value for a
-        name whose learned hash is real files at the learned hash."""
+        """An encrypted copy claiming an index-range value files at the learned hash."""
         r = channels.ChannelResolver()
         r.seed({"MediumFast": 31})
         got = r.resolve(
@@ -246,9 +219,7 @@ class TestResolver:
 
 
 def _decoded_envelope(name, channel_value, text="hi", pkt_id=999001):
-    """ServiceEnvelope carrying an already-decoded packet, as published by a
-    gateway with mqtt.encryption_enabled = false — firmware has overwritten
-    .channel with its local slot index by this point."""
+    """Decoded-gateway ServiceEnvelope — .channel is the gateway's local slot index."""
     mp = mesh_pb2.MeshPacket()
     setattr(mp, "from", 0x67EA9401)
     mp.to = 0xFFFFFFFF
@@ -268,8 +239,7 @@ def _decoded_envelope(name, channel_value, text="hi", pkt_id=999001):
 def _encrypted_envelope(
     name, channel_value, text="hi", pkt_id=999501, psk=DEFAULT_PSK, rx_time=1700000000
 ):
-    """ServiceEnvelope carrying a genuinely AES-CTR encrypted packet, as
-    published by a default-configured gateway — .channel is the real hash.
+    """AES-CTR encrypted ServiceEnvelope — .channel is the real hash.
     Nonce layout must match mqtt.py: packet_id LE64 ‖ from LE64."""
     from_ = 0x67EA9401
     data = mesh_pb2.Data()
@@ -304,9 +274,7 @@ def _buckets(data):
 
 class TestIngestEndToEnd:
     def test_encrypted_uplink_teaches_then_decoded_uplink_converges(self):
-        """The regression this change exists for: the same channel relayed by an
-        encrypting gateway (hash 8) and a decoding gateway (index 0) must not
-        split across two buckets."""
+        """One channel relayed as hash 8 and index 0 must not split across buckets."""
         mqtt, data = make_mqtt_pb([DEFAULT_PSK_B64])
 
         run(mqtt.process_mqtt_msg(
@@ -319,11 +287,8 @@ class TestIngestEndToEnd:
         assert _buckets(data) == ["8", "8"]
 
     def test_assignment_not_setdefault(self):
-        """Kills the mutant that restores the pre-fix `outs.setdefault(...)`.
-
-        Needs a decoded index != 0: MessageToJson omits a zero channel, so with
-        setdefault a 0 would still be filled in and the bucket would look right.
-        """
+        """Needs a decoded index != 0: MessageToJson omits a zero channel, so a
+        regressed setdefault would still look right for 0."""
         mqtt, data = make_mqtt_pb([DEFAULT_PSK_B64])
 
         run(mqtt.process_mqtt_msg(
@@ -336,12 +301,8 @@ class TestIngestEndToEnd:
         assert _buckets(data)[-1] == "8", "slot index 3 leaked through as its own bucket"
 
     def test_encrypted_flap_files_at_learned_until_corroborated(self):
-        """A flapping gateway emits encrypted copies whose channel byte is an
-        index-range value for a channel whose established hash is real (live:
-        MediumFast copies carrying 0). One such copy must file with the channel,
-        not the glitch — but a genuine re-key into 0-7 still lands once a
-        SECOND, distinct packet corroborates it.
-        """
+        """One flapped copy files at the learned hash; a second distinct packet
+        corroborates a genuine re-key into 0-7."""
         mqtt, data = make_mqtt_pb([DEFAULT_PSK_B64])
 
         run(mqtt.process_mqtt_msg(
@@ -360,9 +321,7 @@ class TestIngestEndToEnd:
         assert _buckets(data)[-1] == "3", "corroborated re-key was not honored"
 
     def test_double_publish_of_one_packet_cannot_confirm_a_change(self):
-        """The live flap gateway publishes each packet twice ~330ms apart, so
-        'two consecutive sightings' alone was satisfied by one flapped packet's
-        two copies. Corroboration must require distinct packets."""
+        """Gateways can publish one packet twice; corroboration must require distinct packets."""
         mqtt, data = make_mqtt_pb([DEFAULT_PSK_B64])
 
         run(mqtt.process_mqtt_msg(
@@ -380,8 +339,7 @@ class TestIngestEndToEnd:
         assert _buckets(data)[-1] == "31", "one double-published packet re-taught the hash"
 
     def test_encrypted_low_hash_passes_through(self):
-        """'ares' hashes to 7 on the default PSK — a real hash inside the index
-        range, which must not be mistaken for a slot index."""
+        """'ares' hashes to 7 — a real hash inside the index range, not a slot index."""
         assert channels.channel_hash("ares", DEFAULT_PSK) == 7
         mqtt, data = make_mqtt_pb([DEFAULT_PSK_B64])
 
@@ -415,8 +373,7 @@ class TestIngestEndToEnd:
         assert _buckets(data) == ["0"]
 
     def test_unset_rx_time_is_floored_at_arrival(self):
-        """proto3 zero for rx_time used to store epoch 0, which renders as 1969
-        and is filtered out by every range except 'all'."""
+        """proto3 zero rx_time stored epoch 0 — renders as 1969, hidden by every range but 'all'."""
         import time as _time
 
         mqtt, data = make_mqtt_pb([DEFAULT_PSK_B64])
@@ -438,8 +395,7 @@ class TestIngestEndToEnd:
         assert chat["timestamp"] == 1700000000
 
     def test_pki_dm_does_not_overwrite_last_channel(self):
-        """A PKI DM belongs to no channel; its 0 sentinel must not flip the
-        sender's bucket to Legacy every time they DM someone."""
+        """PKI DMs carry no channel; the 0 sentinel must not flip the sender's bucket."""
         from mqtt import _node_channel
 
         assert _node_channel({"channel": 0, "channel_name": "PKI"}) is None

@@ -1,7 +1,6 @@
 """
-Tests for the /v1/channels surface: the shared chat-range vocabulary and
-query_channels' fail-safe fallbacks. The endpoint itself is a thin composition
-of these two pieces (see api/api.py channels_endpoint).
+Tests for /v1/channels: the chat-range vocabulary and query_channels'
+fail-safe fallbacks.
 """
 
 import asyncio
@@ -17,8 +16,7 @@ class TestChatRangeSeconds:
         assert API._chat_range_seconds("7d") == 604800
 
     def test_all_means_no_window(self):
-        # Membership semantics: "all" maps to None on purpose — a .get()
-        # default would silently turn it into 24h.
+        # "all" maps to None on purpose — a .get() default would turn it into 24h.
         assert API._chat_range_seconds("all") is None
 
     def test_absent_and_unknown_default_to_24h(self):
@@ -42,8 +40,7 @@ class TestQueryChannelsFallbacks:
         assert asyncio.run(s.query_channels()) == {}
 
     def test_no_pool_returns_empty(self):
-        # Pool not up yet (startup race) — the endpoint must degrade to an
-        # empty channels map, never raise.
+        # Startup race (no pool yet) must degrade to empty, never raise.
         s = self._storage_without_pool()
         assert asyncio.run(s.query_channels()) == {}
         assert asyncio.run(s.query_channels(range_seconds=3600)) == {}

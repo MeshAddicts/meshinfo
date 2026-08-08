@@ -54,9 +54,8 @@ export function useChatSearchParams(args?: {
   }, [args?.defaultCh, views]);
 
   const aliasToKey = useMemo(() => {
-    // normalizeKey, not bare toLowerCase: the page normalizes its raw ?ch=
-    // the same way, and a lowercase-only map missed aliases differing in
-    // punctuation/spacing ("Sac Valley" vs ?ch=sacvalley).
+    // normalizeKey, not toLowerCase — must match the page's ?ch= normalization
+    // ("Sac Valley" vs ?ch=sacvalley).
     const m = new Map<string, string>();
     for (const v of views) {
       const k = normalizeKey(v.key ?? "");
@@ -118,8 +117,7 @@ export function useChatSearchParams(args?: {
   const urlRange = parseEnum<RangeKey>(
     searchParams.get("r"),
     ["1h", "24h", "7d", "all"] as const,
-    // Default widened to "all": the pills are range-scoped, and hiding
-    // channels by default surprised operators more than a bigger first load.
+    // "all" by default: range-scoped pills hiding channels surprised operators.
     "all"
   );
 

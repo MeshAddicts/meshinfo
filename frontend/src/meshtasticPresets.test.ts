@@ -44,10 +44,7 @@ describe("isFirmwarePreset", () => {
   });
 
   it("excludes the two historical names no firmware emits", () => {
-    // Neither string is emitted by any firmware build, so their buckets only
-    // populate if someone literally NAMES a channel that way. Pinned so a
-    // future edit does not quietly reintroduce them — they live in
-    // PRESET_ALIASES instead.
+    // Firmware never emits these; they live in PRESET_ALIASES instead.
     expect(FIRMWARE_PRESET_NAMES.has("LongModerate")).toBe(false);
     expect(FIRMWARE_PRESET_NAMES.has("VeryLongSlow")).toBe(false);
   });
@@ -76,8 +73,7 @@ describe("FIRMWARE_MODEM_PRESETS (canonical RF table)", () => {
 describe("canonicalPresetName", () => {
   it("maps historical config spellings to firmware names", () => {
     expect(canonicalPresetName("LongModerate")).toBe("LongMod");
-    // VeryLongSlow was removed upstream; firmware falls back to default
-    // (LongFast) params for a node still configured with it.
+    // VeryLongSlow was removed upstream; firmware falls back to LongFast params.
     expect(canonicalPresetName("VeryLongSlow")).toBe("LongFast");
   });
 

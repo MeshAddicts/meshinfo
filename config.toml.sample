@@ -130,45 +130,26 @@ enabled = true
 # Channel Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 # A channel id is a hash of the channel name and its PSK, not a slot number.
-# The hashes below are computed for the default PSK (1PG7OiApB1nwvP+rz05pAQ==);
-# a custom PSK, or a renamed channel, produces different ones.
+# Hashes below assume the default PSK (1PG7OiApB1nwvP+rz05pAQ==); a custom PSK or
+# renamed channel produces different ones. Decoded uplinks carry a slot index (0-7);
+# ingest re-files those by name (older rows: scripts/backfill_channel_buckets.py).
 #
-# Caveat worth knowing: MeshPacket.channel carries that hash only on encrypted
-# uplinks. A gateway running with mqtt.encryption_enabled = false republishes
-# packets it already decoded, and firmware has overwritten the field with that
-# gateway's local slot index (0-7) by then. MeshInfo resolves those back to the
-# hash at ingest using the channel name, so both land in one bucket — but rows
-# ingested before that existed may still sit in a 0-7 bucket. See
-# scripts/backfill_channel_buckets.py to re-file them.
-#
-# To see which channels are actually active, query your DB — the name column is
-# populated from the wire:
+# To see which channels are active:
 #   SELECT cm.channel_id, cc.name, COUNT(*) AS msgs
 #   FROM chat_messages cm LEFT JOIN chat_channels cc ON cc.id = cm.channel_id
 #   GROUP BY 1, 2 ORDER BY msgs DESC;
 # ─────────────────────────────────────────────────────────────────────────────
 
 [broker.channels]
-# Which channels the Chat page shows. Ingest always stores every channel it
-# receives — this is display only, so no setting here ever loses data.
-#
-#   "presets" (default) — only stock modem-preset channels (LongFast,
-#             MediumFast, ShortTurbo, ...). A channel's name is half of its id,
-#             and firmware fills the name in with the preset string when nobody
-#             has renamed the channel — so a preset-named channel is a stock
-#             channel, and anything else was named by a human.
-#   "all"     — presets plus those human-named channels (regional, club, ...).
-#   "manual"  — hand-curated: only what `display` below and the
-#             [[broker.channels.views]] blocks say.
-#
-# Pills are also scoped to the time range selected in the UI: a channel with no
-# traffic in the selected range drops out of the bar until it speaks again.
+# Which channels the Chat page shows (display only — ingest stores everything).
+#   "presets" (default) — stock modem-preset channels only (LongFast, ...).
+#   "all"     — presets plus human-named channels (regional, club, ...).
+#   "manual"  — only what `display` and [[broker.channels.views]] list.
+# Channels with no traffic in the selected time range drop off the bar.
 mode = "presets"
 
-# Only used when mode = "manual". Channel hashes to show; everything else is
-# hidden. Channels with no data are hidden regardless. These hashes assume the
-# default PSK — a custom PSK or a renamed channel produces different ones, so a
-# curated list copied from here will not match a mesh it was not written for.
+# Only used when mode = "manual": channel hashes to show. These assume the
+# default PSK — a custom PSK or renamed channel produces different hashes.
 display = ["8", "31", "24", "15", "118", "119", "112", "110", "14"]
 
 # Encryption keys for decoding channel traffic (base64-encoded)
@@ -179,16 +160,9 @@ key_name = "Default"
 # ─────────────────────────────────────────────────────────────────────────────
 # Standard Meshtastic Preset Channel Hashes
 # Computed from: XOR_bytes(channel_name) ^ XOR_bytes(PSK)
-# These values assume the default PSK above.
-#
-# Names match the firmware's display strings — the strings unnamed channels
-# hash on the wire. Older MeshInfo samples used two spellings firmware never
-# emits, and `preset =` still accepts them as aliases:
-#   "LongModerate" — firmware displays "LongMod" (hash 110, below).
-#   "VeryLongSlow" — removed upstream; a node still set to it transmits with
-#   the default (LongFast) parameters, so the alias maps there. No firmware
-#   emits the string anymore, though a channel someone literally NAMES
-#   "VeryLongSlow" would still hash to its old bucket 55.
+# These values assume the default PSK above. Names match firmware's display
+# strings; the old sample spellings "LongModerate" and "VeryLongSlow" are still
+# accepted by `preset =` as aliases (-> LongMod, -> LongFast).
 # ─────────────────────────────────────────────────────────────────────────────
 
 [broker.channels.meta.8]
@@ -260,10 +234,7 @@ description = "ShortTurbo modem preset (default PSK hash: 14)"
 # ─────────────────────────────────────────────────────────────────────────────
 # Channel Views — tabs shown in the Chat UI
 # Only single-channel views are supported. Views with no data are hidden.
-# The Chat page uses these only when broker.channels.mode = "manual"; in
-# presets/all mode it builds one tab per active channel — presets and custom
-# channels on their own rows — defaulting to the busiest. The Nodes and Log
-# pages still read these views unconditionally for their channel pills.
+# Chat uses these only when mode = "manual"; Nodes and Log always read them.
 # ─────────────────────────────────────────────────────────────────────────────
 
 [[broker.channels.views]]

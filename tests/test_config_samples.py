@@ -23,8 +23,7 @@ def _validatable_base():
 
 
 def test_validate_survives_wrong_shaped_channels():
-    """A plausible config mistake (channels as a bare list) must warn, not
-    crash startup with an AttributeError inside the deeper channel checks."""
+    """Channels as a bare list must warn, not crash validate() with AttributeError."""
     import config as config_mod
 
     broken = _validatable_base()
@@ -48,9 +47,8 @@ def test_validate_flags_bad_channel_mode_and_stale_lists():
 
 
 def test_upgrade_warning_for_stale_display_views(caplog):
-    """A pre-mode config carrying display/views must warn once at load — those
-    lists went from unconditionally-honored to manual-mode-only. An explicit
-    mode alongside them is a deliberate stash and must stay quiet."""
+    """Pre-mode configs with display/views warn (now manual-mode-only); an
+    explicit mode alongside them stays quiet."""
     import logging
 
     import config as config_mod
@@ -72,9 +70,8 @@ def test_upgrade_warning_for_stale_display_views(caplog):
 
 
 def test_cleanse_redacts_encryption_keys_in_both_shapes():
-    """PSKs must never reach the unauthenticated /v1/server/config — including
-    the single-bracket typo ([broker.channels.encryption]) that turns the
-    section into a dict instead of a list of tables."""
+    """PSKs must never reach /v1/server/config — including the single-bracket
+    typo that makes the encryption section a dict instead of a list."""
     import config as config_mod
 
     as_list = {"broker": {"channels": {"encryption": [{"key": "s1", "key_name": "A"}]}}}

@@ -299,8 +299,7 @@ export const Nodes = () => {
     return out;
   }, [nodes, serverNode]);
 
-  // Range-scoped list: the pill set, its counts, and the filters below all
-  // read the same time window.
+  // Range-scoped list shared by the pill set, its counts, and the filters.
   const rangeItems = useMemo(() => {
     if (typeof rangeThresholdMs !== "number") return allItems;
     return allItems.filter(
@@ -308,8 +307,7 @@ export const Nodes = () => {
     );
   }, [allItems, rangeThresholdMs]);
 
-  // Node count per hash bucket present in the window. Exact-string match on
-  // last_channel — ids are opaque hashes, never coerced.
+  // Node count per bucket in the window; ids are opaque strings, never coerced.
   const dataChannels = useMemo(() => {
     const counts = new Map<string, number>();
     for (const x of rangeItems) {
@@ -320,20 +318,13 @@ export const Nodes = () => {
     return counts;
   }, [rangeItems]);
 
-  // ?ch= resolution surface (auto modes). Built mode:"all" on purpose: this
-  // page has always resolved links against EVERY bucket in the window — a
-  // presets-mode class filter hides a custom pill, but an explicit link to it
-  // must still resolve (the selected exemption below then renders it). No
-  // selectedId either: resolution can't depend on the selection it produces.
+  // ?ch= resolution (auto modes). mode:"all" so links resolve against every
+  // bucket, even class-filtered ones; no selectedId to avoid circularity.
   const channelResolveModel = useMemo(
     () =>
       buildChannelModel({
-        // Union of window buckets and every bucket /v1/channels knows: a slug
-        // link to an out-of-window channel (?ch=svcomm after a quiet week)
-        // must still resolve — the selected-exemption then renders its pill
-        // at count 0 instead of silently dropping the filter. First-wins
-        // arbitration on duplicate labels is count-ordered, so an in-window
-        // busier bucket always beats an out-of-window twin for the slug.
+        // Union with all known buckets so slug links to out-of-window
+        // channels still resolve (their pill renders at count 0).
         ids: new Set([
           ...dataChannels.keys(),
           ...Object.keys(channelsData?.channels ?? {}),
@@ -358,15 +349,13 @@ export const Nodes = () => {
     }
     const hit = channelResolveModel.resolveKey(urlCh);
     if (hit) return hit;
-    // An explicit numeric id outside the current window still filters — a
-    // deep link to a quiet bucket honestly shows an empty list.
+    // Numeric ids outside the window still filter (empty list, not dropped).
     const key = normalizeKey(urlCh);
     return /^[0-9]+$/.test(key) ? key : null;
   }, [urlCh, channelMode, channelViews, channelResolveModel]);
 
-  // Pill model (auto modes): window buckets plus the selected id — so an
-  // out-of-window ?ch= bucket keeps a zero-count pill — class-filtered per
-  // mode with the selected exemption, presets-first/busiest order, labels.
+  // Pill model (auto modes): window buckets plus the selected id, so an
+  // out-of-window ?ch= bucket keeps a zero-count pill.
   const channelModel = useMemo(
     () =>
       buildChannelModel({
@@ -388,10 +377,8 @@ export const Nodes = () => {
     [channelMeta, wireNames],
   );
 
-  // Pills. Manual mode: the curated views with all-time counts — legacy
-  // behavior, untouched. Auto modes: the model's entries verbatim; the
-  // selected bucket always keeps its pill (an explicit ?ch= link must render
-  // what it names), at zero count when the range window dropped it entirely.
+  // Pills: manual = curated views with all-time counts (legacy); auto = model
+  // entries, with the selected bucket always kept (zero count if out of window).
   const channelPills = useMemo(() => {
     if (channelMode === "manual") {
       return channelViews.map((v) => ({
@@ -417,11 +404,8 @@ export const Nodes = () => {
   const allPillCount =
     channelMode === "manual" ? allItems.length : rangeItems.length;
 
-  // Land returning visitors on the channel pill they last had selected.
-  // `urlHasCh` demands the raw ?ch actually RESOLVE to a selection: a link to
-  // an unknown/renamed bucket falls back to no-filter, and adopting that
-  // fallback would overwrite the remembered selection with "" (Chat's
-  // rawChResolves guard).
+  // `urlHasCh` requires the raw ?ch to actually resolve — adopting an
+  // unresolved link's no-filter fallback would wipe the remembered selection.
   const rawChParam = (searchParams.get("ch") ?? "").trim();
   const rawChResolves = !!rawChParam && selectedChannelId != null;
   // Remember the time range the same way (default "all"; URL wins).
@@ -438,11 +422,8 @@ export const Nodes = () => {
     value: selectedChannelId ?? "",
     urlHasCh: rawChResolves,
     suppressRestore: [...searchParams.keys()].some((k) => k !== "ch"),
-    // Auto modes: ready once nodes + channel names settle (an errored names
-    // fetch still settles — labels degrade, validity doesn't need them).
-    // Config must be present in BOTH modes: mode defaults to "presets"
-    // pre-config, and a restore decided under the wrong mode can removeStored
-    // a perfectly valid key.
+    // Gate on config: mode defaults to "presets" pre-config, and a restore
+    // under the wrong mode can removeStored a valid key. Errored fetch = settled.
     ready:
       !!config &&
       (channelMode === "manual"
@@ -1064,9 +1045,8 @@ export const Nodes = () => {
               title="Click to reset status to All"
               onClick={() => setParam("st", "all", "push")} // deletes
             />
-            {/* Chip shown whenever a channel filter is ACTIVE, even when the
-                pill row is hidden (single-bucket window) — an invisible active
-                filter over an emptied list is undebuggable. */}
+            {/* Shown whenever a channel filter is active, even with the pill
+                row hidden — an invisible active filter is undebuggable. */}
             {(showChannelPills || selectedChannelId != null) && (
               <StatusChip
                 label={selectedChannelId ? `Channel: ${channelPills.find((v) => v.channelId === selectedChannelId)?.label ?? selectedChannelId}` : "Channel: all"}

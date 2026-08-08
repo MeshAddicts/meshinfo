@@ -61,8 +61,7 @@ type PresetSlice = {
   custom: boolean;
 };
 
-/** session_by_modem_preset keys are TOPIC channel-name segments: canonicalize,
- *  sort busiest-first, keep the top N and fold the rest into "Other". */
+/** Keys are topic channel-name segments: canonicalize, sort busiest-first, fold past top N into "Other". */
 function presetSlicesFrom(presets: Record<string, number> | undefined): PresetSlice[] {
   const counts = new Map<string, number>();
   for (const [key, raw] of Object.entries(presets ?? {})) {

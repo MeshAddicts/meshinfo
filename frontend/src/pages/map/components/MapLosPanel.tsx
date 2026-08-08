@@ -17,9 +17,7 @@ import type { DemSource } from "../terrain/terrainRgb";
 import { ElevationProfile } from "./ElevationProfile";
 
 /** Fallback modem preset when the selected index is stale/out of range.
- *  The find() cannot miss (the array derives from the canonical firmware
- *  table), but the last resort must not be a positional index — the array's
- *  order changed once already and silently turned [1] into a different preset. */
+ *  Don't fall back by positional index — the array's order has shifted before. */
 const DEFAULT_LOS_PRESET = MESHTASTIC_PRESETS.find((p) => p.id === "LongFast") ?? MESHTASTIC_PRESETS[0];
 
 /** Common LoRa region frequencies (distinct MHz values; several regions share one). */

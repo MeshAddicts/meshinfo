@@ -63,8 +63,7 @@ class API:
         except (TypeError, ValueError):
             return raw
 
-    # /v1/chat + /v1/channels share this window vocabulary. Membership check,
-    # not .get(): "all" maps to None on purpose; anything unknown means 24h.
+    # Membership check, not .get(): "all" maps to None on purpose; unknown -> 24h.
     _CHAT_RANGE_MAP = {"1h": 3600, "24h": 86400, "7d": 604800, "all": None}
 
     @classmethod
@@ -259,15 +258,12 @@ class API:
 
         @app.get("/v1/chat")
         async def chat(request: Request) -> JSONResponse:
-            # Omitted = every channel (counts always, messages too). Defaulting
-            # to "0" predates channel ids being (name, PSK) hashes — bucket "0"
-            # is a gateway slot index and is empty on most meshes.
+            # Omitted = every channel.
             channel = request.query_params.get("channel") or None  # e.g. "8", "31"
             # "1h","24h","7d","all" — unknown values mean 24h.
             range_seconds = self._chat_range_seconds(request.query_params.get("range"))
 
-            # Per channel, so asking for every channel multiplies the payload.
-            # Default is high on purpose: range=all should mean all.
+            # Limit is per channel; high default is deliberate (range=all means all).
             try:
                 limit = max(1, min(int(request.query_params.get("limit", 10000)), 50000))
             except (TypeError, ValueError):
@@ -284,8 +280,7 @@ class API:
         @app.get("/v1/channels")
         async def channels_endpoint(request: Request) -> JSONResponse:
             """Channel buckets with display facts (name, counts), no messages.
-            For pages that label or filter by channel without wanting chat
-            payloads. `range` scopes recentMessages exactly like /v1/chat."""
+            `range` scopes recentMessages exactly like /v1/chat."""
             range_seconds = self._chat_range_seconds(request.query_params.get("range"))
             channels_data = await self.data.pg_storage.query_channels(
                 range_seconds=range_seconds
