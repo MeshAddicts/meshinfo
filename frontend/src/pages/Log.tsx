@@ -81,7 +81,7 @@ const fromLocalInput = (val: string): number | undefined => {
 const escapeHtml = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-function JsonBlock({ code }: { code: string }) {
+function JsonBlock({ code, className }: { code: string; className?: string }) {
   // Render escaped plain text on mount; highlight later off the render path
   // so row mounts don't jank flick-scroll.
   const [html, setHtml] = useState(() => escapeHtml(code));
@@ -113,7 +113,12 @@ function JsonBlock({ code }: { code: string }) {
   }, [code]);
 
   return (
-    <pre className="mt-3 rounded-lg border border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-gray-950/40 p-3 text-xs font-mono text-gray-800 dark:text-gray-200 overflow-x-auto">
+    <pre
+      className={
+        className ??
+        "mt-3 rounded-lg border border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-gray-950/40 p-3 text-xs font-mono text-gray-800 dark:text-gray-200 overflow-x-auto"
+      }
+    >
       <code
         className="hljs"
         style={{ background: "transparent" }}
@@ -985,7 +990,7 @@ export const Log = () => {
         <div className="mx-auto max-w-400 px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
           {/* Deeplinked packet */}
           {hasPacketLink ? (
-            <div className="mb-3 rounded-xl border border-indigo-300/70 dark:border-indigo-800/70 bg-indigo-50/50 dark:bg-indigo-950/20 overflow-hidden">
+            <div className="mb-3 shrink-0 rounded-xl border border-indigo-300/70 dark:border-indigo-800/70 bg-indigo-50/50 dark:bg-indigo-950/20 overflow-hidden">
               <div className="px-4 py-2 flex items-center justify-between border-b border-indigo-200/70 dark:border-indigo-900/60">
                 <div className="text-sm font-semibold text-indigo-900 dark:text-indigo-200">
                   Linked packet #{packetId}
@@ -1010,19 +1015,20 @@ export const Log = () => {
                   clear
                 </button>
               </div>
-              <div className="p-3">
-                {linkedFetching && !linkedPacket ? (
-                  <div className="text-xs text-gray-600 dark:text-gray-400">
-                    Loading packet…
-                  </div>
-                ) : linkedPacket ? (
-                  <JsonBlock code={JSON.stringify(linkedPacket, null, 2)} />
-                ) : (
-                  <div className="text-xs text-gray-600 dark:text-gray-400">
-                    Packet #{packetId} not found.
-                  </div>
-                )}
-              </div>
+              {linkedFetching && !linkedPacket ? (
+                <div className="p-3 text-xs text-gray-600 dark:text-gray-400">
+                  Loading packet…
+                </div>
+              ) : linkedPacket ? (
+                <JsonBlock
+                  code={JSON.stringify(linkedPacket, null, 2)}
+                  className="m-0 p-3 text-xs font-mono text-gray-800 dark:text-gray-200 bg-white/70 dark:bg-gray-950/40 max-h-[45vh] overflow-auto"
+                />
+              ) : (
+                <div className="p-3 text-xs text-gray-600 dark:text-gray-400">
+                  Packet #{packetId} not found.
+                </div>
+              )}
             </div>
           ) : null}
 
