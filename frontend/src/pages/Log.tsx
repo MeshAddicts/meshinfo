@@ -255,6 +255,9 @@ export const Log = () => {
   const urlQ = searchParams.get("q") ?? "";
   const urlCh = normalizeKey(searchParams.get("ch") ?? "");
   const urlPacket = searchParams.get("packet") ?? "";
+  // Chat's "View in logs": mesh packet id + sender (chat rows lack the row id).
+  const urlPkt = searchParams.get("pkt") ?? "";
+  const urlPFrom = searchParams.get("pfrom") ?? "";
 
   const parseEpochParam = (key: string): number | undefined => {
     const raw = searchParams.get(key);
@@ -616,10 +619,11 @@ export const Log = () => {
   );
 
   // ---- deeplinked packet ---------------------------------------------------
-  const packetId = Number(urlPacket);
-  const hasPacketLink = !!urlPacket && Number.isFinite(packetId);
+  const byPacket = !urlPacket && !!urlPkt && !!urlPFrom;
+  const packetId = Number(urlPacket || urlPkt);
+  const hasPacketLink = Number.isFinite(packetId) && (!!urlPacket || byPacket);
   const { data: linkedData, isFetching: linkedFetching } = useGetPacketQuery(
-    packetId,
+    byPacket ? { pkt: packetId, from: urlPFrom } : packetId,
     { skip: !hasPacketLink },
   );
   const linkedPacket = linkedData?.packet;
@@ -997,7 +1001,11 @@ export const Log = () => {
                 <button
                   type="button"
                   className="text-xs underline hover:no-underline text-indigo-700 dark:text-indigo-300"
-                  onClick={() => setParam("packet", undefined)}
+                  onClick={() => {
+                    setParam("packet", undefined);
+                    setParam("pkt", undefined);
+                    setParam("pfrom", undefined);
+                  }}
                 >
                   clear
                 </button>

@@ -193,8 +193,16 @@ export const apiSlice = createApi({
       providesTags: [{ type: "MqttMessages", id: "PACKETS" }],
     }),
     // Single packet by mqtt_row_id — backs per-packet deeplinks.
-    getPacket: builder.query<{ packet: IPacketMessage }, number>({
-      query: (id) => `packets/${id}`,
+    getPacket: builder.query<
+      { packet: IPacketMessage | null },
+      number | { pkt: number; from: string }
+    >({
+      // Number = archive row id; object = (sender, mesh packet id), the address
+      // chat rows know.
+      query: (arg) =>
+        typeof arg === "number"
+          ? `packets/${arg}`
+          : `packets/${arg.pkt}?by=packet&from=${encodeURIComponent(arg.from)}`,
     }),
   }),
 });

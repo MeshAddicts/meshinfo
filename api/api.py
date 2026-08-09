@@ -380,7 +380,20 @@ class API:
             except (TypeError, ValueError):
                 return JSONResponse({"error": "packet id must be an integer"}, status_code=400)
             include_copies = request.query_params.get("copies", "").lower() in ("1", "true", "yes")
-            packet = await self.data.pg_storage.query_mqtt_message_by_id(row_id, include_copies=include_copies)
+            # ?by=packet&from=<node>: address by (sender, mesh packet id) —
+            # what chat rows know — instead of the archive row id.
+            if request.query_params.get("by") == "packet":
+                from_id = utils.normalize_node_id(request.query_params.get("from") or "")
+                if not from_id:
+                    return JSONResponse(
+                        {"error": "by=packet requires a valid from=<node id>"},
+                        status_code=400,
+                    )
+                packet = await self.data.pg_storage.query_mqtt_message_by_packet(
+                    from_id, row_id, include_copies=include_copies
+                )
+            else:
+                packet = await self.data.pg_storage.query_mqtt_message_by_id(row_id, include_copies=include_copies)
             if packet is None:
                 return JSONResponse({"error": "packet not found"}, status_code=404)
             return JSONResponse(jsonable_encoder({"packet": packet}))

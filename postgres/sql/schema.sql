@@ -221,6 +221,8 @@ BEGIN
     END IF;
 END $mqtt$;
 
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX IF NOT EXISTS idx_mqtt_messages_topic_trgm ON mqtt_messages USING gin (topic gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_mqtt_messages_created_at ON mqtt_messages(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_mqtt_messages_timestamp ON mqtt_messages(timestamp DESC);
 

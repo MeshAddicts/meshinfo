@@ -517,6 +517,16 @@ class PostgresStorage:
                         ON mqtt_messages(id)
                         WHERE from_node_id IS NULL;
                 """, timeout=300)
+                # Trigram index: Logs' channel pills filter by topic substring;
+                # without it a rare name scans the whole archive into the 10s
+                # pool timeout. ~40s build per 3M rows.
+                await conn.execute(
+                    "CREATE EXTENSION IF NOT EXISTS pg_trgm", timeout=60
+                )
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_mqtt_messages_topic_trgm
+                        ON mqtt_messages USING gin (topic gin_trgm_ops);
+                """, timeout=900)
                 # Dedup fallback lookup (#526). Partial: pre-dedup history has
                 # packet_id NULL, so the initial build stays a read-only scan
                 # and the index only ever holds post-dedup (and compacted) rows.
@@ -1825,7 +1835,7 @@ class PostgresStorage:
                 )
             return self._build_mqtt_message_page(rows, limit)
         except Exception as e:
-            logger.error("Failed to query mqtt_messages: %s", e)
+            logger.error("Failed to query mqtt_messages: %r", e)
             return {"messages": [], "next_cursor": None}
 
     async def query_node_mqtt_messages(
@@ -1921,6 +1931,28 @@ class PostgresStorage:
             last = page[-1]
             next_cursor = _encode_cursor(last["created_at"], last["id"])
         return {"messages": messages, "next_cursor": next_cursor}
+
+    async def query_mqtt_message_by_packet(
+        self, from_id: str, mesh_packet_id: int, include_copies: bool = False
+    ) -> Optional[dict]:
+        """Canonical archived row for a mesh packet, addressed the way chat
+        knows it: (sender, 32-bit packet id). Newest row wins on reuse."""
+        if not self._ready("query_mqtt_message_by_packet"):
+            return None
+        try:
+            async with self.pool.acquire() as conn:
+                row_id = await conn.fetchval(
+                    """SELECT id FROM mqtt_messages
+                       WHERE from_node_id = $1 AND packet_id = $2
+                       ORDER BY created_at DESC LIMIT 1""",
+                    from_id, mesh_packet_id,
+                )
+        except Exception as e:
+            logger.error("Failed to query mqtt_messages by packet: %r", e)
+            return None
+        if row_id is None:
+            return None
+        return await self.query_mqtt_message_by_id(row_id, include_copies=include_copies)
 
     async def query_mqtt_message_by_id(self, row_id: int, include_copies: bool = False) -> Optional[dict]:
         """Fetch one mqtt_messages row by its DB id — backs per-packet deeplinks.
