@@ -17,6 +17,9 @@ Dry-run first and take the backup it prints the command for. The script refuses 
 run until the app's automatic node-ID backfill has finished (it tells you if it
 hasn't). Safe to interrupt, re-run, and run while ingest is live.
 
+New rows store their wire channel name (`chat_messages.channel_name`); the
+backfill also fills it for historical rows while their archive copies exist.
+
 ## `broker.channels.mode`
 
 `display` and `[[broker.channels.views]]` are honored only when

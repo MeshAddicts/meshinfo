@@ -113,6 +113,56 @@ JOIN mqtt_messages m
 ORDER BY x.id, m.created_at
 """
 
+# Per-row name provenance: fill channel_name from the archive while copies
+# still exist, so any future re-bucketing is a plain UPDATE on the row itself.
+NAME_PASS1_SQL = """
+SELECT DISTINCT ON (c.id)
+       c.id,
+       substring(m.topic from '/2/e/([^/]+)/') AS name
+FROM chat_messages c
+JOIN mqtt_messages m
+  ON m.from_node_id = c.from_node_id
+ AND m.packet_id = c.id
+ AND m.created_at BETWEEN c.created_at - interval '1 day'
+                      AND c.created_at + interval '1 day'
+WHERE c.channel_name IS NULL
+ORDER BY c.id, m.created_at
+"""
+
+NAME_MISSED_TABLE_SQL = """
+CREATE TEMP TABLE _bf_name_missed AS
+SELECT id, from_node_id, created_at
+FROM chat_messages WITH NO DATA
+"""
+
+NAME_MISSED_FILL_SQL = """
+INSERT INTO _bf_name_missed
+SELECT c.id, c.from_node_id, c.created_at
+FROM chat_messages c
+WHERE c.channel_name IS NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM mqtt_messages m
+      WHERE m.from_node_id = c.from_node_id
+        AND m.packet_id = c.id
+        AND m.created_at BETWEEN c.created_at - interval '1 day'
+                             AND c.created_at + interval '1 day'
+  )
+"""
+
+NAME_PASS2_SQL = """
+SELECT DISTINCT ON (x.id)
+       x.id,
+       substring(m.topic from '/2/e/([^/]+)/') AS name
+FROM _bf_name_missed x
+JOIN mqtt_messages m
+  ON m.packet_id IS NULL
+ AND m.from_node_id = x.from_node_id
+ AND substring(m.payload from '"id": ([0-9]+)') = x.id::text
+ AND m.created_at BETWEEN x.created_at - interval '1 day'
+                      AND x.created_at + interval '1 day'
+ORDER BY x.id, m.created_at
+"""
+
 # last_channel 0-7 = stale slot indices. A payload channel >7 is a hash by
 # definition; the node's latest such packet wins (handles genuine channel moves).
 NODE_EVIDENCE_SQL = """
@@ -164,17 +214,18 @@ async def _preflight(conn) -> str | None:
         r["column_name"]
         for r in await conn.fetch(
             """
-            SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'mqtt_messages'
-              AND column_name IN ('packet_id', 'from_node_id')
+            SELECT table_name, column_name FROM information_schema.columns
+            WHERE (table_name = 'mqtt_messages'
+                   AND column_name IN ('packet_id', 'from_node_id'))
+               OR (table_name = 'chat_messages' AND column_name = 'channel_name')
             """
         )
     }
-    missing = {"packet_id", "from_node_id"} - cols
+    missing = {"packet_id", "from_node_id", "channel_name"} - cols
     if missing:
         return (
-            f"mqtt_messages is missing column(s) {sorted(missing)} — upgrade "
-            "MeshInfo and start the app once so its schema migrations run."
+            f"missing column(s) {sorted(missing)} — upgrade MeshInfo and start "
+            "the app once so its schema migrations run."
         )
     # Unattributed rows would force every probe to scan them all (and reopen a
     # packet-id-collision path). The partial backfill index makes this check free.
@@ -306,7 +357,48 @@ async def main() -> int:
             print(f"  {evidence_less} node(s) in index buckets have no hash-carrying "
                   f"packet at all — left alone (they heal if they ever transmit one).")
 
-        if not total and not n_nodes:
+        # ── channel_name provenance pass ──
+        total_unnamed = await conn.fetchval(
+            "SELECT COUNT(*) FROM chat_messages WHERE channel_name IS NULL"
+        )
+        names_by_value: dict = defaultdict(list)
+        if total_unnamed:
+            print(f"\nScanning {total_unnamed} row(s) without stored channel "
+                  f"names against the archive...")
+            for r in await conn.fetch(NAME_PASS1_SQL):
+                if r["name"]:
+                    names_by_value[r["name"][:100]].append(r["id"])
+            await conn.execute(NAME_MISSED_TABLE_SQL)
+            await conn.execute(NAME_MISSED_FILL_SQL)
+            await conn.execute("ANALYZE _bf_name_missed")
+            for r in await conn.fetch(NAME_PASS2_SQL):
+                if r["name"]:
+                    names_by_value[r["name"][:100]].append(r["id"])
+        n_names = sum(len(v) for v in names_by_value.values())
+        if total_unnamed:
+            print(f"{'Would store' if not args.apply else 'Storing'} channel-name "
+                  f"provenance on {n_names} row(s); "
+                  f"{total_unnamed - n_names} have no name-bearing archived copy.")
+
+        healable = await conn.fetchval(
+            """
+            SELECT COUNT(*) FROM chat_channels cc
+            JOIN (
+                SELECT channel_id, MIN(channel_name) AS name
+                FROM chat_messages
+                WHERE channel_name IS NOT NULL AND channel_name <> 'PKI'
+                GROUP BY channel_id
+                HAVING COUNT(DISTINCT channel_name) = 1
+            ) x ON cc.id = x.channel_id
+            WHERE cc.id ~ '^[0-9]+$' AND cc.id::bigint > 7
+              AND (cc.name = 'General' OR cc.name ~ '^Channel [0-9]+$')
+            """
+        )
+        if healable:
+            print(f"{'Would heal' if not args.apply else 'Healing'} {healable} "
+                  f"placeholder bucket label(s) from row provenance.")
+
+        if not total and not n_nodes and not n_names and not healable:
             print("\nNothing to do.")
             return 0
         if not args.apply:
@@ -356,7 +448,42 @@ async def main() -> int:
                     )
                 moved_nodes += _updated_count(tag)
 
-        print(f"\nDone. Re-filed {moved} chat row(s) and {moved_nodes} node(s).")
+        named = 0
+        for name, ids in names_by_value.items():
+            for i in range(0, len(ids), batch):
+                chunk = ids[i:i + batch]
+                async with conn.transaction():
+                    tag = await conn.execute(
+                        """
+                        UPDATE chat_messages SET channel_name = $1
+                        WHERE id = ANY($2::bigint[]) AND channel_name IS NULL
+                        """,
+                        name, chunk,
+                    )
+                named += _updated_count(tag)
+                print(f"  ... named {named}/{n_names}", end="\r", flush=True)
+
+        # Placeholder bucket labels heal from unanimous row provenance (same
+        # placeholder-only rule as ingest).
+        tag = await conn.execute(
+            """
+            UPDATE chat_channels cc SET name = x.name
+            FROM (
+                SELECT channel_id, MIN(channel_name) AS name
+                FROM chat_messages
+                WHERE channel_name IS NOT NULL AND channel_name <> 'PKI'
+                GROUP BY channel_id
+                HAVING COUNT(DISTINCT channel_name) = 1
+            ) x
+            WHERE cc.id = x.channel_id
+              AND cc.id ~ '^[0-9]+$' AND cc.id::bigint > 7
+              AND (cc.name = 'General' OR cc.name ~ '^Channel [0-9]+$')
+            """
+        )
+        healed = _updated_count(tag)
+
+        print(f"\nDone. Re-filed {moved} chat row(s), {moved_nodes} node(s); "
+              f"stored names on {named} row(s); healed {healed} bucket label(s).")
         print("Empty source buckets are left in chat_channels; the UI hides "
               "channels with no data.")
         return 0

@@ -138,6 +138,75 @@ async def _heal_scenario():
         await st.close()
 
 
+def test_channel_name_provenance_stored():
+    """Rows store their wire name (incl. PKI); NULL when absent."""
+    asyncio.run(_provenance_scenario())
+
+
+async def _provenance_scenario():
+    st = _make_storage()
+    assert await st.connect()
+    try:
+        async with st.pool.acquire() as conn:
+            (bkt,) = await _pick_free_buckets(conn, 1)
+            msg_ids = [BASE_MSG_ID + 100 + i for i in range(3)]
+            before = await _synthetic_counts(conn, msg_ids, [bkt])
+            assert before["messages"] == 0 and before["buckets"] == 0
+
+        try:
+            await st.write_chat_message(NODE_ID, _msg(msg_ids[0], bkt, "SynthProv"))
+            await st.write_chat_message(NODE_ID, _msg(msg_ids[1], bkt))
+            await st.write_chat_message(NODE_ID, _msg(msg_ids[2], "0", "PKI"))
+            async with st.pool.acquire() as conn:
+                got = {
+                    r["id"]: r["channel_name"]
+                    for r in await conn.fetch(
+                        "SELECT id, channel_name FROM chat_messages WHERE id = ANY($1)",
+                        msg_ids,
+                    )
+                }
+            assert got[msg_ids[0]] == "SynthProv"
+            assert got[msg_ids[1]] is None
+            assert got[msg_ids[2]] == "PKI"
+        finally:
+            async with st.pool.acquire() as conn:
+                await _cleanup(conn, msg_ids, [bkt])
+                after = await _synthetic_counts(conn, msg_ids, [bkt])
+                assert after["messages"] == 0 and after["buckets"] == 0
+    finally:
+        await st.close()
+
+
+def test_seed_learns_from_row_names():
+    """get_wire_channel_names also learns from per-row channel_name provenance."""
+    asyncio.run(_row_seed_scenario())
+
+
+async def _row_seed_scenario():
+    st = _make_storage()
+    assert await st.connect()
+    try:
+        async with st.pool.acquire() as conn:
+            (bkt,) = await _pick_free_buckets(conn, 1)
+            msg_id = BASE_MSG_ID + 200
+
+        try:
+            # Bucket name stays a placeholder; only the ROW carries the name.
+            await st.write_chat_message(NODE_ID, _msg(msg_id, bkt, "SynthRowSeed"))
+            async with st.pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE chat_channels SET name = $2 WHERE id = $1",
+                    bkt, f"Channel {bkt}",
+                )
+            seeds = await st.get_wire_channel_names()
+            assert seeds.get("SynthRowSeed") == int(bkt)
+        finally:
+            async with st.pool.acquire() as conn:
+                await _cleanup(conn, [msg_id], [bkt])
+    finally:
+        await st.close()
+
+
 def test_get_wire_channel_names():
     """Seed returns only >7 buckets with unambiguous non-placeholder names."""
     asyncio.run(_wire_names_scenario())

@@ -499,6 +499,7 @@ class PostgresStorage:
             async with self.pool.acquire() as conn:
                 await conn.execute("""
                     ALTER TABLE nodes ADD COLUMN IF NOT EXISTS gateway VARCHAR(8);
+                    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS channel_name VARCHAR(100);
                     ALTER TABLE mqtt_messages ADD COLUMN IF NOT EXISTS from_node_id VARCHAR(8);
                     ALTER TABLE mqtt_messages ADD COLUMN IF NOT EXISTS to_node_id VARCHAR(8);
                 """)
@@ -1285,9 +1286,9 @@ class PostgresStorage:
                         """
                         INSERT INTO chat_messages (
                             id, from_node_id, to_node_id, sender_node_id, channel_id,
-                            text, timestamp, rx_time, hops_away, rssi, snr
+                            channel_name, text, timestamp, rx_time, hops_away, rssi, snr
                         )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                         ON CONFLICT (id) DO NOTHING
                         """,
                         chat_msg.get("id"),
@@ -1295,6 +1296,7 @@ class PostgresStorage:
                         to_id,
                         sender_id,
                         channel_id,
+                        wire_name or None,
                         (chat_msg.get("text") or "").replace("\x00", ""),
                         chat_msg.get("timestamp"),
                         rx_time,
@@ -1340,18 +1342,32 @@ class PostgresStorage:
             return {}
         try:
             async with self.pool.acquire() as conn:
+                # Second source: per-row wire names (90-day bound keeps the
+                # startup scan cheap; reconnects re-run this).
                 rows = await conn.fetch(
                     """
-                    SELECT name, MAX(id::int) AS hash
-                    FROM chat_channels
-                    WHERE id ~ '^[0-9]+$'
-                      AND id::int > 7
-                      AND id::int <= 255
-                      AND name IS NOT NULL
-                      AND name <> 'PKI'
-                      AND name !~ '^(General|Channel [0-9]+)$'
+                    WITH pairs AS (
+                        SELECT name, id::bigint AS hash
+                        FROM chat_channels
+                        WHERE id ~ '^[0-9]+$'
+                          AND id::bigint BETWEEN 8 AND 255
+                          AND name IS NOT NULL
+                          AND name <> 'PKI'
+                          AND name !~ '^(General|Channel [0-9]+)$'
+                        UNION
+                        SELECT channel_name, channel_id::bigint
+                        FROM chat_messages
+                        WHERE created_at >= NOW() - INTERVAL '90 days'
+                          AND channel_id ~ '^[0-9]+$'
+                          AND channel_id::bigint BETWEEN 8 AND 255
+                          AND channel_name IS NOT NULL
+                          AND channel_name <> 'PKI'
+                          AND channel_name !~ '^(General|Channel [0-9]+)$'
+                    )
+                    SELECT name, MAX(hash) AS hash
+                    FROM pairs
                     GROUP BY name
-                    HAVING COUNT(DISTINCT id) = 1
+                    HAVING COUNT(DISTINCT hash) = 1
                     """
                 )
                 return {r["name"]: r["hash"] for r in rows}

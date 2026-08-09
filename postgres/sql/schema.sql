@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     to_node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE SET NULL,
     sender_node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE SET NULL,
     channel_id VARCHAR(10) REFERENCES chat_channels(id),
+    channel_name VARCHAR(100),
     text TEXT,
     timestamp BIGINT,
     rx_time TIMESTAMP WITH TIME ZONE,
