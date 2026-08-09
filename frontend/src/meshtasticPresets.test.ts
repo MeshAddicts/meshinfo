@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  canonicalPresetName,
   FIRMWARE_MODEM_PRESETS,
   FIRMWARE_PRESET_NAMES,
-  canonicalPresetName,
   isFirmwarePreset,
 } from "./meshtasticPresets";
 

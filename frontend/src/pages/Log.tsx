@@ -13,8 +13,8 @@ import React, {
 import { useSearchParams } from "react-router";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
-import { LivePill } from "../components/LivePill";
 import { ChannelPillGroups } from "../components/ChannelPillGroups";
+import { LivePill } from "../components/LivePill";
 import { MobileSheet } from "../components/MobileSheet";
 import { useLiveEvent } from "../hooks/useLiveEvent";
 import {

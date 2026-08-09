@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo } from "react";
-import { normalizeKey } from "../../utils/channelDisplay";
 import { useSearchParams } from "react-router";
+
+import { normalizeKey } from "../../utils/channelDisplay";
 
 export type FocusMode = "endpoints" | "any";
 export type MsgType = "all" | "bc" | "dm";

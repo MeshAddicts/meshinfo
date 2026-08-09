@@ -3,11 +3,8 @@ and resolver seed query. Synthetic rows only; cleanup is verified in-test."""
 
 import asyncio
 import os
-import sys
 import time
 from urllib.parse import urlsplit
-
-sys.path.insert(0, "/app")
 
 import pytest
 
@@ -203,6 +200,53 @@ async def _row_seed_scenario():
         finally:
             async with st.pool.acquire() as conn:
                 await _cleanup(conn, [msg_id], [bkt])
+    finally:
+        await st.close()
+
+
+def test_packet_lookup_by_sender_and_packet_id():
+    """(sender, mesh packet id) resolves to the newest archive row and agrees
+    with the row-id lookup."""
+    asyncio.run(_packet_lookup_scenario())
+
+
+async def _packet_lookup_scenario():
+    st = _make_storage()
+    assert await st.connect()
+    row_ids = [BASE_MSG_ID + 300, BASE_MSG_ID + 301]
+    mesh_packet_id = 4_060_000_123
+    try:
+        async with st.pool.acquire() as conn:
+            assert await conn.fetchval(
+                "SELECT count(*) FROM mqtt_messages WHERE id = ANY($1)", row_ids
+            ) == 0
+
+        try:
+            async with st.pool.acquire() as conn:
+                # Same (sender, packet id) twice — id reuse; newest row must win.
+                for age_s, rid in zip((1, 0), row_ids):
+                    await conn.execute(
+                        """INSERT INTO mqtt_messages
+                               (id, topic, payload, from_node_id, packet_id, created_at)
+                           VALUES ($1, $2, $3, $4, $5, now() - interval '1 second' * $6)""",
+                        rid, "msh/US/synthetic/test",
+                        f'{{"id": {mesh_packet_id}, "from": {int(NODE_ID, 16)}}}',
+                        NODE_ID, mesh_packet_id, age_s,
+                    )
+
+            by_packet = await st.query_mqtt_message_by_packet(NODE_ID, mesh_packet_id)
+            assert by_packet is not None
+            assert by_packet["mqtt_row_id"] == row_ids[-1]
+            by_id = await st.query_mqtt_message_by_id(row_ids[-1])
+            assert by_id == by_packet
+        finally:
+            async with st.pool.acquire() as conn:
+                await conn.execute(
+                    "DELETE FROM mqtt_messages WHERE id = ANY($1)", row_ids
+                )
+                assert await conn.fetchval(
+                    "SELECT count(*) FROM mqtt_messages WHERE id = ANY($1)", row_ids
+                ) == 0
     finally:
         await st.close()
 

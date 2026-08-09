@@ -517,16 +517,6 @@ class PostgresStorage:
                         ON mqtt_messages(id)
                         WHERE from_node_id IS NULL;
                 """, timeout=300)
-                # Trigram index: Logs' channel pills filter by topic substring;
-                # without it a rare name scans the whole archive into the 10s
-                # pool timeout. ~40s build per 3M rows.
-                await conn.execute(
-                    "CREATE EXTENSION IF NOT EXISTS pg_trgm", timeout=60
-                )
-                await conn.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_mqtt_messages_topic_trgm
-                        ON mqtt_messages USING gin (topic gin_trgm_ops);
-                """, timeout=900)
                 # Dedup fallback lookup (#526). Partial: pre-dedup history has
                 # packet_id NULL, so the initial build stays a read-only scan
                 # and the index only ever holds post-dedup (and compacted) rows.
@@ -553,6 +543,22 @@ class PostgresStorage:
             logger.error(f"Failed to run migrations: {e}")
             if self.raise_on_write_error:
                 raise
+
+        # Trigram topic index — performance only (Logs' pills filter by topic
+        # substring), so fail-soft: it must never starve the migrations above.
+        try:
+            async with self.pool.acquire() as conn:
+                # pg_trgm is trusted (PG13+): the DB owner can create it unprivileged.
+                await conn.execute(
+                    "CREATE EXTENSION IF NOT EXISTS pg_trgm", timeout=60
+                )
+                # First build scans the whole table: ~40s per 3M rows.
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_mqtt_messages_topic_trgm
+                        ON mqtt_messages USING gin (topic gin_trgm_ops);
+                """, timeout=900)
+        except Exception as e:
+            logger.warning(f"pg_trgm topic index skipped (topic filters will be slower): {e}")
 
         # Mqtt node-ID trigger + backfill — run independently so a failure here
         # does not prevent the core schema from being applied.

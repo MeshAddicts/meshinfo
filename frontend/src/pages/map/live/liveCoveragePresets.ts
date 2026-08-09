@@ -3,8 +3,8 @@
  *  presets: mapping comes from `[broker.channels.meta.<hash>] preset` config. */
 
 import {
-  FIRMWARE_MODEM_PRESETS,
   canonicalPresetName,
+  FIRMWARE_MODEM_PRESETS,
 } from "../../../meshtasticPresets";
 
 /** Typical real-world SX1262 sensitivity (dBm) per firmware modem preset. */

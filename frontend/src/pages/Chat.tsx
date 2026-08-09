@@ -9,10 +9,10 @@ import {
 import { Link, useSearchParams } from "react-router";
 import { VirtuosoHandle } from "react-virtuoso";
 
+import { ChannelPillGroups } from "../components/ChannelPillGroups";
 import { ExportMenu } from "../components/ExportMenu";
 import { HeardBy } from "../components/HeardBy";
 import { LivePill } from "../components/LivePill";
-import { ChannelPillGroups } from "../components/ChannelPillGroups";
 import { MobileSheet } from "../components/MobileSheet";
 import { useAppSelector } from "../hooks/redux";
 import {
@@ -1692,7 +1692,7 @@ export const Chat = () => {
             <StatusChip
               label={`Range: ${urlRange}`}
               active={urlRange !== "all"}
-              title="Click to reset range to 24h"
+              title="Click to reset range to all"
               onClick={() => setParam("r", undefined, "push")}
             />
 

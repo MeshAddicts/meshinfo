@@ -221,8 +221,8 @@ BEGIN
     END IF;
 END $mqtt$;
 
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
-CREATE INDEX IF NOT EXISTS idx_mqtt_messages_topic_trgm ON mqtt_messages USING gin (topic gin_trgm_ops);
+-- pg_trgm + trgm topic index live in ensure_schema's fail-soft migration — this
+-- file runs as one implicit transaction and must not abort on a restricted PG.
 CREATE INDEX IF NOT EXISTS idx_mqtt_messages_created_at ON mqtt_messages(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_mqtt_messages_timestamp ON mqtt_messages(timestamp DESC);
 

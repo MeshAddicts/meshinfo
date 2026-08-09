@@ -20,6 +20,12 @@ hasn't). Safe to interrupt, re-run, and run while ingest is live.
 New rows store their wire channel name (`chat_messages.channel_name`); the
 backfill also fills it for historical rows while their archive copies exist.
 
+First start after this upgrade also builds a `pg_trgm` GIN index over
+`mqtt_messages.topic` (backs the Log page's channel filters) — expect roughly
+40s per 3M archived rows. `pg_trgm` is a trusted extension (PostgreSQL 13+), so
+the database owner can create it without superuser; if creation still fails,
+MeshInfo logs a warning and runs without it — topic filters just get slower.
+
 ## `broker.channels.mode`
 
 `display` and `[[broker.channels.views]]` are honored only when

@@ -5,9 +5,9 @@
  */
 
 import {
+  channelLabel,
   ChannelMetaMap,
   ChannelMode,
-  channelLabel,
   channelShort,
   channelVisibleInMode,
   classifyChannel,

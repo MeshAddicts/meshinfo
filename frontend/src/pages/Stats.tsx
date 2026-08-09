@@ -3,8 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HeardBy } from "../components/HeardBy";
 import { LivePill } from "../components/LivePill";
 import {
-  FIRMWARE_MODEM_PRESETS,
   canonicalPresetName,
+  FIRMWARE_MODEM_PRESETS,
   isFirmwarePreset,
 } from "../meshtasticPresets";
 import { useGetStatsQuery } from "../slices/apiSlice";
