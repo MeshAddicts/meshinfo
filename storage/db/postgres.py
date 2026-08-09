@@ -60,6 +60,11 @@ def _json_default(obj: Any) -> Any:
     return str(obj)
 
 
+def bucket_can_have_name(channel_id: str) -> bool:
+    """Index buckets 0-7 never take a wire name (glitched relays)."""
+    return not (channel_id.isdigit() and int(channel_id) <= 7)
+
+
 def _finite_or_none(value: Any) -> Any:
     """Map non-finite telemetry metrics to None for typed numeric columns.
 
@@ -1249,11 +1254,8 @@ class PostgresStorage:
                     )
 
                     # 8-bit hashes collide: only fill placeholders, never overwrite a
-                    # wire name. Index buckets (0-7) never take one (glitched relays).
-                    bucket_can_have_name = not (
-                        channel_id.isdigit() and int(channel_id) <= 7
-                    )
-                    if wire_name and wire_name != "PKI" and bucket_can_have_name:
+                    # wire name.
+                    if wire_name and wire_name != "PKI" and bucket_can_have_name(channel_id):
                         await conn.execute(
                             """
                             INSERT INTO chat_channels (id, name)

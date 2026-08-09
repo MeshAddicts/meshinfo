@@ -55,29 +55,62 @@ WHERE id ~ '^[0-9]+$'
   AND name !~ '^(General|Channel [0-9]+)$'
 """
 
+# Two set-based passes instead of a per-row LATERAL: pass 1 is one indexed join
+# for rows with packet_id copies; pass 2 scans the packet_id-IS-NULL slice once.
 # 32-bit packet ids collide across nodes — match from_node_id too (preflight
-# guarantees it is populated), prefer the indexed packet_id match, and bound the
-# probe to +-1 day of the chat row so partitions prune. packet_id is NULL on old
-# rows: fall back to a payload regex, not ::jsonb (\\u0000 breaks the cast).
-INDEX_ROWS_SQL = """
-SELECT c.id,
+# guarantees it is populated) and bound to +-1 day so partitions prune.
+PASS1_SQL = """
+SELECT DISTINCT ON (c.id)
+       c.id,
        c.channel_id AS bucket,
        substring(m.topic from '/2/e/([^/]+)/') AS name
 FROM chat_messages c
-JOIN LATERAL (
-    SELECT m2.topic
-    FROM mqtt_messages m2
-    WHERE (m2.packet_id = c.id
-           OR (m2.packet_id IS NULL
-               AND substring(m2.payload from '"id": ([0-9]+)') = c.id::text))
-      AND m2.from_node_id = c.from_node_id
-      AND m2.created_at BETWEEN c.created_at - interval '1 day'
-                            AND c.created_at + interval '1 day'
-    ORDER BY (m2.packet_id = c.id) DESC NULLS LAST, m2.created_at
-    LIMIT 1
-) m ON TRUE
+JOIN mqtt_messages m
+  ON m.from_node_id = c.from_node_id
+ AND m.packet_id = c.id
+ AND m.created_at BETWEEN c.created_at - interval '1 day'
+                      AND c.created_at + interval '1 day'
 WHERE c.channel_id ~ '^[0-9]$' AND c.channel_id::int <= $1
-ORDER BY c.id
+ORDER BY c.id, m.created_at
+"""
+
+# Rows pass 1 missed, materialized + ANALYZEd so the planner keeps pass 2 a
+# single set-based scan rather than reverting to per-row probes.
+MISSED_TABLE_SQL = """
+CREATE TEMP TABLE _bf_missed AS
+SELECT id, channel_id AS bucket, from_node_id, created_at
+FROM chat_messages WITH NO DATA
+"""
+
+MISSED_FILL_SQL = """
+INSERT INTO _bf_missed
+SELECT c.id, c.channel_id, c.from_node_id, c.created_at
+FROM chat_messages c
+WHERE c.channel_id ~ '^[0-9]$' AND c.channel_id::int <= $1
+  AND NOT EXISTS (
+      SELECT 1 FROM mqtt_messages m
+      WHERE m.from_node_id = c.from_node_id
+        AND m.packet_id = c.id
+        AND m.created_at BETWEEN c.created_at - interval '1 day'
+                             AND c.created_at + interval '1 day'
+  )
+"""
+
+# packet_id is NULL on old rows: match by payload regex, not ::jsonb
+# (\\u0000 breaks the cast).
+PASS2_SQL = """
+SELECT DISTINCT ON (x.id)
+       x.id,
+       x.bucket,
+       substring(m.topic from '/2/e/([^/]+)/') AS name
+FROM _bf_missed x
+JOIN mqtt_messages m
+  ON m.packet_id IS NULL
+ AND m.from_node_id = x.from_node_id
+ AND substring(m.payload from '"id": ([0-9]+)') = x.id::text
+ AND m.created_at BETWEEN x.created_at - interval '1 day'
+                      AND x.created_at + interval '1 day'
+ORDER BY x.id, m.created_at
 """
 
 # last_channel 0-7 = stale slot indices. A payload channel >7 is a hash by
@@ -211,7 +244,15 @@ async def main() -> int:
         if resolved and total_index_rows:
             print(f"\nScanning {total_index_rows} index-bucket chat row(s) "
                   f"against the archive...")
-            for r in await conn.fetch(INDEX_ROWS_SQL, MAX_CHANNEL_INDEX):
+            copies = list(await conn.fetch(PASS1_SQL, MAX_CHANNEL_INDEX))
+            await conn.execute(MISSED_TABLE_SQL)
+            missed = _updated_count(
+                await conn.execute(MISSED_FILL_SQL, MAX_CHANNEL_INDEX))
+            if missed:
+                await conn.execute("ANALYZE _bf_missed")
+                copies += await conn.fetch(PASS2_SQL)
+            copies.sort(key=lambda r: r["id"])
+            for r in copies:
                 rows_with_copy += 1
                 name = r["name"]
                 if not name:

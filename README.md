@@ -26,7 +26,7 @@ See live instances at [Central Valley Mesh](https://meshinfo.cvme.sh),
 - **Node Enrichment** -- Augment node data from the MeshInfo network discovery service
 - **Reverse Geocoding** -- Resolve node coordinates to human-readable locations
 - **Multi-topic MQTT** -- Subscribe to multiple MQTT topics with tag-based filtering in the UI
-- **Channel-aware Chat** -- Firmware 2.5+ channel hash support with configurable channel views
+- **Channel-aware Chat** -- Channels resolved to firmware `(name, PSK)` hash ids; channel pills build themselves from traffic in the selected time range, or pin a curated list with `broker.channels.mode = "manual"`
 
 ## Architecture
 
@@ -100,13 +100,15 @@ git pull && docker compose pull && docker compose down && docker compose up -d
 > the final `up -d` — `docker compose pull` then `bash scripts/migrate-postgres.sh`.
 > See [POSTGRES.md](POSTGRES.md#upgrading-postgresql-major-versions).
 
+Upgrading from an older release? See [UPGRADING.md](UPGRADING.md) for release-specific notes (channel-id resolution and backfill, config changes).
+
 ### Configuration
 
 The main configuration file is `config.toml`. Key sections:
 
 | Section | Purpose |
 |---------|---------|
-| `[broker]` | MQTT connection, topics, channel hashes, decoders |
+| `[broker]` | MQTT connection, topics, channel display mode and hashes, decoders |
 | `[server]` | Node ID, base URL, timezone, enrichment, graph settings |
 | `[storage.postgres]` | PostgreSQL connection and pool settings |
 | `[mesh]` | Network name, region, coordinates, external tool links |

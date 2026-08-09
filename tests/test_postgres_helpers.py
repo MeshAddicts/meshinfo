@@ -16,6 +16,7 @@ from storage.db.postgres import (
     _finite_or_none,
     _json_default,
     _month_partition_specs,
+    bucket_can_have_name,
 )
 
 
@@ -52,6 +53,26 @@ class TestDumpsWithDefault:
 
         with pytest.raises(TypeError):
             json.dumps({"ts": datetime.datetime.now()})
+
+
+class TestBucketCanHaveName:
+    """Heal guard: index buckets 0-7 never take a wire name."""
+
+    def test_index_buckets_refused(self):
+        assert bucket_can_have_name("0") is False
+        assert bucket_can_have_name("7") is False
+
+    def test_hash_buckets_allowed(self):
+        assert bucket_can_have_name("8") is True
+        assert bucket_can_have_name("255") is True
+
+    def test_zero_padded_index_refused(self):
+        assert bucket_can_have_name("007") is False
+
+    def test_non_numeric_allowed(self):
+        assert bucket_can_have_name("") is True
+        assert bucket_can_have_name("abc") is True
+        assert bucket_can_have_name("-1") is True
 
 
 class TestFiniteOrNone:
