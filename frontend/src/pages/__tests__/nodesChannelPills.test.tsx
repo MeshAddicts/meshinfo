@@ -73,6 +73,22 @@ describe("Nodes channel pills", () => {
     expect(isActivePill(pillButton("All"))).toBe(true);
   });
 
+  it("mode=all renders grouped rows with headers, like Chat", async () => {
+    stubApi({ config: configFix("all"), channels: channelsFix, nodes: nodesFix });
+    await mountAt("/nodes", <Nodes />);
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("Modem presets");
+    expect(text).toContain("Custom channels");
+  });
+
+  it("mode=presets shows no group headers (single visible group)", async () => {
+    stubApi({ config: configFix("presets"), channels: channelsFix, nodes: nodesFix });
+    await mountAt("/nodes", <Nodes />);
+    const text = document.body.textContent ?? "";
+    expect(text).not.toContain("Modem presets");
+    expect(text).not.toContain("Custom channels");
+  });
+
   it("mode=presets (default) hides custom buckets; All still counts them", async () => {
     stubApi({ config: configFix(), channels: channelsFix, nodes: nodesFix });
     await mountAt("/nodes", <Nodes />);

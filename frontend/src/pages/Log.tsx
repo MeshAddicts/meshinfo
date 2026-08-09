@@ -14,6 +14,7 @@ import { useSearchParams } from "react-router";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
 import { LivePill } from "../components/LivePill";
+import { ChannelPillGroups } from "../components/ChannelPillGroups";
 import { MobileSheet } from "../components/MobileSheet";
 import { useLiveEvent } from "../hooks/useLiveEvent";
 import {
@@ -342,6 +343,7 @@ export const Log = () => {
       topicMatch: string;
       /** Model entry id (auto modes only); what resolveKey returns. */
       id?: string;
+      group?: "presets" | "custom";
     }> = [{ key: "all", label: "All", topicMatch: "" }];
     const matchFor = (name: string) => `/2/e/${name}/`;
 
@@ -369,7 +371,9 @@ export const Log = () => {
       // Label slug as key keeps old bookmarks; denied slugs fall back to id.
       const labelSlug = normalizeKey(e.label);
       const key = e.aliases.includes(labelSlug) ? labelSlug : e.id;
-      out.push({ key, label: e.label, topicMatch: matchFor(name), id: e.id });
+      out.push({
+        key, label: e.label, topicMatch: matchFor(name), id: e.id, group: e.group,
+      });
     }
     return out;
   }, [channelMode, config, channelModel, wireNames, topicNameFor]);
@@ -882,30 +886,25 @@ export const Log = () => {
             </div>
           </div>
 
-          {/* Preset pills */}
+          {/* Channel pills: grouped rows in auto mode, one row in manual. */}
           {views.length > 1 ? (
-            <div className="mt-3 flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
-              {views.map((v) => {
-                const active = v.key === selectedView.key;
-                return (
-                  <button
-                    key={`preset-${v.key}`}
-                    type="button"
-                    className={[
-                      "whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-medium border transition",
-                      active
-                        ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
-                        : "bg-transparent text-gray-700 dark:text-gray-200 border-gray-300/60 dark:border-gray-600/60 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
-                    ].join(" ")}
-                    onClick={() =>
-                      setParam("ch", v.key === "all" ? undefined : v.key)
-                    }
-                  >
-                    {v.label}
-                  </button>
-                );
-              })}
-            </div>
+            <ChannelPillGroups
+              leading={{
+                key: "all",
+                label: "All",
+                active: selectedView.key === "all",
+                onClick: () => setParam("ch", undefined),
+              }}
+              pills={views
+                .filter((v) => v.key !== "all")
+                .map((v) => ({
+                  key: v.key,
+                  label: v.label,
+                  active: v.key === selectedView.key,
+                  group: v.group,
+                  onClick: () => setParam("ch", v.key),
+                }))}
+            />
           ) : null}
 
           {/* Search + range controls */}

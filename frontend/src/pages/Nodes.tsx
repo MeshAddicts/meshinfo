@@ -8,6 +8,7 @@ import {
 } from "react";
 
 import { ExportMenu } from "../components/ExportMenu";
+import { ChannelPillGroups } from "../components/ChannelPillGroups";
 import { HeardBy } from "../components/HeardBy";
 import { LivePill } from "../components/LivePill";
 import { MobileSheet } from "../components/MobileSheet";
@@ -393,6 +394,7 @@ export const Nodes = () => {
       channelId: e.id,
       label: e.label,
       count: e.count,
+      group: e.group,
     }));
   }, [channelMode, channelViews, allItems, channelModel]);
 
@@ -885,58 +887,23 @@ export const Nodes = () => {
 
           {/* Channel bucket pills */}
           {showChannelPills && (
-            <div className="mt-3 flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
-              <button
-                type="button"
-                className={[
-                  "whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-medium border transition",
-                  !selectedChannelId
-                    ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
-                    : "bg-transparent text-gray-700 dark:text-gray-200 border-gray-300/60 dark:border-gray-600/60 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
-                ].join(" ")}
-                onClick={() => setParam("ch", undefined, "push")}
-              >
-                All
-                <span
-                  className={[
-                    "ml-2 rounded-full px-2 py-0.5 text-xs",
-                    !selectedChannelId
-                      ? "bg-white/20 text-white"
-                      : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-700 dark:text-gray-200",
-                  ].join(" ")}
-                >
-                  {allPillCount}
-                </span>
-              </button>
-              {channelPills.map((v) => {
-                const active = selectedChannelId === v.channelId;
-                return (
-                  <button
-                    key={`ch-${v.channelId}`}
-                    type="button"
-                    className={[
-                      "whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-medium border transition",
-                      active
-                        ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
-                        : "bg-transparent text-gray-700 dark:text-gray-200 border-gray-300/60 dark:border-gray-600/60 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
-                    ].join(" ")}
-                    onClick={() => setParam("ch", v.channelId, "push")}
-                  >
-                    {v.label}
-                    <span
-                      className={[
-                        "ml-2 rounded-full px-2 py-0.5 text-xs",
-                        active
-                          ? "bg-white/20 text-white"
-                          : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-700 dark:text-gray-200",
-                      ].join(" ")}
-                    >
-                      {v.count}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+            <ChannelPillGroups
+              leading={{
+                key: "all",
+                label: "All",
+                count: allPillCount,
+                active: !selectedChannelId,
+                onClick: () => setParam("ch", undefined, "push"),
+              }}
+              pills={channelPills.map((v) => ({
+                key: v.channelId,
+                label: v.label,
+                count: v.count,
+                active: selectedChannelId === v.channelId,
+                group: (v as { group?: "presets" | "custom" }).group,
+                onClick: () => setParam("ch", v.channelId, "push"),
+              }))}
+            />
           )}
 
           {/* Toolbar */}

@@ -12,6 +12,7 @@ import { VirtuosoHandle } from "react-virtuoso";
 import { ExportMenu } from "../components/ExportMenu";
 import { HeardBy } from "../components/HeardBy";
 import { LivePill } from "../components/LivePill";
+import { ChannelPillGroups } from "../components/ChannelPillGroups";
 import { MobileSheet } from "../components/MobileSheet";
 import { useAppSelector } from "../hooks/redux";
 import {
@@ -59,11 +60,6 @@ type ViewDef = {
   tooltip?: string;
   isDefault?: boolean;
   group?: "presets" | "custom"; // absent in curated mode — no grouping there
-};
-
-const GROUP_LABELS: Record<string, string> = {
-  presets: "Modem presets",
-  custom: "Custom channels",
 };
 
 type MobileSheetKey = "controls" | "focus" | "details";
@@ -494,18 +490,6 @@ export const Chat = () => {
 
   const defaultViewKey =
     views.find((v) => v.isDefault)?.key ?? views[0]?.key ?? "";
-
-  // Consecutive same-group runs; ungrouped curated views collapse into one run.
-  const viewGroups = useMemo(() => {
-    const groups: Array<{ key: string; items: ViewDef[] }> = [];
-    for (const v of views) {
-      const key = v.group ?? "all";
-      const last = groups[groups.length - 1];
-      if (last && last.key === key) last.items.push(v);
-      else groups.push({ key, items: [v] });
-    }
-    return groups;
-  }, [views]);
 
   // Stable identity: a fresh array here would defeat useChatSearchParams'
   // internal memos on every render.
@@ -1544,63 +1528,28 @@ export const Chat = () => {
           </div>
 
           {/* Channel pills: grouped rows in auto mode, one row in curated mode. */}
-          {viewGroups.map((grp) => (
-            <div key={`grp-${grp.key}`}>
-              {viewGroups.length > 1 && GROUP_LABELS[grp.key] && (
-                <div className="mt-3 mb-1 text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                  {GROUP_LABELS[grp.key]}
-                </div>
-              )}
-              <div
-                className={[
-                  viewGroups.length > 1 ? "mt-1" : "mt-3",
-                  "flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]",
-                ].join(" ")}
-              >
-            {grp.items.map((v) => {
-              const active = v.key === selectedView?.key;
+          <ChannelPillGroups
+            pills={views.map((v) => {
               const chObj = effectiveChat?.channels?.[v.channelId];
-              // Badge counts the selected range, matching what the pill shows.
-              const count = chObj?.recentMessages ?? chObj?.totalMessages ?? 0;
-
-              return (
-                <button
-                  key={`preset-${v.key}`}
-                  type="button"
-                  className={[
-                    "whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-medium border transition",
-                    active
-                      ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
-                      : "bg-transparent text-gray-700 dark:text-gray-200 border-gray-300/60 dark:border-gray-600/60 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
-                  ].join(" ")}
-                  onClick={() => {
-                    setParams(
-                      [
-                        { key: "ch", value: v.key },
-                        { key: "msg", value: undefined },
-                      ],
-                      "push"
-                    );
-                  }}
-                  title={v.tooltip || channelTooltip(v.channelId)}
-                >
-                  {v.label}
-                  <span
-                    className={[
-                      "ml-2 rounded-full px-2 py-0.5 text-xs",
-                      active
-                        ? "bg-white/20 text-white"
-                        : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-700 dark:text-gray-200",
-                    ].join(" ")}
-                  >
-                    {count}
-                  </span>
-                </button>
-              );
+              return {
+                key: v.key,
+                label: v.label,
+                // Badge counts the selected range, matching what the pill shows.
+                count: chObj?.recentMessages ?? chObj?.totalMessages ?? 0,
+                active: v.key === selectedView?.key,
+                group: v.group,
+                tooltip: v.tooltip || channelTooltip(v.channelId),
+                onClick: () =>
+                  setParams(
+                    [
+                      { key: "ch", value: v.key },
+                      { key: "msg", value: undefined },
+                    ],
+                    "push"
+                  ),
+              };
             })}
-              </div>
-            </div>
-          ))}
+          />
 
           {/* Toolbar row: mobile keeps ONLY search; desktop keeps full controls */}
           <div className="mt-3 flex flex-col lg:flex-row gap-2 lg:items-center lg:justify-between">
