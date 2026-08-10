@@ -41,7 +41,7 @@ RUNTIME_EXPORTS='[
 ]'
 
 # shellcheck disable=SC2046
-emcc \
+em++ \
   -O3 \
   -std=c++17 \
   -DNDEBUG \
