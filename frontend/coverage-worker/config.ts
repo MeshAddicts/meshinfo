@@ -1,6 +1,7 @@
 /** Coverage-worker configuration (env-overridable). */
 import { cpus } from "node:os";
 
+import { canonicalPresetName } from "../src/meshtasticPresets";
 import { ROUTER_CLASS_ROLES } from "../src/pages/map/live/liveCoverageParams";
 import { DEFAULT_LIVE_PRESET, isKnownPreset } from "../src/pages/map/live/liveCoveragePresets";
 import type { NodeRole } from "../src/types";
@@ -42,7 +43,7 @@ export const CLIENT_REACH_KM = Number(process.env.COVERAGE_CLIENT_REACH_KM ?? 80
 export const RECENCY_HOURS = Number(process.env.COVERAGE_RECENCY_HOURS ?? 4);
 
 /** Modem preset for channel hashes with no `[broker.channels.meta.<hash>]`
- *  mapping. Must be a known preset id — it doubles as a group directory name. */
+ *  mapping. Canonicalized — it doubles as a group directory name. */
 export const DEFAULT_PRESET = (() => {
   const raw = process.env.COVERAGE_DEFAULT_PRESET;
   if (!raw) return DEFAULT_LIVE_PRESET;
@@ -50,7 +51,7 @@ export const DEFAULT_PRESET = (() => {
     console.warn(`[coverage-worker] unknown COVERAGE_DEFAULT_PRESET "${raw}" — using ${DEFAULT_LIVE_PRESET}`);
     return DEFAULT_LIVE_PRESET;
   }
-  return raw;
+  return canonicalPresetName(raw);
 })();
 
 /** Accuracy layers (NLCD clutter / ETH canopy / JRC buildings), fetched from

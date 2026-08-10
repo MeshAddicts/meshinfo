@@ -13,6 +13,7 @@ import React, {
 import { useSearchParams } from "react-router";
 import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 
+import { ChannelPillGroups } from "../components/ChannelPillGroups";
 import { LivePill } from "../components/LivePill";
 import { MobileSheet } from "../components/MobileSheet";
 import { useLiveEvent } from "../hooks/useLiveEvent";
@@ -21,12 +22,25 @@ import {
   useRememberedChannel,
 } from "../hooks/useRememberedChannel";
 import {
+  REMEMBERED_RANGE_KEYS,
+  useRememberedRange,
+} from "../hooks/useRememberedRange";
+import { canonicalPresetName, isFirmwarePreset } from "../meshtasticPresets";
+import {
   IPacketMessage,
   IPacketsArg,
+  useGetChannelsQuery,
   useGetConfigQuery,
   useGetPacketQuery,
   useGetPacketsInfiniteQuery,
 } from "../slices/apiSlice";
+import {
+  channelLabel,
+  channelModeFrom,
+  normalizeKey,
+  wireNamesFrom,
+} from "../utils/channelDisplay";
+import { buildChannelModel } from "../utils/channelModel";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { csvEscape, downloadBlob } from "../utils/export";
 import { formatTimestamp } from "../utils/formatTimestamp";
@@ -42,11 +56,6 @@ const LIVE_FLUSH_MS = 350; // coalesce a burst of packets into one state update
 const AT_TOP_THRESHOLD_PX = 60; // freeze as soon as the user scrolls down this far
 
 hljs.registerLanguage("json", json);
-
-const normalizeKey = (s: string) => {
-  const k = String(s ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
-  return k.startsWith("all") ? "all" : k;
-};
 
 const toUnixSeconds = (ts: unknown): number => {
   const n = Number(ts);
@@ -72,7 +81,7 @@ const fromLocalInput = (val: string): number | undefined => {
 const escapeHtml = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-function JsonBlock({ code }: { code: string }) {
+function JsonBlock({ code, className }: { code: string; className?: string }) {
   // Render escaped plain text on mount; highlight later off the render path
   // so row mounts don't jank flick-scroll.
   const [html, setHtml] = useState(() => escapeHtml(code));
@@ -104,7 +113,12 @@ function JsonBlock({ code }: { code: string }) {
   }, [code]);
 
   return (
-    <pre className="mt-3 rounded-lg border border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-gray-950/40 p-3 text-xs font-mono text-gray-800 dark:text-gray-200 overflow-x-auto">
+    <pre
+      className={
+        className ??
+        "mt-3 rounded-lg border border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-gray-950/40 p-3 text-xs font-mono text-gray-800 dark:text-gray-200 overflow-x-auto"
+      }
+    >
       <code
         className="hljs"
         style={{ background: "transparent" }}
@@ -116,6 +130,8 @@ function JsonBlock({ code }: { code: string }) {
 
 type PacketRowProps = {
   m: IPacketMessage;
+  /** Resolved channel chip text; absent when the row carries no channel info. */
+  channel?: string;
   highlighted?: boolean;
   selected?: boolean;
   copiedJson: boolean;
@@ -127,6 +143,7 @@ type PacketRowProps = {
 
 const PacketRow = React.memo(function PacketRow({
   m,
+  channel,
   highlighted,
   selected,
   copiedJson,
@@ -165,6 +182,14 @@ const PacketRow = React.memo(function PacketRow({
             {type ? (
               <span className="ml-2 rounded-full px-2 py-0.5 border border-gray-300/60 dark:border-gray-700 text-[11px] text-gray-600 dark:text-gray-300">
                 {type}
+              </span>
+            ) : null}
+            {channel ? (
+              <span
+                className="ml-2 rounded-full px-2 py-0.5 border border-sky-400/50 dark:border-sky-800 text-[11px] text-sky-700 dark:text-sky-300"
+                title="Channel"
+              >
+                {channel}
               </span>
             ) : null}
             {Number.isFinite(id) ? (
@@ -235,6 +260,9 @@ export const Log = () => {
   const urlQ = searchParams.get("q") ?? "";
   const urlCh = normalizeKey(searchParams.get("ch") ?? "");
   const urlPacket = searchParams.get("packet") ?? "";
+  // Chat's "View in logs": mesh packet id + sender (chat rows lack the row id).
+  const urlPkt = searchParams.get("pkt") ?? "";
+  const urlPFrom = searchParams.get("pfrom") ?? "";
 
   const parseEpochParam = (key: string): number | undefined => {
     const raw = searchParams.get(key);
@@ -274,43 +302,127 @@ export const Log = () => {
     [setParams],
   );
 
-  // ---- preset views (from broker config) ----------------------------------
-  // Each view maps to a topic substring (the modem-preset channel name), which
-  // the API filters server-side so pagination stays correct.
-  const views = useMemo(() => {
-    const out: Array<{ key: string; label: string; topicMatch: string }> = [
-      { key: "all", label: "All", topicMatch: "" },
-    ];
-    // `views` is operator-defined and not in the typed Channels shape.
-    const vraw = (config?.broker?.channels as { views?: unknown[] } | undefined)
-      ?.views as
-      | Array<{ label?: string; id?: string; channels?: unknown[] }>
-      | undefined;
-    if (Array.isArray(vraw)) {
-      for (const v of vraw) {
-        const chans = Array.isArray(v?.channels) ? v.channels.map(String) : [];
-        if (chans.length !== 1) continue;
-        const label = String(v?.label ?? v?.id ?? "");
-        const key = normalizeKey(label) || normalizeKey(String(v?.id ?? ""));
-        if (!key) continue;
-        out.push({ key, label: label || key, topicMatch: chans[0] });
-      }
-    }
-    return out;
-  }, [config]);
-
-  const selectedView = useMemo(
-    () => views.find((v) => v.key === urlCh) ?? views[0],
-    [views, urlCh],
+  // ---- channel pills -------------------------------------------------------
+  // Topics carry the channel NAME, never the bucket hash; pills filter by
+  // substring pinned to "/2/e/<name>/" so node-id hex/region can't match.
+  const { data: channelsData } = useGetChannelsQuery({ range: "all" });
+  const channelMeta = config?.broker?.channels?.meta;
+  const channelMode = channelModeFrom(config?.broker?.channels);
+  const wireNames = useMemo(
+    () => wireNamesFrom(channelsData?.channels),
+    [channelsData],
   );
 
+  // Topic name for a bucket: wire name > validated preset > preset-named
+  // label; undefined = no pill (an unfilterable pill is worse than none).
+  const topicNameFor = useCallback(
+    (id: string, wire: string | undefined): string | undefined => {
+      if (wire) return wire;
+      const m = channelMeta?.[id];
+      const preset = m?.preset;
+      if (preset && isFirmwarePreset(canonicalPresetName(preset))) {
+        // "LongModerate" airs as "LongMod"; other presets air as-is.
+        return preset === "LongModerate" ? "LongMod" : preset;
+      }
+      if (isFirmwarePreset(m?.label)) return m?.label;
+      return undefined;
+    },
+    [channelMeta],
+  );
+
+  // Shared model drives auto-mode pills. No selectedId: ?ch= resolves against
+  // Log's own pill set, so a resolved selection is visible by construction.
+  const channelModel = useMemo(() => {
+    const channels = channelsData?.channels ?? {};
+    return buildChannelModel({
+      ids: Object.keys(channels),
+      mode: channelMode,
+      meta: channelMeta,
+      wireNames,
+      counts: (id) =>
+        Number(channels[id]?.recentMessages ?? channels[id]?.totalMessages ?? 0),
+    });
+  }, [channelsData, channelMode, channelMeta, wireNames]);
+
+  const views = useMemo(() => {
+    const out: Array<{
+      key: string;
+      label: string;
+      topicMatch: string;
+      /** Model entry id (auto modes only); what resolveKey returns. */
+      id?: string;
+      group?: "presets" | "custom";
+    }> = [{ key: "all", label: "All", topicMatch: "" }];
+    const matchFor = (name: string) => `/2/e/${name}/`;
+
+    if (channelMode === "manual") {
+      // Manual mode: operator-curated views; unresolvable buckets get no pill.
+      const seen = new Set(["all"]);
+      for (const v of config?.broker?.channels?.views ?? []) {
+        const chans = Array.isArray(v?.channels) ? v.channels.map(String) : [];
+        if (chans.length !== 1) continue;
+        const name = topicNameFor(chans[0], wireNames[chans[0]]);
+        if (!name) continue;
+        const label = String(v?.label ?? v?.id ?? "");
+        const key = normalizeKey(label) || normalizeKey(String(v?.id ?? ""));
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push({ key, label: label || key, topicMatch: matchFor(name) });
+      }
+      return out;
+    }
+
+    // Auto modes: model entries verbatim, minus buckets with no topic name.
+    for (const e of channelModel.entries) {
+      const name = topicNameFor(e.id, e.wireName);
+      if (!name) continue;
+      // Label slug as key keeps old bookmarks; denied slugs fall back to id.
+      const labelSlug = normalizeKey(e.label);
+      const key = e.aliases.includes(labelSlug) ? labelSlug : e.id;
+      out.push({
+        key, label: e.label, topicMatch: matchFor(name), id: e.id, group: e.group,
+      });
+    }
+    return out;
+  }, [channelMode, config, channelModel, wireNames, topicNameFor]);
+
+  // Auto modes resolve ?ch= via the model's aliases; a resolved bucket with
+  // no pill falls back to All. Manual keeps legacy key matching.
+  const selectedView = useMemo(() => {
+    if (channelMode === "manual") {
+      return views.find((v) => v.key === urlCh) ?? views[0];
+    }
+    const id = urlCh ? channelModel.resolveKey(urlCh) : undefined;
+    return (id ? views.find((v) => v.id === id) : undefined) ?? views[0];
+  }, [channelMode, views, urlCh, channelModel]);
+
   // Land returning visitors on the channel pill they last had selected.
+  // `urlHasCh` requires the raw ?ch to resolve to a rendered pill — adopting
+  // an unresolved link's All fallback would wipe the remembered selection.
+  const rawChParam = (searchParams.get("ch") ?? "").trim();
+  const rawChResolves =
+    !!rawChParam &&
+    (channelMode === "manual"
+      ? views.some((v) => v.key === urlCh && v.key !== "all")
+      : channelModel.resolveKey(rawChParam) !== undefined &&
+        selectedView.key !== "all");
+  // Remember the time range the same way (default "all"; URL wins).
+  useRememberedRange({
+    storageKey: REMEMBERED_RANGE_KEYS.logs,
+    value: urlRange,
+    urlHasR: !!searchParams.get("r")?.trim(),
+    suppressRestore: [...searchParams.keys()].some((k) => k !== "r"),
+    apply: (stored) => setParam("r", stored, "replace"),
+  });
+
   useRememberedChannel({
     storageKey: REMEMBERED_CH_KEYS.logs,
     value: selectedView.key === "all" ? "" : selectedView.key,
-    urlHasCh: !!searchParams.get("ch")?.trim(),
+    urlHasCh: rawChResolves,
     suppressRestore: [...searchParams.keys()].some((k) => k !== "ch"),
-    ready: views.length > 1,
+    // Gate on config: mode defaults to "presets" pre-config, and a restore
+    // under the wrong mode can removeStored a valid key.
+    ready: !!config && views.length > 1,
     isValid: (stored) => views.some((v) => v.key === stored),
     apply: (stored) => setParam("ch", stored, "replace"),
   });
@@ -496,14 +608,31 @@ export const Log = () => {
     virtuosoRef.current?.scrollToIndex({ index: 0, align: "start", behavior: "smooth" });
   }, []);
 
+  // Chip text: newer rows carry the gateway-published name; older rows only a
+  // numeric channel, which the shared label chain resolves.
+  const channelChipFor = useCallback(
+    (m: IPacketMessage): string | undefined => {
+      const name = m["channel_name"];
+      if (typeof name === "string" && name.trim()) return name;
+      const id = m["channel"];
+      if (typeof id === "number" && Number.isFinite(id)) {
+        return channelLabel(channelMeta, wireNames, String(id));
+      }
+      return undefined;
+    },
+    [channelMeta, wireNames],
+  );
+
   // ---- deeplinked packet ---------------------------------------------------
-  const packetId = Number(urlPacket);
-  const hasPacketLink = !!urlPacket && Number.isFinite(packetId);
+  const byPacket = !urlPacket && !!urlPkt && !!urlPFrom;
+  const packetId = Number(urlPacket || urlPkt);
+  const hasPacketLink = Number.isFinite(packetId) && (!!urlPacket || byPacket);
   const { data: linkedData, isFetching: linkedFetching } = useGetPacketQuery(
-    packetId,
+    byPacket ? { pkt: packetId, from: urlPFrom } : packetId,
     { skip: !hasPacketLink },
   );
   const linkedPacket = linkedData?.packet;
+  const linkedChannel = linkedPacket ? channelChipFor(linkedPacket) : undefined;
 
   // ---- search input (deferred -> URL) -------------------------------------
   const [qInput, setQInput] = useState(urlQ);
@@ -640,12 +769,13 @@ export const Log = () => {
   // ---- filter helpers ------------------------------------------------------
   const activeFilterCount = useMemo(() => {
     let n = 0;
-    if (urlCh && urlCh !== "all") n += 1;
+    // A ?ch= that fell back to All must not count as an active filter.
+    if (urlCh && urlCh !== "all" && selectedView.key !== "all") n += 1;
     if (useAbsolute) n += 1;
     else if (urlRange !== DEFAULT_RANGE) n += 1;
     if (urlQ.trim()) n += 1;
     return n;
-  }, [urlCh, useAbsolute, urlRange, urlQ]);
+  }, [urlCh, selectedView.key, useAbsolute, urlRange, urlQ]);
   const hasFilters = activeFilterCount > 0;
 
   const clearFilters = useCallback(() => {
@@ -765,30 +895,25 @@ export const Log = () => {
             </div>
           </div>
 
-          {/* Preset pills */}
+          {/* Channel pills: grouped rows in auto mode, one row in manual. */}
           {views.length > 1 ? (
-            <div className="mt-3 flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
-              {views.map((v) => {
-                const active = v.key === selectedView.key;
-                return (
-                  <button
-                    key={`preset-${v.key}`}
-                    type="button"
-                    className={[
-                      "whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-medium border transition",
-                      active
-                        ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
-                        : "bg-transparent text-gray-700 dark:text-gray-200 border-gray-300/60 dark:border-gray-600/60 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
-                    ].join(" ")}
-                    onClick={() =>
-                      setParam("ch", v.key === "all" ? undefined : v.key)
-                    }
-                  >
-                    {v.label}
-                  </button>
-                );
-              })}
-            </div>
+            <ChannelPillGroups
+              leading={{
+                key: "all",
+                label: "All",
+                active: selectedView.key === "all",
+                onClick: () => setParam("ch", undefined),
+              }}
+              pills={views
+                .filter((v) => v.key !== "all")
+                .map((v) => ({
+                  key: v.key,
+                  label: v.label,
+                  active: v.key === selectedView.key,
+                  group: v.group,
+                  onClick: () => setParam("ch", v.key),
+                }))}
+            />
           ) : null}
 
           {/* Search + range controls */}
@@ -865,32 +990,45 @@ export const Log = () => {
         <div className="mx-auto max-w-400 px-3 sm:px-5 pt-3 pb-20 lg:pb-0 flex-1 min-h-0 w-full flex flex-col">
           {/* Deeplinked packet */}
           {hasPacketLink ? (
-            <div className="mb-3 rounded-xl border border-indigo-300/70 dark:border-indigo-800/70 bg-indigo-50/50 dark:bg-indigo-950/20 overflow-hidden">
+            <div className="mb-3 shrink-0 rounded-xl border border-indigo-300/70 dark:border-indigo-800/70 bg-indigo-50/50 dark:bg-indigo-950/20 overflow-hidden">
               <div className="px-4 py-2 flex items-center justify-between border-b border-indigo-200/70 dark:border-indigo-900/60">
                 <div className="text-sm font-semibold text-indigo-900 dark:text-indigo-200">
                   Linked packet #{packetId}
+                  {linkedChannel ? (
+                    <span
+                      className="ml-2 rounded-full px-2 py-0.5 border border-sky-400/50 dark:border-sky-800 text-[11px] font-normal text-sky-700 dark:text-sky-300"
+                      title="Channel"
+                    >
+                      {linkedChannel}
+                    </span>
+                  ) : null}
                 </div>
                 <button
                   type="button"
                   className="text-xs underline hover:no-underline text-indigo-700 dark:text-indigo-300"
-                  onClick={() => setParam("packet", undefined)}
+                  onClick={() => {
+                    setParam("packet", undefined);
+                    setParam("pkt", undefined);
+                    setParam("pfrom", undefined);
+                  }}
                 >
                   clear
                 </button>
               </div>
-              <div className="p-3">
-                {linkedFetching && !linkedPacket ? (
-                  <div className="text-xs text-gray-600 dark:text-gray-400">
-                    Loading packet…
-                  </div>
-                ) : linkedPacket ? (
-                  <JsonBlock code={JSON.stringify(linkedPacket, null, 2)} />
-                ) : (
-                  <div className="text-xs text-gray-600 dark:text-gray-400">
-                    Packet #{packetId} not found.
-                  </div>
-                )}
-              </div>
+              {linkedFetching && !linkedPacket ? (
+                <div className="p-3 text-xs text-gray-600 dark:text-gray-400">
+                  Loading packet…
+                </div>
+              ) : linkedPacket ? (
+                <JsonBlock
+                  code={JSON.stringify(linkedPacket, null, 2)}
+                  className="m-0 p-3 text-xs font-mono text-gray-800 dark:text-gray-200 bg-white/70 dark:bg-gray-950/40 max-h-[45vh] overflow-auto"
+                />
+              ) : (
+                <div className="p-3 text-xs text-gray-600 dark:text-gray-400">
+                  Packet #{packetId} not found.
+                </div>
+              )}
             </div>
           ) : null}
 
@@ -957,6 +1095,7 @@ export const Log = () => {
                     return (
                       <PacketRow
                         m={m}
+                        channel={channelChipFor(m)}
                         highlighted={hasPacketLink && id === packetId}
                         selected={id === selectedId}
                         copiedJson={

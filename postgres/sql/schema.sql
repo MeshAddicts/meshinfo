@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     to_node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE SET NULL,
     sender_node_id VARCHAR(8) REFERENCES nodes(id) ON DELETE SET NULL,
     channel_id VARCHAR(10) REFERENCES chat_channels(id),
+    channel_name VARCHAR(100),
     text TEXT,
     timestamp BIGINT,
     rx_time TIMESTAMP WITH TIME ZONE,
@@ -220,6 +221,8 @@ BEGIN
     END IF;
 END $mqtt$;
 
+-- pg_trgm + trgm topic index live in ensure_schema's fail-soft migration — this
+-- file runs as one implicit transaction and must not abort on a restricted PG.
 CREATE INDEX IF NOT EXISTS idx_mqtt_messages_created_at ON mqtt_messages(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_mqtt_messages_timestamp ON mqtt_messages(timestamp DESC);
 

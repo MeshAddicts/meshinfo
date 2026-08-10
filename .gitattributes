@@ -1,4 +1,25 @@
+# Source and config files are LF everywhere; the repo historically mixed CRLF
+# in, which inflated diffs (a 12-hunk Chat.tsx edit once showed as 4195 changed
+# lines) and made local edits flip whole files. Keep path-specific binary
+# overrides BELOW the type rules so they win for their paths.
 *.sh                 text eol=lf
+*.py                 text eol=lf
+*.ts                 text eol=lf
+*.tsx                text eol=lf
+*.js                 text eol=lf
+*.json               text eol=lf
+*.yml                text eol=lf
+*.yaml               text eol=lf
+*.toml               text eol=lf
+*.md                 text eol=lf
+*.html               text eol=lf
+*.css                text eol=lf
+*.svg                text eol=lf
+*.ini                text eol=lf
+*.txt                text eol=lf
+*.sample             text eol=lf
+.gitignore           text eol=lf
+.gitattributes       text eol=lf
 
 /frontend/.yarn/**            linguist-vendored
 /frontend/.yarn/releases/*    binary

@@ -60,13 +60,16 @@ describe("liveCoveragePresets", () => {
       "MediumFast",
       "MediumSlow",
       "LongFast",
-      "LongModerate",
+      "LongMod",
       "LongSlow",
-      "VeryLongSlow",
     ];
     for (let i = 1; i < ladder.length; i++) {
       expect(LIVE_PRESET_SENSITIVITY_DBM[ladder[i]]).toBeLessThan(LIVE_PRESET_SENSITIVITY_DBM[ladder[i - 1]]);
     }
+    // LongTurbo (SF11/500) sits off the SF/BW ladder: same RX class as MediumSlow.
+    expect(LIVE_PRESET_SENSITIVITY_DBM["LongTurbo"]).toBe(
+      LIVE_PRESET_SENSITIVITY_DBM["MediumSlow"]
+    );
   });
 
   it("falls back to the default preset for unknown ids", () => {
@@ -75,7 +78,10 @@ describe("liveCoveragePresets", () => {
 
   it("builds chip labels from preset capitals", () => {
     expect(presetShortLabel("MediumFast")).toBe("MF");
-    expect(presetShortLabel("VeryLongSlow")).toBe("VLS");
+    expect(presetShortLabel("LongTurbo")).toBe("LT");
+    // Historical spellings resolve through PRESET_ALIASES first.
+    expect(presetShortLabel("LongModerate")).toBe("LM");
+    expect(presetShortLabel("VeryLongSlow")).toBe("LF"); // alias models the RF fallback
     expect(presetShortLabel("weird")).toBe("WE");
   });
 });

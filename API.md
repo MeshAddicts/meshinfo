@@ -21,11 +21,11 @@ directly for integrations. Responses are JSON unless noted.
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/v1/chat` | Chat in a channel. Query params: `channel` (default `"0"`), `range` (`1h`/`24h`/`7d`/`all`, default `24h`). |
+| GET | `/v1/chat` | Chat in a channel. Query params: `channel` (a channel-hash id such as `"8"`; **omit for all channels**), `range` (`1h`/`24h`/`7d`/`all`, default `24h`), `limit` (1–50000, default 10000; non-integer → 400). Every channel is always returned with its `name`, `totalMessages` (all-time), `recentMessages` (within the selected `range`; equals `totalMessages` at `range=all`), and `newestTimestamp` (unix epoch of its latest message, `null` if none); `messages` is populated for the requested channel, or for all of them when `channel` is omitted. `limit` applies **per channel**, so `range=all` with no `channel` returns every message of every channel and the payload scales with channel count — pass a smaller `limit` if that matters. The old default of `"0"` was dropped — channel ids are `(name, PSK)` hashes and `"0"` is a gateway slot index that is empty on most meshes. |
 | GET | `/v1/messages` | Raw MQTT messages, newest window only. Query params: `q` (search), `range`, `limit` (1–50000, default 5000). |
 | GET | `/v1/mqtt_messages` | Same as `/v1/messages` without search. |
 | GET | `/v1/packets` | Keyset-paginated packet archive — reaches the full history, not just the newest window. Query params: `q` (search), `topic` (substring filter on topic only), `range`, `start`/`end` (unix-epoch seconds, absolute window on ingest time), `before` (cursor from a prior page), `limit` (1–50000, default 1000). Returns `{"messages": [...], "next_cursor": str \| null}`; pass `next_cursor` back as `before` for the next page. Each message carries `mqtt_row_id` (stable DB id). |
-| GET | `/v1/packets/{id}` | Single packet by `mqtt_row_id` — backs per-packet deeplinks. Returns `{"packet": {...}}`, or 404 if not found. Query param: `copies` (`1`/`true`/`yes`) rebuilds every gateway's original uplink message from its reception rows — dedup is lossless, see POSTGRES.md. |
+| GET | `/v1/packets/{id}` | Single packet by `mqtt_row_id` — backs per-packet deeplinks. Returns `{"packet": {...}}`, or 404 if not found. Query params: `copies` (`1`/`true`/`yes`) rebuilds every gateway's original uplink message from its reception rows — dedup is lossless, see POSTGRES.md; `by=packet&from=<node id>` reads `{id}` as the sender's 32-bit mesh packet id instead of the row id (what chat rows know — newest archived row wins on id reuse; 400 if `from` is missing or invalid). |
 
 ### Telemetry / Traceroutes / Stats
 
@@ -34,6 +34,7 @@ directly for integrations. Responses are JSON unless noted.
 | GET | `/v1/telemetry` | All recent telemetry. |
 | GET | `/v1/traceroutes` | Recent traceroutes, newest first. Query params: `from`/`to` (node id; both = pair in either direction), `range` (`1h`/`24h`/`7d`), `limit` (1–10000, default 1000), `slim` (`1` keeps only the fields the SPA reads, adds `packet_id`/`created_at`/`route_back_ids`), `envelope` (`1` wraps the response as `{"traceroutes": [...], "next_cursor": str \| null}` for keyset pagination — pass `next_cursor` back as `before`). Without `envelope` the response is a bare array and cannot page. Payload semantics: `snr_towards`/`snr_back` are dB ×4 with `-128` = unknown; a row whose `snr_towards` length equals `route` length + 1 is a REPLY packet, whose travel path reads header `to` → route → header `from`. `packet_id` on replies carries the request's packet id. Rows may be upgraded in place for up to 1h after first insert as richer gateway copies arrive (`created_at` never changes). |
 | GET | `/v1/stats` | Mesh totals (counts, top nodes, modem preset, etc.). |
+| GET | `/v1/channels` | Channel buckets with display facts and no messages — for labeling/filtering UIs. Query params: `range` (`1h`/`24h`/`7d`/`all`, default `24h`). Returns `{"channels": {"<id>": {"name", "totalMessages", "recentMessages", "newestTimestamp"}}}` with the same field semantics as `/v1/chat`. |
 
 ### Live events (SSE)
 

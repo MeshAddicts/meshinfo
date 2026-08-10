@@ -19,14 +19,14 @@ function filtersSubtitle(
   linkMode: LinkMode,
   clusterEnabled: boolean,
   roleFilter: number | null,
-  channelFilter: string | null,
+  channelLabel: string | null,
 ): string {
   const parts: string[] = [];
   if (recentDays !== 30) parts.push(`Last ${recentDays}d`);
   if (linkMode !== "selected") parts.push(linkMode === "all" ? "All links" : "My Node");
   if (!clusterEnabled) parts.push("No cluster");
   if (roleFilter != null) parts.push(roleTitles[roleFilter as NodeRole]?.abbreviation ?? "Role");
-  if (channelFilter != null) parts.push(`Ch ${channelFilter}`);
+  if (channelLabel != null) parts.push(channelLabel);
   return parts.length === 0 ? "Defaults" : parts.join(" · ");
 }
 
@@ -55,7 +55,7 @@ function FiltersSection({
   channelFilter: string | null;
   setChannelFilter: Dispatch<SetStateAction<string | null>>;
   availableChannels: string[];
-  resolveChannelLabel?: (id: string | null | undefined) => string | null;
+  resolveChannelLabel: (id: string) => string;
 }) {
   const DAYS_OPTIONS: DropupOption<number>[] = [
     { value: 1, label: "Last 1 day" },
@@ -86,9 +86,14 @@ function FiltersSection({
     { value: null, label: "All Channels" },
     ...availableChannels.map((ch) => ({
       value: ch,
-      label: resolveChannelLabel?.(ch) ?? `Ch ${ch}`,
+      label: resolveChannelLabel(ch),
     })),
   ];
+  // The trigger pill stays narrow; mark the cut ("Channel 11" for 119 misleads).
+  const channelTriggerLabel = (id: string) => {
+    const full = resolveChannelLabel(id);
+    return full.length > 12 ? `${full.slice(0, 11)}…` : full;
+  };
 
   const daysLabel = (d: number) => (d >= 30 ? "30d" : `${d}d`);
   const linkModeLabel = (m: LinkMode) =>
@@ -131,11 +136,7 @@ function FiltersSection({
         />
         {availableChannels.length > 0 && (
           <FilterDropup
-            label={
-              channelFilter != null
-                ? (resolveChannelLabel?.(channelFilter) ?? `Ch ${channelFilter}`).slice(0, 10)
-                : "Channel"
-            }
+            label={channelFilter != null ? channelTriggerLabel(channelFilter) : "Channel"}
             value={channelFilter}
             options={channelOptions}
             onChange={(v) => setChannelFilter(v)}
@@ -276,7 +277,7 @@ export function MapSettingsPanel({
   channelFilter: string | null;
   setChannelFilter: Dispatch<SetStateAction<string | null>>;
   availableChannels?: string[];
-  resolveChannelLabel?: (id: string | null | undefined) => string | null;
+  resolveChannelLabel: (id: string) => string;
 }) {
   const [nodeSearch, setNodeSearch] = useState("");
   const [myNodeHighlight, setMyNodeHighlight] = useState(0);
@@ -431,7 +432,13 @@ export function MapSettingsPanel({
               open={openSections.has("filters")}
               onToggle={() => toggleSection("filters")}
               title="Filters"
-              subtitle={filtersSubtitle(recentDays, linkMode, clusterEnabled, roleFilter, channelFilter)}
+              subtitle={filtersSubtitle(
+                recentDays,
+                linkMode,
+                clusterEnabled,
+                roleFilter,
+                channelFilter != null ? resolveChannelLabel(channelFilter) : null,
+              )}
             >
               <FiltersSection
                 recentDays={recentDays}

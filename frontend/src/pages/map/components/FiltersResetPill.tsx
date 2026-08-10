@@ -17,6 +17,7 @@ export function FiltersResetPill({
   setRoleFilter,
   channelFilter,
   setChannelFilter,
+  resolveChannelLabel,
   onOpenFilters,
   hidden = false,
 }: {
@@ -28,6 +29,8 @@ export function FiltersResetPill({
   setRoleFilter: Dispatch<SetStateAction<number | null>>;
   channelFilter: string | null;
   setChannelFilter: Dispatch<SetStateAction<string | null>>;
+  /** Channel-id → display label (meta.label > wire name > "Channel <id>"). */
+  resolveChannelLabel?: (id: string) => string;
   /** Called when the pill is clicked with no filters applied — opens the
    *  settings panel on the Filters section so the user can pick one. */
   onOpenFilters?: () => void;
@@ -62,7 +65,7 @@ export function FiltersResetPill({
   if (channelFilter != null) {
     chips.push({
       key: "channel",
-      label: `Ch ${channelFilter}`,
+      label: resolveChannelLabel?.(channelFilter) ?? `Channel ${channelFilter}`,
       clear: () => setChannelFilter(null),
     });
   }

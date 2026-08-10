@@ -257,9 +257,9 @@ export function DetailsPanel({
               </div>
               <div className="mt-2">
                 <Link
-                  to={`/logs?q=${String(selectedMessage.id)}`}
+                  to={`/logs?pkt=${String(selectedMessage.id)}&pfrom=${String(selectedMessage.from ?? "")}`}
                   className={`${baseBtn} ${defaultBtn} inline-block`}
-                  title="Search for this packet in logs"
+                  title="Open this packet in logs"
                 >
                   View in logs
                 </Link>

@@ -1,5 +1,7 @@
 /** Coverage prediction constants/presets shared between the panel UI and the worker. */
 
+import { canonicalPresetName, FIRMWARE_MODEM_PRESETS } from "../../../meshtasticPresets";
+
 /**
  * Aggression scaler stops for the per-pixel ITU clutter model. Multiplied into
  * the final A_h_tx + A_h_rx + L_v sum in computePathClutterLoss.
@@ -27,9 +29,8 @@ export const DEFAULT_AGGRESSION = AGGRESSION_STOPS[DEFAULT_AGGRESSION_IDX].value
  */
 export const REPRESENTATIVE_CLUTTER_DB = 16;
 
-/** Meshtastic modem presets. `sensitivityDbm` is real-world typical (~3 dB worse than
- *  SX1262 datasheet). SX1276 adds another ~2 dB (see COMMON_HARDWARE.chipset + effectiveSensitivityDbm).
- *  Refs: meshtastic.org/docs/overview/radio-settings/modem-presets/ */
+/** Tool-selectable modem preset. SX1276 chipsets are ~2 dB less sensitive
+ *  (see COMMON_HARDWARE.chipset + effectiveSensitivityDbm). */
 export interface ModemPreset {
   id: string;
   label: string;
@@ -41,13 +42,27 @@ export interface ModemPreset {
   bwKhz: number;
   isCustom?: boolean;
 }
+
+/** All firmware presets in canonical ladder order, plus a Custom slot last.
+ *  Derived from FIRMWARE_MODEM_PRESETS — never fork the RF numbers here. */
 export const MESHTASTIC_PRESETS: ModemPreset[] = [
-  { id: "MediumFast",   label: "MediumFast (SF9, 250 kHz)",    sensitivityDbm: -124, datasheetSensitivityDbm: -127, sf: 9,  bwKhz: 250 },
-  { id: "LongFast",     label: "LongFast (SF11, 250 kHz)",     sensitivityDbm: -130, datasheetSensitivityDbm: -133, sf: 11, bwKhz: 250 },
-  { id: "LongSlow",     label: "LongSlow (SF12, 125 kHz)",     sensitivityDbm: -134, datasheetSensitivityDbm: -137, sf: 12, bwKhz: 125 },
-  { id: "VeryLongSlow", label: "VeryLongSlow (SF12, 62.5 kHz)", sensitivityDbm: -137, datasheetSensitivityDbm: -140, sf: 12, bwKhz: 62.5 },
-  { id: "Custom",       label: "Custom",                        sensitivityDbm: -130, datasheetSensitivityDbm: -133, sf: 11, bwKhz: 250, isCustom: true },
+  ...FIRMWARE_MODEM_PRESETS.map((p) => ({
+    id: p.name,
+    label: `${p.name} (SF${p.sf}, ${p.bwKhz} kHz)`,
+    sensitivityDbm: p.sensitivityDbm,
+    datasheetSensitivityDbm: p.datasheetSensitivityDbm,
+    sf: p.sf,
+    bwKhz: p.bwKhz,
+  })),
+  { id: "Custom", label: "Custom", sensitivityDbm: -130, datasheetSensitivityDbm: -133, sf: 11, bwKhz: 250, isCustom: true },
 ];
+
+/** Alias-aware preset id → MESHTASTIC_PRESETS index; -1 when unknown. */
+export function modemPresetIdx(id: string | undefined | null): number {
+  if (!id) return -1;
+  const canonical = canonicalPresetName(id);
+  return MESHTASTIC_PRESETS.findIndex((p) => p.id === canonical);
+}
 
 /** SX1276 is ~2 dB less sensitive than SX1262 at the same SF/BW.
  *  Offset is added to sensitivity (dBm); a less-sensitive chipset needs a stronger

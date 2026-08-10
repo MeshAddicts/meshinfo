@@ -1,4 +1,5 @@
 /** Fetch the node set from meshinfo and reduce to coverage origins. */
+import { canonicalPresetName } from "../src/meshtasticPresets";
 import { txDbmForRole } from "../src/pages/map/live/liveCoverageParams";
 import { isKnownPreset } from "../src/pages/map/live/liveCoveragePresets";
 import { fetchWithTimeout } from "../src/pages/map/terrain/fetchWithTimeout";
@@ -63,7 +64,8 @@ async function channelPresetMap(): Promise<Map<string, string>> {
         }
         continue;
       }
-      map.set(String(hash), preset);
+      // Canonicalize so pyramid groups don't fork on historical spellings.
+      map.set(String(hash), canonicalPresetName(preset));
     }
     presetMap = { at: Date.now(), map };
     return map;

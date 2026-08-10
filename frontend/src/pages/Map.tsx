@@ -12,8 +12,10 @@ import { toast } from "../components/toastStore";
 import { env } from "../env";
 import { reverseGeocode } from "../maps/geocoder";
 import { buildMapStyle, ensureBuildings3D, ensureTerrain, isDarkBasemap, type OsmBasemap, removeBuildings3D, removeTerrain } from "../maps/mapStyle";
-import { useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
+import { useGetChannelsQuery, useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { type INode, type ITraceroutesResponse } from "../types";
+import { channelLabel, channelModeFrom, wireNamesFrom } from "../utils/channelDisplay";
+import { buildChannelModel } from "../utils/channelModel";
 import { convertNodeIdFromIntToHex } from "../utils/convertNodeId";
 import { prefersReducedMotion } from "../utils/reducedMotion";
 import { type ClusterHover, ClusterHoverCard, type ClusterHoverLeaf } from "./map/components/ClusterHoverCard";
@@ -158,16 +160,13 @@ export function Map() {
 
   const { data: rawNodes = EMPTY_RAW_NODES, isError: nodesQueryFailed } = useGetNodesQuery();
   const { data: config } = useGetConfigQuery();
+  // "all" range: labels are identity, not activity — a quiet bucket still needs its wire name.
+  const { data: channelsData } = useGetChannelsQuery({ range: "all" });
   const { data: rawTraceroutes = EMPTY_TRACEROUTES, isLoading: rawTraceroutesLoading } = useGetTraceroutesQuery();
 
-  const resolveChannelLabel = useCallback(
-    (channelId: string | null | undefined): string | null => {
-      if (!channelId) return null;
-      const meta = (config as any)?.broker?.channels?.meta?.[channelId];
-      return meta?.label ? String(meta.label) : null;
-    },
-    [config],
-  );
+  const channelMeta = config?.broker?.channels?.meta;
+  const channelMode = channelModeFrom(config?.broker?.channels);
+  const wireNames = useMemo(() => wireNamesFrom(channelsData?.channels), [channelsData?.channels]);
 
   const mapboxToken = env.MAPBOX_TOKEN;
   const hasMapbox = Boolean(mapboxToken);
@@ -490,13 +489,38 @@ export function Map() {
     [config?.server?.node_id, nodes]
   );
 
-  const availableChannels = useMemo(() => {
-    const chSet = new Set<string>();
+  // Ordering, mode filtering, and the selected-channel exemption live in
+  // buildChannelModel; the map only supplies node counts.
+  const channelModel = useMemo(() => {
+    const counts = new globalThis.Map<string, number>();
     for (const n of Object.values(rawNodes)) {
-      if (n.last_channel) chSet.add(n.last_channel);
+      if (n.last_channel) counts.set(n.last_channel, (counts.get(n.last_channel) ?? 0) + 1);
     }
-    return [...chSet].sort();
-  }, [rawNodes]);
+    // A selected channel whose nodes aged out still needs its dropdown entry.
+    const ids = [...counts.keys()];
+    if (channelFilter != null && !counts.has(channelFilter)) ids.push(channelFilter);
+    return buildChannelModel({
+      ids,
+      mode: channelMode,
+      meta: channelMeta,
+      wireNames,
+      counts: (id) => counts.get(id) ?? 0,
+      selectedId: channelFilter ?? undefined,
+    });
+  }, [rawNodes, channelMode, channelMeta, wireNames, channelFilter]);
+
+  const availableChannels = useMemo(
+    () => channelModel.entries.map((e) => e.id),
+    [channelModel],
+  );
+
+  // Label tiers: meta.label > wire name > "Channel <id>". Falls back past the
+  // model — the details panel can show a mode-filtered channel.
+  const resolveChannelLabel = useCallback(
+    (channelId: string): string =>
+      channelModel.byId.get(channelId)?.label ?? channelLabel(channelMeta, wireNames, channelId),
+    [channelModel, channelMeta, wireNames],
+  );
 
   const [detailsData, setDetailsData] = useState<NodeDetailsData | null>(null);
   const [clusterHover, setClusterHover] = useState<ClusterHover | null>(null);
@@ -527,6 +551,8 @@ export function Map() {
   const myNodeIdRef = useRef(myNodeId);
   const roleFilterRef = useRef(roleFilter);
   const channelFilterRef = useRef(channelFilter);
+  // Bind-once click handler reads through this ref to dodge stale closures.
+  const resolveChannelLabelRef = useRef(resolveChannelLabel);
   const activeToolRef = useRef(activeTool);
   const toolStepRef = useRef(toolStep);
   const toolFromIdRef = useRef(toolFromId);
@@ -591,6 +617,7 @@ export function Map() {
   useEffect(() => { terrain3DRef.current = terrain3D; }, [terrain3D]);
   useEffect(() => { buildings3DRef.current = buildings3D; }, [buildings3D]);
   useEffect(() => { channelFilterRef.current = channelFilter; }, [channelFilter]);
+  useEffect(() => { resolveChannelLabelRef.current = resolveChannelLabel; }, [resolveChannelLabel]);
   useEffect(() => { myNodeIdRef.current = myNodeId; }, [myNodeId]);
 
   useEffect(() => {
@@ -1783,7 +1810,7 @@ export function Map() {
           displayName: "Locating…",
           elsewhereLinks: configRef.current?.mesh?.elsewhere_links,
           traceroutes: traceroutesRef.current,
-          channelLabel: resolveChannelLabel((node as any).last_channel),
+          channelLabel: node.last_channel ? resolveChannelLabelRef.current(node.last_channel) : undefined,
           heardBy,
           maxRangeKm,
         });
@@ -2680,6 +2707,7 @@ export function Map() {
         setRoleFilter={setRoleFilter}
         channelFilter={channelFilter}
         setChannelFilter={setChannelFilter}
+        resolveChannelLabel={resolveChannelLabel}
         onOpenFilters={() => {
           setSettingsOpenSections((prev) => {
             const next = new Set(prev);

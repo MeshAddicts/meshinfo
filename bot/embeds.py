@@ -161,11 +161,16 @@ def _snr_color(gateway_entries: Optional[list], msg: dict) -> discord.Color:
     return discord.Color.from_rgb(194, 108, 108)       # muted red — poor
 
 
-def _resolve_channel_name(channel_hash: str, config: dict) -> str:
-    """Resolve a channel hash to its label from config, or return the hash."""
+def resolve_channel_name(channel_hash: str, config: dict) -> str:
+    """Resolve a channel hash to its meta label, else "Channel <hash>".
+    `or`, not .get(default): an empty label must fall through."""
     meta = config.get("broker", {}).get("channels", {}).get("meta", {})
-    channel_meta = meta.get(channel_hash, {})
-    return channel_meta.get("label", f"Channel {channel_hash}")
+    channel_meta = meta.get(channel_hash) or {}
+    return channel_meta.get("label") or f"Channel {channel_hash}"
+
+
+# Back-compat alias for any external callers of the old private name.
+_resolve_channel_name = resolve_channel_name
 
 
 def build_text_embed(

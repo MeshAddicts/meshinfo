@@ -81,8 +81,19 @@ export interface ITraceroutesResponse {
 
 export interface IChannel {
   messages: IMessage[];
+  /** All-time message count for the bucket. */
   totalMessages: number;
+  /** Count within the requested range (== totalMessages at range "all"). */
+  recentMessages?: number;
+  /** Unix epoch of the bucket's newest message, null when empty. */
+  newestTimestamp?: number | null;
+  /** Wire-healed channel name, or a "General"/"Channel N" placeholder. */
   name: string;
+}
+
+/** /v1/channels — the message-free sibling of IChatResponse. */
+export interface IChannelsResponse {
+  channels: Record<string, Omit<IChannel, "messages">>;
 }
 
 export interface IMessage {

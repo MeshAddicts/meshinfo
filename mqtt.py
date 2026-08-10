@@ -17,12 +17,22 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from fastapi.encoders import jsonable_encoder
 
+import channels
 from encoders import _JSONDecoder
 from models.node import Node
 import utils
 from utils import normalize_node_id
 
 logger = logging.getLogger(__name__)
+
+
+def _node_channel(msg) -> Optional[str]:
+    """Channel to stamp on the sending node, or None to leave it alone.
+    PKI DMs carry no channel; don't stamp last_channel."""
+    if 'channel' not in msg or msg.get('channel_name') == channels.PKI_CHANNEL:
+        return None
+    return str(msg['channel'])
+
 
 class MQTT:
     _DISCORD_DROP_LOG_EVERY = 100
@@ -41,6 +51,9 @@ class MQTT:
         # Track drops so the warning at every Nth surfaces a stalled consumer.
         self._discord_drops_total: int = 0
 
+        # Learns name -> hash from encrypted uplinks so decoded slot indices remap.
+        self._channel_resolver = channels.ChannelResolver()
+
     def _record_discord_drop(self, event_type: str) -> None:
         self._discord_drops_total += 1
         if self._discord_drops_total % self._DISCORD_DROP_LOG_EVERY == 0:
@@ -53,6 +66,14 @@ class MQTT:
 
     async def connect(self):
         # Single attempt; main.py's supervise() owns reconnect + exponential backoff.
+        # Seed from wire-healed names so a restart doesn't reopen the learning
+        # window (first decoded copy would misfile permanently). Non-fatal.
+        try:
+            seedable = await self.data.pg_storage.get_wire_channel_names()
+            self._channel_resolver.seed(seedable)
+        except Exception as e:
+            logger.warning("Channel resolver seeding skipped: %s", e)
+
         logger.info("Connecting to MQTT broker at %s:%d", self.config['broker']['host'], self.config['broker']['port'])
         try:
             async with aiomqtt.Client(
@@ -140,10 +161,13 @@ class MQTT:
                     outs['rssi'] = mp.rx_rssi
                 if mp.rx_rssi != 0 or mp.rx_snr != 0.0:
                     outs['snr'] = mp.rx_snr
-                # Clamp rx_time to current time if node clock is ahead
+                # Clamp rx_time to now if the node clock is ahead; floor unset
+                # (proto3 zero) at arrival — epoch 0 evades every range filter.
                 rx_time = mp.rx_time
                 now_epoch = int(time.time())
-                if rx_time and rx_time > now_epoch + 300:  # 5 min tolerance
+                if not rx_time:
+                    rx_time = now_epoch
+                elif rx_time > now_epoch + 300:  # 5 min tolerance
                     node_id = utils.convert_node_id_from_int_to_hex(getattr(mp, "from", 0))
                     logger.warning("Node %s has future clock: rx_time=%s (%.0f min ahead), clamping to now", node_id, rx_time, (rx_time - now_epoch) / 60)
                     rx_time = now_epoch
@@ -152,7 +176,19 @@ class MQTT:
                 outs["qos"] = getattr(msg, "qos", None)
                 outs["retain"] = getattr(msg, "retain", None)
                 # MessageToJson omits channel 0 (primary); read it off mp.
-                outs.setdefault('channel', mp.channel)
+                # mp.channel is the (name,PSK) hash on encrypted uplinks but a
+                # gateway-local slot index on decoded ones — resolve to one bucket.
+                channel_name = se.channel_id or channels.name_from_topic(msg.topic.value)
+                outs['channel'] = self._channel_resolver.resolve(
+                    raw_channel=mp.channel,
+                    is_encrypted=is_encrypted,
+                    channel_name=channel_name,
+                    is_pki=mp.pki_encrypted,
+                    # Lets observe() tell a re-key from one packet published twice.
+                    packet_id=mp.id or None,
+                )
+                if channel_name:
+                    outs['channel_name'] = channel_name
 
                 # Fallback: extract gateway from topic suffix if gateway_id was empty
                 if not outs.get('sender'):
@@ -488,8 +524,9 @@ class MQTT:
         if msg.get('sender'):
             node['gateway'] = msg['sender']
 
-        if 'channel' in msg:
-            node['last_channel'] = str(msg['channel'])
+        ch_for_node = _node_channel(msg)
+        if ch_for_node is not None:
+            node['last_channel'] = ch_for_node
 
         await self.data.update_node(id, node)
 
@@ -532,8 +569,9 @@ class MQTT:
         if msg.get('sender'):
             node['gateway'] = msg['sender']
 
-        if 'channel' in msg:
-            node['last_channel'] = str(msg['channel'])
+        ch_for_node = _node_channel(msg)
+        if ch_for_node is not None:
+            node['last_channel'] = ch_for_node
 
         await self.data.update_node(from_id, node)
 
@@ -550,8 +588,9 @@ class MQTT:
 
         node['position'] = msg.get('payload')
 
-        if 'channel' in msg:
-            node['last_channel'] = str(msg['channel'])
+        ch_for_node = _node_channel(msg)
+        if ch_for_node is not None:
+            node['last_channel'] = ch_for_node
 
         await self.data.update_node(id, node)
 
@@ -591,8 +630,9 @@ class MQTT:
         if msg.get('sender'):
             node['gateway'] = msg['sender']
 
-        if 'channel' in msg:
-            node['last_channel'] = str(msg['channel'])
+        ch_for_node = _node_channel(msg)
+        if ch_for_node is not None:
+            node['last_channel'] = ch_for_node
 
         await self.data.update_node(id, node)
         logger.debug("Node %s updated with telemetry (variant=%s)", id, telemetry_type)
@@ -623,8 +663,6 @@ class MQTT:
         if from_id is None:
             logger.debug("handle_text: missing/invalid 'from'; skipping: %s", msg)
             return
-        if 'channel' not in msg:
-            msg['channel'] = "0"
 
         payload = msg.get('payload')
         text = payload.get('text') if isinstance(payload, dict) else None
@@ -642,13 +680,16 @@ class MQTT:
             'id': msg_id,
             'from': from_id,
             'to': msg.get('to'),
-            'channel': str(msg['channel']),
+            'channel_name': msg.get('channel_name'),
             'text': text,
             'timestamp': timestamp,
             'hops_away': msg.get('hops_away'),
             'rssi': msg.get('rssi'),
             'snr': msg.get('snr'),
         }
+        # Channel-less stays channel-less; write_chat_message owns the bucket-0 fallback.
+        if 'channel' in msg:
+            chat['channel'] = str(msg['channel'])
         if 'sender' in msg:
             chat['sender'] = msg['sender']
 
@@ -666,7 +707,9 @@ class MQTT:
         if node:
             if 'TC' in text and 'BBS' in text and 'Commands' in text:
                 node['tc2_bbs'] = True
-            node['last_channel'] = str(msg['channel'])
+            ch_for_node = _node_channel(msg)
+            if ch_for_node is not None:
+                node['last_channel'] = ch_for_node
             await self.data.update_node(node['id'], node)
 
         # Emit event for Discord bridge

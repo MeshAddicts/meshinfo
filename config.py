@@ -65,7 +65,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         },
         "channels": {
             "encryption": [],
-            "display": ["0"],
+            # Display only — ingest stores every channel. `meta` applies in all modes.
+            # presets = stock preset channels | all = + named | manual = display/views lists
+            "mode": "presets",
+            # mode = "manual" only. Ids are (name, PSK) hashes — no default fits every mesh.
+            "display": [],
             "meta": {},
             "views": [],
         },
@@ -320,6 +324,24 @@ def _warn_placeholder(config: dict, path: str, placeholders: list[str]) -> str |
     return None
 
 
+def _warn_stale_channel_lists(user_config: dict) -> None:
+    """Warn pre-`mode` configs whose display/views lists would silently stop applying.
+    An explicit mode alongside the lists is deliberate — stay quiet then."""
+    try:
+        uc = user_config.get("broker", {}).get("channels", {})
+    except AttributeError:
+        return
+    if not isinstance(uc, dict) or "mode" in uc:
+        return
+    if uc.get("display") or uc.get("views"):
+        logger.warning(
+            "broker.channels display/views are configured but broker.channels.mode "
+            'is not set; they are now only honored when mode = "manual". The Chat '
+            'page currently shows automatic preset pills instead. Set mode = '
+            '"manual" to keep your curated tabs, or delete the lists.'
+        )
+
+
 def validate(config: dict) -> list[str]:
     """
     Validate the merged config and return a list of warning messages.
@@ -378,6 +400,34 @@ def validate(config: dict) -> list[str]:
 
     check(_validate_type(config, "broker.decoders", dict))
     check(_validate_type(config, "broker.channels", dict))
+
+    # A wrong-shaped broker.channels already warned above; don't crash the deeper checks.
+    channels = config.get("broker", {}).get("channels", {})
+    if isinstance(channels, dict):
+        check(_validate_type(config, "broker.channels.display", list))
+        check(_validate_type(config, "broker.channels.views", list))
+        # A single-bracket typo ([...] not [[...]]) makes this a dict —
+        # decryption then silently finds no keys.
+        check(_validate_type(config, "broker.channels.encryption", list))
+        check(
+            _validate_one_of(
+                config, "broker.channels.mode", ["presets", "all", "manual"]
+            )
+        )
+        # Pre-release key names a stale working copy might still carry.
+        for old_key in ("show", "custom_views"):
+            if old_key in channels:
+                warn(
+                    f"broker.channels.{old_key} is not a setting; use "
+                    f'broker.channels.mode = "presets" | "all" | "manual".'
+                )
+        if isinstance(channels.get("display"), list) and not all(
+            isinstance(x, str) for x in channels["display"]
+        ):
+            warn(
+                "broker.channels.display should hold quoted strings "
+                '(e.g. ["8", "31"]); unquoted numbers never match a channel id.'
+            )
 
     # ── server section ────────────────────────────────────────────────
     _validate_type(config, "server", dict, required=True)
@@ -528,6 +578,8 @@ class Config:
                 "Copy config.toml.sample to config.toml and edit it for your deployment."
             )
 
+        _warn_stale_channel_lists(user_config)
+
         # Merge: defaults first, user overrides on top
         config = _deep_merge(DEFAULT_CONFIG, user_config)
 
@@ -625,5 +677,19 @@ class Config:
             # redact sensitive keys in dicts
             if isinstance(d, dict) and path[-1] in d:
                 d[path[-1]] = "***REDACTED***"
+
+        # PSKs sit in a list of tables the path walk can't reach, and
+        # /v1/server/config is unauthenticated. Dict shape (bracket typo) must not leak either.
+        try:
+            enc = config_clean["broker"]["channels"]["encryption"]
+            entries = (
+                list(enc.values()) + [enc] if isinstance(enc, dict)
+                else enc if isinstance(enc, list) else []
+            )
+            for entry in entries:
+                if isinstance(entry, dict) and "key" in entry:
+                    entry["key"] = "***REDACTED***"
+        except (KeyError, TypeError):
+            pass
 
         return config_clean

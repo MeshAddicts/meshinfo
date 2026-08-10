@@ -2,6 +2,7 @@ import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
 
 import { env } from "../env";
 import {
+  IChannelsResponse,
   IChatResponse,
   IMqttMessagesResponse,
   INodesResponse,
@@ -60,6 +61,14 @@ export const apiSlice = createApi({
       transformResponse: (response: { config: IConfigResponse }) =>
         response.config,
       providesTags: [{ type: "Config", id: "LIST" }],
+    }),
+    // Message-free channel facts (names, counts) — no chat payloads.
+    getChannels: builder.query<IChannelsResponse, { range?: string } | void>({
+      query: (params) => {
+        const r = params && params.range ? `?range=${params.range}` : "";
+        return `channels${r}`;
+      },
+      providesTags: [{ type: "Chat", id: "CHANNELS" }],
     }),
     getChats: builder.query<
         IChatResponse,
@@ -184,13 +193,22 @@ export const apiSlice = createApi({
       providesTags: [{ type: "MqttMessages", id: "PACKETS" }],
     }),
     // Single packet by mqtt_row_id — backs per-packet deeplinks.
-    getPacket: builder.query<{ packet: IPacketMessage }, number>({
-      query: (id) => `packets/${id}`,
+    getPacket: builder.query<
+      { packet: IPacketMessage | null },
+      number | { pkt: number; from: string }
+    >({
+      // Number = archive row id; object = (sender, mesh packet id), the address
+      // chat rows know.
+      query: (arg) =>
+        typeof arg === "number"
+          ? `packets/${arg}`
+          : `packets/${arg.pkt}?by=packet&from=${encodeURIComponent(arg.from)}`,
     }),
   }),
 });
 
 export const {
+  useGetChannelsQuery,
   useGetChatsQuery,
   useGetNodesQuery,
   useGetConfigQuery,

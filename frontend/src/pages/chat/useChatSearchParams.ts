@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router";
 
+import { normalizeKey } from "../../utils/channelDisplay";
+
 export type FocusMode = "endpoints" | "any";
 export type MsgType = "all" | "bc" | "dm";
 export type RangeKey = "1h" | "24h" | "7d" | "all";
@@ -11,7 +13,7 @@ export type NavMode = "replace" | "push";
 // Default URL param values (we will *remove* these from the URL for canonical links)
 // NOTE: ch is dynamic (depends on args/views), so it is handled separately.
 const DEFAULT_PARAM: Record<string, string> = {
-  r: "24h",
+  r: "all",
   t: "all",
   s: "desc",
   focus: "endpoints",
@@ -53,15 +55,17 @@ export function useChatSearchParams(args?: {
   }, [args?.defaultCh, views]);
 
   const aliasToKey = useMemo(() => {
+    // normalizeKey, not toLowerCase — must match the page's ?ch= normalization
+    // ("Sac Valley" vs ?ch=sacvalley).
     const m = new Map<string, string>();
     for (const v of views) {
-      const k = (v.key ?? "").trim();
+      const k = normalizeKey(v.key ?? "");
       if (!k) continue;
-      m.set(k.toLowerCase(), k);
+      m.set(k, v.key);
       for (const a of v.aliases ?? []) {
-        const aa = (a ?? "").trim();
+        const aa = normalizeKey(a ?? "");
         if (!aa) continue;
-        m.set(aa.toLowerCase(), k);
+        m.set(aa, v.key);
       }
     }
     return m;
@@ -72,7 +76,7 @@ export function useChatSearchParams(args?: {
     if (!defaultCh) return rawCh; // fallback (shouldn’t happen)
     if (!rawCh) return defaultCh;
 
-    const mapped = aliasToKey.get(rawCh.toLowerCase());
+    const mapped = aliasToKey.get(normalizeKey(rawCh));
     return mapped ?? defaultCh;
   }, [rawCh, aliasToKey, defaultCh]);
 
@@ -114,7 +118,8 @@ export function useChatSearchParams(args?: {
   const urlRange = parseEnum<RangeKey>(
     searchParams.get("r"),
     ["1h", "24h", "7d", "all"] as const,
-    "24h"
+    // "all" by default: range-scoped pills hiding channels surprised operators.
+    "all"
   );
 
   const urlType = parseEnum<MsgType>(

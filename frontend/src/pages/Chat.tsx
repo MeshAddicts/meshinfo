@@ -9,6 +9,7 @@ import {
 import { Link, useSearchParams } from "react-router";
 import { VirtuosoHandle } from "react-virtuoso";
 
+import { ChannelPillGroups } from "../components/ChannelPillGroups";
 import { ExportMenu } from "../components/ExportMenu";
 import { HeardBy } from "../components/HeardBy";
 import { LivePill } from "../components/LivePill";
@@ -19,10 +20,22 @@ import {
   useRememberedChannel,
 } from "../hooks/useRememberedChannel";
 import {
+  REMEMBERED_RANGE_KEYS,
+  useRememberedRange,
+} from "../hooks/useRememberedRange";
+import {
   useGetChatsQuery,
   useGetConfigQuery,
   useGetNodesQuery,
 } from "../slices/apiSlice";
+import type { IChannel } from "../types";
+import {
+  channelLabel as channelBucketLabel,
+  channelModeFrom,
+  normalizeKey,
+  wireNamesFrom,
+} from "../utils/channelDisplay";
+import { buildChannelModel } from "../utils/channelModel";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { csvEscape, downloadBlob } from "../utils/export";
 import {
@@ -46,14 +59,7 @@ type ViewDef = {
   aliases: string[]; // ["mf","0","MediumFast",...]
   tooltip?: string;
   isDefault?: boolean;
-};
-
-const normalizeKey = (s: string) => {
-  const raw = String(s ?? "").trim().toLowerCase();
-  const k = raw.replace(/[^a-z0-9]+/g, "");
-  if (!k) return "";
-  if (k.startsWith("all")) return "all";
-  return k;
+  group?: "presets" | "custom"; // absent in curated mode — no grouping there
 };
 
 type MobileSheetKey = "controls" | "focus" | "details";
@@ -139,56 +145,59 @@ export const Chat = () => {
   // → chat query → channelEntries).
   const [searchParamsRaw] = useSearchParams();
   const rawCh = normalizeKey(searchParamsRaw.get("ch") || "");
-  const rawRange = (searchParamsRaw.get("r") || "24h") as string;
+  const rawRange = (searchParamsRaw.get("r") || "all") as string;
 
   // ── 3. Channel metadata helpers (from broker config) ──
   const channelMeta = useMemo(
     () => (config?.broker?.channels as any)?.meta ?? {},
     [config]
   );
-  const rawChannelLabel = useCallback(
-    (id: string) =>
-      channelMeta?.[id]?.label ? String(channelMeta[id].label) : `Channel ${id}`,
-    [channelMeta]
+
+  // Display-only channel mode: "presets" (default) | "all" | "manual" (curated
+  // views). Ingest stores everything regardless.
+  const channelMode = useMemo(
+    () => channelModeFrom(config?.broker?.channels),
+    [config]
   );
   const rawChannelShort = useCallback(
     (id: string) =>
       channelMeta?.[id]?.short ? String(channelMeta[id].short) : id,
     [channelMeta]
   );
-  const rawChannelTooltip = useCallback(
-    (id: string) => {
-      const meta = channelMeta?.[id] ?? {};
-      const label = rawChannelLabel(id);
-      const short = rawChannelShort(id);
-      const desc =
-        meta.description ??
-        meta.desc ??
-        meta.tooltip ??
-        meta.notes ??
-        meta.presetDescription ??
-        "";
-      const preset = meta.preset ?? meta.modemPreset ?? meta.profile ?? "";
-      const parts = [
-        `${label} (ch ${id}${short ? ` • ${short}` : ""})`,
-        preset ? `Preset: ${preset}` : "",
-        desc ? String(desc) : "",
-      ].filter(Boolean);
-      return parts.join("\n");
-    },
-    [channelMeta, rawChannelLabel, rawChannelShort]
-  );
+
+  // Post-fetch snapshot of the channels map, declared above the query so
+  // resolvedChannelId can consult it without a circular declaration.
+  const [dataChannels, setDataChannels] = useState<
+    Record<string, unknown> | undefined
+  >(undefined);
 
   // ── 4. Resolve channel ID from config + raw URL ──
   // This lets the chat query fire immediately using only config
   // data, without waiting for chat data to build the full views.
   const resolvedChannelId = useMemo(() => {
+    // Auto mode: honor an explicit ?ch=, else send no channel so the API
+    // returns every channel.
+    if (channelMode !== "manual") {
+      // Numeric ?ch= only: this runs pre-data, and resolving label slugs here
+      // would cost a second query round-trip on every load.
+      return rawCh && /^[0-9]+$/.test(rawCh) ? rawCh : undefined;
+    }
     const viewsConfig = (config?.broker?.channels as any)?.views;
+
+    // Scoping to a channel the data says is empty renders "showing 0" forever;
+    // fall back to unscoped. dataChannels undefined = can't judge yet, keep id.
+    const emptyPerData = (id: string): boolean => {
+      const ch = dataChannels?.[id] as { totalMessages?: number } | undefined;
+      return !!dataChannels && (!ch || !Number(ch.totalMessages));
+    };
+    const scoped = (id: string): string | undefined =>
+      emptyPerData(id) ? undefined : id;
+
     if (!Array.isArray(viewsConfig) || viewsConfig.length === 0) {
-      // No views config — fall back to the raw URL channel if it looks
-      // like a numeric channel id, otherwise default to "0".
-      if (rawCh && /^[0-9]+$/.test(rawCh)) return rawCh;
-      return "0";
+      // No views config — honor numeric ?ch=, else send no channel (naming one
+      // could diverge from the tab the UI actually selects).
+      if (rawCh && /^[0-9]+$/.test(rawCh)) return scoped(rawCh);
+      return undefined;
     }
 
     // Try matching the raw URL ch param against config views
@@ -210,7 +219,7 @@ export const Chat = () => {
           rawCh === short ||
           rawCh === channelId
         ) {
-          return channelId;
+          return scoped(channelId);
         }
       }
     }
@@ -218,11 +227,11 @@ export const Chat = () => {
     // Fall back to the default view's channel
     const def =
       viewsConfig.find((v: any) => v.default) ?? viewsConfig[0];
-    if (def?.channels?.[0]) return String(def.channels[0]);
+    if (def?.channels?.[0]) return scoped(String(def.channels[0]));
     // Views exist but no channel resolved — still scope the query
-    if (rawCh && /^[0-9]+$/.test(rawCh)) return rawCh;
-    return "0";
-  }, [config, rawCh]);
+    if (rawCh && /^[0-9]+$/.test(rawCh)) return scoped(rawCh);
+    return undefined;
+  }, [config, rawCh, channelMode, dataChannels]);
 
   // Live / auto-follow toggle (declared before query so polling can reference it)
   const [liveEnabled, setLiveEnabled] = useState(true);
@@ -269,15 +278,102 @@ export const Chat = () => {
   if (chat) prevChatRef.current = chat;
   const effectiveChat = chat ?? prevChatRef.current;
 
+  // Feed the pre-query snapshot used by resolvedChannelId's stuck-state heal.
+  useEffect(() => {
+    const chs = (chat as { channels?: Record<string, unknown> } | undefined)
+      ?.channels;
+    if (chs) setDataChannels(chs);
+  }, [chat]);
+
   // ── 7. Channel entries from chat data (now below query) ──
+  // Both display filters exempt the selected channel so an explicit ?ch= always
+  // renders. Range scoping via recentMessages doubles as the stale-pill filter.
   const channelEntries = useMemo(() => {
-    const entries = Object.entries(effectiveChat?.channels ?? {});
-    const allow = config?.broker?.channels?.display;
+    const channels: Record<string, IChannel> = effectiveChat?.channels ?? {};
+    let entries = Object.entries(channels);
+    const allow =
+      channelMode === "manual" ? config?.broker?.channels?.display : undefined;
     if (Array.isArray(allow) && allow.length > 0) {
-      return entries.filter(([id]) => allow.includes(id));
+      entries = entries.filter(
+        ([id]) => allow.includes(id) || id === resolvedChannelId
+      );
     }
-    return entries;
-  }, [effectiveChat?.channels, config?.broker?.channels?.display]);
+    return entries.filter(([id, ch]) => {
+      const recent = Number(ch.recentMessages ?? NaN);
+      // Older API without recentMessages: fall back to all-time behavior.
+      if (Number.isNaN(recent)) return true;
+      return recent > 0 || id === resolvedChannelId;
+    });
+  }, [
+    effectiveChat?.channels,
+    config?.broker?.channels?.display,
+    channelMode,
+    resolvedChannelId,
+  ]);
+
+  // Gateway-published channel names; placeholders never win over `Channel <id>`.
+  const wireNames = useMemo(
+    () => wireNamesFrom(effectiveChat?.channels),
+    [effectiveChat?.channels]
+  );
+
+  // Label priority: configured meta > name off the wire > bare channel id.
+  const labelFor = useCallback(
+    (id: string) => channelBucketLabel(channelMeta, wireNames, id),
+    [channelMeta, wireNames]
+  );
+
+  // Tooltip uses the same label chain as the pill (meta > wire > Channel N).
+  const rawChannelTooltip = useCallback(
+    (id: string) => {
+      const meta = channelMeta?.[id] ?? {};
+      const label = labelFor(id);
+      const short = rawChannelShort(id);
+      const desc =
+        meta.description ??
+        meta.desc ??
+        meta.tooltip ??
+        meta.notes ??
+        meta.presetDescription ??
+        "";
+      const preset = meta.preset ?? meta.modemPreset ?? meta.profile ?? "";
+      const parts = [
+        `${label} (ch ${id}${short ? ` • ${short}` : ""})`,
+        preset ? `Preset: ${preset}` : "",
+        desc ? String(desc) : "",
+      ].filter(Boolean);
+      return parts.join("\n");
+    },
+    [channelMeta, labelFor, rawChannelShort]
+  );
+
+  // Default tab when no view is configured. Latched per range so live count
+  // updates can't flip the default tab mid-session.
+  const busiestLatchRef = useRef<{ range: string; id: string } | null>(null);
+  const busiestChannelId = useMemo(() => {
+    if (busiestLatchRef.current?.range === rawRange) {
+      return busiestLatchRef.current.id;
+    }
+    // While fetching, entries still hold the old range's counts — keep the
+    // previous latch to avoid a default-tab flicker.
+    if (isFetching && busiestLatchRef.current) {
+      return busiestLatchRef.current.id;
+    }
+    let best: string | undefined;
+    let bestCount = -1;
+    for (const [id, ch] of channelEntries) {
+      const n = Number(ch.recentMessages ?? ch.totalMessages ?? 0);
+      if (n > bestCount) {
+        bestCount = n;
+        best = String(id);
+      }
+    }
+    // Latch only from a settled response — stale counts would pin a wrong default.
+    if (best !== undefined && !isFetching) {
+      busiestLatchRef.current = { range: rawRange, id: best };
+    }
+    return best;
+  }, [channelEntries, rawRange, isFetching]);
 
   // null = chat hasn't loaded yet, allow all views through
   const availableChannelIds = useMemo(
@@ -290,7 +386,8 @@ export const Chat = () => {
 
   // ── 8. Build "views" from broker.channels.views (single-channel ones) ──
   const views: ViewDef[] = useMemo(() => {
-    const vraw = (config?.broker?.channels as any)?.views;
+    const vraw =
+      channelMode === "manual" ? (config?.broker?.channels as any)?.views : undefined;
     const out: ViewDef[] = [];
 
     if (Array.isArray(vraw) && vraw.length > 0) {
@@ -300,7 +397,7 @@ export const Chat = () => {
         const channelId = chans[0];
         if (availableChannelIds && !availableChannelIds.has(channelId)) continue;
 
-        const label = String(v?.label ?? v?.id ?? rawChannelLabel(channelId));
+        const label = String(v?.label ?? v?.id ?? labelFor(channelId));
         const short = v?.short ? String(v.short) : rawChannelShort(channelId);
 
         const key =
@@ -337,24 +434,59 @@ export const Chat = () => {
       }
     }
 
-    // Fallback: if no views config, present channels as-is (canonical key = channel id)
+    // Auto mode: one tab per active channel; ordering, filtering, and aliases
+    // come from the shared model. Also the fallback when no configured view matched.
     if (out.length === 0) {
-      for (const [id] of channelEntries) {
-        const channelId = String(id);
+      const manual = channelMode === "manual";
+      const model = buildChannelModel({
+        ids: channelEntries.map(([id]) => String(id)),
+        mode: channelMode,
+        meta: channelMeta,
+        wireNames,
+        counts: Object.fromEntries(
+          channelEntries.map(([id, ch]) => [
+            String(id),
+            Number(ch.recentMessages ?? ch.totalMessages ?? 0),
+          ])
+        ),
+        selectedId: resolvedChannelId,
+      });
+
+      for (const e of model.entries) {
         out.push({
-          key: channelId,
-          label: rawChannelLabel(channelId),
-          short: rawChannelShort(channelId),
-          channelId,
-          aliases: [channelId],
-          tooltip: rawChannelTooltip(channelId),
-          isDefault: channelId === "0",
+          key: e.id,
+          label: e.label,
+          short: e.short,
+          channelId: e.id,
+          aliases: e.aliases,
+          tooltip: [
+            rawChannelTooltip(e.id),
+            e.group === "presets" ? "Stock modem preset" : "Custom channel",
+          ].join("\n"),
+          // Latched busiest, not model.defaultId — needs the pre-class-filter busiest.
+          isDefault: e.id === busiestChannelId,
+          group: manual ? undefined : e.group,
+        });
+      }
+
+      // Never render an empty page: fall back to the busiest channel.
+      if (out.length === 0 && busiestChannelId) {
+        out.push({
+          key: busiestChannelId,
+          label: labelFor(busiestChannelId),
+          short: rawChannelShort(busiestChannelId),
+          channelId: busiestChannelId,
+          aliases: [busiestChannelId],
+          tooltip: rawChannelTooltip(busiestChannelId),
+          isDefault: true,
         });
       }
     }
 
     return out;
-  }, [config, channelEntries, availableChannelIds, rawChannelLabel, rawChannelShort, rawChannelTooltip]);
+  }, [config, channelMode, channelEntries, availableChannelIds, labelFor,
+      channelMeta, wireNames, resolvedChannelId, rawChannelShort,
+      rawChannelTooltip, busiestChannelId]);
 
   const defaultViewKey =
     views.find((v) => v.isDefault)?.key ?? views[0]?.key ?? "";
@@ -394,10 +526,29 @@ export const Chat = () => {
   });
 
   // Land returning visitors on the channel they last had selected.
+  // urlHasCh requires the raw ?ch to resolve to a known view — a bad link must
+  // not overwrite the remembered selection with "".
+  const rawChParam = normalizeKey(searchParams.get("ch") ?? "");
+  const rawChResolves =
+    !!rawChParam &&
+    views.some(
+      (v) =>
+        v.key.toLowerCase() === rawChParam ||
+        v.aliases.some((a) => a.toLowerCase() === rawChParam)
+    );
+  // Remember the time range the same way (default "all"; URL wins).
+  useRememberedRange({
+    storageKey: REMEMBERED_RANGE_KEYS.chat,
+    value: rawRange,
+    urlHasR: !!searchParamsRaw.get("r")?.trim(),
+    suppressRestore: [...searchParamsRaw.keys()].some((k) => k !== "r"),
+    apply: (stored) => setParam("r", stored, "replace"),
+  });
+
   useRememberedChannel({
     storageKey: REMEMBERED_CH_KEYS.chat,
     value: urlCh === defaultViewKey ? "" : urlCh,
-    urlHasCh: !!searchParams.get("ch")?.trim(),
+    urlHasCh: rawChResolves,
     suppressRestore: [...searchParams.keys()].some((k) => k !== "ch"),
     ready: views.length > 0,
     isValid: (stored) => views.some((v) => v.key === stored),
@@ -415,7 +566,7 @@ export const Chat = () => {
   // ── View-based label helpers ──
   const channelLabel = (id: string) => {
     const v = views.find((x) => x.channelId === id);
-    return v?.label ?? rawChannelLabel(id);
+    return v?.label ?? labelFor(id);
   };
 
   const channelTooltip = (id: string) => {
@@ -660,7 +811,7 @@ export const Chat = () => {
   const activeFilterCount = useMemo(() => {
     let n = 0;
     if (urlQ.trim()) n += 1;
-    if (urlRange !== "24h") n += 1;
+    if (urlRange !== "all") n += 1;
     if (urlType !== "all") n += 1;
     if (typeof urlHopsMin === "number") n += 1;
     if (typeof urlHopsMax === "number") n += 1;
@@ -696,7 +847,7 @@ export const Chat = () => {
   const activeChips = useMemo(() => {
     const chips: Array<{ label: string; clear: () => void }> = [];
 
-    if (urlRange !== "24h")
+    if (urlRange !== "all")
       chips.push({
         label: `Range: ${urlRange}`,
         clear: () => setParam("r", undefined, "push"),
@@ -1376,49 +1527,29 @@ export const Chat = () => {
             </div>
           </div>
 
-          {/* Preset pills (canonical ch=mediumfast/longfast) */}
-          <div className="mt-3 flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
-            {views.map((v) => {
-              const active = v.key === selectedView?.key;
-              const chObj: any = (effectiveChat?.channels as any)?.[v.channelId];
-              const count = chObj?.totalMessages ?? 0;
-
-              return (
-                <button
-                  key={`preset-${v.key}`}
-                  type="button"
-                  className={[
-                    "whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-medium border transition",
-                    active
-                      ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
-                      : "bg-transparent text-gray-700 dark:text-gray-200 border-gray-300/60 dark:border-gray-600/60 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
-                  ].join(" ")}
-                  onClick={() => {
-                    setParams(
-                      [
-                        { key: "ch", value: v.key },
-                        { key: "msg", value: undefined },
-                      ],
-                      "push"
-                    );
-                  }}
-                  title={v.tooltip || channelTooltip(v.channelId)}
-                >
-                  {v.label}
-                  <span
-                    className={[
-                      "ml-2 rounded-full px-2 py-0.5 text-xs",
-                      active
-                        ? "bg-white/20 text-white"
-                        : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-700 dark:text-gray-200",
-                    ].join(" ")}
-                  >
-                    {count}
-                  </span>
-                </button>
-              );
+          {/* Channel pills: grouped rows in auto mode, one row in curated mode. */}
+          <ChannelPillGroups
+            pills={views.map((v) => {
+              const chObj = effectiveChat?.channels?.[v.channelId];
+              return {
+                key: v.key,
+                label: v.label,
+                // Badge counts the selected range, matching what the pill shows.
+                count: chObj?.recentMessages ?? chObj?.totalMessages ?? 0,
+                active: v.key === selectedView?.key,
+                group: v.group,
+                tooltip: v.tooltip || channelTooltip(v.channelId),
+                onClick: () =>
+                  setParams(
+                    [
+                      { key: "ch", value: v.key },
+                      { key: "msg", value: undefined },
+                    ],
+                    "push"
+                  ),
+              };
             })}
-          </div>
+          />
 
           {/* Toolbar row: mobile keeps ONLY search; desktop keeps full controls */}
           <div className="mt-3 flex flex-col lg:flex-row gap-2 lg:items-center lg:justify-between">
@@ -1560,8 +1691,8 @@ export const Chat = () => {
           <div className="mt-2 hidden lg:flex items-center gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch] min-h-7.5">
             <StatusChip
               label={`Range: ${urlRange}`}
-              active={urlRange !== "24h"}
-              title="Click to reset range to 24h"
+              active={urlRange !== "all"}
+              title="Click to reset range to all"
               onClick={() => setParam("r", undefined, "push")}
             />
 

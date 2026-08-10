@@ -16,8 +16,9 @@ import type { LoSResult } from "../rf/losAnalysis";
 import type { DemSource } from "../terrain/terrainRgb";
 import { ElevationProfile } from "./ElevationProfile";
 
-/** Fallback modem preset when the selected index is stale/out of range. */
-const DEFAULT_LOS_PRESET = MESHTASTIC_PRESETS.find((p) => p.id === "LongFast") ?? MESHTASTIC_PRESETS[1];
+/** Fallback modem preset when the selected index is stale/out of range.
+ *  Don't fall back by positional index — the array's order has shifted before. */
+const DEFAULT_LOS_PRESET = MESHTASTIC_PRESETS.find((p) => p.id === "LongFast") ?? MESHTASTIC_PRESETS[0];
 
 /** Common LoRa region frequencies (distinct MHz values; several regions share one). */
 const LORA_FREQS: { mhz: number; label: string }[] = [

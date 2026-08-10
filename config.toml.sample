@@ -129,20 +129,28 @@ enabled = true
 # ─────────────────────────────────────────────────────────────────────────────
 # Channel Configuration
 # ─────────────────────────────────────────────────────────────────────────────
-# Meshtastic firmware 2.5+ identifies channels by a hash value derived from
-# the channel name and PSK — not a slot index (0-7). The hashes below are
-# computed for the default PSK (1PG7OiApB1nwvP+rz05pAQ==). If your network
-# uses a custom PSK, your channel hashes will differ.
+# A channel id is a hash of the channel name and its PSK, not a slot number.
+# Hashes below assume the default PSK (1PG7OiApB1nwvP+rz05pAQ==); a custom PSK or
+# renamed channel produces different ones. Decoded uplinks carry a slot index (0-7);
+# ingest re-files those by name (older rows: scripts/backfill_channel_buckets.py).
 #
-# To discover which channel hashes are active on your network, query your DB:
-#   SELECT channel_id, COUNT(*) as msgs FROM chat_messages
-#   GROUP BY channel_id ORDER BY msgs DESC;
+# To see which channels are active:
+#   SELECT cm.channel_id, cc.name, COUNT(*) AS msgs
+#   FROM chat_messages cm LEFT JOIN chat_channels cc ON cc.id = cm.channel_id
+#   GROUP BY 1, 2 ORDER BY msgs DESC;
 # ─────────────────────────────────────────────────────────────────────────────
 
 [broker.channels]
-# Channel hashes to show in the UI. Channels with no data are hidden
-# automatically — it is safe to list all presets here.
-display = ["8", "31", "24", "15", "55", "119", "112", "9", "14"]
+# Which channels the Chat page shows (display only — ingest stores everything).
+#   "presets" (default) — stock modem-preset channels only (LongFast, ...).
+#   "all"     — presets plus human-named channels (regional, club, ...).
+#   "manual"  — only what `display` and [[broker.channels.views]] list.
+# Channels with no traffic in the selected time range drop off the bar.
+mode = "presets"
+
+# Only used when mode = "manual": channel hashes to show. These assume the
+# default PSK — a custom PSK or renamed channel produces different hashes.
+display = ["8", "31", "24", "15", "118", "119", "112", "110", "14"]
 
 # Encryption keys for decoding channel traffic (base64-encoded)
 [[broker.channels.encryption]]
@@ -152,7 +160,9 @@ key_name = "Default"
 # ─────────────────────────────────────────────────────────────────────────────
 # Standard Meshtastic Preset Channel Hashes
 # Computed from: XOR_bytes(channel_name) ^ XOR_bytes(PSK)
-# These values assume the default PSK above. Verified against live traffic.
+# These values assume the default PSK above. Names match firmware's display
+# strings; the old sample spellings "LongModerate" and "VeryLongSlow" are still
+# accepted by `preset =` as aliases (-> LongMod, -> LongFast).
 # ─────────────────────────────────────────────────────────────────────────────
 
 [broker.channels.meta.8]
@@ -179,11 +189,11 @@ short = "LS"
 preset = "LongSlow"
 description = "LongSlow modem preset (default PSK hash: 15)"
 
-[broker.channels.meta.55]
-label = "VeryLongSlow"
-short = "VLS"
-preset = "VeryLongSlow"
-description = "VeryLongSlow modem preset (default PSK hash: 55)"
+[broker.channels.meta.118]
+label = "LongTurbo"
+short = "LT"
+preset = "LongTurbo"
+description = "LongTurbo modem preset (default PSK hash: 118)"
 
 [broker.channels.meta.119]
 label = "ShortSlow"
@@ -197,11 +207,11 @@ short = "SF"
 preset = "ShortFast"
 description = "ShortFast modem preset (default PSK hash: 112)"
 
-[broker.channels.meta.9]
-label = "LongModerate"
+[broker.channels.meta.110]
+label = "LongMod"
 short = "LM"
-preset = "LongModerate"
-description = "LongModerate modem preset (default PSK hash: 9)"
+preset = "LongMod"
+description = "LongMod modem preset (default PSK hash: 110)"
 
 [broker.channels.meta.14]
 label = "ShortTurbo"
@@ -224,6 +234,7 @@ description = "ShortTurbo modem preset (default PSK hash: 14)"
 # ─────────────────────────────────────────────────────────────────────────────
 # Channel Views — tabs shown in the Chat UI
 # Only single-channel views are supported. Views with no data are hidden.
+# Chat uses these only when mode = "manual"; Nodes and Log always read them.
 # ─────────────────────────────────────────────────────────────────────────────
 
 [[broker.channels.views]]

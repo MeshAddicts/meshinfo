@@ -22,7 +22,30 @@ export interface Broker {
 
 export interface Channels {
   encryption?: Encryption[];
+  /** Which channels the Chat UI shows; display-only, ingest stores everything. */
+  mode?: "presets" | "all" | "manual";
+  /** Allowlist of channel-hash ids; only honored when mode = "manual". */
   display?: string[];
+  /** Per-bucket annotation (label/short/preset/description); honored in every mode. */
+  meta?: Record<string, ChannelMeta>;
+  /** Hand-curated Chat tabs; only honored when mode = "manual". */
+  views?: ChannelView[];
+}
+
+export interface ChannelMeta {
+  label?: string;
+  short?: string;
+  preset?: string;
+  description?: string;
+}
+
+export interface ChannelView {
+  id?: string;
+  label?: string;
+  short?: string;
+  channels?: string[];
+  default?: boolean;
+  description?: string;
 }
 
 export interface Encryption {

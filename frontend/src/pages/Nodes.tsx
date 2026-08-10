@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 
+import { ChannelPillGroups } from "../components/ChannelPillGroups";
 import { ExportMenu } from "../components/ExportMenu";
 import { HeardBy } from "../components/HeardBy";
 import { LivePill } from "../components/LivePill";
@@ -15,7 +16,23 @@ import {
   REMEMBERED_CH_KEYS,
   useRememberedChannel,
 } from "../hooks/useRememberedChannel";
-import { useGetConfigQuery, useGetNodesQuery } from "../slices/apiSlice";
+import {
+  REMEMBERED_RANGE_KEYS,
+  useRememberedRange,
+} from "../hooks/useRememberedRange";
+import {
+  useGetChannelsQuery,
+  useGetConfigQuery,
+  useGetNodesQuery,
+} from "../slices/apiSlice";
+import {
+  channelLabel,
+  type ChannelMetaMap,
+  channelModeFrom,
+  normalizeKey,
+  wireNamesFrom,
+} from "../utils/channelDisplay";
+import { buildChannelModel } from "../utils/channelModel";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { csvEscape, downloadBlob } from "../utils/export";
 import { NodeDetailsPanel } from "./nodes/NodeDetailsPanel";
@@ -90,6 +107,12 @@ export const Nodes = () => {
 
   const { data: config } = useGetConfigQuery();
 
+  // Bucket names off the wire, for labels/classing. range:"all" — names
+  // don't age out; node counts come from the node list itself.
+  const { data: channelsData, isError: channelsError } = useGetChannelsQuery({
+    range: "all",
+  });
+
   // URL state (shareable)
   const {
     searchParams,
@@ -138,7 +161,22 @@ export const Nodes = () => {
     return bang ?? null;
   }, [nodes, serverNodeId]);
 
-  // Channel views from config
+  // Channel display facts from config: operator meta, mode, wire names.
+  const channelMeta = useMemo<ChannelMetaMap>(
+    () => config?.broker?.channels?.meta ?? {},
+    [config],
+  );
+  const channelMode = useMemo(
+    () => channelModeFrom(config?.broker?.channels),
+    [config],
+  );
+  const wireNames = useMemo(
+    () => wireNamesFrom(channelsData?.channels),
+    [channelsData],
+  );
+
+  // Curated channel views from config — the pill source in manual mode only
+  // (legacy compat path; auto modes build pills from the data below).
   const channelViews = useMemo(() => {
     const vraw = (config as any)?.broker?.channels?.views;
     if (!Array.isArray(vraw) || vraw.length === 0) return [];
@@ -153,26 +191,6 @@ export const Nodes = () => {
     }
     return out;
   }, [config]);
-
-  // Resolve urlCh to a channel ID
-  const selectedChannelId = useMemo(() => {
-    if (!urlCh) return null;
-    for (const v of channelViews) {
-      if (urlCh === v.channelId || urlCh.toLowerCase() === v.label.toLowerCase()) return v.channelId;
-    }
-    return null;
-  }, [urlCh, channelViews]);
-
-  // Land returning visitors on the channel pill they last had selected.
-  useRememberedChannel({
-    storageKey: REMEMBERED_CH_KEYS.nodes,
-    value: selectedChannelId ?? "",
-    urlHasCh: !!searchParams.get("ch")?.trim(),
-    suppressRestore: [...searchParams.keys()].some((k) => k !== "ch"),
-    ready: channelViews.length > 1,
-    isValid: (stored) => channelViews.some((v) => v.channelId === stored),
-    apply: (stored) => setParam("ch", stored, "replace"),
-  });
 
   // Range threshold clock: update infrequently (range cutoffs don't need 1s precision)
   const [rangeNowMs, setRangeNowMs] = useState(() => Date.now());
@@ -282,15 +300,147 @@ export const Nodes = () => {
     return out;
   }, [nodes, serverNode]);
 
-  // Filter (range/status/search)
-  const filteredItems = useMemo(() => {
-    let items = [...allItems];
+  // Range-scoped list shared by the pill set, its counts, and the filters.
+  const rangeItems = useMemo(() => {
+    if (typeof rangeThresholdMs !== "number") return allItems;
+    return allItems.filter(
+      (x) => x.lastSeenMs != null && x.lastSeenMs >= rangeThresholdMs,
+    );
+  }, [allItems, rangeThresholdMs]);
 
-    if (typeof rangeThresholdMs === "number") {
-      items = items.filter(
-        (x) => x.lastSeenMs != null && x.lastSeenMs >= rangeThresholdMs,
-      );
+  // Node count per bucket in the window; ids are opaque strings, never coerced.
+  const dataChannels = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const x of rangeItems) {
+      const ch = (x.node as any)?.last_channel;
+      if (typeof ch !== "string" || !ch) continue;
+      counts.set(ch, (counts.get(ch) ?? 0) + 1);
     }
+    return counts;
+  }, [rangeItems]);
+
+  // ?ch= resolution (auto modes). mode:"all" so links resolve against every
+  // bucket, even class-filtered ones; no selectedId to avoid circularity.
+  const channelResolveModel = useMemo(
+    () =>
+      buildChannelModel({
+        // Union with all known buckets so slug links to out-of-window
+        // channels still resolve (their pill renders at count 0).
+        ids: new Set([
+          ...dataChannels.keys(),
+          ...Object.keys(channelsData?.channels ?? {}),
+        ]),
+        mode: "all",
+        meta: channelMeta,
+        wireNames,
+        counts: (id) => dataChannels.get(id) ?? 0,
+      }),
+    [dataChannels, channelsData, channelMeta, wireNames],
+  );
+
+  // Resolve urlCh to a channel ID. Manual mode keeps the legacy views-only
+  // match; auto modes accept id / label / meta.short.
+  const selectedChannelId = useMemo(() => {
+    if (!urlCh) return null;
+    if (channelMode === "manual") {
+      for (const v of channelViews) {
+        if (urlCh === v.channelId || urlCh.toLowerCase() === v.label.toLowerCase()) return v.channelId;
+      }
+      return null;
+    }
+    const hit = channelResolveModel.resolveKey(urlCh);
+    if (hit) return hit;
+    // Numeric ids outside the window still filter (empty list, not dropped).
+    const key = normalizeKey(urlCh);
+    return /^[0-9]+$/.test(key) ? key : null;
+  }, [urlCh, channelMode, channelViews, channelResolveModel]);
+
+  // Pill model (auto modes): window buckets plus the selected id, so an
+  // out-of-window ?ch= bucket keeps a zero-count pill.
+  const channelModel = useMemo(
+    () =>
+      buildChannelModel({
+        ids: selectedChannelId
+          ? [...dataChannels.keys(), selectedChannelId]
+          : dataChannels.keys(),
+        mode: channelMode,
+        meta: channelMeta,
+        wireNames,
+        counts: (id) => dataChannels.get(id) ?? 0,
+        selectedId: selectedChannelId ?? undefined,
+      }),
+    [dataChannels, channelMode, channelMeta, wireNames, selectedChannelId],
+  );
+
+  // Shared bucket-label resolver (pills, export, details panel).
+  const channelLabelFor = useCallback(
+    (id: string) => channelLabel(channelMeta, wireNames, id),
+    [channelMeta, wireNames],
+  );
+
+  // Pills: manual = curated views with all-time counts (legacy); auto = model
+  // entries, with the selected bucket always kept (zero count if out of window).
+  const channelPills = useMemo(() => {
+    if (channelMode === "manual") {
+      return channelViews.map((v) => ({
+        channelId: v.channelId,
+        label: v.label,
+        count: allItems.filter(
+          (x) => (x.node as any)?.last_channel === v.channelId,
+        ).length,
+      }));
+    }
+    return channelModel.entries.map((e) => ({
+      channelId: e.id,
+      label: e.label,
+      count: e.count,
+      group: e.group,
+    }));
+  }, [channelMode, channelViews, allItems, channelModel]);
+
+  // Pill-bar gate: manual keeps the views gate; auto modes gate on the DATA
+  // (>=2 buckets present in the window), so pills need zero pill config.
+  const showChannelPills =
+    channelMode === "manual" ? channelViews.length > 1 : dataChannels.size >= 2;
+
+  const allPillCount =
+    channelMode === "manual" ? allItems.length : rangeItems.length;
+
+  // `urlHasCh` requires the raw ?ch to actually resolve — adopting an
+  // unresolved link's no-filter fallback would wipe the remembered selection.
+  const rawChParam = (searchParams.get("ch") ?? "").trim();
+  const rawChResolves = !!rawChParam && selectedChannelId != null;
+  // Remember the time range the same way (default "all"; URL wins).
+  useRememberedRange({
+    storageKey: REMEMBERED_RANGE_KEYS.nodes,
+    value: urlRange,
+    urlHasR: !!searchParams.get("r")?.trim(),
+    suppressRestore: [...searchParams.keys()].some((k) => k !== "r"),
+    apply: (stored) => setParam("r", stored, "replace"),
+  });
+
+  useRememberedChannel({
+    storageKey: REMEMBERED_CH_KEYS.nodes,
+    value: selectedChannelId ?? "",
+    urlHasCh: rawChResolves,
+    suppressRestore: [...searchParams.keys()].some((k) => k !== "ch"),
+    // Gate on config: mode defaults to "presets" pre-config, and a restore
+    // under the wrong mode can removeStored a valid key. Errored fetch = settled.
+    ready:
+      !!config &&
+      (channelMode === "manual"
+        ? channelViews.length > 1
+        : !!nodesRaw && (!!channelsData || channelsError)),
+    isValid: (stored) =>
+      channelMode === "manual"
+        ? channelViews.some((v) => v.channelId === stored)
+        : dataChannels.has(stored),
+    apply: (stored) => setParam("ch", stored, "replace"),
+  });
+
+  // Filter (status/search — range already applied by rangeItems)
+  const filteredItems = useMemo(() => {
+    let items = [...rangeItems];
 
     if (urlStatus === "online") items = items.filter((x) => x.online);
     if (urlStatus === "offline") items = items.filter((x) => !x.online);
@@ -344,7 +494,7 @@ export const Nodes = () => {
     });
 
     return items;
-  }, [allItems, rangeThresholdMs, urlStatus, selectedChannelId, urlQ, urlBy, urlDir]);
+  }, [rangeItems, urlStatus, selectedChannelId, urlQ, urlBy, urlDir]);
 
   // Selection (urlNode)
   const selectedId = useMemo(() => cleanNodeId(urlNode ?? ""), [urlNode]);
@@ -502,6 +652,9 @@ export const Nodes = () => {
         role: roleLabel(n?.role),
         hardware: hardwareLabel(n?.hardware),
         last_channel: String(n?.last_channel ?? ""),
+        last_channel_label: n?.last_channel
+          ? channelLabelFor(String(n.last_channel))
+          : "",
         last_seen: n?.last_seen ? new Date(n.last_seen).toISOString() : "",
         altitude_m: n?.position?.altitude ?? "",
         latitude: ll ? ll[1] : "",
@@ -732,61 +885,25 @@ export const Nodes = () => {
             </div>
           </div>
 
-          {/* Channel preset pills */}
-          {channelViews.length > 1 && (
-            <div className="mt-3 flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
-              <button
-                type="button"
-                className={[
-                  "whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-medium border transition",
-                  !selectedChannelId
-                    ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
-                    : "bg-transparent text-gray-700 dark:text-gray-200 border-gray-300/60 dark:border-gray-600/60 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
-                ].join(" ")}
-                onClick={() => setParam("ch", undefined, "push")}
-              >
-                All
-                <span
-                  className={[
-                    "ml-2 rounded-full px-2 py-0.5 text-xs",
-                    !selectedChannelId
-                      ? "bg-white/20 text-white"
-                      : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-700 dark:text-gray-200",
-                  ].join(" ")}
-                >
-                  {allItems.length}
-                </span>
-              </button>
-              {channelViews.map((v) => {
-                const active = selectedChannelId === v.channelId;
-                const count = allItems.filter((x) => (x.node as any)?.last_channel === v.channelId).length;
-                return (
-                  <button
-                    key={`ch-${v.key}`}
-                    type="button"
-                    className={[
-                      "whitespace-nowrap rounded-full px-3 py-1.5 text-sm font-medium border transition",
-                      active
-                        ? "bg-indigo-600 text-white border-indigo-600 shadow-xs"
-                        : "bg-transparent text-gray-700 dark:text-gray-200 border-gray-300/60 dark:border-gray-600/60 hover:bg-gray-100/60 dark:hover:bg-gray-800/40",
-                    ].join(" ")}
-                    onClick={() => setParam("ch", v.channelId, "push")}
-                  >
-                    {v.label}
-                    <span
-                      className={[
-                        "ml-2 rounded-full px-2 py-0.5 text-xs",
-                        active
-                          ? "bg-white/20 text-white"
-                          : "bg-gray-200/70 dark:bg-gray-700/60 text-gray-700 dark:text-gray-200",
-                      ].join(" ")}
-                    >
-                      {count}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+          {/* Channel bucket pills */}
+          {showChannelPills && (
+            <ChannelPillGroups
+              leading={{
+                key: "all",
+                label: "All",
+                count: allPillCount,
+                active: !selectedChannelId,
+                onClick: () => setParam("ch", undefined, "push"),
+              }}
+              pills={channelPills.map((v) => ({
+                key: v.channelId,
+                label: v.label,
+                count: v.count,
+                active: selectedChannelId === v.channelId,
+                group: (v as { group?: "presets" | "custom" }).group,
+                onClick: () => setParam("ch", v.channelId, "push"),
+              }))}
+            />
           )}
 
           {/* Toolbar */}
@@ -895,9 +1012,11 @@ export const Nodes = () => {
               title="Click to reset status to All"
               onClick={() => setParam("st", "all", "push")} // deletes
             />
-            {channelViews.length > 1 && (
+            {/* Shown whenever a channel filter is active, even with the pill
+                row hidden — an invisible active filter is undebuggable. */}
+            {(showChannelPills || selectedChannelId != null) && (
               <StatusChip
-                label={selectedChannelId ? `Channel: ${channelViews.find((v) => v.channelId === selectedChannelId)?.label ?? selectedChannelId}` : "Channel: all"}
+                label={selectedChannelId ? `Channel: ${channelPills.find((v) => v.channelId === selectedChannelId)?.label ?? selectedChannelId}` : "Channel: all"}
                 active={!!selectedChannelId}
                 title="Click to show all channels"
                 onClick={() => setParam("ch", undefined, "push")}
@@ -962,6 +1081,7 @@ export const Nodes = () => {
                     node={selectedNode as any}
                     nodes={nodes as any}
                     serverNode={serverNode as any}
+                    channelLabelFor={channelLabelFor}
                     onClearSelection={clearSelection}
                     onSelectNode={onSelect}
                   />
@@ -1177,6 +1297,7 @@ export const Nodes = () => {
             node={selectedNode as any}
             nodes={nodes as any}
             serverNode={serverNode as any}
+            channelLabelFor={channelLabelFor}
             onClearSelection={() => {
               clearSelection();
               setMobileSheet(null);

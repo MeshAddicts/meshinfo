@@ -34,6 +34,20 @@ from storage.db.write_retry import WriteRetryQueue, WriteStillFailing
 
 logger = logging.getLogger(__name__)
 
+# Per-channel display facts, shared by query_chat_filtered and query_channels
+# so the two can't drift. $1 = range threshold (0 = all time).
+_CHANNEL_ROWS_SQL = """
+    SELECT cc.id, cc.name,
+           COUNT(cm.id) AS total_messages,
+           COUNT(cm.id) FILTER (WHERE cm.timestamp >= $1) AS recent_messages,
+           MAX(cm.timestamp) AS newest_timestamp
+    FROM chat_channels cc
+    LEFT JOIN chat_messages cm ON cc.id = cm.channel_id
+    GROUP BY cc.id, cc.name
+    ORDER BY cc.id
+"""
+
+
 
 def _json_default(obj: Any) -> Any:
     """json.dumps fallback for JSONB writes. The JSON-decoder path coerces
@@ -44,6 +58,11 @@ def _json_default(obj: Any) -> Any:
     if isinstance(obj, datetime.timedelta):
         return obj.total_seconds()
     return str(obj)
+
+
+def bucket_can_have_name(channel_id: str) -> bool:
+    """Index buckets 0-7 never take a wire name (glitched relays)."""
+    return not (channel_id.isdigit() and int(channel_id) <= 7)
 
 
 def _finite_or_none(value: Any) -> Any:
@@ -480,6 +499,7 @@ class PostgresStorage:
             async with self.pool.acquire() as conn:
                 await conn.execute("""
                     ALTER TABLE nodes ADD COLUMN IF NOT EXISTS gateway VARCHAR(8);
+                    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS channel_name VARCHAR(100);
                     ALTER TABLE mqtt_messages ADD COLUMN IF NOT EXISTS from_node_id VARCHAR(8);
                     ALTER TABLE mqtt_messages ADD COLUMN IF NOT EXISTS to_node_id VARCHAR(8);
                 """)
@@ -523,6 +543,22 @@ class PostgresStorage:
             logger.error(f"Failed to run migrations: {e}")
             if self.raise_on_write_error:
                 raise
+
+        # Trigram topic index — performance only (Logs' pills filter by topic
+        # substring), so fail-soft: it must never starve the migrations above.
+        try:
+            async with self.pool.acquire() as conn:
+                # pg_trgm is trusted (PG13+): the DB owner can create it unprivileged.
+                await conn.execute(
+                    "CREATE EXTENSION IF NOT EXISTS pg_trgm", timeout=60
+                )
+                # First build scans the whole table: ~40s per 3M rows.
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_mqtt_messages_topic_trgm
+                        ON mqtt_messages USING gin (topic gin_trgm_ops);
+                """, timeout=900)
+        except Exception as e:
+            logger.warning(f"pg_trgm topic index skipped (topic filters will be slower): {e}")
 
         # Mqtt node-ID trigger + backfill — run independently so a failure here
         # does not prevent the core schema from being applied.
@@ -1227,19 +1263,38 @@ class PostgresStorage:
                     sender_id = await self._ensure_node_stub(conn, chat_msg.get("sender"))
                     to_id = await self._ensure_node_stub(conn, chat_msg.get("to"))
 
-                    # Ensure channel exists
+                    # Ensure channel exists; wire name heals placeholder rows. Strip
+                    # NUL (aborts the transaction). Channel-less defaults to bucket 0.
                     channel_id = str(chat_msg.get("channel", "0"))
-                    channel_name = f"Channel {channel_id}" if channel_id != "0" else "General"
-
-                    await conn.execute(
-                        """
-                        INSERT INTO chat_channels (id, name)
-                        VALUES ($1, $2)
-                        ON CONFLICT (id) DO NOTHING
-                        """,
-                        channel_id,
-                        channel_name,
+                    wire_name = (
+                        (chat_msg.get("channel_name") or "").replace("\x00", "").strip()[:100]
                     )
+
+                    # 8-bit hashes collide: only fill placeholders, never overwrite a
+                    # wire name.
+                    if wire_name and wire_name != "PKI" and bucket_can_have_name(channel_id):
+                        await conn.execute(
+                            """
+                            INSERT INTO chat_channels (id, name)
+                            VALUES ($1, $2)
+                            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name
+                            WHERE chat_channels.name IS DISTINCT FROM EXCLUDED.name
+                              AND (chat_channels.name = 'General'
+                                   OR chat_channels.name ~ '^Channel [0-9]+$')
+                            """,
+                            channel_id,
+                            wire_name,
+                        )
+                    else:
+                        await conn.execute(
+                            """
+                            INSERT INTO chat_channels (id, name)
+                            VALUES ($1, $2)
+                            ON CONFLICT (id) DO NOTHING
+                            """,
+                            channel_id,
+                            f"Channel {channel_id}" if channel_id != "0" else "General",
+                        )
 
                     rx_time = self._ts_to_dt(chat_msg.get("timestamp"))
 
@@ -1247,9 +1302,9 @@ class PostgresStorage:
                         """
                         INSERT INTO chat_messages (
                             id, from_node_id, to_node_id, sender_node_id, channel_id,
-                            text, timestamp, rx_time, hops_away, rssi, snr
+                            channel_name, text, timestamp, rx_time, hops_away, rssi, snr
                         )
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                         ON CONFLICT (id) DO NOTHING
                         """,
                         chat_msg.get("id"),
@@ -1257,7 +1312,8 @@ class PostgresStorage:
                         to_id,
                         sender_id,
                         channel_id,
-                        chat_msg.get("text"),
+                        wire_name or None,
+                        (chat_msg.get("text") or "").replace("\x00", ""),
                         chat_msg.get("timestamp"),
                         rx_time,
                         chat_msg.get("hops_away"),
@@ -1267,6 +1323,73 @@ class PostgresStorage:
 
         except Exception as e:
             self._handle_write_failure("chat message", "chat_message", (node_id, chat_msg), e)
+
+    async def query_channels(
+        self, range_seconds: Optional[int] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """Channel buckets with display facts, no messages — light sibling of
+        query_chat_filtered. recentMessages == totalMessages when range is None."""
+        if not self.enabled or not self.pool:
+            return {}
+        import time
+        threshold = (
+            int(time.time()) - range_seconds if range_seconds is not None else 0
+        )
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(_CHANNEL_ROWS_SQL, threshold)
+                return {
+                    row["id"]: {
+                        "name": row["name"],
+                        "totalMessages": row["total_messages"],
+                        "recentMessages": row["recent_messages"],
+                        "newestTimestamp": row["newest_timestamp"],
+                    }
+                    for row in rows
+                }
+        except Exception as e:
+            logger.error(f"Failed to query channels: {e}")
+            return {}
+
+    async def get_wire_channel_names(self) -> Dict[str, int]:
+        """name -> hash for wire-confirmed channels, to seed the ingest resolver.
+        Only hash buckets (id > 7) with unambiguous, wire-healed names qualify."""
+        if not self.enabled or not self.pool:
+            return {}
+        try:
+            async with self.pool.acquire() as conn:
+                # Second source: per-row wire names (90-day bound keeps the
+                # startup scan cheap; reconnects re-run this).
+                rows = await conn.fetch(
+                    """
+                    WITH pairs AS (
+                        SELECT name, id::bigint AS hash
+                        FROM chat_channels
+                        WHERE id ~ '^[0-9]+$'
+                          AND id::bigint BETWEEN 8 AND 255
+                          AND name IS NOT NULL
+                          AND name <> 'PKI'
+                          AND name !~ '^(General|Channel [0-9]+)$'
+                        UNION
+                        SELECT channel_name, channel_id::bigint
+                        FROM chat_messages
+                        WHERE created_at >= NOW() - INTERVAL '90 days'
+                          AND channel_id ~ '^[0-9]+$'
+                          AND channel_id::bigint BETWEEN 8 AND 255
+                          AND channel_name IS NOT NULL
+                          AND channel_name <> 'PKI'
+                          AND channel_name !~ '^(General|Channel [0-9]+)$'
+                    )
+                    SELECT name, MAX(hash) AS hash
+                    FROM pairs
+                    GROUP BY name
+                    HAVING COUNT(DISTINCT hash) = 1
+                    """
+                )
+                return {r["name"]: r["hash"] for r in rows}
+        except Exception as e:
+            logger.warning(f"get_wire_channel_names failed: {e}")
+            return {}
 
     async def write_traceroute(self, node_id: str, traceroute_msg: Dict[str, Any]) -> Optional[str]:
         """Richer-wins traceroute upsert. Returns 'inserted' | 'upgraded' |
@@ -1693,8 +1816,14 @@ class PostgresStorage:
                     idx += 1
 
                 if topic:
-                    conditions.append(f"topic ILIKE '%' || ${idx} || '%'")
-                    params.append(topic)
+                    # Channel names land here and can carry ILIKE metacharacters
+                    # ("My_Chan" must not match "MyXChan") — escape + ESCAPE.
+                    conditions.append(
+                        f"topic ILIKE '%' || ${idx} || '%' ESCAPE '\\'"
+                    )
+                    params.append(
+                        topic.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    )
                     idx += 1
 
                 idx = self._append_window_conditions(conditions, params, idx, start, end, before)
@@ -1712,7 +1841,7 @@ class PostgresStorage:
                 )
             return self._build_mqtt_message_page(rows, limit)
         except Exception as e:
-            logger.error("Failed to query mqtt_messages: %s", e)
+            logger.error("Failed to query mqtt_messages: %r", e)
             return {"messages": [], "next_cursor": None}
 
     async def query_node_mqtt_messages(
@@ -1808,6 +1937,28 @@ class PostgresStorage:
             last = page[-1]
             next_cursor = _encode_cursor(last["created_at"], last["id"])
         return {"messages": messages, "next_cursor": next_cursor}
+
+    async def query_mqtt_message_by_packet(
+        self, from_id: str, mesh_packet_id: int, include_copies: bool = False
+    ) -> Optional[dict]:
+        """Canonical archived row for a mesh packet, addressed the way chat
+        knows it: (sender, 32-bit packet id). Newest row wins on reuse."""
+        if not self._ready("query_mqtt_message_by_packet"):
+            return None
+        try:
+            async with self.pool.acquire() as conn:
+                row_id = await conn.fetchval(
+                    """SELECT id FROM mqtt_messages
+                       WHERE from_node_id = $1 AND packet_id = $2
+                       ORDER BY created_at DESC LIMIT 1""",
+                    from_id, mesh_packet_id,
+                )
+        except Exception as e:
+            logger.error("Failed to query mqtt_messages by packet: %r", e)
+            return None
+        if row_id is None:
+            return None
+        return await self.query_mqtt_message_by_id(row_id, include_copies=include_copies)
 
     async def query_mqtt_message_by_id(self, row_id: int, include_copies: bool = False) -> Optional[dict]:
         """Fetch one mqtt_messages row by its DB id — backs per-packet deeplinks.
@@ -2343,56 +2494,6 @@ class PostgresStorage:
             logger.error(f"Failed to query traceroutes from PostgreSQL: {e}")
             return []
 
-    async def query_all_chat(self, limit: int = 10000) -> Dict[str, Any]:
-        """Query all chat channels and messages."""
-        if not self.enabled or not self.pool:
-            return {"channels": {"0": {"name": "General", "messages": []}}}
-
-        try:
-            async with self.pool.acquire() as conn:
-                chat = {"channels": {}}
-
-                # Load channels
-                channel_rows = await conn.fetch("SELECT * FROM chat_channels ORDER BY id")
-                for row in channel_rows:
-                    chat["channels"][row["id"]] = {"name": row["name"], "messages": []}
-
-                # Load messages
-                message_rows = await conn.fetch(
-                    """
-                    SELECT * FROM chat_messages
-                    ORDER BY created_at DESC
-                    LIMIT $1
-                    """,
-                    limit,
-                )
-
-                for row in message_rows:
-                    channel_id = row["channel_id"] or "0"
-                    if channel_id not in chat["channels"]:
-                        chat["channels"][channel_id] = {"name": f"Channel {channel_id}", "messages": []}
-
-                    chat["channels"][channel_id]["messages"].append(
-                        {
-                            "id": row["id"],
-                            "from": row["from_node_id"],
-                            "to": row["to_node_id"],
-                            "sender": row["sender_node_id"],
-                            "channel": channel_id,
-                            "text": row["text"],
-                            "timestamp": row["timestamp"],
-                            "hops_away": row["hops_away"],
-                            "rssi": row["rssi"],
-                            "snr": row["snr"],
-                        }
-                    )
-
-                return chat
-
-        except Exception as e:
-            logger.error(f"Failed to query chat from PostgreSQL: {e}")
-            return {"channels": {"0": {"name": "General", "messages": []}}}
-
     async def query_chat_filtered(
         self,
         channel_id: Optional[str] = None,
@@ -2416,27 +2517,30 @@ class PostgresStorage:
             Chat structure: { channels: { "<id>": { name, totalMessages, messages[] } } }
         """
         if not self.enabled or not self.pool:
-            return {"channels": {"0": {"name": "General", "totalMessages": 0, "messages": []}}}
+            # Empty, not a fabricated bucket 0 — the UI renders no pills fine.
+            return {"channels": {}}
 
         try:
             async with self.pool.acquire() as conn:
                 chat: Dict[str, Any] = {"channels": {}}
 
-                # ── 1. Load ALL channels with their total message counts ──
-                channel_rows = await conn.fetch(
-                    """
-                    SELECT cc.id, cc.name, COUNT(cm.id) AS total_messages
-                    FROM chat_channels cc
-                    LEFT JOIN chat_messages cm ON cc.id = cm.channel_id
-                    GROUP BY cc.id, cc.name
-                    ORDER BY cc.id
-                    """
+                # Range threshold shared by channel counts and the message query;
+                # None ("all") degenerates to 0, so recent == total.
+                import time
+                threshold = (
+                    int(time.time()) - range_seconds if range_seconds is not None else 0
                 )
+
+                # ── 1. Load ALL channels with their message counts ──
+                # recentMessages/newestTimestamp drive range-scoped channel pills.
+                channel_rows = await conn.fetch(_CHANNEL_ROWS_SQL, threshold)
 
                 for row in channel_rows:
                     chat["channels"][row["id"]] = {
                         "name": row["name"],
                         "totalMessages": row["total_messages"],
+                        "recentMessages": row["recent_messages"],
+                        "newestTimestamp": row["newest_timestamp"],
                         "messages": [],
                     }
 
@@ -2451,26 +2555,40 @@ class PostgresStorage:
                     param_num += 1
 
                 if range_seconds is not None:
-                    import time
-                    threshold = int(time.time()) - range_seconds
                     where_parts.append(f"timestamp >= ${param_num}")
                     params.append(threshold)
                     param_num += 1
 
                 where_clause = " AND ".join(where_parts) if where_parts else "TRUE"
 
+                # `limit` is per channel, so the payload scales with channel count.
                 params.append(limit)
                 limit_param = f"${param_num}"
 
-                message_rows = await conn.fetch(
-                    f"""
-                    SELECT * FROM chat_messages
-                    WHERE {where_clause}
-                    ORDER BY timestamp DESC
-                    LIMIT {limit_param}
-                    """,
-                    *params,
-                )
+                if channel_id is not None:
+                    # One channel: a plain LIMIT lets the index short-circuit.
+                    sql = f"""
+                        SELECT * FROM chat_messages
+                        WHERE {where_clause}
+                        ORDER BY timestamp DESC
+                        LIMIT {limit_param}
+                    """
+                else:
+                    # Every channel: cap per channel rather than across them, so
+                    # a busy channel can't starve a quiet one out of the response.
+                    sql = f"""
+                        SELECT * FROM (
+                            SELECT *, ROW_NUMBER() OVER (
+                                PARTITION BY channel_id ORDER BY timestamp DESC
+                            ) AS rn
+                            FROM chat_messages
+                            WHERE {where_clause}
+                        ) ranked
+                        WHERE rn <= {limit_param}
+                        ORDER BY timestamp DESC
+                    """
+
+                message_rows = await conn.fetch(sql, *params)
 
                 for row in message_rows:
                     ch_id = row["channel_id"] or "0"
@@ -2478,6 +2596,8 @@ class PostgresStorage:
                         chat["channels"][ch_id] = {
                             "name": f"Channel {ch_id}",
                             "totalMessages": 0,
+                            "recentMessages": 0,
+                            "newestTimestamp": None,
                             "messages": [],
                         }
 
@@ -2500,7 +2620,7 @@ class PostgresStorage:
 
         except Exception as e:
             logger.error(f"Failed to query filtered chat from PostgreSQL: {e}")
-            return {"channels": {"0": {"name": "General", "totalMessages": 0, "messages": []}}}
+            return {"channels": {}}
 
     async def query_all_telemetry(self, limit: int = 1000) -> List[Dict[str, Any]]:
         """Query all telemetry records."""
@@ -2679,7 +2799,8 @@ class PostgresStorage:
                 stats["active_nodes"] = await conn.fetchval("SELECT COUNT(*) FROM nodes WHERE active = TRUE")
 
                 # Count messages
-                stats["total_chat"] = await conn.fetchval("SELECT COUNT(*) FROM chat_messages WHERE channel_id = '0'")
+                # All channels: ids are hashes now; filtering on '0' froze this stat.
+                stats["total_chat"] = await conn.fetchval("SELECT COUNT(*) FROM chat_messages")
                 stats["total_telemetry"] = await conn.fetchval("SELECT COUNT(*) FROM telemetry")
                 stats["total_traceroutes"] = await conn.fetchval("SELECT COUNT(*) FROM traceroutes")
 

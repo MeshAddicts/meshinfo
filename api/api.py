@@ -63,6 +63,14 @@ class API:
         except (TypeError, ValueError):
             return raw
 
+    # Membership check, not .get(): "all" maps to None on purpose; unknown -> 24h.
+    _CHAT_RANGE_MAP = {"1h": 3600, "24h": 86400, "7d": 604800, "all": None}
+
+    @classmethod
+    def _chat_range_seconds(cls, value: str | None) -> int | None:
+        v = value if value is not None else "24h"
+        return cls._CHAT_RANGE_MAP[v] if v in cls._CHAT_RANGE_MAP else 86400
+
     @staticmethod
     def _parse_range(value: str | None) -> int | None:
         """Convert a range string like '1h', '24h', '7d' to seconds. Returns None for 'all' or missing, defaults invalid values to 24h."""
@@ -250,23 +258,34 @@ class API:
 
         @app.get("/v1/chat")
         async def chat(request: Request) -> JSONResponse:
-            channel = request.query_params.get("channel") or "0"  # e.g. "8", "0"
-            range_param = request.query_params.get("range", "24h")  # "1h","24h","7d","all"
+            # Omitted = every channel.
+            channel = request.query_params.get("channel") or None  # e.g. "8", "31"
+            # "1h","24h","7d","all" — unknown values mean 24h.
+            range_seconds = self._chat_range_seconds(request.query_params.get("range"))
 
-            range_map = {
-                "1h": 3600,
-                "24h": 86400,
-                "7d": 604800,
-                "all": None,
-            }
-            # Membership check, not `.get() is None` — "all" maps to None on purpose.
-            range_seconds = range_map[range_param] if range_param in range_map else 86400
+            # Limit is per channel; high default is deliberate (range=all means all).
+            try:
+                limit = max(1, min(int(request.query_params.get("limit", 10000)), 50000))
+            except (TypeError, ValueError):
+                # Same contract as /v1/traceroutes: reject, don't silently default.
+                return JSONResponse({"error": "limit must be an integer"}, status_code=400)
 
             chat_data = await self.data.pg_storage.query_chat_filtered(
                 channel_id=channel,
                 range_seconds=range_seconds,
+                limit=limit,
             )
             return JSONResponse(jsonable_encoder(chat_data))
+
+        @app.get("/v1/channels")
+        async def channels_endpoint(request: Request) -> JSONResponse:
+            """Channel buckets with display facts (name, counts), no messages.
+            `range` scopes recentMessages exactly like /v1/chat."""
+            range_seconds = self._chat_range_seconds(request.query_params.get("range"))
+            channels_data = await self.data.pg_storage.query_channels(
+                range_seconds=range_seconds
+            )
+            return JSONResponse(jsonable_encoder({"channels": channels_data}))
 
         @app.get("/v1/telemetry")
         async def telemetry(request: Request) -> JSONResponse:
@@ -361,7 +380,20 @@ class API:
             except (TypeError, ValueError):
                 return JSONResponse({"error": "packet id must be an integer"}, status_code=400)
             include_copies = request.query_params.get("copies", "").lower() in ("1", "true", "yes")
-            packet = await self.data.pg_storage.query_mqtt_message_by_id(row_id, include_copies=include_copies)
+            # ?by=packet&from=<node>: address by (sender, mesh packet id) —
+            # what chat rows know — instead of the archive row id.
+            if request.query_params.get("by") == "packet":
+                from_id = utils.normalize_node_id(request.query_params.get("from") or "")
+                if not from_id:
+                    return JSONResponse(
+                        {"error": "by=packet requires a valid from=<node id>"},
+                        status_code=400,
+                    )
+                packet = await self.data.pg_storage.query_mqtt_message_by_packet(
+                    from_id, row_id, include_copies=include_copies
+                )
+            else:
+                packet = await self.data.pg_storage.query_mqtt_message_by_id(row_id, include_copies=include_copies)
             if packet is None:
                 return JSONResponse({"error": "packet not found"}, status_code=404)
             return JSONResponse(jsonable_encoder({"packet": packet}))
