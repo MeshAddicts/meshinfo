@@ -31,6 +31,7 @@ from storage.db.uplink_dedup import (
     reconstruct_copy,
 )
 from storage.db.write_retry import WriteRetryQueue, WriteStillFailing
+import utils
 
 logger = logging.getLogger(__name__)
 
@@ -983,6 +984,10 @@ class PostgresStorage:
                 pos_time = int(pos_time)
             except Exception:
                 pos_time = None
+        # An insane future time never becomes stored freshness (it would block
+        # honest updates, #575); write the coords but claim no time.
+        if isinstance(pos_time, int) and pos_time > int(time.time()) + utils.FUTURE_CLOCK_TOLERANCE_S:
+            pos_time = None
 
         await conn.execute(
             """
@@ -1009,6 +1014,10 @@ class PostgresStorage:
                 OR
                 -- if both are NULL, allow the update
                 (EXCLUDED.time IS NULL AND node_positions.time IS NULL)
+                OR
+                -- a future-poisoned stored time loses to any timestamped write (#575)
+                (EXCLUDED.time IS NOT NULL
+                 AND node_positions.time > EXTRACT(EPOCH FROM now())::int + $13)
             """,
             node_id,
             position.get("latitude_i"),
@@ -1022,6 +1031,7 @@ class PostgresStorage:
             position.get("altitude_geoidal_separation"),
             position.get("location_source"),
             position.get("altitude_source"),
+            utils.FUTURE_CLOCK_TOLERANCE_S,
         )
 
     async def _write_node_neighborinfo(self, conn, node_id: str, neighborinfo: Dict[str, Any]):
