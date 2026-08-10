@@ -26,6 +26,39 @@ from utils import normalize_node_id
 logger = logging.getLogger(__name__)
 
 
+def _sane_epoch(v, ceiling: int) -> bool:
+    """A real positive epoch no further than tolerance past ceiling
+    (bool/NaN/inf all fail)."""
+    return (isinstance(v, (int, float)) and not isinstance(v, bool)
+            and v == v and 1 <= v <= ceiling + utils.FUTURE_CLOCK_TOLERANCE_S)
+
+
+def _stamp_position_time(msg):
+    """Position payload with a guaranteed-sane time: missing/zero/NaN/future
+    times become the packet's arrival-bounded rx_time, so real position packets
+    compete on arrival order at the node_positions freshness guard (#575).
+    Coordinate-less payloads and retained replays pass through unstamped — a
+    stamped copy would beat the guard (wiping coordinates / replaying stale
+    data)."""
+    pos = msg.get('payload')
+    if not isinstance(pos, dict) or msg.get('retain'):
+        return pos
+    lat, lon = pos.get('latitude_i'), pos.get('longitude_i')
+    # 0/0 is a no-fix beacon, not null island — as coordinate-less as absent.
+    if lat is None or lon is None or (not lat and not lon):
+        return pos
+    now_epoch = int(time.time())
+    # The JSON-decoder path delivers the publisher's timestamp unclamped.
+    rx = msg.get('timestamp')
+    rx = int(rx) if _sane_epoch(rx, now_epoch) else now_epoch
+    # Ceiling is now, not rx: rx has its own tolerance, and stacking the two
+    # would let stored times exceed the guard's poison floor.
+    if not _sane_epoch(pos.get('time'), now_epoch):
+        pos = dict(pos)
+        pos['time'] = rx
+    return pos
+
+
 def _node_channel(msg) -> Optional[str]:
     """Channel to stamp on the sending node, or None to leave it alone.
     PKI DMs carry no channel; don't stamp last_channel."""
@@ -167,7 +200,7 @@ class MQTT:
                 now_epoch = int(time.time())
                 if not rx_time:
                     rx_time = now_epoch
-                elif rx_time > now_epoch + 300:  # 5 min tolerance
+                elif rx_time > now_epoch + utils.FUTURE_CLOCK_TOLERANCE_S:
                     node_id = utils.convert_node_id_from_int_to_hex(getattr(mp, "from", 0))
                     logger.warning("Node %s has future clock: rx_time=%s (%.0f min ahead), clamping to now", node_id, rx_time, (rx_time - now_epoch) / 60)
                     rx_time = now_epoch
@@ -586,7 +619,7 @@ class MQTT:
             node = Node.default_node(id)
             logger.debug("Node %s skeleton added with position", id)
 
-        node['position'] = msg.get('payload')
+        node['position'] = _stamp_position_time(msg)
 
         ch_for_node = _node_channel(msg)
         if ch_for_node is not None:

@@ -4,6 +4,9 @@ import logging
 from math import asin, cos, radians, sin, sqrt
 import requests
 logger = logging.getLogger(__name__)
+
+# How far past "now" a claimed epoch may run before it's treated as clock skew.
+FUTURE_CLOCK_TOLERANCE_S = 300
 def distance_between_two_points(lat1, lon1, lat2, lon2):
   # Haversine, R=6371 km
   lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
