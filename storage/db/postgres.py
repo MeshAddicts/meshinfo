@@ -31,6 +31,7 @@ from storage.db.uplink_dedup import (
     reconstruct_copy,
 )
 from storage.db.write_retry import WriteRetryQueue, WriteStillFailing
+import channels
 import utils
 
 logger = logging.getLogger(__name__)
@@ -1400,6 +1401,112 @@ class PostgresStorage:
         except Exception as e:
             logger.warning(f"get_wire_channel_names failed: {e}")
             return {}
+
+    async def ensure_channel_label(self, channel_id: str, name: str) -> bool:
+        """Name a bucket that has no chat rows yet (node-only traffic), so the
+        UI never has to render a bare id. Placeholder-only, like ingest.
+        Returns whether the row is known to exist, so the caller only caches
+        writes that actually happened."""
+        if not self.enabled or not self.pool or not bucket_can_have_name(channel_id):
+            return False
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO chat_channels (id, name)
+                VALUES ($1, $2)
+                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name
+                WHERE chat_channels.name IS DISTINCT FROM EXCLUDED.name
+                  AND (chat_channels.name = 'General'
+                       OR chat_channels.name ~ '^Channel [0-9]+$')
+                """,
+                channel_id, name[:100],
+            )
+        return True
+
+    async def get_name_bucket_names(self) -> List[str]:
+        """Names of existing name-keyed buckets (id > 255), for the stranded-
+        bucket sweep. Tiny table; cheap to poll."""
+        if not self.enabled or not self.pool:
+            return []
+        try:
+            async with self.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT name FROM chat_channels
+                    WHERE id ~ '^[0-9]+$' AND id::bigint > 255
+                      AND name IS NOT NULL AND name <> 'PKI'
+                    """
+                )
+                return [r["name"] for r in rows]
+        except Exception as e:
+            logger.warning(f"get_name_bucket_names failed: {e}")
+            return []
+
+    async def rebucket_name_channel(self, name: str, learned_hash: int) -> None:
+        """Merge a name-keyed bucket into its just-learned hash bucket.
+        Called on resolver learn events; idempotent and cheap when the name
+        never had a synthetic bucket. telemetry/traceroutes keep old synthetic
+        values (unindexed scans; same deferral as their raw-channel display)."""
+        if not self.enabled or not self.pool:
+            return
+        # resolve() keeps index-range hashes at the name bucket — a 0-7 target
+        # would re-conflate the channel with slot-index traffic.
+        if learned_hash <= channels.MAX_CHANNEL_INDEX:
+            return
+        synthetic = str(channels.name_bucket_id(name))
+        target = str(learned_hash)
+        async with self.pool.acquire() as conn:
+            async with conn.transaction():
+                # FK target first; same placeholder-only naming rule as ingest.
+                await conn.execute(
+                    """
+                    INSERT INTO chat_channels (id, name)
+                    VALUES ($1, $2)
+                    ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name
+                    WHERE chat_channels.name IS DISTINCT FROM EXCLUDED.name
+                      AND (chat_channels.name = 'General'
+                           OR chat_channels.name ~ '^Channel [0-9]+$')
+                    """,
+                    target, name[:100],
+                )
+                moved = await conn.execute(
+                    "UPDATE chat_messages SET channel_id = $1 WHERE channel_id = $2",
+                    target, synthetic,
+                )
+                await conn.execute(
+                    "UPDATE nodes SET last_channel = $1 WHERE last_channel = $2",
+                    target, synthetic,
+                )
+                # Drop the emptied source row: a dataless duplicate of the same
+                # name renders as a second, identical pill on the Log page.
+                # Best-effort inside a savepoint — NOT EXISTS races a concurrent
+                # write (its FK check uses a later snapshot than our subquery),
+                # and losing that race just means the bucket is populated again,
+                # so the row should stay. Letting it abort would roll the whole
+                # merge back.
+                try:
+                    async with conn.transaction():
+                        await conn.execute(
+                            """
+                            DELETE FROM chat_channels
+                            WHERE id = $1
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM chat_messages WHERE channel_id = $1
+                              )
+                            """,
+                            synthetic,
+                        )
+                except asyncpg.ForeignKeyViolationError:
+                    logger.debug("Name bucket %s repopulated mid-merge; label kept", synthetic)
+        try:
+            n = int(moved.rsplit(" ", 1)[-1])
+        except (ValueError, IndexError):
+            n = 0
+        if n:
+            logger.info(
+                "Channel %r learned hash %s: merged %d row(s) from name bucket %s",
+                name, target, n, synthetic,
+            )
 
     async def write_traceroute(self, node_id: str, traceroute_msg: Dict[str, Any]) -> Optional[str]:
         """Richer-wins traceroute upsert. Returns 'inserted' | 'upgraded' |

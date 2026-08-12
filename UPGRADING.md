@@ -20,6 +20,25 @@ hasn't). Safe to interrupt, re-run, and run while ingest is live.
 New rows store their wire channel name (`chat_messages.channel_name`); the
 backfill also fills it for historical rows while their archive copies exist.
 
+### Name-keyed buckets for decode-only meshes
+
+When every gateway on a channel uplinks already-decoded packets (MQTT
+`encryption_enabled = false`), its real hash never appears on the wire, so it
+can't be learned. Those packets used to keep the gateway's slot index, which
+conflated every such channel sharing a slot. They now file under a stable
+bucket derived from the wire channel name (a large id, ≥ 2^30), labeled with
+that name automatically. If the real hash is ever observed later, the name
+bucket merges into it on its own. This applies to new traffic; messages already
+stored under a slot index stay where they are. These buckets are "named
+channels" for `broker.channels.mode` purposes: visible under `"all"`, hidden
+under `"presets"` unless the name is a stock preset.
+
+A named channel is never bucketed in 0–7 anymore, even when that is its genuine
+hash (roughly 3% of name/PSK pairs hash into the slot-index range — `ares`
+hashes to 7). Those ids cannot be told apart from a gateway slot index and
+cannot carry a channel name in storage, so such a channel gets a name bucket
+too. If you have one, its ids will differ from instances that bucket it by hash.
+
 First start after this upgrade also builds a `pg_trgm` GIN index over
 `mqtt_messages.topic` (backs the Log page's channel filters) — expect roughly
 40s per 3M archived rows. `pg_trgm` is a trusted extension (PostgreSQL 13+), so
