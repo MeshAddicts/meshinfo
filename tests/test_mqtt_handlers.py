@@ -639,12 +639,19 @@ class TestProcessEnvelope:
         assert archived["snr"] == 5.5
 
     def test_primary_channel_zero_archived(self):
-        archived, _ = self._archived(build_envelope(channel=0))
-        assert archived["channel"] == 0
+        """proto3 omits channel=0 in MessageToJson; it must still reach outs.
+        build_envelope is decoded with an unlearned name, so it resolves to
+        that name's bucket — the guard is that the field exists at all."""
+        import channels
 
-    def test_nonzero_channel_unchanged(self):
+        archived, _ = self._archived(build_envelope(channel=0))
+        assert archived["channel"] == channels.name_bucket_id("LongFast")
+
+    def test_decoded_slot_value_is_irrelevant_when_name_is_known(self):
+        import channels
+
         archived, _ = self._archived(build_envelope(channel=2))
-        assert archived["channel"] == 2
+        assert archived["channel"] == channels.name_bucket_id("LongFast")
 
     def test_zero_hop_traceroute_not_dropped(self):
         """Empty route (direct neighbor) still reaches write_traceroute;

@@ -86,6 +86,52 @@ class MQTT:
 
         # Learns name -> hash from encrypted uplinks so decoded slot indices remap.
         self._channel_resolver = channels.ChannelResolver()
+        # Name bucket -> when its label row was last confirmed written.
+        self._labeled_name_buckets: dict = {}
+        self._last_stranded_sweep = time.monotonic()
+
+    # Re-confirmed periodically rather than cached for the process lifetime, so
+    # a row deleted behind our back (a merge, an operator) is written again
+    # without waiting for a restart.
+    _LABEL_RECHECK_S = 900
+
+    async def _ensure_name_bucket_label(self, bucket: int, channel_name: str) -> None:
+        """One label write per name bucket per recheck window; failures retry."""
+        now = time.monotonic()
+        last = self._labeled_name_buckets.get(bucket)
+        if last is not None and now - last < self._LABEL_RECHECK_S:
+            return
+        try:
+            written = await self.data.pg_storage.ensure_channel_label(str(bucket), channel_name)
+        except Exception:
+            logger.exception("Labeling name bucket %d (%r) failed", bucket, channel_name)
+            return
+        if written:
+            self._labeled_name_buckets[bucket] = now
+
+    async def _merge_stranded_name_buckets(self) -> None:
+        """Sweep name buckets whose name has a learned hash back into it.
+        The learn-event merge fires once, but a bucket can repopulate after it:
+        write-retry replays carry the pre-merge bucket, the operator backfill
+        can race a mid-run learn, and a merge that failed before a restart
+        loses its in-memory requeue. Runs at connect and every recheck window."""
+        try:
+            names = await self.data.pg_storage.get_name_bucket_names()
+        except Exception:
+            logger.exception("Stranded name-bucket sweep failed")
+            return
+        for name in names:
+            learned = self._channel_resolver.lookup(name)
+            # <= 7 (e.g. 'ares' -> 7) is unusable as a bucket; that name bucket
+            # is the channel's permanent home, not a stranding.
+            if learned is None or learned <= channels.MAX_CHANNEL_INDEX:
+                continue
+            try:
+                await self.data.pg_storage.rebucket_name_channel(name, learned)
+            except Exception:
+                logger.exception("Sweep merge for %r -> %d failed; next sweep retries", name, learned)
+            else:
+                self._labeled_name_buckets.pop(channels.name_bucket_id(name), None)
 
     def _record_discord_drop(self, event_type: str) -> None:
         self._discord_drops_total += 1
@@ -106,6 +152,8 @@ class MQTT:
             self._channel_resolver.seed(seedable)
         except Exception as e:
             logger.warning("Channel resolver seeding skipped: %s", e)
+        await self._merge_stranded_name_buckets()
+        self._last_stranded_sweep = time.monotonic()
 
         logger.info("Connecting to MQTT broker at %s:%d", self.config['broker']['host'], self.config['broker']['port'])
         try:
@@ -211,7 +259,11 @@ class MQTT:
                 # MessageToJson omits channel 0 (primary); read it off mp.
                 # mp.channel is the (name,PSK) hash on encrypted uplinks but a
                 # gateway-local slot index on decoded ones — resolve to one bucket.
-                channel_name = se.channel_id or channels.name_from_topic(msg.topic.value)
+                # Normalized so resolver keys, name buckets, and stored
+                # channel_name all agree on one spelling.
+                channel_name = channels.normalize_wire_name(
+                    se.channel_id or channels.name_from_topic(msg.topic.value)
+                )
                 outs['channel'] = self._channel_resolver.resolve(
                     raw_channel=mp.channel,
                     is_encrypted=is_encrypted,
@@ -222,6 +274,34 @@ class MQTT:
                 )
                 if channel_name:
                     outs['channel_name'] = channel_name
+
+                # A just-learned hash merges that name's bucket into it. Requeue
+                # on failure: a reaffirmation never re-emits, so dropping the
+                # event would strand that name's rows in the old bucket for good.
+                for learned_name, learned_hash in self._channel_resolver.drain_learn_events():
+                    try:
+                        await self.data.pg_storage.rebucket_name_channel(learned_name, learned_hash)
+                    except Exception:
+                        logger.exception("Bucket merge for %r -> %d failed; will retry",
+                                         learned_name, learned_hash)
+                        self._channel_resolver.requeue_learn_event(learned_name, learned_hash)
+                    else:
+                        # The merge drops the label row, so a name that later
+                        # re-derives its bucket (LRU eviction, re-key into 0-7)
+                        # must be able to write it again.
+                        self._labeled_name_buckets.pop(
+                            channels.name_bucket_id(learned_name), None
+                        )
+
+                if time.monotonic() - self._last_stranded_sweep >= self._LABEL_RECHECK_S:
+                    self._last_stranded_sweep = time.monotonic()
+                    await self._merge_stranded_name_buckets()
+
+                # Name buckets are derived, not stored: without this the label
+                # only exists once the channel carries a chat message, so
+                # telemetry/position-only channels render as "Channel <bigint>".
+                if channel_name and channels.is_name_bucket(outs['channel']):
+                    await self._ensure_name_bucket_label(outs['channel'], channel_name)
 
                 # Fallback: extract gateway from topic suffix if gateway_id was empty
                 if not outs.get('sender'):

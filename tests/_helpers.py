@@ -21,8 +21,25 @@ class FakePgStorage:
         self.telemetry_writes: list = []
         self.traceroute_writes: list = []
         self.mqtt_writes: list = []
+        self.rebucket_calls: list = []
+        self.name_bucket_names: list = []
+        self.label_calls: list = []
+        self.rebucket_fail_times = 0
         self._mqtt_row_seq = 0
         self.pool = None  # disables _write_node_telemetry_current side-branch
+
+    async def rebucket_name_channel(self, name: str, learned_hash: int) -> None:
+        self.rebucket_calls.append((name, learned_hash))
+        if self.rebucket_fail_times > 0:
+            self.rebucket_fail_times -= 1
+            raise RuntimeError("simulated merge failure")
+
+    async def get_name_bucket_names(self) -> list:
+        return list(self.name_bucket_names)
+
+    async def ensure_channel_label(self, channel_id: str, name: str) -> bool:
+        self.label_calls.append((channel_id, name))
+        return True
 
     async def write_mqtt_message(self, mqtt_msg) -> int:
         self.mqtt_writes.append(dict(mqtt_msg))
