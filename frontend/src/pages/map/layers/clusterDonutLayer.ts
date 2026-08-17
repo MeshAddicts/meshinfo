@@ -347,9 +347,14 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
     }
 
     // Overlapping donuts collapse into one marker (#567). Past clusterMaxZoom
-    // clusters are physically stacked nodes — leave those to spiderfy.
+    // clusters are physically stacked nodes — leave those to spiderfy. Pitched:
+    // rings are screen-space billboards, so test overlap in screen px
+    // (map.project is CPU-only, terrain-aware — safe inside render()).
     const zoom = map.getZoom();
-    const display = mergeOverlappingClusters(src, zoom, { merge: zoom < CLUSTER_MAX_ZOOM });
+    const project = map.getPitch() > 0
+      ? (lng: number, lat: number) => { const p = map.project([lng, lat]); return { x: p.x, y: p.y }; }
+      : undefined;
+    const display = mergeOverlappingClusters(src, zoom, { merge: zoom < CLUSTER_MAX_ZOOM, project });
     const next: Donut[] = display.map((d) => ({ ...d, ratio: d.count > 0 ? d.online / d.count : 0 }));
 
     this.pushDisplaySource(next);

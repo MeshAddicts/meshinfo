@@ -9,14 +9,23 @@ import { type LegendContext, useLegendContext } from "./useLegendContext";
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 type Handler = (e?: unknown) => void;
-function stubMap(opts: { layers: string[]; features?: Array<{ layer: { id: string }; properties: Record<string, unknown> }>; loaded?: boolean }) {
+type Feat = { layer: { id: string }; properties: Record<string, unknown> };
+/** Stub map: each configured layer id doubles as its source id; features are
+ *  served per source by querySourceFeatures (like maplibre, minus the map). */
+function stubMap(opts: { layers: string[]; features?: Feat[]; loaded?: boolean; hidden?: string[]; minzoom?: Record<string, number>; zoom?: number }) {
   const handlers = new Map<string, Set<Handler>>();
-  const query = vi.fn((_o?: { layers: string[] }) => opts.features ?? []);
+  const query = vi.fn((source: string, _o?: { filter?: unknown; sourceLayer?: string }) =>
+    (opts.features ?? []).filter((f) => f.layer.id === source).map((f) => ({ properties: f.properties })),
+  );
   const map = {
     on: vi.fn((ev: string, h: Handler) => { if (!handlers.has(ev)) handlers.set(ev, new Set()); handlers.get(ev)!.add(h); }),
     off: vi.fn((ev: string, h: Handler) => handlers.get(ev)?.delete(h)),
-    getLayer: vi.fn((id: string) => (opts.layers.includes(id) ? { id } : undefined)),
-    queryRenderedFeatures: query,
+    getLayer: vi.fn((id: string) => (opts.layers.includes(id) ? { id, source: id, minzoom: opts.minzoom?.[id] } : undefined)),
+    getSource: vi.fn((id: string) => (opts.layers.includes(id) ? { id } : undefined)),
+    getLayoutProperty: vi.fn((id: string, _p: string) => (opts.hidden?.includes(id) ? "none" : "visible")),
+    getFilter: vi.fn(() => undefined),
+    getZoom: vi.fn(() => opts.zoom ?? 10),
+    querySourceFeatures: query,
     loaded: vi.fn(() => opts.loaded ?? true),
     fire: (ev: string) => handlers.get(ev)?.forEach((h) => h()),
     fireWith: (ev: string, e: unknown) => handlers.get(ev)?.forEach((h) => h(e)),
@@ -57,17 +66,35 @@ describe("useLegendContext", () => {
     expect(map.on).not.toHaveBeenCalled();
   });
 
-  it("queries immediately when the map is already idle, filtering to existing layers", () => {
+  it("queries immediately when the map is already idle, one source query per existing layer", () => {
     const { map, query } = stubMap({
       layers: ["clusters", "links-solid"],
       features: [{ layer: { id: "clusters" }, properties: { point_count: 5 } }],
     });
     mount(<Probe mapRef={{ current: map }} enabled />);
-    expect(query).toHaveBeenCalledTimes(1);
-    expect(query.mock.calls[0][0]).toEqual({ layers: ["clusters", "links-solid"] });
+    expect(query.mock.calls.map((c) => c[0]).sort()).toEqual(["clusters", "links-solid"]);
     expect(latest?.cluster).toBe(true);
     expect(latest?.linkHeard).toBe(false);
     expect(map.listenerCount("idle")).toBe(1);
+  });
+
+  it("skips hidden layers and layers below their minzoom", () => {
+    const { map, query } = stubMap({
+      layers: ["clusters", "plain-nodes", "links-solid"],
+      hidden: ["clusters"],
+      minzoom: { "links-solid": 12 },
+      zoom: 10,
+      features: [
+        { layer: { id: "clusters" }, properties: { point_count: 5 } },
+        { layer: { id: "plain-nodes" }, properties: { online: true, role: 0 } },
+        { layer: { id: "links-solid" }, properties: { kind: "neighbor", snr: 3 } },
+      ],
+    });
+    mount(<Probe mapRef={{ current: map }} enabled />);
+    expect(query.mock.calls.map((c) => c[0])).toEqual(["plain-nodes"]);
+    expect(latest?.cluster).toBe(false);
+    expect(latest?.onlineNode).toBe(true);
+    expect(latest?.linkHeard).toBe(false);
   });
 
   it("waits for idle when the map is still loading, then debounces idle bursts", () => {

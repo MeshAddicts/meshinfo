@@ -1,4 +1,4 @@
-import type { Map as MlMap, MapGeoJSONFeature, MapSourceDataEvent } from "maplibre-gl";
+import type { Map as MlMap, MapSourceDataEvent } from "maplibre-gl";
 import { useLayoutEffect, useState } from "react";
 
 import { MAP_ROUTER_COLORS } from "../../../palette";
@@ -50,11 +50,17 @@ const ALL_LAYERS = [...NODE_LAYERS, ...CLUSTER_LAYERS, ...LINK_LAYERS];
 /** Trailing debounce for `idle` bursts (hover feature-state churn re-idles the map). */
 const QUERY_DEBOUNCE_MS = 200;
 
+/** A rendered feature reduced to what the legend needs. */
+export interface LegendFeature {
+  layer?: { id: string } | null;
+  properties?: Record<string, unknown> | null;
+}
+
 /** Reduce the viewport's rendered features to legend flags. Exported for tests. */
-export function legendContextFromFeatures(features: Pick<MapGeoJSONFeature, "layer" | "properties">[]): LegendContext {
+export function legendContextFromFeatures(features: readonly LegendFeature[]): LegendContext {
   const ctx = { ...EMPTY_LEGEND_CONTEXT };
   for (const f of features) {
-    const layerId = f.layer?.id;
+    const layerId = f.layer?.id ?? "";
     const p = f.properties ?? {};
     if (CLUSTER_LAYERS.includes(layerId)) {
       ctx.cluster = true;
@@ -78,6 +84,36 @@ export function legendContextFromFeatures(features: Pick<MapGeoJSONFeature, "lay
   return ctx;
 }
 
+/**
+ * Features of every visible legend layer, from its source's loaded tiles.
+ * Source queries (not queryRenderedFeatures): the whole-viewport box breaks
+ * under 3D terrain at high pitch — sky corners have no terrain hit and the
+ * query polygon degenerates to nothing — and they skip the per-feature
+ * geometry tests. Loaded tiles ≈ the viewport plus a margin, which is what
+ * a legend should describe anyway. Returns null when no layer exists yet.
+ */
+export function collectLegendFeatures(map: MlMap): LegendFeature[] | null {
+  const zoom = map.getZoom();
+  const out: LegendFeature[] = [];
+  let anyLayer = false;
+  for (const id of ALL_LAYERS) {
+    const layer = map.getLayer(id);
+    if (!layer) continue;
+    anyLayer = true;
+    if (map.getLayoutProperty(id, "visibility") === "none") continue;
+    if (layer.minzoom != null && zoom < layer.minzoom) continue;
+    if (layer.maxzoom != null && zoom >= layer.maxzoom) continue;
+    const source = (layer as { source?: string }).source;
+    if (!source || !map.getSource(source)) continue;
+    const filter = map.getFilter(id) ?? undefined;
+    const sourceLayer = (layer as { sourceLayer?: string }).sourceLayer;
+    for (const f of map.querySourceFeatures(source, { sourceLayer, filter })) {
+      out.push({ layer: { id }, properties: f.properties });
+    }
+  }
+  return anyLayer ? out : null;
+}
+
 function sameContext(a: LegendContext | null, b: LegendContext): boolean {
   if (!a) return false;
   for (const k of Object.keys(b) as (keyof LegendContext)[]) if (a[k] !== b[k]) return false;
@@ -85,7 +121,7 @@ function sameContext(a: LegendContext | null, b: LegendContext): boolean {
 }
 
 /**
- * Query the map (on `idle`, debounced) for what is actually rendered in the
+ * Query the map (on `idle`, debounced) for what is actually drawn around the
  * viewport, so the legend can show only the rows that apply. Only runs while
  * `enabled` (legend open); `null` when disabled or before the first result.
  */
@@ -115,16 +151,15 @@ export function useLegendContext(
     const run = () => {
       timer = null;
       pending = false;
-      const layers = ALL_LAYERS.filter((id) => map.getLayer(id));
-      // No layers yet (style swap in progress) — keep what we have; the idle
-      // after the layers come back re-runs.
-      if (layers.length === 0) return;
-      let features: MapGeoJSONFeature[] = [];
+      let features: LegendFeature[] | null;
       try {
-        features = map.queryRenderedFeatures({ layers });
+        features = collectLegendFeatures(map);
       } catch {
         return;
       }
+      // No layers yet (style swap in progress) — keep what we have; the idle
+      // after the layers come back re-runs.
+      if (!features) return;
       const next = legendContextFromFeatures(features);
       setCtx((prev) => (sameContext(prev, next) ? prev : next));
     };

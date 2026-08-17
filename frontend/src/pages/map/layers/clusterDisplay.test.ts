@@ -97,6 +97,22 @@ describe("mergeOverlappingClusters", () => {
     expect(mergeOverlappingClusters(same, 6)).toHaveLength(1);
   });
 
+  it("with a screen projection (pitched view), overlap is judged in screen px", () => {
+    // 200 map-px apart at z6 → no merge un-pitched…
+    const src = pair(200, 6, 246, 211);
+    expect(mergeOverlappingClusters(src, 6)).toHaveLength(2);
+    // …but a far-field view compresses them to 60 screen px → merge; the
+    // marker still sits at the geographic (Mercator) centroid.
+    const squash = (lng: number, lat: number) => ({ x: (lng + 118) * pxPerDegLng(6) * 0.3, y: lat });
+    const out = mergeOverlappingClusters(src, 6, { project: squash });
+    expect(out).toHaveLength(1);
+    expect(out[0].lng).toBeGreaterThan(-118);
+    expect(out[0].lng).toBeLessThan(-118 + 200 / pxPerDegLng(6));
+    // items the projection cannot place (behind the camera) never merge
+    const offscreen = (lng: number) => (lng === -118 ? null : { x: 0, y: 0 });
+    expect(mergeOverlappingClusters(pair(30, 6, 246, 211), 6, { project: (lng) => offscreen(lng) })).toHaveLength(2);
+  });
+
   it("is deterministic regardless of input order", () => {
     const src = pair(30, 6, 246, 211);
     const a = mergeOverlappingClusters(src, 6);

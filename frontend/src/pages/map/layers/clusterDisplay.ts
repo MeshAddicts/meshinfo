@@ -114,35 +114,62 @@ export function zoomDeltaToSeparate(sepPx: number, needPx: number): number {
   return Math.max(0, Math.log2(needPx / sepPx));
 }
 
+/** Screen projection for pitched views: lng/lat → CSS px, or null when the
+ *  point isn't meaningfully on screen (behind the camera, off the horizon). */
+export type ScreenProject = (lng: number, lat: number) => { x: number; y: number } | null;
+
+// Beyond this the point is behind the camera / past the horizon — maplibre
+// returns absurd coordinates rather than null.
+const SCREEN_SANE_PX = 1e5;
+
 /**
  * Merge clusters whose donuts overlap on screen at `zoom`. Deterministic:
  * bigger clusters absorb smaller ones; passes repeat until stable (a merged
  * marker grows and may newly overlap a neighbour).
+ *
+ * Distances are un-pitched map px unless `project` is given (pitched views):
+ * then overlap is tested in real screen px while the merged marker's position
+ * stays the count-weighted geographic centroid.
  */
 export function mergeOverlappingClusters(
   input: readonly SourceCluster[],
   zoom: number,
-  opts: { radiusFor?: (count: number) => number; padPx?: number; merge?: boolean } = {},
+  opts: { radiusFor?: (count: number) => number; padPx?: number; merge?: boolean; project?: ScreenProject } = {},
 ): DisplayCluster[] {
   const radiusFor = opts.radiusFor ?? pixelRadiusForCount;
   const pad = opts.padPx ?? DISPLAY_MERGE_PAD_PX;
   const doMerge = opts.merge ?? true;
+  const project = opts.project;
   const scale = TILE * Math.pow(2, zoom);
   // A merge that needs more than the next integer zoom is moot — the tile
   // zoom changes there and the source clusters are re-derived.
   const zoomCap = Math.floor(zoom) + 1;
 
-  type Work = { x: number; y: number; count: number; online: number; r: number; members: number[]; splitZoom: number; z: number | undefined };
-  const items: Work[] = input.map((c) => ({
-    x: projX(c.lng) * scale,
-    y: projY(c.lat) * scale,
-    count: c.count,
-    online: c.online,
-    r: radiusFor(c.count),
-    members: [c.clusterId],
-    splitZoom: zoom,
-    z: c.z,
-  }));
+  type Work = {
+    x: number; y: number;              // Mercator px (output centroid)
+    sx: number | null; sy: number | null; // screen px when `project` is used (overlap test)
+    count: number; online: number; r: number; members: number[]; splitZoom: number; z: number | undefined;
+  };
+  const items: Work[] = input.map((c) => {
+    let sx: number | null = null, sy: number | null = null;
+    if (project) {
+      const s = project(c.lng, c.lat);
+      if (s && Number.isFinite(s.x) && Number.isFinite(s.y) && Math.abs(s.x) < SCREEN_SANE_PX && Math.abs(s.y) < SCREEN_SANE_PX) {
+        sx = s.x; sy = s.y;
+      }
+    }
+    return {
+      x: projX(c.lng) * scale,
+      y: projY(c.lat) * scale,
+      sx, sy,
+      count: c.count,
+      online: c.online,
+      r: radiusFor(c.count),
+      members: [c.clusterId],
+      splitZoom: zoom,
+      z: c.z,
+    };
+  });
   // Stable order: count desc, then position — the same input always merges the same way.
   items.sort((a, b) => b.count - a.count || a.x - b.x || a.y - b.y);
 
@@ -155,7 +182,14 @@ export function mergeOverlappingClusters(
         const b = items[j];
         if (a.z !== b.z) continue;
         const need = a.r + b.r + pad;
-        const dx = a.x - b.x, dy = a.y - b.y;
+        let dx: number, dy: number;
+        if (project) {
+          // Off-screen / behind-camera items never merge.
+          if (a.sx == null || b.sx == null) continue;
+          dx = a.sx - b.sx; dy = (a.sy as number) - (b.sy as number);
+        } else {
+          dx = a.x - b.x; dy = a.y - b.y;
+        }
         const d2 = dx * dx + dy * dy;
         if (d2 >= need * need) continue;
         const total = a.count + b.count;
@@ -163,6 +197,10 @@ export function mergeOverlappingClusters(
         a.splitZoom = Math.min(zoomCap, Math.max(a.splitZoom, b.splitZoom, split));
         a.x = (a.x * a.count + b.x * b.count) / total;
         a.y = (a.y * a.count + b.y * b.count) / total;
+        if (a.sx != null && b.sx != null) {
+          a.sx = (a.sx * a.count + b.sx * b.count) / total;
+          a.sy = ((a.sy as number) * a.count + (b.sy as number) * b.count) / total;
+        }
         a.count = total;
         a.online += b.online;
         a.r = radiusFor(total);
