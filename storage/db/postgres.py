@@ -334,6 +334,13 @@ class PostgresStorage:
               AND pr.created_at < mqtt_messages.created_at + interval '{self._reception_lookback} seconds'
         )"""
 
+        # 24h preset split cache (stats). The day-of-traffic scan behind it is
+        # the priciest stats query and the split drifts slowly, so /v1/stats
+        # serves a cached copy refreshed at most once per TTL.
+        self._preset_split_cache: Optional[Tuple[float, Dict[str, int]]] = None
+        self._preset_split_lock = asyncio.Lock()
+        self._preset_split_ttl = 300
+
     async def connect(self) -> bool:
         """
         Establish connection pool to PostgreSQL.
@@ -561,6 +568,20 @@ class PostgresStorage:
                 """, timeout=900)
         except Exception as e:
             logger.warning(f"pg_trgm topic index skipped (topic filters will be slower): {e}")
+
+        # Preset-split partial index — stats-only perf. The 24h preset GROUP BY
+        # keeps ~1% of a day's rows, so indexing just the matching topics turns
+        # a multi-GB scan into a few thousand index hits. Fail-soft like the
+        # trgm index; the first build scans the whole table.
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_mqtt_messages_preset_split
+                        ON mqtt_messages(created_at)
+                        WHERE topic LIKE '%/2/e/%/!%';
+                """, timeout=900)
+        except Exception as e:
+            logger.warning(f"preset-split index skipped (stats preset split will be slower): {e}")
 
         # Mqtt node-ID trigger + backfill — run independently so a failure here
         # does not prevent the core schema from being applied.
@@ -2902,6 +2923,45 @@ class PostgresStorage:
             logger.error(f"Failed to query traceroutes from PostgreSQL: {e}")
             return {"traceroutes": [], "next_cursor": None} if with_cursor else []
 
+    async def _query_preset_split(self, conn) -> Dict[str, int]:
+        """24h topic-preset split, TTL-cached.
+
+        Topic format: msh/<region>/2/e/<preset>/!<node>. Even with the partial
+        index this is the priciest stats query, and /v1/stats is polled every
+        5s per open tab — so refresh at most once per TTL, with an explicit
+        timeout above the pool default (which killed it on large partitions),
+        and serve the previous split when a refresh fails or is in flight.
+        """
+        cached = self._preset_split_cache
+        if cached and time.monotonic() - cached[0] < self._preset_split_ttl:
+            return cached[1]
+        if self._preset_split_lock.locked() and cached:
+            return cached[1]
+        async with self._preset_split_lock:
+            cached = self._preset_split_cache
+            if cached and time.monotonic() - cached[0] < self._preset_split_ttl:
+                return cached[1]
+            try:
+                rows = await conn.fetch(
+                    """
+                    SELECT substring(topic from '/2/e/([^/]+)/') AS preset,
+                           COUNT(*)::bigint                       AS n
+                      FROM mqtt_messages
+                     WHERE created_at > NOW() - INTERVAL '24 hours'
+                       AND topic LIKE '%/2/e/%/!%'
+                     GROUP BY preset
+                    HAVING substring(topic from '/2/e/([^/]+)/') IS NOT NULL
+                    ORDER BY n DESC
+                    """,
+                    timeout=60,
+                )
+                split = {row["preset"]: int(row["n"]) for row in rows if row["preset"]}
+                self._preset_split_cache = (time.monotonic(), split)
+                return split
+            except Exception as e:
+                logger.warning("Failed to compute preset split: %s", e, exc_info=True)
+                return cached[1] if cached else {}
+
     async def query_stats(self) -> Dict[str, Any]:
         """Query statistics from PostgreSQL."""
         if not self.enabled or not self.pool:
@@ -2961,25 +3021,7 @@ class PostgresStorage:
                     logger.warning("Failed to estimate packet_receptions count: %s", e)
                     stats["total_receptions"] = 0
 
-                # 24h topic-preset split. Topic format: msh/<region>/2/e/<preset>/!<node>.
-                preset_split: Dict[str, int] = {}
-                try:
-                    rows = await conn.fetch(
-                        """
-                        SELECT substring(topic from '/2/e/([^/]+)/') AS preset,
-                               COUNT(*)::bigint                       AS n
-                          FROM mqtt_messages
-                         WHERE created_at > NOW() - INTERVAL '24 hours'
-                           AND topic LIKE '%/2/e/%/!%'
-                         GROUP BY preset
-                        HAVING substring(topic from '/2/e/([^/]+)/') IS NOT NULL
-                        ORDER BY n DESC
-                        """
-                    )
-                    preset_split = {row["preset"]: int(row["n"]) for row in rows if row["preset"]}
-                except Exception as e:
-                    logger.warning("Failed to compute preset split: %s", e, exc_info=True)
-                stats["session_by_modem_preset"] = preset_split
+                stats["session_by_modem_preset"] = await self._query_preset_split(conn)
 
                 # Hardware split. Values are stringified HardwareModel enum ids
                 # ("9", "43", ...); FK-stub rows stay NULL until a nodeinfo or
