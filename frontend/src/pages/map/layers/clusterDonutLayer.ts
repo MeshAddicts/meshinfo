@@ -2,13 +2,33 @@
  * WebGL custom layer: billboarded proportional donut markers for clusters.
  * Buffer rebuilds on debounced moveend and on loaded sourcedata; pixel→NDC
  * sizing happens in the shader.
- * Hit-testing is handled by the companion "clusters" circle layer.
+ *
+ * Owns the cluster "display set": source clusters (nodes_clustered) whose
+ * donuts would overlap on screen are merged (see clusterDisplay.ts) and the
+ * result is pushed to the `clusters_display` GeoJSON source that drives the
+ * companion "clusters" hit-test circles and "clusters-count" labels — rings,
+ * labels and hit areas share one display set (labels/hits trail the rings by
+ * the source's worker round-trip).
  */
 import * as maplibregl from "maplibre-gl";
 import { type CustomRenderMethodInput } from "maplibre-gl";
 
 import { MAP_STYLE_IDS } from "../../../maps/mapStyle";
 import { prefersReducedMotion } from "../../../utils/reducedMotion";
+import {
+  CLUSTER_DISPLAY_SOURCE,
+  CLUSTER_MAX_ZOOM,
+  type DisplayCluster,
+  displayFeatureCollection,
+  dropDominatedByFinerTiles,
+  mergeOverlappingClusters,
+  pixelRadiusForCount,
+  type SourceCluster,
+} from "./clusterDisplay";
+
+export { pixelRadiusForCount };
+
+type Donut = DisplayCluster & { ratio: number };
 
 const VS = `
 attribute vec3 a_pos;          // Mercator xyz (z = altitude → terrain-aware)
@@ -111,17 +131,6 @@ function compile(gl: WebGLRenderingContext, type: number, src: string): WebGLSha
   return s;
 }
 
-// Matches the "clusters" circle hit-test layer radius curve.
-// Exported so spiderfy legs can start at the donut edge.
-export function pixelRadiusForCount(count: number): number {
-  const c = Math.max(count, 2);
-  if (c <= 10)  return 16 + (22 - 16) * ((c - 2)   / (10 - 2));
-  if (c <= 25)  return 22 + (30 - 22) * ((c - 10)  / (25 - 10));
-  if (c <= 100) return 30 + (44 - 30) * ((c - 25)  / (100 - 25));
-  if (c <= 200) return 44 + (52 - 44) * ((c - 100) / (200 - 100));
-  return 52;
-}
-
 export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
   readonly id = "clusters-donuts";
   readonly type = "custom" as const;
@@ -146,7 +155,11 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
   private dirty = true;
   /** Cache of the last queryRenderedFeatures pass — render() rebuilds the GPU
    *  buffer from this each frame with fresh terrain z when terrain is on. */
-  private lastClusters: { lng: number; lat: number; r: number; ratio: number; key: string }[] = [];
+  private lastClusters: Donut[] = [];
+  /** Signature of the display set last pushed to `clusters_display` (skip no-op setData). */
+  private lastDisplaySig = "";
+  /** Source the signature belongs to — a recreated source (style swap) starts empty. */
+  private lastDisplaySource: maplibregl.GeoJSONSource | null = null;
 
   /** Per-cluster ratio tween (keyed by rounded position, like the dedupe). */
   private anim = new Map<string, { from: number; to: number; start: number }>();
@@ -245,6 +258,9 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
     this.onSourceData = null;
     this.anim.clear();
     this.vertScratch = null;
+    this.lastClusters = [];
+    this.lastDisplaySig = "";
+    this.lastDisplaySource = null;
   }
 
   /** Layer-wide opacity multiplier (0..1). Used to dim donuts when an RF tool is active. */
@@ -300,32 +316,70 @@ export class ClusterDonutLayer implements maplibregl.CustomLayerInterface {
       return;
     }
 
-    // Dedupe by position — cluster_ids can flip across setData calls, and
-    // querySourceFeatures duplicates features that straddle tile borders
-    const seen = new Set<string>();
-    const next: { lng: number; lat: number; r: number; ratio: number; key: string }[] = [];
-
+    // Tile of origin comes along as _z/_x/_y — needed to keep one zoom per
+    // region when parent and child tiles are both queryable.
+    const tiled: (SourceCluster & { z: number; x: number; y: number })[] = [];
     for (const f of features) {
       const coords = (f.geometry as any)?.coordinates;
       if (!Array.isArray(coords) || coords.length < 2) continue;
       const lng = coords[0] as number;
       const lat = coords[1] as number;
       if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
-
-      const key = `${Math.round(lng * 1e5)},${Math.round(lat * 1e5)}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-
-      const count = (f.properties?.point_count as number) ?? 0;
-      const online = (f.properties?.onlineCount as number) ?? 0;
-      const ratio = count > 0 ? online / count : 0;
-
-      next.push({ lng, lat, r: pixelRadiusForCount(count), ratio, key });
+      const clusterId = f.properties?.cluster_id as number | undefined;
+      if (clusterId == null) continue;
+      tiled.push({
+        lng, lat, clusterId,
+        count: (f.properties?.point_count as number) ?? 0,
+        online: (f.properties?.onlineCount as number) ?? 0,
+        z: f._z ?? 0, x: f._x ?? 0, y: f._y ?? 0,
+      });
     }
 
+    // Dedupe by position — cluster_ids can flip across setData calls, and
+    // querySourceFeatures duplicates features that straddle tile borders
+    const seen = new Set<string>();
+    const src: SourceCluster[] = [];
+    for (const c of dropDominatedByFinerTiles(tiled)) {
+      const key = `${Math.round(c.lng * 1e5)},${Math.round(c.lat * 1e5)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      src.push({ lng: c.lng, lat: c.lat, count: c.count, online: c.online, clusterId: c.clusterId, z: c.z });
+    }
+
+    // Overlapping donuts collapse into one marker (#567). Past clusterMaxZoom
+    // clusters are physically stacked nodes — leave those to spiderfy. Pitched:
+    // rings are screen-space billboards, so test overlap in screen px
+    // (map.project is CPU-only, terrain-aware — safe inside render()).
+    const zoom = map.getZoom();
+    const project = map.getPitch() > 0
+      ? (lng: number, lat: number) => { const p = map.project([lng, lat]); return { x: p.x, y: p.y }; }
+      : undefined;
+    const display = mergeOverlappingClusters(src, zoom, { merge: zoom < CLUSTER_MAX_ZOOM, project });
+    const next: Donut[] = display.map((d) => ({ ...d, ratio: d.count > 0 ? d.online / d.count : 0 }));
+
+    this.pushDisplaySource(next);
     this.reconcileTweens(next);
     this.lastClusters = next;
     this.uploadVerts();
+  }
+
+  /** Mirror the display set into `clusters_display` for the native hit/label layers. */
+  private pushDisplaySource(display: Donut[]): void {
+    const map = this.map;
+    const source = map?.getSource(CLUSTER_DISPLAY_SOURCE) as maplibregl.GeoJSONSource | undefined;
+    if (!source) return;
+    if (source !== this.lastDisplaySource) {
+      this.lastDisplaySource = source;
+      this.lastDisplaySig = "";
+    }
+    // Member ids are part of the signature: supercluster reassigns cluster_ids
+    // on every setData, and stale ids would break click/hover lookups.
+    const sig = display
+      .map((d) => `${d.key}:${d.count}:${d.online}:${d.members.join(",")}:${d.splitZoom?.toFixed(2) ?? ""}`)
+      .join("|");
+    if (sig === this.lastDisplaySig) return;
+    this.lastDisplaySig = sig;
+    source.setData(displayFeatureCollection(display));
   }
 
   /** Start a tween for each cluster whose ratio target changed; prune the rest. */

@@ -5,6 +5,7 @@ import type { Map as MlMap } from "maplibre-gl";
 import { mbNodeColorExpr, TRANSPARENT_1PX_PNG } from "../lib/helpers";
 import { emptyLineFeatureCollection } from "../lib/utils";
 import { ActivityLayer } from "./activityLayer";
+import { CLUSTER_DISPLAY_SOURCE, CLUSTER_MAX_ZOOM } from "./clusterDisplay";
 import { ClusterDonutLayer } from "./clusterDonutLayer";
 import { LosTubeLayer } from "./losTubeLayer";
 
@@ -62,14 +63,26 @@ export function ensureMapSourcesAndLayers(map: MlMap, ctx: EnsureLayersCtx): voi
       type: "geojson",
       data: ctx.getNodesData(),
       cluster: true,
-      // 80 (vs default 50) spaces large donut centroids enough to avoid overlap
+      // 80 (vs default 50) spaces centroids; it can't prevent donut overlap
+      // (greedy centroids drift closer than the radius) — the display-merge in
+      // clusterDonutLayer/clusterDisplay handles that (#567).
       clusterRadius: 80,
       // Align zoom range with map's (default 22); source defaults (18/17) break auto-spiderfy for stacked nodes
       maxzoom: 22,
-      clusterMaxZoom: 21,
+      clusterMaxZoom: CLUSTER_MAX_ZOOM,
       clusterProperties: {
         onlineCount: ["+", ["case", ["get", "online"], 1, 0]],
       },
+    });
+  }
+
+  // Display set (source clusters with overlapping donuts merged), fed by the
+  // donut layer; the hit-test circles and count labels read from here so they
+  // always match the rings.
+  if (!map.getSource(CLUSTER_DISPLAY_SOURCE)) {
+    map.addSource(CLUSTER_DISPLAY_SOURCE, {
+      type: "geojson",
+      data: { type: "FeatureCollection", features: [] },
     });
   }
 
@@ -514,7 +527,7 @@ export function ensureMapSourcesAndLayers(map: MlMap, ctx: EnsureLayersCtx): voi
     map.addLayer({
       id: "clusters",
       type: "circle",
-      source: "nodes_clustered",
+      source: CLUSTER_DISPLAY_SOURCE,
       filter: ["has", "point_count"],
       paint: {
         // ~2 px larger than donut for forgiving click target
@@ -540,7 +553,7 @@ export function ensureMapSourcesAndLayers(map: MlMap, ctx: EnsureLayersCtx): voi
     map.addLayer({
       id: "clusters-count",
       type: "symbol",
-      source: "nodes_clustered",
+      source: CLUSTER_DISPLAY_SOURCE,
       filter: ["has", "point_count"],
       layout: {
         "text-field": ["get", "point_count_abbreviated"],
