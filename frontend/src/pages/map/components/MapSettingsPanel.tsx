@@ -2,7 +2,9 @@ import { type Dispatch, type RefObject, type SetStateAction, useEffect, useMemo,
 
 import type { OsmBasemap } from "../../../maps/mapStyle";
 import { NodeRole, roleTitles } from "../../../types";
+import { prefersReducedMotion } from "../../../utils/reducedMotion";
 import { useBottomSheetGesture } from "../hooks/useBottomSheet";
+import type { LegendContext } from "../hooks/useLegendContext";
 import type { LinkMode, MapProvider } from "../lib/types";
 import { ROLE_COLORS } from "../lib/utils";
 import { type DropupOption,FilterDropup } from "./FilterDropup";
@@ -193,6 +195,12 @@ export function MapSettingsPanel({
   settingsToggleRef,
   settingsPanelOpen,
   setSettingsPanelOpen,
+  legendOpen,
+  setLegendOpen,
+  legendContext = null,
+  legendSuppressed = false,
+  dodgeDetails = false,
+  nodesHidden = false,
   openSections,
   setOpenSections,
 
@@ -238,6 +246,18 @@ export function MapSettingsPanel({
   settingsToggleRef: RefObject<HTMLButtonElement | null>;
   settingsPanelOpen: boolean;
   setSettingsPanelOpen: Dispatch<SetStateAction<boolean>>;
+  /** Legend preference (persisted by the parent). The legend is only drawn
+   *  while the settings panel is closed; it never auto-closes on map use. */
+  legendOpen: boolean;
+  setLegendOpen: Dispatch<SetStateAction<boolean>>;
+  /** What the viewport is rendering (contextual rows); null → full legend. */
+  legendContext?: LegendContext | null;
+  /** RF tool active: keep the preference but don't draw the legend (tool panels own the bottom). */
+  legendSuppressed?: boolean;
+  /** Desktop details column open: shift the stack left of it so the legend never covers it. */
+  dodgeDetails?: boolean;
+  /** Node markers hidden (Live coverage → Hide nodes); tunes the legend's empty-state copy. */
+  nodesHidden?: boolean;
   openSections: Set<string>;
   setOpenSections: Dispatch<SetStateAction<Set<string>>>;
 
@@ -281,8 +301,8 @@ export function MapSettingsPanel({
 }) {
   const [nodeSearch, setNodeSearch] = useState("");
   const [myNodeHighlight, setMyNodeHighlight] = useState(0);
-  const [legendOpen, setLegendOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const legendVisible = legendOpen && !settingsPanelOpen && !legendSuppressed;
+  const filtersActive = recentDays !== 30 || roleFilter != null || channelFilter != null;
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   // Move focus into the panel on open; return it to the toggle on close.
@@ -337,21 +357,6 @@ export function MapSettingsPanel({
     }
   };
 
-  useEffect(() => {
-    if (!legendOpen) return;
-    const onPointerDown = (e: PointerEvent) => {
-      if (containerRef.current?.contains(e.target as Node)) return;
-      setLegendOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setLegendOpen(false); };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [legendOpen]);
-
   const sheet = useBottomSheetGesture(() => setSettingsPanelOpen(false));
 
   const selectClasses =
@@ -370,10 +375,22 @@ export function MapSettingsPanel({
   };
 
   return (
-    <div ref={containerRef} className={`fixed bottom-4 right-4 z-1100 flex flex-col items-end ${hidden ? "max-sm:hidden" : ""}`}>
-      {legendOpen && !settingsPanelOpen && (
+    <div
+      className={`fixed bottom-4 right-4 z-1100 flex flex-col items-end ${hidden ? "max-sm:hidden" : ""} ${
+        // MapDetailsPanel is a right column (sm:w-85) — sit beside it, not on it.
+        dodgeDetails ? "sm:right-[calc(21.25rem+1rem)]" : ""
+      }`}
+    >
+      {legendVisible && (
         <div className="mb-2">
-          <MapLegend linkMode={linkMode} myNodeLabel={myNodeLabel} />
+          <MapLegend
+            linkMode={linkMode}
+            myNodeLabel={myNodeLabel}
+            livePackets={livePackets && !prefersReducedMotion()}
+            context={legendContext}
+            nodesHidden={nodesHidden}
+            filtersActive={filtersActive}
+          />
         </div>
       )}
 
@@ -694,18 +711,30 @@ export function MapSettingsPanel({
         <button
           type="button"
           onClick={() => {
-            setLegendOpen(!legendOpen);
-            if (settingsPanelOpen) setSettingsPanelOpen(false);
+            // Suppressed (RF tool active): inert, keeps the persisted preference.
+            if (legendSuppressed) return;
+            // Settings open hides the legend; the button then means "show it".
+            if (settingsPanelOpen) {
+              setSettingsPanelOpen(false);
+              setLegendOpen(true);
+            } else {
+              setLegendOpen(!legendOpen);
+            }
           }}
           className={`${iconBtnBase} ${
-            legendOpen
+            legendVisible
               ? "bg-gray-900/95 border-cyan-500/50"
               : "bg-gray-900/95 border-white/10 hover:bg-gray-900"
           }`}
           aria-label="Toggle legend"
+          aria-expanded={legendVisible}
+          aria-controls="legend"
+          aria-disabled={legendSuppressed || undefined}
+          title={legendSuppressed ? "Legend hidden while a tool is active" : undefined}
+          data-legend-toggle
         >
           <div className="w-5 h-5 flex items-center justify-center">
-            <svg className={`w-4 h-4 ${legendOpen ? "text-cyan-400" : "text-gray-400"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className={`w-4 h-4 ${legendVisible ? "text-cyan-400" : "text-gray-400"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </div>
@@ -714,10 +743,7 @@ export function MapSettingsPanel({
         <button
           ref={settingsToggleRef}
           type="button"
-          onClick={() => {
-            setSettingsPanelOpen(!settingsPanelOpen);
-            if (legendOpen) setLegendOpen(false);
-          }}
+          onClick={() => setSettingsPanelOpen(!settingsPanelOpen)}
           className={`${iconBtnBase} ${
             settingsPanelOpen
               ? "bg-gray-900/95 border-cyan-500/50"

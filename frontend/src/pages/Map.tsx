@@ -30,6 +30,7 @@ import { type CorridorSort, type TraceCorridor } from "./map/components/MapTrace
 import { useCoverageCompute } from "./map/hooks/useCoverageCompute";
 import { useCoverageMergeOrigins } from "./map/hooks/useCoverageMergeOrigins";
 import { useCoverageState } from "./map/hooks/useCoverageState";
+import { useLegendContext } from "./map/hooks/useLegendContext";
 import { useLivePacketArcs } from "./map/hooks/useLivePacketArcs";
 import { useLosCompute } from "./map/hooks/useLosCompute";
 import { useLosState } from "./map/hooks/useLosState";
@@ -43,6 +44,7 @@ import { useTraceFlyover } from "./map/hooks/useTraceFlyover";
 import { useTraceLiveEvents } from "./map/hooks/useTraceLiveEvents";
 import { useUrlMapSync } from "./map/hooks/useUrlMapSync";
 import type { ActivityLayer } from "./map/layers/activityLayer";
+import { parseClusterMembers } from "./map/layers/clusterDisplay";
 import type { ClusterDonutLayer } from "./map/layers/clusterDonutLayer";
 import type { LosTubeLayer } from "./map/layers/losTubeLayer";
 import { bindMapHoverUi } from "./map/layers/mapHoverUi";
@@ -324,12 +326,22 @@ export function Map() {
     // Desktop default open
     return stored ?? (typeof window !== "undefined" && window.innerWidth >= 1024);
   });
+  // Legend is a persistent preference: it stays up while the user pans/zooms
+  // (#564) and survives reloads. Drawn only while the settings panel is closed.
+  const [legendOpen, setLegendOpen] = useState<boolean>(() => readJson<boolean>(LS_KEYS.legendOpen, false));
   // Which accordion section is expanded in the settings panel. Lifted to
   // Map.tsx so the tools drawer can jump the user to the "terrain" section
   // when they click a terrain-gated tool with 3D off.
   const [settingsOpenSections, setSettingsOpenSections] = useState<Set<string>>(
     () => new Set(["appearance"]),
   );
+  // Contextual legend rows: what the viewport is rendering (idle-driven query,
+  // only while the legend is actually shown).
+  const legendContext = useLegendContext(mbMapRef, {
+    enabled: legendOpen && !settingsPanelOpen && activeTool == null,
+    mapLoaded,
+    styleEpoch,
+  });
 
   useEffect(() => writeJson(LS_KEYS.provider, provider), [provider]);
   useEffect(() => writeJson(LS_KEYS.mapboxStyle, mapboxStyle), [mapboxStyle]);
@@ -340,6 +352,7 @@ export function Map() {
   useEffect(() => writeJson(LS_KEYS.linkMode, linkMode), [linkMode]);
   useEffect(() => writeJson(LS_KEYS.myNodeId, myNodeId), [myNodeId]);
   useEffect(() => writeJson(LS_KEYS.settingsPanelOpen, settingsPanelOpen), [settingsPanelOpen]);
+  useEffect(() => writeJson(LS_KEYS.legendOpen, legendOpen), [legendOpen]);
   useEffect(() => writeJson(LS_KEYS.terrain3D, terrain3D), [terrain3D]);
   useEffect(() => writeJson(LS_KEYS.buildings3D, buildings3D), [buildings3D]);
   useEffect(() => {
@@ -393,6 +406,9 @@ export function Map() {
       // FilterDropup menus are portaled to <body>, outside the panel tree.
       // A click on one of them shouldn't close the settings panel.
       if ((target as Element | null)?.closest?.("[data-filter-menu]")) return;
+      // The legend toggle closes settings itself (and shows the legend); if
+      // mousedown closed it first, the click would toggle the legend off.
+      if ((target as Element | null)?.closest?.("[data-legend-toggle]")) return;
 
       setSettingsPanelOpen(false);
     };
@@ -2021,7 +2037,7 @@ export function Map() {
         // leaf click be handled by onNodeLayerClick instead of re-spiderfying.
         if (hitsSpiderfyNode(e.point)) return;
 
-        const clusterId = cluster.properties?.cluster_id;
+        let clusterId = cluster.properties?.cluster_id;
         const source = map.getSource("nodes_clustered") as MlGeoJSONSource;
         if (!source || clusterId == null) return;
 
@@ -2043,6 +2059,21 @@ export function Map() {
 
         const currentZoom = map.getZoom();
         const maxZoom = map.getMaxZoom();
+
+        // Merged display marker (overlapping donuts, #567): zoom just far
+        // enough for the members to separate. If that isn't possible (at max
+        // zoom), act on the largest member below.
+        const members = parseClusterMembers(cluster.properties);
+        if (members.length > 1) {
+          const split = Number(cluster.properties?.split_zoom);
+          const target = Math.min(Math.max(Number.isFinite(split) ? split + 0.05 : currentZoom + 1, currentZoom + 0.5), maxZoom);
+          if (target > currentZoom + 0.05) {
+            removeSpiderfyLayers(map);
+            map.easeTo({ center: [lng, lat], zoom: target });
+            return;
+          }
+          clusterId = members[0];
+        }
 
         let handled = false;
         const zoomFallback = () => {
@@ -2093,41 +2124,43 @@ export function Map() {
       // Live cluster hover card (display-only; closes on map move to avoid drift)
       let clusterHoverTimer: number | null = null;
       let hoveredClusterId: number | null = null;
-      const readCluster = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+      type ClusterIntent = { cid: number; lng: number; lat: number; count: number; online: number; members: number[] };
+      const readCluster = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }): ClusterIntent | null => {
         const f = e.features?.[0];
         const cid = f?.properties?.cluster_id;
         if (f == null || cid == null) return null;
         const [lng, lat] = (f.geometry as any).coordinates as [number, number];
+        const members = parseClusterMembers(f.properties);
         return {
           cid: cid as number,
           lng,
           lat,
           count: (f.properties?.point_count as number) ?? 0,
           online: (f.properties?.onlineCount as number) ?? 0,
+          // Merged display marker: leaves come from every member cluster.
+          members: members.length > 1 ? members : [cid as number],
         };
       };
-      const fillClusterHover = (cid: number, lng: number, lat: number, count: number, online: number) => {
-        const p = map.project([lng, lat]);
-        setClusterHover({ ids: [], count, online, x: p.x, y: p.y });
+      const fillClusterHover = (c: ClusterIntent) => {
+        const p = map.project([c.lng, c.lat]);
+        setClusterHover({ ids: [], count: c.count, online: c.online, x: p.x, y: p.y });
         const source = map.getSource("nodes_clustered") as MlGeoJSONSource | undefined;
-        source
-          ?.getClusterLeaves(cid, Infinity, 0)
-          .then((feats) => {
-            if (hoveredClusterId !== cid) return;
-            const ids = (feats ?? [])
-              .map((f) => String((f.properties as any)?.id ?? ""))
+        if (!source) return;
+        Promise.all(c.members.map((m) => source.getClusterLeaves(m, Infinity, 0).catch(() => [])))
+          .then((lists) => {
+            if (hoveredClusterId !== c.cid) return;
+            const ids = lists
+              .flat()
+              .map((f) => String((f?.properties as any)?.id ?? ""))
               .filter(Boolean);
             setClusterHover((prev) => (prev ? { ...prev, ids } : null));
           })
           .catch(() => {});
       };
-      const onClusterIntent = (c: { cid: number; lng: number; lat: number; count: number; online: number }) => {
+      const onClusterIntent = (c: ClusterIntent) => {
         hoveredClusterId = c.cid;
         if (clusterHoverTimer != null) clearTimeout(clusterHoverTimer);
-        clusterHoverTimer = window.setTimeout(
-          () => fillClusterHover(c.cid, c.lng, c.lat, c.count, c.online),
-          120,
-        );
+        clusterHoverTimer = window.setTimeout(() => fillClusterHover(c), 120);
       };
       const closeClusterHover = () => {
         hoveredClusterId = null;
@@ -2304,7 +2337,15 @@ export function Map() {
         const hitNode = map.queryRenderedFeatures(bbox, { layers: nodeLayers }).length > 0;
         const hitCluster =
           map.queryRenderedFeatures(bbox, { layers: ["clusters"] }).length > 0;
-        if (hitNode || hitCluster) return;
+        // The hit circles trail the drawn rings by the display source's worker
+        // round-trip; a click on a ring must never read as empty space.
+        const hitDonut =
+          clusterEnabledRef.current &&
+          !!clusterDonutLayerRef.current?.visibleClusters().some((c) => {
+            const p = map.project([c.lng, c.lat]);
+            return Math.hypot(p.x - e.point.x, p.y - e.point.y) <= c.r + PAD;
+          });
+        if (hitNode || hitCluster || hitDonut) return;
 
         // Dismiss-and-remember in both modes so the auto pass won't immediately
         // re-open the set the user just closed.
@@ -2724,6 +2765,12 @@ export function Map() {
         settingsToggleRef={settingsToggleRef}
         settingsPanelOpen={settingsPanelOpen}
         setSettingsPanelOpen={setSettingsPanelOpen}
+        legendOpen={legendOpen}
+        setLegendOpen={setLegendOpen}
+        legendContext={legendContext}
+        legendSuppressed={activeTool != null}
+        dodgeDetails={!!detailsData}
+        nodesHidden={nodesHidden}
         openSections={settingsOpenSections}
         setOpenSections={setSettingsOpenSections}
         setProvider={setProvider}

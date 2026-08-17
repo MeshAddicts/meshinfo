@@ -14,7 +14,7 @@ import type { GeoJSONSource as MlGeoJSONSource, Map as MlMap } from "maplibre-gl
 
 import { mbNodeColorExpr } from "../../../palette";
 import { prefersReducedMotion } from "../../../utils/reducedMotion";
-import { pixelRadiusForCount } from "./clusterDonutLayer";
+import { parseClusterMembers, pixelRadiusForCount } from "./clusterDisplay";
 
 export const SPIDERFY_SOURCE_NODES = "spiderfy-nodes";
 export const SPIDERFY_SOURCE_LEGS = "spiderfy-legs";
@@ -546,6 +546,9 @@ export async function autoSpiderfyVisibleClusters(
     for (const cluster of clusterFeatures) {
       const clusterId = cluster.properties?.cluster_id;
       if (clusterId == null) continue;
+      // Merged display marker (overlapping donuts): its members separate on
+      // zoom-in; the auto pass fans single source clusters only.
+      if (parseClusterMembers(cluster.properties).length > 1) continue;
 
       // Timeout guards against stale cluster_ids after setData
       const expansionZoom = await new Promise<number | null>((resolve) => {

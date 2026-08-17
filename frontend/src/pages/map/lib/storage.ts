@@ -9,6 +9,8 @@ export const LS_KEYS = {
   /** Live packet-arc animation on/off (on by default, opt-out). */
   livePackets: "meshinfo.map.livePackets",
   settingsPanelOpen: "meshinfo.map.settingsPanelOpen",
+  /** Legend panel shown (off by default). Never auto-closes on map interaction. */
+  legendOpen: "meshinfo.map.legendOpen",
   linkMode: "meshinfo.map.linkMode",
   myNodeId: "meshinfo.map.myNodeId",
   terrain3D: "meshinfo.map.terrain3D",
