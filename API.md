@@ -33,7 +33,7 @@ directly for integrations. Responses are JSON unless noted.
 |---|---|---|
 | GET | `/v1/telemetry` | All recent telemetry. |
 | GET | `/v1/traceroutes` | Recent traceroutes, newest first. Query params: `from`/`to` (node id; both = pair in either direction), `range` (`1h`/`24h`/`7d`), `limit` (1–10000, default 1000), `slim` (`1` keeps only the fields the SPA reads, adds `packet_id`/`created_at`/`route_back_ids`), `envelope` (`1` wraps the response as `{"traceroutes": [...], "next_cursor": str \| null}` for keyset pagination — pass `next_cursor` back as `before`). Without `envelope` the response is a bare array and cannot page. Payload semantics: `snr_towards`/`snr_back` are dB ×4 with `-128` = unknown; a row whose `snr_towards` length equals `route` length + 1 is a REPLY packet, whose travel path reads header `to` → route → header `from`. `packet_id` on replies carries the request's packet id. Rows may be upgraded in place for up to 1h after first insert as richer gateway copies arrive (`created_at` never changes). |
-| GET | `/v1/stats` | Mesh totals (counts, top nodes, modem preset, etc.). |
+| GET | `/v1/stats` | Mesh totals (counts, top nodes, modem preset, etc.). `nodes_by_hardware` / `online_nodes_by_hardware` map stringified HardwareModel enum ids to node counts; `online_nodes` and the online split count nodes heard in the last 6 hours (the map's online window). |
 | GET | `/v1/channels` | Channel buckets with display facts and no messages — for labeling/filtering UIs. Query params: `range` (`1h`/`24h`/`7d`/`all`, default `24h`). Returns `{"channels": {"<id>": {"name", "totalMessages", "recentMessages", "newestTimestamp"}}}` with the same field semantics as `/v1/chat`. |
 
 ### Live events (SSE)

@@ -11,6 +11,11 @@ import { useGetStatsQuery } from "../slices/apiSlice";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { downloadBlob } from "../utils/export";
 import {
+  foldHardwareSlices,
+  HARDWARE_TOP_N,
+  hardwareSlicesFrom,
+} from "./stats/hardwareMix";
+import {
   BarMeter,
   Icon,
   InsightRow,
@@ -32,6 +37,11 @@ type StatsPayload = {
   total_receptions?: number;
 
   session_by_modem_preset?: Record<string, number>;
+  /** Nodes heard in the last 6 hours — same window as the map's online dot. */
+  online_nodes?: number;
+  /** Hardware split (#579), keyed by stringified HardwareModel enum id. */
+  nodes_by_hardware?: Record<string, number>;
+  online_nodes_by_hardware?: Record<string, number>;
 };
 
 // ---------------------- small helpers ----------------------
@@ -101,6 +111,10 @@ export const Stats = () => {
 
   const stats = rawStats as StatsPayload | undefined;
 
+  // Hardware mix scope: online (6h, like the map) vs the whole inventory.
+  const [hwScope, setHwScope] = useState<"online" | "all">("online");
+  const [hwExpanded, setHwExpanded] = useState(false);
+
   const [copied, setCopied] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
@@ -148,6 +162,7 @@ export const Stats = () => {
   const derived = useMemo(() => {
     const active = safeNum(stats?.active_nodes);
     const nodes = safeNum(stats?.total_nodes);
+    const online = safeNum(stats?.online_nodes);
 
     const chat = safeNum(stats?.total_chat);
     const telemetry = safeNum(stats?.total_telemetry);
@@ -160,6 +175,12 @@ export const Stats = () => {
     const presetSlices = presetSlicesFrom(stats?.session_by_modem_preset);
     const presetTotal = presetSlices.reduce((acc, s) => acc + s.count, 0);
 
+    // hardware split (unfolded — commonest first)
+    const hardwareOnlineSlices = hardwareSlicesFrom(stats?.online_nodes_by_hardware);
+    const hardwareAllSlices = hardwareSlicesFrom(stats?.nodes_by_hardware);
+    const hardwareOnlineTotal = hardwareOnlineSlices.reduce((acc, s) => acc + s.count, 0);
+    const hardwareAllTotal = hardwareAllSlices.reduce((acc, s) => acc + s.count, 0);
+
     const persistedTotal = chat + telemetry + traceroutes;
 
     const activeRatio = nodes > 0 ? active / nodes : 0;
@@ -170,6 +191,7 @@ export const Stats = () => {
     return {
       active,
       nodes,
+      online,
       chat,
       telemetry,
       traceroutes,
@@ -179,6 +201,11 @@ export const Stats = () => {
 
       presetSlices,
       presetTotal,
+
+      hardwareOnlineSlices,
+      hardwareAllSlices,
+      hardwareOnlineTotal,
+      hardwareAllTotal,
 
       activeRatio: clamp01(activeRatio),
       msgsPerActive,
@@ -220,6 +247,11 @@ export const Stats = () => {
     for (const s of derived.presetSlices) {
       // custom wire names may hold anything — keep the CSV key plain
       rows.push([`preset_${s.name.toLowerCase().replace(/[^a-z0-9]+/g, "_")}_24h`, s.count]);
+    }
+
+    for (const s of derived.hardwareAllSlices) {
+      // _all: counts every known node, not just the panel's selected scope
+      rows.push([`hardware_${s.name.toLowerCase().replace(/[^a-z0-9]+/g, "_")}_all`, s.count]);
     }
 
     const csv =
@@ -281,6 +313,26 @@ export const Stats = () => {
       });
     }
 
+    // Hardware mix — prefer the on-air fleet, fall back to the whole inventory
+    const hwSlices =
+      derived.hardwareOnlineTotal > 0
+        ? derived.hardwareOnlineSlices
+        : derived.hardwareAllSlices;
+    const hwTotal =
+      derived.hardwareOnlineTotal > 0
+        ? derived.hardwareOnlineTotal
+        : derived.hardwareAllTotal;
+    if (hwTotal > 0) {
+      const top = hwSlices[0];
+      const pct = Math.round((top.count / hwTotal) * 100);
+      const scope = derived.hardwareOnlineTotal > 0 ? "online" : "known";
+      items.push({
+        title: "Fleet hardware",
+        detail: `${top.name} is the most common hardware — ${pct}% of ${scope} nodes that report it.`,
+        tone: "info",
+      });
+    }
+
     // Data mix
     if (derived.persistedTotal > 0) {
       const top =
@@ -299,6 +351,19 @@ export const Stats = () => {
 
     return items.slice(0, 5);
   }, [derived]);
+
+  // Hardware panel view of the selected scope
+  const hwPanelAllSlices =
+    hwScope === "online" ? derived.hardwareOnlineSlices : derived.hardwareAllSlices;
+  const hwPanelSlices = hwExpanded
+    ? hwPanelAllSlices
+    : foldHardwareSlices(hwPanelAllSlices);
+  const hwPanelTotal =
+    hwScope === "online" ? derived.hardwareOnlineTotal : derived.hardwareAllTotal;
+  const hwPanelPopulation = Math.max(
+    hwScope === "online" ? derived.online : derived.nodes,
+    hwPanelTotal
+  );
 
   return (
     <div className="w-full h-dvh overflow-hidden flex flex-col">
@@ -671,7 +736,105 @@ export const Stats = () => {
               )}
             </Panel>
 
-            <Panel className="lg:col-span-5">
+            <div className="lg:col-span-5 flex flex-col gap-4">
+            <Panel>
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-medium text-gray-900 dark:text-gray-100">Hardware</div>
+
+                <div className="flex items-center gap-1 text-xs" role="group" aria-label="Hardware scope">
+                  <button
+                    type="button"
+                    aria-pressed={hwScope === "online"}
+                    onClick={() => setHwScope("online")}
+                    className={
+                      "rounded-md px-2 py-1 border transition " +
+                      (hwScope === "online"
+                        ? "border-indigo-500/50 bg-indigo-600/15 text-indigo-700 dark:text-indigo-300"
+                        : "border-gray-300/60 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-100/60 dark:hover:bg-gray-800/40")
+                    }
+                    title="Hardware of nodes heard in the last 6 hours — same window as the map"
+                  >
+                    Online
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={hwScope === "all"}
+                    onClick={() => setHwScope("all")}
+                    className={
+                      "rounded-md px-2 py-1 border transition " +
+                      (hwScope === "all"
+                        ? "border-indigo-500/50 bg-indigo-600/15 text-indigo-700 dark:text-indigo-300"
+                        : "border-gray-300/60 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-100/60 dark:hover:bg-gray-800/40")
+                    }
+                    title="Hardware across the whole persisted inventory"
+                  >
+                    All known
+                  </button>
+                </div>
+              </div>
+
+              {!stats ? (
+                <div className="mt-4 space-y-3">
+                  <div className="h-4 w-40 rounded-sm bg-gray-800/30" />
+                  <div className="h-2 w-full rounded-sm bg-gray-800/20" />
+                  <div className="h-4 w-48 rounded-sm bg-gray-800/30" />
+                  <div className="h-2 w-full rounded-sm bg-gray-800/20" />
+                </div>
+              ) : hwPanelTotal > 0 ? (
+                <div className="mt-4 space-y-3">
+                  {hwPanelSlices.map((s) => (
+                    <BarMeter
+                      key={s.name}
+                      label={s.name}
+                      value={s.count / hwPanelTotal}
+                      leftValue={s.count}
+                      rightHint="nodes"
+                    />
+                  ))}
+                  <div className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                    {hwPanelTotal.toLocaleString()} of {hwPanelPopulation.toLocaleString()}{" "}
+                    {hwScope === "online" ? "online" : "known"} nodes report hardware
+                  </div>
+                  {hwPanelAllSlices.length > HARDWARE_TOP_N ? (
+                    <button
+                      type="button"
+                      aria-expanded={hwExpanded}
+                      onClick={() => setHwExpanded((v) => !v)}
+                      className="w-full flex items-center justify-center gap-1 rounded-md px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition"
+                    >
+                      {hwExpanded
+                        ? `Show top ${HARDWARE_TOP_N}`
+                        : `Show all ${hwPanelAllSlices.length} models`}
+                      <svg
+                        className={
+                          "h-3 w-3 transition-transform " +
+                          (hwExpanded ? "rotate-180" : "")
+                        }
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M6 9l6 6 6-6"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="mt-4 text-xs text-gray-400 dark:text-gray-500">
+                  {hwScope === "online"
+                    ? "No online node has reported hardware yet."
+                    : "No node has reported hardware yet."}
+                </div>
+              )}
+            </Panel>
+
+            <Panel>
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-sm font-medium text-gray-900 dark:text-gray-100">Quick insights</div>
@@ -708,6 +871,7 @@ export const Stats = () => {
                 </div>
               </div>
             </Panel>
+            </div>
           </div>
 
           <div className="mt-6 text-xs text-gray-400 dark:text-gray-500">
