@@ -2914,6 +2914,10 @@ class PostgresStorage:
                 # Count nodes
                 stats["total_nodes"] = await conn.fetchval("SELECT COUNT(*) FROM nodes")
                 stats["active_nodes"] = await conn.fetchval("SELECT COUNT(*) FROM nodes WHERE active = TRUE")
+                # Online = heard in the last 6h, matching the map's definition.
+                stats["online_nodes"] = await conn.fetchval(
+                    "SELECT COUNT(*) FROM nodes WHERE last_seen > NOW() - INTERVAL '6 hours'"
+                )
 
                 # Count messages
                 # All channels: ids are hashes now; filtering on '0' froze this stat.
@@ -2976,6 +2980,39 @@ class PostgresStorage:
                 except Exception as e:
                     logger.warning("Failed to compute preset split: %s", e, exc_info=True)
                 stats["session_by_modem_preset"] = preset_split
+
+                # Hardware split. Values are stringified HardwareModel enum ids
+                # ("9", "43", ...); FK-stub rows stay NULL until a nodeinfo or
+                # mapreport is heard, so they simply don't appear here.
+                hw_all: Dict[str, int] = {}
+                hw_online: Dict[str, int] = {}
+                try:
+                    rows = await conn.fetch(
+                        """
+                        SELECT hardware,
+                               COUNT(*)::bigint AS n,
+                               COUNT(*) FILTER (
+                                   WHERE last_seen > NOW() - INTERVAL '6 hours'
+                               )::bigint        AS n_online
+                          FROM nodes
+                         WHERE hardware IS NOT NULL
+                         GROUP BY hardware
+                         ORDER BY n DESC
+                        """
+                    )
+                    for row in rows:
+                        hw = (row["hardware"] or "").strip()
+                        # "0" is HardwareModel UNSET — not a reported model.
+                        if not hw or hw == "0":
+                            continue
+                        hw_all[hw] = hw_all.get(hw, 0) + int(row["n"])
+                        n_online = int(row["n_online"])
+                        if n_online > 0:
+                            hw_online[hw] = hw_online.get(hw, 0) + n_online
+                except Exception as e:
+                    logger.warning("Failed to compute hardware split: %s", e, exc_info=True)
+                stats["nodes_by_hardware"] = hw_all
+                stats["online_nodes_by_hardware"] = hw_online
 
                 return stats
 
