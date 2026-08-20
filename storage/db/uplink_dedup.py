@@ -16,6 +16,8 @@ and `reconstruct_copy` replays it. Template and patch MUST stay in sync — a
 template change invalidates previously stored patches.
 """
 
+import hashlib
+import json
 import time
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
@@ -53,6 +55,20 @@ def coerce_packet_id(value: Any) -> Optional[int]:
         v = int(value)
         return v if 0 < v < 2 ** 63 else None
     return None
+
+
+# content_key ignores the per-copy envelope plus relay-rewritten header fields.
+# Separate from PER_COPY_KEYS, which the reception template/patch depend on.
+CONTENT_KEY_IGNORED = PER_COPY_KEYS | frozenset({"priority", "next_hop", "hop_start", "via_mqtt"})
+
+
+def content_key(msg: Dict[str, Any], default: Any = str) -> str:
+    """Dedup key for a packet-id-less message (MapReport ships id 0): digest of
+    everything but CONTENT_KEY_IGNORED. A stray per-copy key outside that set
+    only splits copies into extra rows — over-count, never loss."""
+    body = {k: v for k, v in msg.items() if k not in CONTENT_KEY_IGNORED}
+    text = json.dumps(body, sort_keys=True, separators=(",", ":"), default=default)
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()
 
 
 def contains_nul(value: Any) -> bool:
@@ -197,28 +213,29 @@ def reconstruct_copy(
 
 
 class UplinkDedupCache:
-    """TTL map (from_node_id, packet_id) -> (row_id, canonical dict).
+    """TTL map (from_node_id, packet_id | content key) -> (row_id, canonical dict).
 
     Single-writer only (the MQTT loop awaits one insert at a time). The TTL is
     anchored at first sight and never refreshed on hit, matching the DB
-    fallback's `created_at > now() - window` semantics.
+    fallback's `created_at > now() - window` semantics. Entries also track
+    gateways with a reception (id-less path: one reception per gateway).
     """
 
     def __init__(self, window_seconds: int = 900, max_entries: int = 20000):
         self.window = float(window_seconds)
         self.max_entries = int(max_entries)
-        # key -> (expiry deadline, row_id, canonical dict); insertion-ordered,
-        # so expired entries cluster at the head.
-        self._entries: "OrderedDict[Tuple[str, int], Tuple[float, int, Dict[str, Any]]]" = OrderedDict()
+        # key -> [deadline, row_id, canonical, gateways seen, receptions];
+        # insertion-ordered, so expired entries cluster at the head.
+        self._entries: "OrderedDict[Tuple[str, Any], List[Any]]" = OrderedDict()
 
     def _purge(self, now: float) -> None:
         while self._entries:
-            _, (deadline, _, _) = next(iter(self._entries.items()))
+            deadline = next(iter(self._entries.values()))[0]
             if deadline > now:
                 break
             self._entries.popitem(last=False)
 
-    def get(self, key: Tuple[str, int], now: Optional[float] = None) -> Optional[Tuple[int, Dict[str, Any]]]:
+    def get(self, key: Tuple[str, Any], now: Optional[float] = None) -> Optional[Tuple[int, Dict[str, Any]]]:
         now = time.monotonic() if now is None else now
         self._purge(now)
         entry = self._entries.get(key)
@@ -232,7 +249,7 @@ class UplinkDedupCache:
 
     def put(
         self,
-        key: Tuple[str, int],
+        key: Tuple[str, Any],
         row_id: int,
         canonical: Dict[str, Any],
         now: Optional[float] = None,
@@ -245,6 +262,41 @@ class UplinkDedupCache:
         remaining = self.window if ttl is None else ttl
         if remaining <= 0:
             return
-        self._entries[key] = (now + remaining, row_id, canonical)
+        self._entries[key] = [now + remaining, row_id, canonical, None, 0]
         while len(self._entries) > self.max_entries:
             self._entries.popitem(last=False)
+
+    def receptions(self, key: Tuple[str, Any], now: Optional[float] = None) -> int:
+        """Receptions recorded under a live entry for `key` (0 if none/expired)."""
+        now = time.monotonic() if now is None else now
+        entry = self._entries.get(key)
+        return 0 if entry is None or entry[0] <= now else int(entry[4])
+
+    def count_reception(self, key: Tuple[str, Any], now: Optional[float] = None) -> int:
+        """Bump and return the reception count for `key` (0 if entry is gone)."""
+        now = time.monotonic() if now is None else now
+        entry = self._entries.get(key)
+        if entry is None or entry[0] <= now:
+            return 0
+        entry[4] += 1
+        return int(entry[4])
+
+    def gateway_seen(self, key: Tuple[str, Any], gateway: Optional[str],
+                     now: Optional[float] = None) -> bool:
+        """True if `gateway` was already marked under a live entry for `key`."""
+        now = time.monotonic() if now is None else now
+        entry = self._entries.get(key)
+        if entry is None or entry[0] <= now or entry[3] is None:
+            return False
+        return gateway in entry[3]
+
+    def mark_gateway(self, key: Tuple[str, Any], gateway: Optional[str],
+                     now: Optional[float] = None) -> None:
+        """Record that `gateway` has a reception under `key`'s canonical row."""
+        now = time.monotonic() if now is None else now
+        entry = self._entries.get(key)
+        if entry is None or entry[0] <= now:
+            return
+        if entry[3] is None:
+            entry[3] = set()
+        entry[3].add(gateway)

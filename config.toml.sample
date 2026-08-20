@@ -12,10 +12,25 @@ debug = false
 
 [storage]
 # Uplink dedup (#526): store one canonical mqtt_messages row per mesh packet;
-# every per-gateway uplink copy is kept losslessly in packet_receptions.
-# Disable to restore the legacy one-row-per-copy firehose (~10x the disk).
+# every per-gateway uplink copy is kept losslessly in packet_receptions (id-less
+# repeats from the same gateway inside content_dedup_window_seconds are not
+# re-recorded). Disable to restore the legacy one-row-per-copy firehose (~10x
+# the disk) — that also turns off content dedup and the flood guard below.
 dedup_uplinks = true
 dedup_window_seconds = 900            # copies of one packet merge within this window
+content_dedup_window_seconds = 120    # packets without a packet id (MapReport) merge
+                                      # by content within this shorter window
+# Per-node flood guard: caps on NEW archive rows per originating node — copies
+# dedup folds into packet_receptions don't count, so dense meshes are unaffected
+# (measured legit peaks: 28/min, 119/hour). Overflow is dropped before the
+# database with a throttled WARNING naming the node. 0 disables a tier; the
+# guard needs dedup_uplinks.
+max_packets_per_node_per_minute = 60
+max_packets_per_node_per_hour = 600
+# Blunt escape hatch: node ids whose packets — as origin or uplinking gateway —
+# are dropped at the decoder (nothing archived, no node/position/telemetry
+# updates). Hex ids.
+ingest_denylist = []                  # e.g. ["eba3d8e8"]
 
 # Database snapshot backups. The app schedules these itself — the schedule is
 # applied automatically on (re)start, no host cron needed. The raw archive is

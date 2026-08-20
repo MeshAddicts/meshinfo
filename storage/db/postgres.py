@@ -21,9 +21,11 @@ from pathlib import Path
 from typing import Any, Dict, Optional, List, Tuple
 from zoneinfo import ZoneInfo
 
+from storage.db.ingest_guard import NodeRateLimiter, SuppressedCopyLog
 from storage.db.uplink_dedup import (
     UplinkDedupCache,
     coerce_packet_id,
+    content_key,
     gateway_from_msg,
     reception_fields,
     reception_patch,
@@ -319,6 +321,22 @@ class PostgresStorage:
         self.dedup_enabled = bool(storage_cfg.get("dedup_uplinks", True))
         self.dedup_window = int(storage_cfg.get("dedup_window_seconds", 900))
         self._dedup_cache = UplinkDedupCache(self.dedup_window)
+        # Id-less packets (MapReport ships id 0) dedup by content digest in a
+        # shorter window; separate cache so churn can't evict (from, id) entries.
+        self.content_dedup_window = int(storage_cfg.get("content_dedup_window_seconds", 120))
+        self._content_dedup_cache = UplinkDedupCache(self.content_dedup_window)
+        # Per-node cap on new archive rows. Needs dedup: without it every copy
+        # is a row and the cap would clip dense-mesh nodes.
+        self._ingest_limiter = NodeRateLimiter(
+            int(storage_cfg.get("max_packets_per_node_per_minute", 60) or 0) if self.dedup_enabled else 0,
+            int(storage_cfg.get("max_packets_per_node_per_hour", 600) or 0) if self.dedup_enabled else 0,
+        )
+        # Absorbed copies never reach the limiter — this is the only signal
+        # that a node is looping.
+        self._suppressed_log = SuppressedCopyLog()
+        # Receptions per canonical row are otherwise unbounded (copies never
+        # spend the row budget); ~10x the densest legit packet observed (91).
+        self.max_receptions_per_packet = 1000
         self._topic_ids: Dict[str, int] = {}
         # How far past a canonical row's created_at its receptions can land —
         # derived from the dedup window so reads never undercount, with a
@@ -1655,7 +1673,8 @@ class PostgresStorage:
           topic (text), payload (text), qos (int), retain (bool), timestamp (bigint), created_at (timestamptz default now())
 
         Returns the inserted row's id (the `mqtt_row_id` the read path exposes),
-        or None if storage is unavailable or the write failed.
+        or None if storage is unavailable, the write failed, or the copy was
+        dropped by policy (row budget, id-less repeat, reception ceiling).
 
         _dedup_lookback_s: retry-replay only — widens the canonical lookup
         window to cover the time the message spent buffered.
@@ -1704,10 +1723,24 @@ class PostgresStorage:
         from_node_id = None
         to_node_id = None
         packet_id = None
+        dedup_cache = dedup_key = None
         if isinstance(mqtt_msg, dict):
             from_node_id = self._normalize_node_id(mqtt_msg.get("from"))
             to_node_id = self._normalize_node_id(mqtt_msg.get("to"))
-            packet_id = coerce_packet_id(mqtt_msg.get("id"))
+            packet_id, dedup_cache, dedup_key = self._dedup_key(clean, from_node_id)
+
+        # Admission runs pre-pool (a rejected copy is never buffered for retry)
+        # but budget is charged on insert, so an outage never spends it.
+        if not _REPLAYING.get():
+            hit = dedup_cache.get(dedup_key) if dedup_key is not None else None
+            if hit is None:
+                if not self._ingest_limiter.allow(from_node_id):
+                    return None
+            elif packet_id is None and dedup_cache.gateway_seen(dedup_key, gateway_from_msg(clean)):
+                self._suppressed_log.note(from_node_id)
+                return None  # id-less repeat from the same gateway: nothing new to record
+            elif dedup_cache.receptions(dedup_key) >= self.max_receptions_per_packet:
+                return None  # replay flood of one packet: reception ceiling reached
 
         try:
             async with self.pool.acquire() as conn:
@@ -1715,7 +1748,7 @@ class PostgresStorage:
                 # packet_receptions rows under the canonical (first-heard) row.
                 # Any dedup-path failure falls back to a plain per-copy insert
                 # below so a copy is never lost to a dedup bug.
-                if self.dedup_enabled and from_node_id is not None and packet_id is not None:
+                if dedup_key is not None:
                     try:
                         # Serialized: the retry drain is a second writer, and
                         # the dedup check-then-insert must stay atomic per task.
@@ -1723,7 +1756,7 @@ class PostgresStorage:
                             return await self._write_deduped(
                                 conn, clean, topic, payload_text, qos_i, retain_b,
                                 ts_i, from_node_id, to_node_id, packet_id,
-                                lookback_s=_dedup_lookback_s,
+                                dedup_cache, dedup_key, lookback_s=_dedup_lookback_s,
                             )
                     except Exception as e:
                         if _is_retryable_write_error(e):
@@ -1734,13 +1767,53 @@ class PostgresStorage:
                     conn, topic, payload_text, qos_i, retain_b, ts_i,
                     from_node_id, to_node_id, packet_id,
                 )
+                if row_id is not None and not _REPLAYING.get():
+                    self._ingest_limiter.charge(from_node_id)
             return int(row_id) if row_id is not None else None
         except Exception as e:
+            if dedup_key is not None and packet_id is None and _is_retryable_write_error(e):
+                # DB down: pin a placeholder so repeats of this content are
+                # dropped pre-pool instead of flooding the retry buffer; the
+                # replay inserts the real canonical over it.
+                if dedup_cache.get(dedup_key) is None:
+                    dedup_cache.put(dedup_key, None, {})
+                dedup_cache.mark_gateway(dedup_key, gateway_from_msg(clean))
             self._handle_write_failure(
                 "mqtt message", "mqtt_message",
                 (mqtt_msg,) if isinstance(mqtt_msg, dict) else None, e,
             )
             return None
+
+    def _dedup_key(self, msg: Optional[Dict[str, Any]], from_node_id: Optional[str]):
+        """(packet_id, cache, key): (from, packet id) in the uplink cache, or
+        (from, content digest) for id-less packets. cache/key are None when the
+        message can't be deduped (dedup off, no from, unhashable shape)."""
+        packet_id = coerce_packet_id(msg.get("id")) if msg is not None else None
+        if not self.dedup_enabled or msg is None or from_node_id is None:
+            return packet_id, None, None
+        if packet_id is not None:
+            return packet_id, self._dedup_cache, (from_node_id, packet_id)
+        try:
+            return None, self._content_dedup_cache, (from_node_id, content_key(msg, _json_default))
+        except Exception as e:  # unhashable shape: store verbatim
+            logger.warning("Content dedup key failed (storing copy verbatim): %s", e)
+            return None, None, None
+
+    def idless_repeat(self, msg: Dict[str, Any]) -> bool:
+        """True if `msg` is an id-less repeat the archive would record nothing
+        for — handlers can skip it too."""
+        if not isinstance(msg, dict):
+            return False
+        clean = {k: v for k, v in msg.items() if k not in ("decoded", "encrypted")}
+        packet_id, cache, key = self._dedup_key(clean, self._normalize_node_id(msg.get("from")))
+        if packet_id is not None or key is None or cache.get(key) is None:
+            return False
+        return cache.gateway_seen(key, gateway_from_msg(clean))
+
+    def node_over_budget(self, node_id: Optional[str]) -> bool:
+        """True while `node_id` is over its archive-row budget (pure peek; the
+        archive write does the counting/logging)."""
+        return self._ingest_limiter.exhausted(self._normalize_node_id(node_id))
 
     @staticmethod
     async def _insert_mqtt_row(
@@ -1755,7 +1828,8 @@ class PostgresStorage:
         packet_id: Optional[int],
     ) -> Optional[int]:
         """Single INSERT shared by the dedup and verbatim-fallback paths so the
-        two can't drift when mqtt_messages gains a column."""
+        two can't drift when mqtt_messages gains a column. Callers charge the
+        node's flood budget once the row is durable."""
         return await conn.fetchval(
             """
             INSERT INTO mqtt_messages (topic, payload, qos, retain, timestamp, from_node_id, to_node_id, packet_id)
@@ -1777,28 +1851,48 @@ class PostgresStorage:
         ts_i: Optional[int],
         from_node_id: str,
         to_node_id: Optional[str],
-        packet_id: int,
+        packet_id: Optional[int],
+        cache: UplinkDedupCache,
+        key: Tuple[str, Any],
         lookback_s: Optional[float] = None,
     ) -> Optional[int]:
         """Dedup-aware archive write: returns the canonical row id for every
         uplink copy of a packet, inserting a canonical row only for the first.
 
+        packet_id None = id-less packet keyed by content: cache-only (no DB
+        fallback) and one reception per gateway — a same-gateway repeat writes
+        nothing and returns None.
+
         lookback_s widens the DB lookup beyond dedup_window for retry replays,
         whose packet may have been canonicalized before the outage."""
-        key = (from_node_id, packet_id)
-        hit = self._dedup_cache.get(key)
-        if hit is None:
+        hit = cache.get(key)
+        if hit is not None and hit[0] is None:
+            hit = None  # placeholder from a failed write: no row yet
+        if hit is None and packet_id is not None:
             # Cache miss (e.g. app restart mid-window): the canonical row may
             # still exist in the DB — window-bounded lookup via idx_mqtt_messages_packet.
             db_hit = await self._dedup_lookup_db(conn, from_node_id, packet_id, lookback_s)
             if db_hit is not None:
                 row_id, canonical, age = db_hit
-                self._dedup_cache.put(key, row_id, canonical, ttl=max(0.0, self.dedup_window - age))
+                cache.put(key, row_id, canonical, ttl=max(0.0, self.dedup_window - age))
                 hit = (row_id, canonical)
 
+        gateway = gateway_from_msg(clean) if packet_id is None else None
         if hit is not None:
             row_id, canonical = hit
+            if packet_id is None and cache.gateway_seen(key, gateway):
+                if not _REPLAYING.get():  # drain repeats aren't a live flood
+                    self._suppressed_log.note(from_node_id)
+                return None
+            if cache.receptions(key) >= self.max_receptions_per_packet:
+                return None
             await self._write_reception(conn, row_id, clean, canonical)
+            if packet_id is None:
+                cache.mark_gateway(key, gateway)
+            if cache.count_reception(key) == self.max_receptions_per_packet:
+                logger.warning("Packet %s/%s reached %d receptions; further copies are not recorded",
+                               from_node_id, packet_id if packet_id is not None else "idless",
+                               self.max_receptions_per_packet)
             return row_id
 
         # Cache the canonical as readers will see it — parsed from the stored
@@ -1817,7 +1911,13 @@ class PostgresStorage:
             if row_id is None:
                 raise RuntimeError("canonical insert returned no id")
             await self._write_reception(conn, int(row_id), clean, canonical)
-        self._dedup_cache.put(key, int(row_id), canonical)
+        # Replays were admitted live and must not starve recovery traffic.
+        if not _REPLAYING.get():
+            self._ingest_limiter.charge(from_node_id)
+        cache.put(key, int(row_id), canonical)
+        cache.count_reception(key)
+        if packet_id is None:
+            cache.mark_gateway(key, gateway)
         return int(row_id)
 
     async def _dedup_lookup_db(

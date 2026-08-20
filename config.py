@@ -17,6 +17,8 @@ import uuid
 from copy import deepcopy
 from typing import Any
 
+from utils import normalize_node_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -142,6 +144,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # How long copies of one (from, packet id) keep merging into the same
         # canonical row; also bounds the restart-recovery DB lookup.
         "dedup_window_seconds": 900,
+        # Packets without a packet id (MapReport) dedup by content inside this
+        # shorter window — real re-publications are minutes apart.
+        "content_dedup_window_seconds": 120,
+        # Per-node flood guard: at most this many new archive rows per
+        # originating node per minute / per hour (dedup'd copies don't count;
+        # needs dedup_uplinks). 0 disables a tier.
+        "max_packets_per_node_per_minute": 60,
+        "max_packets_per_node_per_hour": 600,
+        # Node ids (hex) whose packets — as origin or uplinking gateway — are
+        # dropped at the decoder entirely.
+        "ingest_denylist": [],
         "postgres": {
             "enabled": False,
             "host": "postgres",
@@ -541,6 +554,28 @@ def validate(config: dict) -> list[str]:
     # ── uplink dedup (#526) ───────────────────────────────────────────
     check(_validate_type(config, "storage.dedup_uplinks", bool))
     check(_validate_positive_number(config, "storage.dedup_window_seconds"))
+
+    # ── per-node flood guard ──────────────────────────────────────────
+    check(_validate_positive_number(config, "storage.content_dedup_window_seconds"))
+    for tier in ("max_packets_per_node_per_minute", "max_packets_per_node_per_hour"):
+        rate = storage_cfg.get(tier)
+        if rate is not None and (isinstance(rate, bool) or not isinstance(rate, int) or rate < 0):
+            warn(f"Config field 'storage.{tier}' must be an integer >= 0 (0 disables), got {rate!r}")
+    if storage_cfg.get("dedup_uplinks") is False and (
+        storage_cfg.get("max_packets_per_node_per_minute", 60) or storage_cfg.get("max_packets_per_node_per_hour", 600)
+    ):
+        warn("storage.dedup_uplinks = false: content dedup for id-less packets is off and the "
+             "per-node flood guard (max_packets_per_node_*) is disabled — without dedup every "
+             "uplink copy is a row and the caps would clip busy nodes. Enable dedup_uplinks, "
+             "or set both caps to 0 to silence this and rely on ingest_denylist.")
+    denylist = storage_cfg.get("ingest_denylist")
+    if denylist is not None:
+        if not isinstance(denylist, list) or not all(isinstance(n, str) for n in denylist):
+            warn(f"Config field 'storage.ingest_denylist' must be a list of node id strings, got {denylist!r}")
+        else:
+            for n in denylist:
+                if normalize_node_id(n) is None:
+                    warn(f"Config field 'storage.ingest_denylist' has an invalid node id {n!r} (expected hex like \"eba3d8e8\")")
 
     # ── backups ───────────────────────────────────────────────────────
     check(_validate_one_of(config, "backups.schedule", ["off", "daily", "weekly", "monthly"]))
