@@ -315,7 +315,9 @@ guild = "REPLACE_WITH_GUILD_ID"
 # Forwards mesh text messages and position updates into Discord channels.
 [integrations.discord.bridge]
 enabled = false
-aggregate_seconds = 5  # seconds to wait for additional gateways before posting
+aggregate_seconds = 5      # seconds to wait for additional gateways before posting
+edit_window_seconds = 900  # posted embeds keep absorbing straggler gateway copies
+                           # (as edits) this long; shorter windows re-post duplicates
 # alert_channel = "1234567890123456789"  # Channel for node online/offline alerts (linked nodes only)
 
 # Map Meshtastic channel hashes to Discord channel IDs for text messages.

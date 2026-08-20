@@ -119,6 +119,18 @@ MeshInfo logs a warning and runs without it — topic filters just get slower.
 startup warning and shows automatic pills instead. Set `mode = "manual"` to keep
 your curated list, or drop the lists and use `"presets"` (default) or `"all"`.
 
+## Discord bridge: straggler copies edit instead of re-posting
+
+The bridge used to forget a packet 60 s after first sight, so a gateway copy
+arriving later (measured up to ~14 min on a real mesh) re-posted the same
+packet as a fresh embed with `Gateways 1` (#585). Posted embeds now stay
+editable for `[integrations.discord.bridge] edit_window_seconds` (default
+900 s): late copies update the original embed's gateway list, and the embed
+timestamp stays the packet's own time instead of shifting on each edit. The
+"View All Gateways" detail view is also capped to Discord's per-message
+limits (10 embeds / 6000 chars) with a truncation note when a very large
+reception list is cut.
+
 ## Discord bridge channel maps
 
 `[integrations.discord.bridge.channels]` and `position_channels` keys keyed on
