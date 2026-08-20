@@ -223,3 +223,80 @@ class TestUplinkDedupCache:
         cache.put(("cc", 3), 3, {}, now=1002.0)
         assert cache.get(("aa", 1), now=1003.0) is None
         assert cache.get(("cc", 3), now=1003.0) == (3, {})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Id-less packets: content key + per-gateway reception tracking
+# ─────────────────────────────────────────────────────────────────────────────
+
+from storage.db.uplink_dedup import content_key  # noqa: E402
+
+MAPREPORT = {
+    "from": "eba3d8e8", "to": "ffffffff", "sender": "eba3d8e8",
+    "timestamp": 1787025877, "topic": "msh/US/bayarea/2/map/",
+    "qos": 0, "retain": False, "channel": 31, "channel_name": "MediumFast",
+    "type": "mapreport",
+    "payload": {"altitude": 853, "firmware_version": "2.7.15", "hw_model": 37,
+                "latitude_i": 393412608, "longitude_i": -1210384384,
+                "long_name": "River Dragon - Base", "num_online_local_nodes": 191,
+                "role": 11, "short_name": "RD"},
+}
+
+
+class TestContentKey:
+    def test_per_copy_envelope_does_not_change_key(self):
+        # The incident pattern: rx_time (-> timestamp) ticks every second, and
+        # gateway/topic/qos differ per uplink — none of it is packet content.
+        a = dict(MAPREPORT)
+        b = dict(MAPREPORT, timestamp=MAPREPORT["timestamp"] + 1, qos=1, retain=True,
+                 sender="aabbccdd", topic="msh/US/2/map/", rssi=-90, snr=3.5,
+                 rx_time=5, hop_limit=2, hops_away=1, relay_node=7)
+        assert content_key(a) == content_key(b)
+
+    def test_payload_change_changes_key(self):
+        a = dict(MAPREPORT)
+        b = dict(MAPREPORT, payload=dict(MAPREPORT["payload"], num_online_local_nodes=192))
+        assert content_key(a) != content_key(b)
+
+    def test_from_type_channel_are_content(self):
+        assert content_key(dict(MAPREPORT, **{"from": "00000001"})) != content_key(MAPREPORT)
+        assert content_key(dict(MAPREPORT, type="nodeinfo")) != content_key(MAPREPORT)
+        assert content_key(dict(MAPREPORT, channel=8)) != content_key(MAPREPORT)
+
+    def test_key_order_independent(self):
+        shuffled = {k: MAPREPORT[k] for k in reversed(list(MAPREPORT))}
+        assert content_key(shuffled) == content_key(MAPREPORT)
+
+    def test_non_json_values_use_default(self):
+        import datetime
+        msg = dict(MAPREPORT, payload={"when": datetime.datetime(2026, 8, 18, 1, 2, 3)})
+        assert content_key(msg, default=str) == content_key(dict(msg), default=str)
+
+
+class TestGatewayTracking:
+    def test_unmarked_gateway_is_new_then_seen(self):
+        cache = UplinkDedupCache(window_seconds=900)
+        key = ("eba3d8e8", "abc")
+        cache.put(key, 7, {}, now=1000.0)
+        assert cache.gateway_seen(key, "eba3d8e8", now=1001.0) is False
+        cache.mark_gateway(key, "eba3d8e8", now=1001.0)
+        assert cache.gateway_seen(key, "eba3d8e8", now=1002.0) is True
+        assert cache.gateway_seen(key, "other", now=1002.0) is False
+        # get() keeps its 2-tuple contract with the gateway set attached
+        assert cache.get(key, now=1002.0) == (7, {})
+
+    def test_gateway_set_dies_with_entry(self):
+        cache = UplinkDedupCache(window_seconds=100)
+        key = ("eba3d8e8", "abc")
+        cache.put(key, 7, {}, now=1000.0)
+        cache.mark_gateway(key, "gw", now=1000.0)
+        assert cache.gateway_seen(key, "gw", now=1101.0) is False
+        cache.mark_gateway(key, "gw", now=1101.0)  # no entry: no-op, no error
+        assert cache.get(key, now=1101.0) is None
+
+    def test_none_gateway_is_tracked_too(self):
+        cache = UplinkDedupCache(window_seconds=900)
+        key = ("aa", "k")
+        cache.put(key, 1, {}, now=0.0)
+        cache.mark_gateway(key, None, now=0.0)
+        assert cache.gateway_seen(key, None, now=1.0) is True

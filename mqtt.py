@@ -84,6 +84,17 @@ class MQTT:
         # Track drops so the warning at every Nth surfaces a stalled consumer.
         self._discord_drops_total: int = 0
 
+        # Packets from these nodes (as origin or uplinking gateway) are dropped
+        # at the decoder entirely.
+        denylist = config.get('storage', {}).get('ingest_denylist') or ()
+        if not isinstance(denylist, (list, tuple)):
+            logger.warning("storage.ingest_denylist must be a list of node ids; ignoring %r", denylist)
+            denylist = ()
+        self._denied_nodes = frozenset(
+            filter(None, (normalize_node_id(n) for n in denylist if isinstance(n, str)))
+        )
+        self._denied_logged: set = set()
+
         # Learns name -> hash from encrypted uplinks so decoded slot indices remap.
         self._channel_resolver = channels.ChannelResolver()
         # Name bucket -> when its label row was last confirmed written.
@@ -209,6 +220,9 @@ class MQTT:
                 except Exception as e:
                     # Returning early avoids logging a noisy type='unknown' row for a packet we can't read.
                     logger.exception("Unexpected error decoding protobuf envelope on %s: %s", msg.topic.value, e)
+                    return
+
+                if self._is_denied_packet(getattr(mp, "from", None), se.gateway_id, msg.topic.value):
                     return
 
                 if mp.HasField("encrypted") and not mp.HasField("decoded"):
@@ -346,7 +360,16 @@ class MQTT:
                     except DecodeError as e:
                         logger.debug("Protobuf decode error: text: %s", e)
                     else:
-                        await self._safe_handle("handle_mapreport", self.handle_mapreport(outs))
+                        # Skip the node upsert for a repeat; normalize first so
+                        # the peek keys the dict exactly as handle_log archives it.
+                        self._normalize_msg_addrs(outs)
+                        try:
+                            repeat = self.data.pg_storage.idless_repeat(outs)
+                        except Exception:
+                            logger.exception("idless_repeat peek failed; handling the packet")
+                            repeat = False
+                        if not repeat:
+                            await self._safe_handle("handle_mapreport", self.handle_mapreport(outs))
 
                 elif mp.decoded.portnum == portnums_pb2.NEIGHBORINFO_APP:
                     try:
@@ -492,6 +515,8 @@ class MQTT:
                 try:
                     decoded = msg.payload.decode("utf-8")
                     j = json.loads(decoded, cls=_JSONDecoder)
+                    if self._is_denied_packet(j.get('from'), j.get('sender'), msg.topic.value):
+                        return
                     j['topic'] = msg.topic.value
                     j["qos"] = getattr(msg, "qos", None)
                     j["retain"] = getattr(msg, "retain", None)
@@ -521,6 +546,37 @@ class MQTT:
                     logger.error("JSON message processing error: %s", e, exc_info=True)
 
     ### message handlers
+
+    def _is_denied(self, node_id) -> bool:
+        if not self._denied_nodes:
+            return False
+        nid = normalize_node_id(node_id)
+        if nid in self._denied_nodes:
+            if nid not in self._denied_logged:
+                self._denied_logged.add(nid)
+                logger.info("Dropping packets originated or uplinked by denylisted node %s ([storage] ingest_denylist)", nid)
+            else:
+                logger.debug("Dropping packet originated or uplinked by denylisted node %s", nid)
+            return True
+        return False
+
+    def _is_denied_packet(self, from_id, gateway, topic: str) -> bool:
+        """Denylist match on the origin or the uplinking gateway (envelope
+        gateway id, else the topic's !suffix — same fallback sender uses)."""
+        if not self._denied_nodes:
+            return False
+        if not gateway:
+            tail = topic.rsplit('/', 1)[-1] if isinstance(topic, str) else ''
+            gateway = tail if tail.startswith('!') else None
+        return self._is_denied(from_id) or self._is_denied(gateway)
+
+    def _over_budget(self, node_id: str, label: str) -> bool:
+        """Handlers share the archive's flood budget: a node over it stops
+        writing anywhere until its window rolls over."""
+        if self.data.pg_storage.node_over_budget(node_id):
+            logger.debug("%s: node %s over its ingest budget; skipping", label, node_id)
+            return True
+        return False
 
     async def _safe_handle(self, label: str, coro) -> None:
         """Run a handler coroutine; log + swallow exceptions so one bad packet
@@ -579,6 +635,8 @@ class MQTT:
         if id is None:
             logger.debug("handle_neighborinfo: missing/invalid 'from'; skipping: %s", msg)
             return
+        if self._over_budget(id, "handle_neighborinfo"):
+            return
         payload = msg.get('payload')
         if not isinstance(payload, dict):
             logger.debug("handle_neighborinfo: missing/invalid payload for %s; skipping", id)
@@ -604,6 +662,8 @@ class MQTT:
         id = normalize_node_id(payload.get('id')) or from_id
         if id is None:
             logger.debug("handle_nodeinfo: no usable node id; skipping: %s", msg)
+            return
+        if self._over_budget(id, "handle_nodeinfo"):
             return
 
         node = await self.data.pg_storage.get_node_cached(id)
@@ -647,6 +707,8 @@ class MQTT:
         from_id = self._normalize_msg_addrs(msg)
         if from_id is None:
             logger.debug("handle_mapreport: missing/invalid 'from'; skipping: %s", msg)
+            return
+        if self._over_budget(from_id, "handle_mapreport"):
             return
         payload = msg.get('payload')
         if not isinstance(payload, dict):
@@ -693,6 +755,8 @@ class MQTT:
         if id is None:
             logger.debug("handle_position: missing/invalid 'from'; skipping: %s", msg)
             return
+        if self._over_budget(id, "handle_position"):
+            return
 
         node = await self.data.pg_storage.get_node_cached(id)
         if node is None:
@@ -722,6 +786,8 @@ class MQTT:
         id = self._normalize_msg_addrs(msg)
         if id is None:
             logger.debug("handle_telemetry: missing/invalid 'from'; skipping: %s", msg)
+            return
+        if self._over_budget(id, "handle_telemetry"):
             return
         telemetry_type = msg.get('telemetry_type')
         payload = msg.get('payload')
@@ -775,6 +841,8 @@ class MQTT:
         from_id = self._normalize_msg_addrs(msg)
         if from_id is None:
             logger.debug("handle_text: missing/invalid 'from'; skipping: %s", msg)
+            return
+        if self._over_budget(from_id, "handle_text"):
             return
 
         payload = msg.get('payload')
@@ -863,6 +931,8 @@ class MQTT:
         id = self._normalize_msg_addrs(msg)
         if id is None:
             logger.debug("handle_traceroute: missing/invalid 'from'; skipping: %s", msg)
+            return
+        if self._over_budget(id, "handle_traceroute"):
             return
         payload = msg.get('payload')
         route = payload.get('route') if isinstance(payload, dict) else None

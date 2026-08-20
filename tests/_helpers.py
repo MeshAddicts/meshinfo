@@ -46,6 +46,19 @@ class FakePgStorage:
         self._mqtt_row_seq += 1
         return self._mqtt_row_seq
 
+    # Flood-guard peeks (per-node budget + id-less repeat); tests flip these.
+    over_budget_nodes: set = frozenset()
+    idless_repeats: int = 0  # >0: the next N idless_repeat() calls answer True
+
+    def node_over_budget(self, node_id) -> bool:
+        return node_id in self.over_budget_nodes
+
+    def idless_repeat(self, msg) -> bool:
+        if self.idless_repeats > 0:
+            self.idless_repeats -= 1
+            return True
+        return False
+
     async def get_node_cached(self, node_id: str):
         return self._nodes.get(node_id)
 

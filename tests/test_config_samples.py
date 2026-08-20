@@ -81,3 +81,39 @@ def test_cleanse_redacts_encryption_keys_in_both_shapes():
     as_dict = {"broker": {"channels": {"encryption": {"key": "s2", "key_name": "B"}}}}
     out = config_mod.Config.cleanse(as_dict)
     assert out["broker"]["channels"]["encryption"]["key"] == "***REDACTED***"
+
+
+def _flood_guard_warnings(**storage_over):
+    import config as config_mod
+
+    cfg = _validatable_base()
+    cfg["storage"].update(storage_over)
+    return [w for w in config_mod.validate(cfg)
+            if "flood guard" in w or "max_packets" in w or "denylist" in w or "content_dedup" in w]
+
+
+def test_flood_guard_defaults_validate_clean():
+    assert _flood_guard_warnings() == []
+    assert _flood_guard_warnings(max_packets_per_node_per_minute=0, max_packets_per_node_per_hour=0,
+                                 ingest_denylist=["eba3d8e8", "!ABCD"]) == []
+
+
+def test_flood_guard_tier_must_be_non_negative_int():
+    for bad in (-1, 1.5, True):
+        assert any("max_packets_per_node_per_minute" in w for w in _flood_guard_warnings(max_packets_per_node_per_minute=bad))
+    assert any("max_packets_per_node_per_hour" in w for w in _flood_guard_warnings(max_packets_per_node_per_hour=-5))
+    assert any("content_dedup_window_seconds" in w for w in _flood_guard_warnings(content_dedup_window_seconds=0))
+
+
+def test_denylist_shape_and_ids_validated():
+    assert any("list of node id strings" in w for w in _flood_guard_warnings(ingest_denylist="eba3d8e8"))
+    assert any("list of node id strings" in w for w in _flood_guard_warnings(ingest_denylist=[12]))
+    warns = _flood_guard_warnings(ingest_denylist=["zz", "!EBA3D8E8", "1f"])
+    assert len(warns) == 1 and "'zz'" in warns[0]
+
+
+def test_dedup_off_warns_that_guard_is_inactive():
+    warns = _flood_guard_warnings(dedup_uplinks=False)
+    assert len(warns) == 1 and "disabled" in warns[0]
+    assert _flood_guard_warnings(dedup_uplinks=False, max_packets_per_node_per_minute=0,
+                                 max_packets_per_node_per_hour=0) == []

@@ -37,6 +37,13 @@ def make_mqtt(nodes=None, json_decoder=False, protobuf_decoder=True):
     return MQTT(config, data), data
 
 
+def make_mqtt_denying(denylist, **kw):
+    """make_mqtt with a [storage] ingest_denylist."""
+    mqtt, data = make_mqtt(**kw)
+    mqtt.config["storage"] = {"ingest_denylist": denylist}
+    return MQTT(mqtt.config, data), data
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # handle_nodeinfo — the headline "Unknown nodes" path
 # ─────────────────────────────────────────────────────────────────────────────
@@ -787,3 +794,184 @@ class TestNormalizeMsgAddrs:
         msg = {"from": 0x1, "sender": "!67ea9400"}
         mqtt._normalize_msg_addrs(msg)
         assert msg["sender"] == "67ea9400"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ingest_denylist — dropped at the decoder: no archive row, no handler
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestIngestDenylist:
+    def test_protobuf_packet_from_denied_node_is_dropped_entirely(self):
+        mqtt, data = make_mqtt_denying(["eba3d8e8"])
+        msg = build_envelope(from_=0xEBA3D8E8, portnum=portnums_pb2.NODEINFO_APP,
+                             payload=mesh_pb2.User(id="!eba3d8e8", long_name="Rogue").SerializeToString())
+        run(mqtt.process_mqtt_msg(None, msg))
+        assert data.pg_storage.mqtt_writes == []
+        assert data.pg_storage.writes == []
+
+    def test_other_nodes_still_flow(self):
+        mqtt, data = make_mqtt_denying(["eba3d8e8"])
+        run(mqtt.process_mqtt_msg(None, build_envelope(from_=0x67EA9400)))
+        assert len(data.pg_storage.mqtt_writes) == 1
+
+    def test_config_ids_are_normalized(self):
+        # '!' prefix, upper case, short hex all match the wire id; non-strings are ignored
+        mqtt, data = make_mqtt_denying(["!EBA3D8E8", "1F", 12])
+        assert mqtt._denied_nodes == frozenset({"eba3d8e8", "0000001f"})
+        run(mqtt.process_mqtt_msg(None, build_envelope(from_=0xEBA3D8E8)))
+        run(mqtt.process_mqtt_msg(None, build_envelope(from_=0x1F)))
+        assert data.pg_storage.mqtt_writes == []
+
+    def test_json_packet_from_denied_node_is_dropped(self):
+        mqtt, data = make_mqtt_denying(["eba3d8e8"], json_decoder=True, protobuf_decoder=False)
+        payload = json.dumps({"from": 0xEBA3D8E8, "type": "position", "id": 5,
+                              "payload": {"latitude_i": 1, "longitude_i": 2}}).encode()
+        from _helpers import FakeMqttMessage
+        run(mqtt.process_mqtt_msg(None, FakeMqttMessage("msh/US/2/json/LongFast/!abcd1234", payload)))
+        assert data.pg_storage.mqtt_writes == []
+        assert data.pg_storage.writes == []
+
+    def test_bare_string_denylist_is_ignored_not_split(self):
+        mqtt, _ = make_mqtt_denying("eba3d8e8")
+        assert mqtt._denied_nodes == frozenset()
+
+    def test_empty_denylist_is_free(self):
+        mqtt, _ = make_mqtt()
+        assert mqtt._denied_nodes == frozenset()
+        assert mqtt._is_denied(0xEBA3D8E8) is False
+
+    def test_denylisted_gateway_drops_what_it_uplinks(self):
+        mqtt, data = make_mqtt_denying(["abcd1234"])  # the envelope's gateway_id
+        run(mqtt.process_mqtt_msg(None, build_envelope(from_=0x67EA9400, gateway_id="!abcd1234")))
+        assert data.pg_storage.mqtt_writes == []
+        run(mqtt.process_mqtt_msg(None, build_envelope(from_=0x67EA9400, gateway_id="!11112222",
+                                                        topic="msh/US/2/e/LongFast/!11112222")))
+        assert len(data.pg_storage.mqtt_writes) == 1
+
+    def test_protobuf_gateway_from_topic_suffix_when_envelope_blank(self):
+        mqtt, data = make_mqtt_denying(["abcd1234"])
+        run(mqtt.process_mqtt_msg(None, build_envelope(from_=0x67EA9400, gateway_id="",
+                                                        topic="msh/US/2/e/LongFast/!abcd1234")))
+        assert data.pg_storage.mqtt_writes == []
+
+    def test_hex_like_topic_segment_is_not_a_gateway(self):
+        # Only a '!'-prefixed suffix is a gateway id; 'cafe' is a channel name.
+        mqtt, data = make_mqtt_denying(["0000cafe"], json_decoder=True, protobuf_decoder=False)
+        from _helpers import FakeMqttMessage
+        payload = json.dumps({"from": 0x67EA9400, "type": "position", "id": 5,
+                              "payload": {"latitude_i": 1, "longitude_i": 2}}).encode()
+        run(mqtt.process_mqtt_msg(None, FakeMqttMessage("msh/US/2/json/cafe", payload)))
+        assert len(data.pg_storage.mqtt_writes) == 1
+
+    def test_json_sender_field_denylisted(self):
+        mqtt, data = make_mqtt_denying(["abcd1234"], json_decoder=True, protobuf_decoder=False)
+        from _helpers import FakeMqttMessage
+        payload = json.dumps({"from": 0x67EA9400, "sender": "!abcd1234", "type": "position", "id": 5,
+                              "payload": {"latitude_i": 1, "longitude_i": 2}}).encode()
+        run(mqtt.process_mqtt_msg(None, FakeMqttMessage("msh/US/2/json/LongFast/!11112222", payload)))
+        assert data.pg_storage.mqtt_writes == []
+
+    def test_json_denylisted_gateway_from_topic_suffix(self):
+        mqtt, data = make_mqtt_denying(["abcd1234"], json_decoder=True, protobuf_decoder=False)
+        from _helpers import FakeMqttMessage
+        payload = json.dumps({"from": 0x67EA9400, "type": "position", "id": 5,
+                              "payload": {"latitude_i": 1, "longitude_i": 2}}).encode()
+        run(mqtt.process_mqtt_msg(None, FakeMqttMessage("msh/US/2/json/LongFast/!abcd1234", payload)))
+        assert data.pg_storage.mqtt_writes == []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# flood guard hooks in the decoder/handlers — id-less repeat skip, budget gate
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestFloodGuardHooks:
+    def _mapreport_envelope(self, from_=0xEBA3D8E8):
+        from meshtastic import mqtt_pb2
+        report = mqtt_pb2.MapReport(long_name="River Dragon", short_name="RD", hw_model=37, role=11,
+                                    latitude_i=393412608, longitude_i=-1210384384, num_online_local_nodes=191)
+        return build_envelope(from_=from_, packet_id=0, portnum=portnums_pb2.MAP_REPORT_APP,
+                              payload=report.SerializeToString(), gateway_id="!eba3d8e8",
+                              topic="msh/US/bayarea/2/map/")
+
+    def test_mapreport_first_copy_runs_handler_and_archives(self):
+        mqtt, data = make_mqtt()
+        run(mqtt.process_mqtt_msg(None, self._mapreport_envelope()))
+        assert len(data.pg_storage.writes) == 1          # node upsert ran
+        assert len(data.pg_storage.mqtt_writes) == 1     # archive write attempted
+        assert "id" not in data.pg_storage.mqtt_writes[0]  # id-less on the wire
+
+    def test_idless_repeat_skips_node_upsert_but_still_offers_archive(self):
+        mqtt, data = make_mqtt()
+        data.pg_storage.idless_repeats = 1
+        run(mqtt.process_mqtt_msg(None, self._mapreport_envelope()))
+        assert data.pg_storage.writes == []              # handler skipped
+        assert len(data.pg_storage.mqtt_writes) == 1     # storage decides (returns None for a repeat)
+        # Archived shape is identical to the handled copy's (from/to normalized
+        # before the peek), so both hash to the same content key.
+        skipped = data.pg_storage.mqtt_writes[0]
+        mqtt2, data2 = make_mqtt()
+        run(mqtt2.process_mqtt_msg(None, self._mapreport_envelope()))
+        handled = data2.pg_storage.mqtt_writes[0]
+        assert skipped["from"] == handled["from"] == "eba3d8e8"
+        assert skipped["to"] == handled["to"]
+        from storage.db.uplink_dedup import content_key
+        assert content_key(skipped) == content_key(handled)
+
+    def test_peek_sees_normalized_addresses(self):
+        """The storage peek receives the same dict shape handle_log archives."""
+        mqtt, data = make_mqtt()
+        seen = []
+        data.pg_storage.idless_repeat = lambda msg: (seen.append(dict(msg)), False)[1]
+        run(mqtt.process_mqtt_msg(None, self._mapreport_envelope()))
+        assert seen[0]["from"] == "eba3d8e8" and seen[0]["to"] == "abcd1234"  # ints normalized to hex
+        from storage.db.uplink_dedup import content_key
+        peeked = {k: v for k, v in seen[0].items() if k not in ("decoded", "encrypted")}
+        assert content_key(peeked) == content_key(data.pg_storage.mqtt_writes[0])
+
+    def test_peek_failure_falls_back_to_handling(self):
+        mqtt, data = make_mqtt()
+        def boom(msg):
+            raise RuntimeError("peek bug")
+        data.pg_storage.idless_repeat = boom
+        run(mqtt.process_mqtt_msg(None, self._mapreport_envelope()))
+        assert len(data.pg_storage.writes) == 1 and len(data.pg_storage.mqtt_writes) == 1
+
+    def test_over_budget_node_skips_state_handlers_too(self):
+        mqtt, data = make_mqtt()
+        data.pg_storage.over_budget_nodes = {"eba3d8e8"}
+        run(mqtt.process_mqtt_msg(None, self._mapreport_envelope()))
+        run(mqtt.handle_position({"from": 0xEBA3D8E8, "id": 3, "payload": {"latitude_i": 1, "longitude_i": 2}}))
+        run(mqtt.handle_nodeinfo({"from": 0xEBA3D8E8, "payload": {"id": "!eba3d8e8", "long_name": "x"}}))
+        run(mqtt.handle_neighborinfo({"from": 0xEBA3D8E8, "payload": {"neighbors": []}}))
+        assert data.pg_storage.writes == []
+        assert len(data.pg_storage.mqtt_writes) == 1  # archive still consulted (it drops/counts)
+
+    def test_over_budget_node_skips_history_writers(self):
+        mqtt, data = make_mqtt()
+        data.pg_storage.over_budget_nodes = {"67ea9400"}
+        run(mqtt.handle_telemetry({"from": 0x67EA9400, "telemetry_type": "device_metrics",
+                                   "payload": {"battery_level": 90}}))
+        run(mqtt.handle_text({"from": 0x67EA9400, "id": 7, "channel": "0", "payload": {"text": "hi"}}))
+        run(mqtt.handle_traceroute({"from": 0x67EA9400, "id": 8, "payload": {"route": []}}))
+        assert data.pg_storage.telemetry_writes == []
+        assert data.pg_storage.chat_writes == []
+        assert data.pg_storage.traceroute_writes == []
+        assert data.pg_storage.writes == []  # not even the node merge for telemetry
+
+    def test_in_budget_node_writes_history(self):
+        mqtt, data = make_mqtt()
+        run(mqtt.handle_telemetry({"from": 0x67EA9400, "telemetry_type": "device_metrics",
+                                   "payload": {"battery_level": 90}}))
+        assert len(data.pg_storage.telemetry_writes) == 1
+
+    def test_denylist_drop_logged_once_at_info(self, caplog):
+        import logging
+        mqtt, data = make_mqtt_denying(["eba3d8e8"])
+        with caplog.at_level(logging.INFO, logger="mqtt"):
+            run(mqtt.process_mqtt_msg(None, build_envelope(from_=0xEBA3D8E8)))
+            run(mqtt.process_mqtt_msg(None, build_envelope(from_=0xEBA3D8E8)))
+        infos = [r for r in caplog.records if r.levelno == logging.INFO and "denylisted" in r.getMessage()]
+        assert len(infos) == 1
+        assert "eba3d8e8" in infos[0].getMessage()
