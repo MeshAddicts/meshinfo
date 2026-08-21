@@ -320,17 +320,21 @@ edit_window_seconds = 900  # posted embeds keep absorbing straggler gateway copi
                            # (as edits) this long; shorter windows re-post duplicates
 # alert_channel = "1234567890123456789"  # Channel for node online/offline alerts (linked nodes only)
 
-# Map Meshtastic channel hashes to Discord channel IDs for text messages.
-# Key = Meshtastic channel hash (from broker.channels.display), value = Discord channel ID.
+# Map mesh channels to Discord channel IDs for text messages.
+# Key = wire channel name (case-sensitive, recommended) or a channel bucket id
+# (hash / name-bucket number from /v1/channels). A bucket-id key pins one
+# name+PSK domain and wins over a name key; a name key follows the channel
+# across re-keys and also matches channels whose hash was never learned.
 # Messages on unmapped channels are ignored.
 [integrations.discord.bridge.channels]
-# "8" = "1234567890123456789"    # LongFast -> #longfast
-# "31" = "1234567890123456790"   # MediumFast -> #mediumfast
+# "LongFast" = "1234567890123456789"     # -> #longfast
+# "MediumFast" = "1234567890123456790"   # -> #mediumfast
+# "31" = "1234567890123456790"           # same, pinned to the default-PSK hash
 
-# Map Meshtastic channel hashes to Discord channel IDs for position updates.
-# Only nodes flagged as "trackers" via /addtracker will have positions forwarded.
+# Same key rules for position updates. Only nodes flagged as "trackers" via
+# /addtracker will have positions forwarded.
 [integrations.discord.bridge.position_channels]
-# "8" = "1234567890123456791"    # LongFast positions -> #position-tracking
+# "LongFast" = "1234567890123456791"     # positions -> #position-tracking
 
 # Static map thumbnails for position tracking embeds.
 # Renders map images server-side by fetching tiles and compositing them locally.

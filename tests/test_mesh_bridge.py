@@ -83,8 +83,10 @@ class FakeChannel:
 class FakeBot:
     def __init__(self, channel):
         self._channel = channel
+        self.requested = []
 
     def get_channel(self, cid):
+        self.requested.append(cid)
         return self._channel
 
 
@@ -433,7 +435,8 @@ class TestDiscordLimits:
     def test_embed_timestamp_is_packet_time_not_build_time(self):
         kw = dict(msg={"from": "d952bddd", "id": 1, "timestamp": 1787000000},
                   chat={"from": "d952bddd", "text": "hi", "timestamp": 1787000000},
-                  nodes={}, base_url="", config={}, gateway_entries=big_gateways(2))
+                  nodes={}, base_url="", config={}, gateway_entries=big_gateways(2),
+                  fallback_ts=1787000300.0)
         e1, _ = build_text_embed(**kw)
         e2, _ = build_text_embed(**kw)
         assert e1.timestamp == e2.timestamp
@@ -497,3 +500,148 @@ class TestNameAndContentLimits:
         assert len(embeds) >= 2  # spilled, not squeezed into one
         assert all(len(e.description) <= EMBED_DESC_LIMIT for e in embeds)
         assert sum(len(e) for e in embeds) <= EMBED_TOTAL_LIMIT
+
+
+class TestNameKeyedChannelMaps:
+    def _bridge(self, channels, position_channels=None):
+        return make_bridge(position_channels=position_channels, channels=channels)
+
+    def test_name_key_matches_by_channel_name(self):
+        async def scenario():
+            bridge, webhook = self._bridge({"MediumFast": "555"})
+            ev = copy_msg("00000001")
+            ev["chat"]["channel"] = "31"
+            ev["chat"]["channel_name"] = "MediumFast"
+            await bridge._handle_event(ev)
+            assert len(bridge._pending) == 1
+            next(iter(bridge._pending.values())).first_seen -= 10
+            await bridge._flush_once()
+            assert len(webhook.sends) == 1
+        run(scenario())
+
+    def test_name_key_follows_channel_to_name_bucket(self):
+        # decode-only channel: filed at its name bucket, hash never learned
+        async def scenario():
+            bridge, _ = self._bridge({"DiabloView": "555"})
+            ev = copy_msg("00000001")
+            ev["chat"]["channel"] = "1605169579"
+            ev["chat"]["channel_name"] = "DiabloView"
+            await bridge._handle_event(ev)
+            assert len(bridge._pending) == 1
+        run(scenario())
+
+    def test_numeric_key_takes_precedence_over_name_key(self):
+        async def scenario():
+            bridge, webhook = self._bridge({"31": "555", "MediumFast": "999"})
+            assert bridge._chat_discord_channel("31", "MediumFast") == "555"   # bucket key wins
+            assert bridge._chat_discord_channel("99", "MediumFast") == "999"   # name as fallback
+            ev = copy_msg("00000001")
+            ev["chat"]["channel"] = "31"
+            ev["chat"]["channel_name"] = "MediumFast"
+            await bridge._handle_event(ev)
+            next(iter(bridge._pending.values())).first_seen -= 10
+            await bridge._flush_once()
+            assert len(webhook.sends) == 1
+            assert bridge.bot.requested == [555]  # routed to the numeric key's channel
+        run(scenario())
+
+    def test_name_match_is_case_sensitive(self):
+        async def scenario():
+            bridge, _ = self._bridge({"mediumfast": "555"})
+            ev = copy_msg("00000001")
+            ev["chat"]["channel"] = "31"
+            ev["chat"]["channel_name"] = "MediumFast"
+            await bridge._handle_event(ev)
+            assert bridge._pending == {}  # wire names are case-sensitive
+        run(scenario())
+
+    def test_message_without_channel_name_needs_numeric_key(self):
+        async def scenario():
+            bridge, _ = self._bridge({"MediumFast": "555"})
+            ev = copy_msg("00000001")
+            ev["chat"]["channel"] = "31"
+            ev["chat"].pop("channel_name", None)  # JSON decoder shape
+            await bridge._handle_event(ev)
+            assert bridge._pending == {}
+        run(scenario())
+
+    def test_position_maps_accept_names_with_chat_fallback(self):
+        bridge, _ = self._bridge({"LongFast": "555"}, position_channels={"MediumFast": "777"})
+        for name, expect in (("MediumFast", "777"), ("LongFast", "555"), ("ShortSlow", None)):
+            got = bridge._position_discord_channel("12345", name)
+            assert got == expect, (name, got, expect)
+
+    def test_position_event_admitted_by_name_key(self):
+        """The position admission path itself must honor name keys."""
+        async def scenario():
+            bridge, _ = self._bridge({"99": "555"}, position_channels={"MediumFast": "777"})
+
+            async def tracked(node_id):
+                return True
+            bridge.data.pg_storage.is_node_tracked = tracked
+            ev = {"type": "position",
+                  "msg": {"from": "d952bddd", "id": 42, "channel": 31,
+                          "channel_name": "MediumFast",
+                          "sender": "00000001", "topic": "msh/x/2/e/Y/!00000001"},
+                  "node_id": "d952bddd"}
+            await bridge._handle_event(ev)
+            assert len(bridge._pending) == 1
+            ev2 = dict(ev, msg=dict(ev["msg"], id=43, channel_name="ShortSlow"))
+            await bridge._handle_event(ev2)
+            assert len(bridge._pending) == 1  # unmapped name rejected
+        run(scenario())
+
+    def test_split_classifies_digit_keys_as_bucket_ids(self):
+        from bot.cogs.mesh_bridge import _split_channel_map
+        by_id, by_name = _split_channel_map(
+            {"31": "a", "1605169579": "b", "MediumFast": "c", " Padded Name ": "d", "": "e"})
+        assert by_id == {"31": "a", "1605169579": "b"}
+        assert by_name == {"MediumFast": "c", "Padded Name": "d"}
+        by_id2, by_name2 = _split_channel_map({"٣١": "x", "³¹": "y"})
+        assert by_id2 == {} and set(by_name2) == {"٣١", "³¹"}  # unicode digits are names
+
+
+class TestBrokenNodeClocks:
+    """Node a3040ad9 shipped rx_time ~8 months in the past; the embed must
+    show arrival time then, not the broken clock — and stay edit-stable."""
+
+    def _embed(self, ts, fallback):
+        return build_text_embed(
+            msg={"from": "a3040ad9", "id": 1, "timestamp": ts},
+            chat={"from": "a3040ad9", "text": "Hello", "timestamp": ts},
+            nodes={}, base_url="", config={}, gateway_entries=big_gateways(1),
+            fallback_ts=fallback,
+        )[0]
+
+    def test_past_bogus_clock_uses_first_seen_wall_time(self):
+        now = 1787000000.0
+        e = self._embed(1765796786, fallback=now)  # ~8 months slow
+        assert int(e.timestamp.timestamp()) == int(now)
+
+    def test_future_bogus_clock_uses_first_seen_wall_time(self):
+        now = 1787000000.0
+        e = self._embed(int(now) + 86400 * 30, fallback=now)
+        assert int(e.timestamp.timestamp()) == int(now)
+
+    def test_sane_clock_still_wins(self):
+        now = 1787000000.0
+        e = self._embed(int(now) - 300, fallback=now)  # 5 min ago: plausible
+        assert int(e.timestamp.timestamp()) == int(now) - 300
+
+    def test_stable_across_edits_even_when_bogus(self):
+        now = 1787000000.0
+        e1 = self._embed(1765796786, fallback=now)
+        e2 = self._embed(1765796786, fallback=now)  # rebuilt on a straggler edit
+        assert e1.timestamp == e2.timestamp
+
+    def test_bridge_passes_wall_first_seen(self):
+        async def scenario():
+            bridge, webhook = make_bridge()
+            ev = copy_msg("00000001", ts=1765796786)  # broken clock
+            await bridge._handle_event(ev)
+            pending = next(iter(bridge._pending.values()))
+            pending.first_seen -= 10
+            await bridge._flush_once()
+            sent_embed = webhook.sends[0]["embed"]
+            assert abs(sent_embed.timestamp.timestamp() - pending.wall_first_seen) < 2
+        run(scenario())

@@ -34,15 +34,20 @@ def _author_name(display_name: str, short_name: str) -> str:
     return display_name[: EMBED_AUTHOR_LIMIT - len(suffix) - 1] + "…" + suffix
 
 
-def _packet_timestamp(*epochs) -> datetime.datetime:
+def _packet_timestamp(*epochs, fallback: Optional[float] = None) -> datetime.datetime:
     """Embed timestamp from the packet's own clock — stable across edits
-    (utcnow would shift the displayed time every straggler edit)."""
+    (utcnow would shift the displayed time every straggler edit). A clock more
+    than a day off is a broken node clock, not history: use `fallback` (the
+    bridge's first-seen wall time, also edit-stable) instead."""
+    anchor = fallback if fallback is not None else datetime.datetime.now(datetime.timezone.utc).timestamp()
     for e in epochs:
         try:
-            if e:
+            if e and anchor - 86400 <= int(e) <= anchor + 3600:
                 return datetime.datetime.fromtimestamp(int(e), datetime.timezone.utc)
         except (TypeError, ValueError, OverflowError, OSError):
             continue
+    if fallback is not None:
+        return datetime.datetime.fromtimestamp(fallback, datetime.timezone.utc)
     return discord.utils.utcnow()
 
 
@@ -206,6 +211,7 @@ def build_text_embed(
     config: dict,
     owner_id: Optional[str] = None,
     gateway_entries: Optional[list] = None,
+    fallback_ts: Optional[float] = None,
 ) -> tuple[discord.Embed, bool]:
     """
     Build a rich embed for a text message from the mesh.
@@ -280,7 +286,8 @@ def build_text_embed(
     embed = discord.Embed(
         description=description,
         color=_snr_color(gateway_entries, msg),
-        timestamp=_packet_timestamp(chat.get("timestamp"), msg.get("timestamp")),
+        timestamp=_packet_timestamp(chat.get("timestamp"), msg.get("timestamp"),
+                                    fallback=fallback_ts),
     )
 
     # Author = sender node (linked to node page)
@@ -395,6 +402,7 @@ def build_position_embed(
     track_type: str = "tracker",
     owner_id: Optional[str] = None,
     gateway_entries: Optional[list] = None,
+    fallback_ts: Optional[float] = None,
 ) -> discord.Embed:
     """
     Build a rich embed for a position update from a tracked node.
@@ -411,7 +419,7 @@ def build_position_embed(
         title=f"{label} Position Update",
         url=map_link or node_link,
         color=discord.Color.orange() if track_type == "balloon" else discord.Color.blue(),
-        timestamp=_packet_timestamp(msg.get("timestamp")),
+        timestamp=_packet_timestamp(msg.get("timestamp"), fallback=fallback_ts),
     )
 
     avatar_url = f"https://api.dicebear.com/9.x/bottts-neutral/png?seed={node_id}"

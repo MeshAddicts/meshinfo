@@ -19,6 +19,7 @@ import discord
 from discord.ext import commands, tasks
 
 from bot.embeds import build_text_embed, build_position_embed, build_gateway_detail_embed
+from channels import normalize_wire_name
 from data_store import DataStore
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,27 @@ def _sanitize_webhook_username(name: str) -> str:
     if len(name) > WEBHOOK_USERNAME_LIMIT:
         name = name[: WEBHOOK_USERNAME_LIMIT - 1] + "…"
     return name
+
+
+def _split_channel_map(raw: dict) -> tuple[dict, dict]:
+    """Split a bridge channel map into (bucket-id keys, name keys).
+
+    All-digit keys are channel bucket ids (hashes or name-bucket ids); anything
+    else is a wire channel name, matched case-sensitively after the same
+    normalization stored channel_name gets. A channel whose *name* is all
+    digits must be mapped by its bucket id.
+    """
+    by_id: dict[str, str] = {}
+    by_name: dict[str, str] = {}
+    for key, value in (raw or {}).items():
+        k = str(key)
+        if k.isascii() and k.isdigit():  # bucket ids are str(int); "٣١" is a name
+            by_id[k] = value
+        else:
+            norm = normalize_wire_name(k)
+            if norm:
+                by_name[norm] = value
+    return by_id, by_name
 
 
 def _chunk_mentions(user_ids: list, limit: int = MESSAGE_CONTENT_LIMIT - 100) -> list[str]:
@@ -115,6 +137,7 @@ class _PendingPacket:
         "node_id",
         "gateways",
         "first_seen",
+        "wall_first_seen",
         "last_post",
         "discord_message",
         "sent_via_webhook",
@@ -130,6 +153,7 @@ class _PendingPacket:
         self.node_id = node_id
         self.gateways: list[dict] = []
         self.first_seen: float = time.monotonic()
+        self.wall_first_seen: float = time.time()
         self.last_post: float = 0.0
         self.discord_message: Optional[discord.Message] = None
         self.sent_via_webhook: bool = False
@@ -179,8 +203,11 @@ class MeshBridge(commands.Cog):
         self.edit_window_seconds = max(
             float(self.aggregate_seconds), float(bridge_cfg.get("edit_window_seconds", 900))
         )
+        # Maps accept bucket ids ("31") or wire channel names ("MediumFast").
         self.channel_map: dict[str, str] = bridge_cfg.get("channels", {})
         self.position_channel_map: dict[str, str] = bridge_cfg.get("position_channels", {})
+        self._chat_by_id, self._chat_by_name = _split_channel_map(self.channel_map)
+        self._pos_by_id, self._pos_by_name = _split_channel_map(self.position_channel_map)
 
         # packet_key -> _PendingPacket, insertion-ordered (oldest first)
         self._pending: dict[str, _PendingPacket] = {}
@@ -238,6 +265,26 @@ class MeshBridge(commands.Cog):
             if node:
                 enriched[nid] = node
         return enriched
+
+    @staticmethod
+    def _map_lookup(by_id: dict, by_name: dict, bucket, channel_name) -> Optional[str]:
+        """Discord channel id for a message: exact bucket-id key first (pins one
+        crypto domain), then the wire name (follows the channel across re-keys
+        and name buckets). None when unmapped."""
+        hit = by_id.get(str(bucket if bucket is not None else "0"))
+        if hit is not None:
+            return hit
+        name = normalize_wire_name(channel_name)
+        return by_name.get(name) if name else None
+
+    def _chat_discord_channel(self, bucket, channel_name) -> Optional[str]:
+        return self._map_lookup(self._chat_by_id, self._chat_by_name, bucket, channel_name)
+
+    def _position_discord_channel(self, bucket, channel_name) -> Optional[str]:
+        hit = self._map_lookup(self._pos_by_id, self._pos_by_name, bucket, channel_name)
+        if hit is not None:
+            return hit
+        return self._chat_discord_channel(bucket, channel_name)
 
     # ─── Webhook management ──────────────────────────────────────────
 
@@ -305,13 +352,13 @@ class MeshBridge(commands.Cog):
             # weight would evict packets that DID post (re-opening #585).
             if event_type == "text":
                 chat = event.get("chat", {})
-                if str(chat.get("channel", "0")) not in self.channel_map:
+                if self._chat_discord_channel(chat.get("channel", "0"),
+                                              chat.get("channel_name")) is None:
                     return
                 pending = _PendingPacket("text", msg, chat=chat)
             elif event_type == "position":
-                channel_hash = str(msg.get("channel", "0"))
-                if (channel_hash not in self.position_channel_map
-                        and channel_hash not in self.channel_map):
+                if self._position_discord_channel(msg.get("channel", "0"),
+                                                  msg.get("channel_name")) is None:
                     return
                 node_id = event.get("node_id", from_id)
                 if not await self.data.pg_storage.is_node_tracked(node_id):
@@ -389,9 +436,9 @@ class MeshBridge(commands.Cog):
         """Post or update a text message embed."""
         chat = pending.chat or {}
         msg = pending.msg
-        channel_hash = str(chat.get("channel", "0"))
 
-        discord_channel_id = self.channel_map.get(channel_hash)
+        discord_channel_id = self._chat_discord_channel(
+            chat.get("channel", "0"), chat.get("channel_name"))
         if not discord_channel_id:
             return
 
@@ -440,6 +487,7 @@ class MeshBridge(commands.Cog):
             config=self.config,
             owner_id=owner_id,
             gateway_entries=pending.gateways,
+            fallback_ts=pending.wall_first_seen,
         )
 
         # Only show "View All Gateways" button if gateway data was truncated
@@ -526,10 +574,8 @@ class MeshBridge(commands.Cog):
         if not await self.data.pg_storage.is_node_tracked(node_id):
             return
 
-        channel_hash = str(msg.get("channel", "0"))
-        discord_channel_id = self.position_channel_map.get(channel_hash)
-        if not discord_channel_id:
-            discord_channel_id = self.channel_map.get(channel_hash)
+        discord_channel_id = self._position_discord_channel(
+            msg.get("channel", "0"), msg.get("channel_name"))
         if not discord_channel_id:
             return
 
@@ -569,6 +615,7 @@ class MeshBridge(commands.Cog):
             track_type=track_type,
             owner_id=owner_id,
             gateway_entries=pending.gateways,
+            fallback_ts=pending.wall_first_seen,
         )
 
         webhook = await self._get_webhook(channel)

@@ -133,10 +133,20 @@ reception list is cut.
 
 ## Discord bridge channel maps
 
-`[integrations.discord.bridge.channels]` and `position_channels` keys keyed on
-legacy slot-index values (e.g. `"0"`) stop matching once traffic resolves to
-hashes. Re-key them to hash ids — find yours via `/v1/channels` or the `?ch=`
-value in Chat URLs.
+`[integrations.discord.bridge.channels]` and `position_channels` now accept
+wire channel **names** as keys (`"MediumFast" = "<discord id>"`) — the
+recommended form: names are what operators know, they follow a channel across
+PSK re-keys, and they also match decode-only channels whose hash never appears
+on the wire. Matching is case-sensitive (wire names are). Numeric keys still
+work and take precedence — use one to pin a single name+PSK domain when two
+communities share a channel name, or for a channel whose *name* is all digits.
+Caveat: messages from the JSON decoder carry no wire name, so JSON-only
+deployments should keep numeric keys.
+
+Legacy slot-index keys (e.g. `"0"`) stop matching once the protobuf decoder
+resolves traffic to hash buckets; JSON-only deployments are unaffected and
+keep their slot-index keys. Protobuf deployments should re-key to names, or
+find bucket ids via `/v1/channels` or the `?ch=` value in Chat URLs.
 
 ## Coverage preset renames
 
