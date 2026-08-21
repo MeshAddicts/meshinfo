@@ -3471,10 +3471,12 @@ class PostgresStorage:
             logger.error("Failed to list bans: %s", e)
             return []
 
-    async def query_top_nodes(self, hours: int = 24, limit: int = 5, channel_id: Optional[str] = None) -> dict:
+    async def query_top_nodes(self, hours: int = 24, limit: int = 5,
+                              channel_id: Optional[Any] = None) -> dict:
         """Query leaderboard stats for the mesh. Returns dict of categories.
-        If channel_id is provided, chat-based stats are scoped to that channel,
-        and node-based categories (such as iron_man) are scoped via nodes.last_channel."""
+        channel_id — one bucket id or a list of them (a name-mapped channel's
+        history can span its name bucket and its learned hash) — scopes
+        chat-based stats via channel_id and node-based ones via last_channel."""
         if not self._ready("query_top_nodes"):
             return {}
 
@@ -3486,8 +3488,9 @@ class PostgresStorage:
         ch_filter = ""
         ch_params: list = []
         if channel_id is not None:
-            ch_filter = " AND channel_id = $3"
-            ch_params = [channel_id]
+            ids = [str(c) for c in (channel_id if isinstance(channel_id, (list, tuple, set)) else [channel_id])]
+            ch_filter = " AND channel_id = ANY($3)"
+            ch_params = [ids]
 
         try:
             async with self.pool.acquire() as conn:
@@ -3507,9 +3510,9 @@ class PostgresStorage:
                         """SELECT id AS node_id,
                                   EXTRACT(EPOCH FROM (NOW() - created_at)) AS uptime_seconds
                            FROM nodes
-                           WHERE active = TRUE AND created_at IS NOT NULL AND last_channel = $2
+                           WHERE active = TRUE AND created_at IS NOT NULL AND last_channel = ANY($2)
                            ORDER BY created_at ASC LIMIT $1""",
-                        limit, channel_id,
+                        limit, ch_params[0],
                     )
                 else:
                     rows = await conn.fetch(

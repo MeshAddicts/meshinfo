@@ -2,11 +2,12 @@
 Rich Discord embed builders for Meshtastic mesh messages.
 
 Inspired by RATM 2.0's presentation layer — gateway grouping by hop count,
-SNR/RSSI display, static map thumbnails for position packets, and reply
-threading support.
+SNR/RSSI display, and static map thumbnails for position packets.
 """
 
+import datetime
 import logging
+import math
 from typing import Optional
 
 import discord
@@ -15,10 +16,39 @@ import utils
 
 logger = logging.getLogger(__name__)
 
-# Discord embed limits
+# Discord embed limits. TOTAL applies to one embed AND to the sum of all
+# embeds in one message; a message carries at most MESSAGE_EMBED_LIMIT embeds.
 EMBED_TOTAL_LIMIT = 6000
 EMBED_DESC_LIMIT = 4096
 EMBED_FIELD_VALUE_LIMIT = 1024
+EMBED_AUTHOR_LIMIT = 256
+MESSAGE_EMBED_LIMIT = 10
+_TRUNCATED_NOTE = " — list truncated; full receptions via the packet link above"
+
+
+def _author_name(display_name: str, short_name: str) -> str:
+    """'display [short]' clamped to the embed author limit, keeping the suffix."""
+    suffix = f" [{short_name}]"
+    if len(display_name) + len(suffix) <= EMBED_AUTHOR_LIMIT:
+        return f"{display_name}{suffix}"
+    return display_name[: EMBED_AUTHOR_LIMIT - len(suffix) - 1] + "…" + suffix
+
+
+def _packet_timestamp(*epochs, fallback: Optional[float] = None) -> datetime.datetime:
+    """Embed timestamp from the packet's own clock — stable across edits
+    (utcnow would shift the displayed time every straggler edit). A clock more
+    than a day off is a broken node clock, not history: use `fallback` (the
+    bridge's first-seen wall time, also edit-stable) instead."""
+    anchor = fallback if fallback is not None else datetime.datetime.now(datetime.timezone.utc).timestamp()
+    for e in epochs:
+        try:
+            if e and anchor - 86400 <= int(e) <= anchor + 3600:
+                return datetime.datetime.fromtimestamp(int(e), datetime.timezone.utc)
+        except (TypeError, ValueError, OverflowError, OSError):
+            continue
+    if fallback is not None:
+        return datetime.datetime.fromtimestamp(fallback, datetime.timezone.utc)
+    return discord.utils.utcnow()
 
 
 def _safe_truncate(text: str, limit: int = EMBED_FIELD_VALUE_LIMIT) -> str:
@@ -181,6 +211,7 @@ def build_text_embed(
     config: dict,
     owner_id: Optional[str] = None,
     gateway_entries: Optional[list] = None,
+    fallback_ts: Optional[float] = None,
 ) -> tuple[discord.Embed, bool]:
     """
     Build a rich embed for a text message from the mesh.
@@ -255,12 +286,13 @@ def build_text_embed(
     embed = discord.Embed(
         description=description,
         color=_snr_color(gateway_entries, msg),
-        timestamp=discord.utils.utcnow(),
+        timestamp=_packet_timestamp(chat.get("timestamp"), msg.get("timestamp"),
+                                    fallback=fallback_ts),
     )
 
     # Author = sender node (linked to node page)
     avatar_url = f"https://api.dicebear.com/9.x/bottts-neutral/png?seed={from_id}"
-    embed.set_author(name=f"{display_name} [{short_name}]", url=node_link, icon_url=avatar_url)
+    embed.set_author(name=_author_name(display_name, short_name), url=node_link, icon_url=avatar_url)
 
     # Owner mention
     if owner_id:
@@ -269,6 +301,28 @@ def build_text_embed(
     embed.set_footer(text=f"Node: !{from_id}")
 
     return embed, was_truncated
+
+
+def _split_oversized(sections: list) -> list:
+    """Split any section past the description limit on line boundaries, so the
+    chunking loop (which owns the truncation decision) sees fitting pieces."""
+    out = []
+    for section in sections:
+        if len(section) <= EMBED_DESC_LIMIT:
+            out.append(section)
+            continue
+        piece = ""
+        for line in section.split("\n"):
+            line = line if len(line) <= EMBED_DESC_LIMIT else _safe_truncate(line, EMBED_DESC_LIMIT)
+            joined = f"{piece}\n{line}" if piece else line
+            if len(joined) <= EMBED_DESC_LIMIT:
+                piece = joined
+            else:
+                out.append(piece)
+                piece = line
+        if piece:
+            out.append(piece)
+    return out
 
 
 def build_gateway_detail_embed(
@@ -297,29 +351,44 @@ def build_gateway_detail_embed(
     if hop_limit is not None:
         header += f" \u2014 hop limit {hop_limit}"
 
-    # Split into chunks that fit in embed descriptions (4096 limit)
-    sections = gw_text.split("\n\n")
-    embeds = []
+    # Split into description-sized chunks; one message holds at most
+    # MESSAGE_EMBED_LIMIT embeds and EMBED_TOTAL_LIMIT chars across them all.
+    footer = f"Node: !{from_id}"
+    budget = EMBED_TOTAL_LIMIT - len(footer) - len(_TRUNCATED_NOTE)
+    chunks: list[str] = []
+    truncated = False
     current = header
-    for section in sections:
-        test = current + "\n\n" + section
-        if len(test) <= EMBED_DESC_LIMIT:
-            current = test
+    for section in _split_oversized(gw_text.split("\n\n")):
+        joined = f"{current}\n\n{section}" if current else section
+        if len(joined) <= EMBED_DESC_LIMIT:
+            current = joined
         else:
-            embeds.append(discord.Embed(
-                description=current,
-                color=discord.Color.from_rgb(69, 179, 186),
-            ))
+            chunks.append(current)
             current = section
     if current:
+        chunks.append(current)
+
+    embeds = []
+    used = 0
+    for i, chunk in enumerate(chunks):
+        if len(embeds) >= MESSAGE_EMBED_LIMIT or used + len(chunk) > budget:
+            truncated = True
+            room = budget - used
+            if len(embeds) < MESSAGE_EMBED_LIMIT and room >= 64:
+                partial = _safe_truncate(chunk, room)
+                embeds.append(discord.Embed(
+                    description=partial,
+                    color=discord.Color.from_rgb(69, 179, 186),
+                ))
+            break
         embeds.append(discord.Embed(
-            description=current,
+            description=chunk,
             color=discord.Color.from_rgb(69, 179, 186),
         ))
+        used += len(chunk)
 
-    # Footer on last embed
     if embeds:
-        embeds[-1].set_footer(text=f"Node: !{from_id}")
+        embeds[-1].set_footer(text=(footer + _TRUNCATED_NOTE) if truncated else footer)
 
     return embeds
 
@@ -333,6 +402,7 @@ def build_position_embed(
     track_type: str = "tracker",
     owner_id: Optional[str] = None,
     gateway_entries: Optional[list] = None,
+    fallback_ts: Optional[float] = None,
 ) -> discord.Embed:
     """
     Build a rich embed for a position update from a tracked node.
@@ -349,11 +419,11 @@ def build_position_embed(
         title=f"{label} Position Update",
         url=map_link or node_link,
         color=discord.Color.orange() if track_type == "balloon" else discord.Color.blue(),
-        timestamp=discord.utils.utcnow(),
+        timestamp=_packet_timestamp(msg.get("timestamp"), fallback=fallback_ts),
     )
 
     avatar_url = f"https://api.dicebear.com/9.x/bottts-neutral/png?seed={node_id}"
-    embed.set_author(name=f"{display_name} [{short_name}]", url=node_link, icon_url=avatar_url)
+    embed.set_author(name=_author_name(display_name, short_name), url=node_link, icon_url=avatar_url)
 
     # Position fields
     lat_i = payload.get("latitude_i")
@@ -369,8 +439,9 @@ def build_position_embed(
         # Clickable coordinates linking to MeshInfo map
         coord_text = f"[{lat:.6f}, {lon:.6f}]({map_link})" if map_link else f"{lat:.6f}, {lon:.6f}"
         embed.add_field(name="Position", value=coord_text, inline=True)
-        if alt is not None:
-            embed.add_field(name="Altitude", value=f"{alt}m", inline=True)
+        # Numeric only — payload junk (strings, bools, NaN) must not render.
+        if isinstance(alt, (int, float)) and not isinstance(alt, bool) and math.isfinite(alt):
+            embed.add_field(name="Altitude", value=f"{alt:.0f}m", inline=True)
 
         # Static map thumbnail (self-hosted, provider from config)
         thumbnail_url = _map_thumbnail_url(lat, lon, base_url, maps_cfg)

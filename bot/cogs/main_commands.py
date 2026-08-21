@@ -10,6 +10,7 @@ from discord.ext import commands
 from meshtastic import mesh_pb2, config_pb2
 
 import utils
+import channels
 from bot.embeds import resolve_channel_name
 from data_store import DataStore
 
@@ -328,9 +329,20 @@ class MainCommands(commands.Cog):
         discord_ch_id = str(interaction.channel_id)
         for mesh_ch, disc_ch in bridge_channels.items():
             if str(disc_ch) == discord_ch_id:
-                mesh_channel = mesh_ch
-                # Resolve a friendly label from channel meta
-                channel_label = resolve_channel_name(mesh_ch, self.config)
+                key = str(mesh_ch)
+                if key.isascii() and key.isdigit():
+                    mesh_channel = key
+                    # Resolve a friendly label from channel meta
+                    channel_label = resolve_channel_name(key, self.config)
+                else:
+                    # Name-keyed map entry: history spans the name bucket and,
+                    # once the hash is learned, the hash bucket.
+                    name = channels.normalize_wire_name(key)
+                    channel_label = name
+                    mesh_channel = [str(channels.name_bucket_id(name))]
+                    learned = (await self.data.pg_storage.get_wire_channel_names()).get(name)
+                    if learned is not None:
+                        mesh_channel.append(str(learned))
                 break
 
         stats = await self.data.pg_storage.query_top_nodes(hours=hours, limit=5, channel_id=mesh_channel)
