@@ -1061,12 +1061,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@maplibre/mlt@npm:^1.1.12":
-  version: 1.1.12
-  resolution: "@maplibre/mlt@npm:1.1.12"
+"@maplibre/mlt@npm:^1.2.0":
+  version: 1.2.0
+  resolution: "@maplibre/mlt@npm:1.2.0"
   dependencies:
     "@mapbox/point-geometry": "npm:^1.1.0"
-  checksum: 10c0/778515a530585998dc3c45b49c2b0da5f23c12994ac1f538c0b7bef5098284c69a35d7b67bbe8a42c3a89e5328dc206457d3efb8788f6b89d6d3c3d2e93b782e
+  checksum: 10c0/2435fc519805ca11a8df7d5f74bdf50ef3a863a7ddfd1830ab89b335c6fbe6aed169cdcc2536b2d573978670cf7efb3347d8523c767368bfbfe36edc1d595660
   languageName: node
   linkType: hard
 
@@ -2367,8 +2367,8 @@ __metadata:
   linkType: hard
 
 "eslint@npm:^10.1.0":
-  version: 10.8.1
-  resolution: "eslint@npm:10.8.1"
+  version: 10.9.0
+  resolution: "eslint@npm:10.9.0"
   dependencies:
     "@eslint-community/eslint-utils": "npm:^4.8.0"
     "@eslint-community/regexpp": "npm:^4.12.2"
@@ -2407,7 +2407,7 @@ __metadata:
       optional: true
   bin:
     eslint: bin/eslint.js
-  checksum: 10c0/0c4720a43ef2052829db18e37aa79adb5f0a62137bdf4a4f8e9507bbbbf888ba0669fc03e4b7139d8f27b59b051bbbcd0a3988b068c30fa934a766d60a81f599
+  checksum: 10c0/bc6c9f4a5c0b97e37ab1aa1753ae30ad5b0cf43a25ca3dcfff937f2b47243654c3ca34e37f71006474a3c1b95d6d4e046149facc6d66af4af6e993a619c23509
   languageName: node
   linkType: hard
 
@@ -3254,8 +3254,8 @@ __metadata:
   linkType: hard
 
 "maplibre-gl@npm:^6.0.0":
-  version: 6.4.1
-  resolution: "maplibre-gl@npm:6.4.1"
+  version: 6.5.0
+  resolution: "maplibre-gl@npm:6.5.0"
   dependencies:
     "@mapbox/point-geometry": "npm:^1.1.0"
     "@mapbox/tiny-sdf": "npm:^2.2.0"
@@ -3263,7 +3263,7 @@ __metadata:
     "@mapbox/vector-tile": "npm:^3.0.0"
     "@maplibre/geojson-vt": "npm:^6.1.1"
     "@maplibre/maplibre-gl-style-spec": "npm:^26.2.1"
-    "@maplibre/mlt": "npm:^1.1.12"
+    "@maplibre/mlt": "npm:^1.2.0"
     "@maplibre/vt-pbf": "npm:^4.3.2"
     "@types/geojson": "npm:^7946.0.16"
     earcut: "npm:^3.2.3"
@@ -3274,7 +3274,7 @@ __metadata:
     potpack: "npm:^2.1.0"
     quickselect: "npm:^3.0.0"
     tinyqueue: "npm:^3.0.0"
-  checksum: 10c0/622aa7d247d999481edd3db9bd4191f09163d4cbc6faae1f990d526cc93945dad9f68867c413a76b4ced7477164ac1db9dbb05c52fa61b36d866ecb629d5ac1e
+  checksum: 10c0/ff412cd2cc8c44b3c8a8425925664f6e101b046c51b6880d93f423947ff58544aa32af6fe8ecf6c19d9bc4ab668acb299add6e183cd013801af4118c10cb6a31
   languageName: node
   linkType: hard
 
