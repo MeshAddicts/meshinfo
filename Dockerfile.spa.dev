@@ -9,7 +9,7 @@ COPY frontend/wasm/itm/fetch-vendor.sh frontend/wasm/itm/build.sh frontend/wasm/
 RUN chmod +x fetch-vendor.sh build.sh && ./fetch-vendor.sh && ./build.sh
 
 # trunk-ignore-all(checkov/CKV_DOCKER_3)
-FROM node:24.19.0-alpine
+FROM node:24.20.0-alpine
 
 LABEL org.opencontainers.image.source="https://github.com/MeshAddicts/meshinfo"
 LABEL org.opencontainers.image.description="Realtime web UI to run against a Meshtastic regional or private mesh network."
