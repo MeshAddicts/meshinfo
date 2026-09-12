@@ -47,7 +47,7 @@
     "typescript": "^6.0.2",
     "typescript-eslint": "^8.57.2",
     "vite": "^8.0.3",
-    "vitest": "^4.1.1"
+    "vitest": "^5.0.0"
   },
   "packageManager": "yarn@4.18.0",
   "engines": {
