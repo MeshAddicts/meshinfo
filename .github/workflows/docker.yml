@@ -105,7 +105,7 @@ jobs:
 
   build-main-arm64:
     name: Build Main (arm64)
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     permissions:
       contents: read
       packages: write
@@ -332,7 +332,7 @@ jobs:
 
   build-spa-arm64:
     name: Build SPA (arm64)
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     permissions:
       contents: read
       packages: write
