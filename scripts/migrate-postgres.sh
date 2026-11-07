@@ -61,6 +61,16 @@ docker compose version >/dev/null 2>&1 || {
   exit 1
 }
 
+# Tiered ZFS installs (ZFS.md) bind-mount the datasets at /var/lib/postgresql
+# instead of using the named volume; migrating a leftover named volume would
+# restore a stale copy over nothing useful. Those installs follow ZFS.md.
+if docker compose config 2>/dev/null | grep -A2 -E '^\s+- type: bind$' \
+     | grep -qE 'target: /var/lib/postgresql$'; then
+  err "The compose config bind-mounts /var/lib/postgresql (tiered ZFS install)."
+  err "This script only migrates Docker named volumes — follow the Upgrades section in ZFS.md."
+  exit 1
+fi
+
 VOLUME="${PGDATA_VOLUME:-}"
 if [ -z "$VOLUME" ]; then
   # Auto-detect the compose pgdata volume. Refuse to guess when a host runs
@@ -144,8 +154,11 @@ for i in $(seq 1 60); do
 done
 
 log "Dumping database '${DB_NAME}' → ${DUMP_FILE}"
+# --no-tablespaces: on tiered installs (ZFS.md) cold months live in the
+# meshinfo_cold tablespace, which does not exist in the fresh cluster. The
+# restore lands everything on pg_default; the tiering job re-tiers afterwards.
 if ! docker exec -e PGPASSWORD="$DB_PASSWORD" "$TMP_PG" \
-       pg_dump -U "$DB_USER" -d "$DB_NAME" --no-owner --no-privileges \
+       pg_dump -U "$DB_USER" -d "$DB_NAME" --no-owner --no-privileges --no-tablespaces \
      | gzip > "$DUMP_FILE"; then
   err "pg_dump failed — the volume has NOT been modified."
   docker logs --tail 30 "$TMP_PG" >&2 || true
