@@ -23,10 +23,13 @@ import maintenance
 import storage.db.tiering as tiering_mod
 from storage.db.tiering import (
     IDENT_RE,
+    LONG_HOLDER_SECONDS,
     MAX_IDENT,
     OLD_SUFFIX,
     RANGE_SUFFIX,
     SCRATCH_SUFFIX,
+    SWAP_ATTEMPTS,
+    SWAP_LOCK_TIMEOUT,
     TIERABLE_TABLES,
     CycleResult,
     MoveResult,
@@ -50,6 +53,9 @@ from storage.db.tiering import (
     safe_name,
     run_cycle,
     plan,
+    swap_pause_seconds,
+    swap_worst_case_seconds,
+    timeout_seconds,
     TieringVerifyError,
     TieringRefused,
     TieringBusy,
@@ -1096,3 +1102,44 @@ class TestRunTieringContract:
         closed = self._wire(monkeypatch, result)
         assert asyncio.run(maintenance.run_tiering(_tiering_cfg(enabled=True))) is result
         assert closed == [10]
+
+
+# ── follow-up: the swap stall bound ──────────────────────────────────────────
+
+class TestSwapBound:
+    """The swap's per-attempt lock_timeout bounds the stall other sessions can
+    see behind the pending ACCESS EXCLUSIVE; the attempt count and the pauses
+    bound how long a move can be delayed before it is reported busy."""
+
+    def test_lock_timeout_is_a_few_seconds(self):
+        assert 2.0 <= timeout_seconds(SWAP_LOCK_TIMEOUT) <= 3.0
+
+    def test_attempts_and_growing_pauses(self):
+        assert SWAP_ATTEMPTS >= 10
+        pauses = [swap_pause_seconds(a, jitter=0.0) for a in range(1, SWAP_ATTEMPTS)]
+        assert pauses == sorted(pauses)
+        assert pauses[:5] == [1.0, 2.0, 4.0, 8.0, 16.0]
+        assert pauses[-1] == tiering_mod.SWAP_PAUSE_MAX_SECONDS
+        for _ in range(50):
+            assert 1.0 <= swap_pause_seconds(1) <= 2.0  # one second of jitter at most
+        assert swap_pause_seconds(2, jitter=5.0) == 3.0  # jitter clamped
+        assert swap_pause_seconds(0, jitter=0.0) == 1.0  # attempts are 1-based
+
+    def test_worst_case_is_minutes_not_hours(self):
+        assert 60 <= swap_worst_case_seconds() <= 240
+
+    def test_long_holder_window_exceeds_the_lock_timeout(self):
+        # A transaction that has outlived the swap's lock timeout will not finish within it.
+        assert LONG_HOLDER_SECONDS > timeout_seconds(SWAP_LOCK_TIMEOUT)
+
+    @pytest.mark.parametrize("text,seconds", [
+        ("2500ms", 2.5), ("2.5s", 2.5), ("20s", 20.0), ("1min", 60.0), ("500", 0.5), ("1h", 3600.0),
+    ])
+    def test_timeout_seconds(self, text, seconds):
+        assert timeout_seconds(text) == pytest.approx(seconds)
+
+    def test_timeout_seconds_rejects_garbage(self):
+        with pytest.raises(ValueError):
+            timeout_seconds("soon")
+
+

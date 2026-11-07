@@ -6,9 +6,12 @@ Closed months of mqtt_messages and packet_receptions that are older than
 [storage.tiering] cold_after_months are rebuilt on the cold tablespace (the
 compressed ZFS dataset behind `meshinfo_cold`) and swapped in. Readers keep
 working during the copy; only the sub-second swap at the end takes an
-exclusive lock on the parent, with a 20 s lock timeout and retries.
-storage/db/tiering.py does the work — one transaction per partition, so a
-failure leaves the original untouched — and this is the operator's front end.
+exclusive lock on the parent, waiting at most 2.5 s per attempt (no request
+ever queues behind it for longer) and retrying up to 10 times with growing
+pauses. storage/db/tiering.py does the work — one transaction per partition,
+so a failure leaves the original untouched — and this is the operator's
+front end.
+
 
     status    every monthly partition: HOT/COLD by policy, tablespace(s),
               table/index/total size, "(partial!)" when split across

@@ -1,0 +1,2 @@
+2026-11-07 03:04:22,417 WARNING tiering: swap of mqtt_messages_2026_03 hit lock_timeout (2500ms) on attempt 1/10
+2026-11-07 03:04:47,181 WARNING tiering: swap of mqtt_messages_2026_06 hit lock_timeout (2500ms) on attempt 1/10
