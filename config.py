@@ -177,8 +177,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "cold_after_months": 3,
             "cold_tablespace": "meshinfo_cold",
             # Created by the job on its first cycle when cold_tablespace does
-            # not exist: the cold dataset's path inside the postgres container
-            # (docker-compose.zfs.yml). "" never creates it (see ZFS.md).
+            # not exist: the cold directory's path inside the postgres container
+            # (docker-compose.zfs.yml / docker-compose.cold.yml). "" never
+            # creates it (see ZFS.md).
             "cold_tablespace_location": "/var/lib/postgresql/cold",
             "tables": ["mqtt_messages", "packet_receptions"],
             "max_partitions_per_cycle": 1,

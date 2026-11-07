@@ -369,6 +369,8 @@ with [`lab/project_production.py`](lab/project_production.py) and
 | … conservative | 8.36 GB | 8.08 GB | 7.95 GB | 7.0 GB |
 | tiered, `cold_after_months=3` | | 6.90 GB | | |
 | per-class cross-check, single / tiered (`cold_after_months=1`) | | 9.80 / 6.21 GB | | |
+| cold-only: hot share untouched on the Docker volume, cold 128K/zstd-9 (`docker-compose.cold.yml`, btrfs or ZFS) | 9.87 GB | 8.59 GB | 7.95 GB | |
+| … conservative | 12.3 GB | 10.7 GB | 9.94 GB | |
 
 Bottom line: a single 16K/zstd-3 dataset divides the archive by ~3; tiering
 closed months onto 128K/zstd-9 divides it by ~4.5 (the cold tier alone runs
@@ -379,9 +381,16 @@ nothing about the plans changes (section 3). An earlier revision of this
 section treated the 29.08 GB as heap only and added indexes on top at the
 lab's proportion ("heap + indexes, 51 GB"); the inventory figure already
 contains them, so that scope double-counted the indexes and is withdrawn.
+The cold-only rows (`--hot-uncompressed`) are the layouts of ZFS.md's
+"Choosing a layout" that leave the cluster on its Docker volume: the two hot
+months stay at 1×, so they cost about 2 GB more than the full layout at 18
+months, and the gap closes as history accumulates.
 Raw: [`projection-m12.json`](projection-m12.json), [`projection-m18.json`](projection-m18.json),
 [`projection-m24.json`](projection-m24.json), [`projection-m18-n3.json`](projection-m18-n3.json),
-[`projection-split-m18.json`](projection-split-m18.json).
+[`projection-split-m18.json`](projection-split-m18.json),
+[`projection-cold-only-m12.json`](projection-cold-only-m12.json),
+[`projection-cold-only-m18.json`](projection-cold-only-m18.json),
+[`projection-cold-only-m24.json`](projection-cold-only-m24.json).
 <!-- PROJECTION:END -->
 
 ## Reproducing

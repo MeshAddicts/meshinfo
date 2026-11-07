@@ -2,14 +2,16 @@
 
 Release-specific notes. The routine update command is in [README.md](README.md#3-update).
 
-## Tiered cold storage on ZFS (opt-in)
+## Tiered cold storage on ZFS or btrfs (opt-in)
 
 Closed months of the packet archive (`mqtt_messages`, `packet_receptions`)
-can now live in a `meshinfo_cold` tablespace on a second, heavily compressed
-ZFS dataset, moved there by an hourly in-app job once they are old enough.
-Nothing changes unless you turn it on: the new `[storage.tiering]` section
-ships with `enabled = false`, and a stack without the `docker-compose.zfs.yml`
-overlay behaves exactly as before.
+can now live in a `meshinfo_cold` tablespace on a heavily compressed
+filesystem — a btrfs filesystem or ZFS dataset holding only the cold months
+(`docker-compose.cold.yml`; the cluster stays on its Docker volume), or the
+cold half of a full ZFS layout (`docker-compose.zfs.yml`) — moved there by an
+hourly in-app job once they are old enough. Nothing changes unless you turn
+it on: the new `[storage.tiering]` section ships with `enabled = false`, and
+a stack without either overlay behaves exactly as before.
 
 ```toml
 [storage.tiering]

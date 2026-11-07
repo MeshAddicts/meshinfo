@@ -124,6 +124,54 @@ review fixes", the re-measurement the commit "re-measure the stall bound".
 | 28 | low | README projection; `project_production.py` | R/C | "conservative inflates the compressed heap by 25 %" — the headline mode inflates the whole compressed size, indexes included | **FIXED-NOW** — wording in the README, the script's docstring and print, and the PR body; the numbers stand (the whole-size haircut is the more conservative) |
 <!-- SECOND-PASS:END -->
 
+## Third pass: the cold-only layout and the default (2026-11-07)
+
+The cold-only layout (`docker-compose.cold.yml`, `setup-zfs-datasets.sh
+--cold-only`, ZFS.md "Choosing a layout" and "Cold-only setup", the
+migrate script's cold-directory mount) and the default `cold_after_months =
+1` were reviewed the same way: six lenses — the compose overlays, the shell
+scripts and the shell the docs tell operators to run, documentation
+accuracy, the default change, genericity, operator safety — and two
+skeptics per finding, reproducing against a disposable PostgreSQL 18.4, the
+lab's btrfs mounts and Docker Compose. 32 raw findings, 30 after
+deduplication: 25 confirmed, 4 contested, 1 rejected. Every confirmed and
+contested item is fixed in the two commits themselves (they were rebuilt
+with the fixes folded in, so the shape stays "layout / overlay / docs" then
+"the default").
+
+| # | sev | where | votes | finding | status |
+|---|---|---|---|---|---|
+| 1 | medium→low | ZFS.md cold-only step b, `.env.sample`, overlay headers | C/C | `COMPOSE_FILE` switches off Compose's automatic loading of `docker-compose.override.yml`, which docker-compose.yml itself suggests for the port map; the recommendation never said so | **FIXED-NOW** — both setups, `.env.sample`, both overlay headers and the setup script's next steps say to list the override file before the overlay |
+| 2 | medium | ZFS.md step 4; `ensure_cold_tablespace` 42501 message | C/C | "mount it" is not enough for a running stack: Docker binds are private, a mount made on the host afterwards stays invisible inside the containers | **FIXED-NOW** — "mount it, then `docker compose restart postgres meshinfo`" in the message, the fs-check refusal, step 4, the cold-only setup and the Upgrades check (`up -d` alone recreates nothing) |
+| 3 | medium | ZFS.md cold-only rollback | C/C | the rollback never switched the scheduler off, so the hourly tick re-tiers months the CLI has just brought back (reproduced); nothing coordinates the two | **FIXED-NOW** — an ordered procedure: scheduler off, move back, `plan --all` empty, `DROP TABLESPACE`, then the overlay and the fstab line |
+| 4 | low | ZFS.md step 4 | C/C | "the last line belongs to a stack without an overlay" is wrong once the cold overlay has run: Docker leaves the root-owned mount point inside the named volume, so a stack that lost the overlay shows the first line (reproduced) | **FIXED-NOW** — the paragraph names that case and the `docker compose config` check that tells it apart; the 42501 message says to check the overlay is part of the invocation |
+| 5 | low | ZFS.md "already on a pool" note | C/C | `findmnt <directory>` prints nothing for a btrfs subvolume (not a mount point) — the very case the note covers | **FIXED-NOW** — `findmnt -no FSTYPE -T` there and as the subvolume variant in the cold-only setup; plain `findmnt` stays where "nothing" is the intended unmounted signal |
+| 6 | medium | `setup-zfs-datasets.sh --cold-only` | C/C | a bare pool name was accepted, and the cold properties and mountpoint would have been set on the pool's root dataset — inherited by every child | **FIXED-NOW** — a name without `/` is refused before pre-flight (`--dry-run` too) |
+| 7 | low | `setup-zfs-datasets.sh --cold-only` | C/C | the script chowned and reported "Dataset ready" without checking the dataset is mounted (`canmount=noauto`, an unloaded key) and would mount over a non-empty directory (`overlay=on` is the Linux default) | **FIXED-NOW** — real mode refuses a non-empty mountpoint that is not already this dataset's mount, and verifies `mounted = yes` plus `findmnt` before the chown |
+| 8 | low | ZFS.md cold-only setup | C/C | the same `findmnt` point for the "already on btrfs" bullet of the setup | **FIXED-NOW** — see #5 |
+| 9 | low | ZFS.md step 4 | C/C | the restart point, reported independently | **FIXED-NOW** — see #2 |
+| 10 | low | ZFS.md "already on a pool" note | C/C | `btrfs property set … compression zstd:9` is accepted but the level is ignored, and the property is heuristic-gated rather than forced; the 5.3× quoted beside it was measured with `compress-force` | **FIXED-NOW** — the note says the property selects the codec only, to expect the `zstd:3` figure (5.0×) from it and 5.3× only from `compress-force=zstd:9` in the mount options |
+| 11 | low→medium | ZFS.md loop image | C/C | a sparse (`truncate`) image reserves nothing on the backing filesystem, and the free-space guard only sees the btrfs inside the image | **FIXED-NOW** — `fallocate -l` (preallocated, fails now if the room is not there), `nodiscard` so freed extents are not punched back out, and a sentence on what the guard sees |
+| 12 | low | `migrate-postgres.sh`; ZFS.md step 4 and Upgrades | C/C | after a major upgrade the old `PG_<old>_…` copy of every cold month stays in the cold directory and counts against the free-space guard; the completion message never mentioned it, and step 4 claimed a leftover directory is refused (only the same major version's is) | **FIXED-NOW** — the script prints the leftover and the `rm -rf` line when a cold directory is bound; Upgrades gives the command; step 4 states the real rule |
+| 13 | medium | ZFS.md "Choosing a layout" | C/C | the 4.6× → 3.5× drop was attributed to readers setting hint bits and the freeze presented as the cure; the lab's record is 3.4–4.1× from a move under load, with the freeze on, because the copy's pages were written back piecemeal | **FIXED-NOW** — the paragraph, step 6 and the `_post_move` docstring state what section 4 of the benchmark README measured |
+| 14 | medium | ZFS.md rollback | C/C | the scheduler-off omission, reported independently | **FIXED-NOW** — see #3 |
+| 15 | low | ZFS.md and benchmark README projection tables | C/C | the 12-month cold-only conservative figure read 12.4 GB (copied from the row above); the JSON says 12.34 | **FIXED-NOW** — 12.3 GB in both tables and the PR body |
+| 16 | low | ZFS.md layout table, Monitoring | C/C | "5.3× … measured with `compsize`" is the ratio of the original files; on months the job has rebuilt `compsize` reads ≈ 4.6× (same bytes, indexes packed by a third), so the documented check would read as a problem | **FIXED-NOW** — both ratios stated, in the table cells and in Monitoring ("expect ≈ 4.6× on the months the job wrote") |
+| 17 | low | ZFS.md "Choosing a layout" | R/C | `logbias=latency` is ZFS's default, so it was no example of a tuned hot dataset | **FIXED-NOW** — `zstd-3` instead |
+| 18 | low | ZFS.md "The btrfs equivalent" | C/C | "the lab measured both" — the ZFS side is the model; the lab has no ZFS | **FIXED-NOW** — measured on btrfs, modelled for ZFS, within 0.2 % |
+| 19 | low | ZFS.md intro | R/C | "the two Linux filesystems that compress transparently" — the job accepts two; Linux has more | **FIXED-NOW** — "the two compressing filesystems the tiering job's mount check accepts" |
+| 20 | low | ZFS.md "already on a pool" note | C/C | the by-hand `zfs create` variant omitted the `chown 999:999` every other variant has; a root-owned mountpoint makes `CREATE TABLESPACE` fail as "not writable" (reproduced) | **FIXED-NOW** — the ownership clause covers both variants |
+| 21 | low | UPGRADING.md | R/C | the commit message said the dial trade-off is documented there; it was not | **FIXED-NOW** — one sentence after the config block |
+| 22 | medium→low | ZFS.md, PR body | C/C | `btrfs filesystem defragment -czstd` without `-r` rewrites no file (reproduced: 0 s, extents unchanged) | **FIXED-NOW** — `-r -czstd -L 9` with the kernel/btrfs-progs caveat, everywhere the command appears |
+| 23 | low | ZFS.md "Choosing a layout" | C/C | the 3.5× figure matched neither the benchmark README nor the PR body | **FIXED-NOW** — see #13 |
+| 24 | low | `scripts/zfs_estimate.py` usage example | R/C | the example `--pgdata` path named a Docker volume this stack never creates (a context line of the edited hunk) | **FIXED-NOW** — `docker volume inspect` of the real volume, as ZFS.md shows it |
+| 25 | high→medium | ZFS.md cold-only fstab lines | C/C | without `nofail` a dead cold disk or a missing loop image fails `local-fs.target` and drops the host into emergency mode — no Docker, no ssh — to protect compressed copies of closed months (reproduced with systemd-fstab-generator) | **FIXED-NOW** — `nofail,x-systemd.device-timeout=30s,x-systemd.before=docker.service` (the mount attempt still precedes the Docker daemon), the reasoning spelled out, a ZFS dataset needs neither, and a check after every reboot |
+| 26 | medium | ZFS.md rollback | C/C | the rollback left the tablespace in the catalog: once the filesystem is gone, a later enabled cycle skips `CREATE TABLESPACE` and fails with `could not create directory` (reproduced); and the move back is not free-space-guarded | **FIXED-NOW** — see #3: `DROP TABLESPACE` while still mounted, the space note, the consequence stated |
+| 27 | medium | `ensure_cold_tablespace` 42501 message, ZFS.md | C/C | the restart point against the code's own message, reported independently (reproduced with nested daemons: the running container keeps the bare directory, `restart` fixes it, `up -d` does not) | **FIXED-NOW** — see #2 |
+| 28 | medium→low | ZFS.md loop image | R/R | a sparse image larger than the root filesystem's free space "can fill the root and PANIC the live cluster" | **REJECTED** — when the cluster's volume shares the filesystem each move frees about five times what it writes into the image, so the image cannot outrun the archive it replaces; the guard's blind spot itself is #11 and is fixed there |
+| 29 | medium | `migrate-postgres.sh` | C/C | a cold-only major-version migration (reachable only since the delta mounted the cold directory into the dump container) restores the whole archive uncompressed onto the Docker volume after deleting the old one, with no capacity check | **FIXED-NOW** — before the dump, with a cold directory bound: `pg_database_size` against the free space of the filesystem behind the volume plus what removing the old volume frees (`SKIP_SPACE_CHECK=1` overrides); Upgrades says so |
+| 30 | low | ZFS.md, PR body | C/C | the defragment command's missing `-r` and the level: on kernels ≥ 6.15 a bare `-czstd` recompresses at zstd level 3, below the mount's `zstd:9` (reproduced) | **FIXED-NOW** — see #22 |
+
 ## Verification of this close-out
 
 <!-- VERIFY:START -->

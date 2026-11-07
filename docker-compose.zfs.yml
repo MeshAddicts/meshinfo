@@ -16,6 +16,10 @@
 #
 #   COMPOSE_FILE=docker-compose.yml:docker-compose.zfs.yml
 #
+#   (list docker-compose.override.yml too if you use one — naming the files
+#   switches off its automatic loading:
+#   docker-compose.yml:docker-compose.override.yml:docker-compose.zfs.yml)
+#
 # Dataset mountpoints default to the layout the setup script creates under a
 # pool called `tank`; override via .env or the environment when yours differ:
 #
