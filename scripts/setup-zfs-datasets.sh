@@ -190,9 +190,11 @@ Next steps (details in ZFS.md):
      hot dataset (ZFS.md, "Switching an existing Docker volume").
   3. Start with the overlay:
        docker compose -f docker-compose.yml -f docker-compose.zfs.yml up -d
-  4. Create the cold tablespace once:
+  4. Enable the job in config.toml ([storage.tiering] enabled = true,
+     cold_filesystem = "/mnt/meshinfo-cold") and restart meshinfo: its first
+     cycle creates the meshinfo_cold tablespace at /var/lib/postgresql/cold
+     (ZFS.md step 4). To manage it by hand instead, set
+     cold_tablespace_location = "" and run once:
        docker compose exec postgres psql -U postgres -d meshinfo \\
          -c "CREATE TABLESPACE meshinfo_cold LOCATION '/var/lib/postgresql/cold'"
-  5. Enable the job in config.toml ([storage.tiering] enabled = true,
-     cold_filesystem = "/mnt/meshinfo-cold") and restart meshinfo.
 EOF

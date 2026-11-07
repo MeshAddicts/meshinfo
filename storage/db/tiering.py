@@ -15,11 +15,13 @@ partition as a new table on the target tablespace and swapping it in:
     DETACH <part>; rename the original and its indexes aside; rename the copy
     and its indexes into place; ATTACH with the original bound; drop the
     CHECK; drop the original (unless keep_original) — retried under a
-    SAVEPOINT whenever the swap hits lock_timeout or a deadlock, and skipped
-    while pg_locks shows a certain deadlock or a long-standing holder of the
-    parent (so requests never queue behind a hopeless ACCESS EXCLUSIVE); the
-    per-attempt lock_timeout bounds how long any other session can wait
-    behind the swap, the attempt count bounds how long a move may be delayed
+    SAVEPOINT whenever the swap hits its timeout or a deadlock, postponed
+    while pg_locks shows a long-standing holder of the parent, the DEFAULT
+    partition or the month (so requests never queue behind a hopeless ACCESS
+    EXCLUSIVE), and given up at once when a writer through the parent is
+    queued behind our SHARE lock (a certain deadlock); the per-attempt
+    timeout bounds how long any other session can wait behind the swap, the
+    attempt count bounds how long a move may be delayed
     COMMIT; then VACUUM (FREEZE, ANALYZE) <part> outside the transaction
 
 `ALTER TABLE ... SET TABLESPACE` would hold ACCESS EXCLUSIVE for the whole
@@ -53,7 +55,7 @@ import asyncpg
 logger = logging.getLogger(__name__)
 
 TIERABLE_TABLES = ("mqtt_messages", "packet_receptions")  # canonical order (mqtt first)
-IDENT_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")  # plain, unquoted-safe identifier
+IDENT_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}\Z")  # plain, unquoted-safe identifier (\Z: no trailing newline)
 MAX_IDENT = 63
 SCRATCH_SUFFIX = "_tiering"  # replacement table / cloned index scratch names
 OLD_SUFFIX = "_tiering_old"  # detached original (kept only with keep_original)
@@ -123,7 +125,7 @@ def safe_name(base: str, suffix: str) -> str:
     return f"{base[:keep]}_{digest}{suffix}"
 
 
-_MONTH_SUFFIX_RE = re.compile(r"^(\d{4})_(\d{2})$")
+_MONTH_SUFFIX_RE = re.compile(r"^(\d{4})_(\d{2})\Z")
 
 
 def partition_month(name: str, table: str) -> Optional[datetime.date]:
@@ -557,11 +559,6 @@ class TieringPolicy:
                 f"storage.tiering.cold_tablespace {self.cold_tablespace!r} is not a plain "
                 "identifier (lowercase letters, digits, underscore; at most 63 characters)"
             )
-        if self.cold_tablespace_location and not self.cold_tablespace_location.startswith("/"):
-            warnings.append(
-                f"storage.tiering.cold_tablespace_location {self.cold_tablespace_location!r} is not "
-                "an absolute path inside the postgres container; the job cannot create the tablespace"
-            )
         if not self.tables:
             warnings.append(
                 "storage.tiering.tables is empty — nothing to tier "
@@ -610,7 +607,17 @@ class TieringPolicy:
             location_raw = raw.get("cold_tablespace_location")
             if "cold_tablespace_location" in raw and not isinstance(location_raw, str):
                 warnings.append(
-                    f"storage.tiering.cold_tablespace_location must be a string (got {location_raw!r}); ignored"
+                    f"storage.tiering.cold_tablespace_location must be a string (got {location_raw!r}); "
+                    "no location is set, so the job will not create the cold tablespace until it is fixed"
+                )
+            elif self.cold_tablespace_location and not self.cold_tablespace_location.startswith("/"):
+                # Config-time only: ensure_cold_tablespace refuses to create with
+                # the same reason, and tiering still runs once the tablespace exists.
+                warnings.append(
+                    f"storage.tiering.cold_tablespace_location {self.cold_tablespace_location!r} is not "
+                    "an absolute path inside the postgres container, so the job cannot create the "
+                    "tablespace (tiering still runs once it exists: fix the path, or create it by hand "
+                    "— see ZFS.md)"
                 )
             tables_raw = raw.get("tables")
             if "tables" in raw and not isinstance(tables_raw, (list, tuple)):
@@ -720,15 +727,21 @@ async def tablespace_exists(conn: asyncpg.Connection, name: str) -> bool:
     return bool(await conn.fetchval("SELECT 1 FROM pg_tablespace WHERE spcname = $1", name))
 
 
-async def ensure_cold_tablespace(conn: asyncpg.Connection, policy: TieringPolicy) -> bool:
+async def ensure_cold_tablespace(conn: asyncpg.Connection, policy: TieringPolicy, *,
+                                 fs_warning: Optional[str] = None) -> bool:
     """Create policy.cold_tablespace at policy.cold_tablespace_location when it
     does not exist yet ("mount the dataset, flip enabled = true" is the whole
     operator path). Returns True when it was created, False when it already
     existed. Raises TieringRefused with an actionable message when it cannot be
     created: no location configured, the directory is missing inside the
-    postgres container (dataset not mounted), not owned by the postgres user or
-    not writable, already holding a tablespace, or the connecting role is not a
-    superuser. CREATE TABLESPACE cannot run inside a transaction block."""
+    postgres container (a stack without the overlay, or another location), not
+    owned by the postgres user or not writable (with the overlay that is what an
+    UNMOUNTED cold dataset looks like: Compose binds the bare, root-owned
+    mountpoint directory underneath it), already holding a tablespace, or the
+    connecting role is not a superuser. With fs_warning (what
+    check_cold_filesystem returned) nothing is created either: a tablespace
+    created on the wrong filesystem would hide the moved months once the dataset
+    mounts over it. CREATE TABLESPACE cannot run inside a transaction block."""
     name = policy.cold_tablespace
     if not IDENT_RE.match(name or ""):
         raise TieringRefused(f"cold_tablespace {name!r} is not a plain identifier")
@@ -744,41 +757,74 @@ async def ensure_cold_tablespace(conn: asyncpg.Connection, policy: TieringPolicy
         raise TieringRefused(
             f"tablespace {name!r} does not exist and cold_tablespace_location {location!r} is not "
             "an absolute path inside the postgres container")
+    if fs_warning:
+        raise TieringRefused(
+            f"not creating tablespace {name!r} at {location}: {fs_warning}; a tablespace created on "
+            f"the wrong filesystem (the bare mountpoint of an unmounted dataset, say) would hide the "
+            f"moved months once the dataset mounts over it — mount the cold dataset and retry, or set "
+            f"cold_filesystem = \"\" to skip this check")
     if conn.is_in_transaction():
         raise TieringError("ensure_cold_tablespace needs a connection with no open transaction")
     sql = f"CREATE TABLESPACE {quote_ident(name)} LOCATION {quote_literal(location)}"
+    # Decided here, not from the server's 42501 message text (which lc_messages
+    # translates): the chmod failure below carries the same SQLSTATE.
+    if not await conn.fetchval("SELECT current_setting('is_superuser') = 'on'"):
+        raise TieringRefused(
+            f"cannot create tablespace {name!r}: the connecting role is not a superuser "
+            f"(CREATE TABLESPACE needs one) — create it as the postgres superuser: {sql}")
+    notices: List[Any] = []
+
+    def _server_message(_connection: Any, message: Any) -> None:
+        notices.append(message)  # asyncpg drops NOTICE/WARNING unless something listens
+
+    conn.add_log_listener(_server_message)
     try:
         await conn.execute(sql)
-    except asyncpg.exceptions.DuplicateObjectError:
-        return False  # created by another session meanwhile
+    except asyncpg.exceptions.DuplicateObjectError:  # 42710: another session's CREATE had committed
+        return False
+    except asyncpg.exceptions.UniqueViolationError as e:
+        # 23505 on pg_tablespace_spcname_index: another session's CREATE was in
+        # flight (its row invisible to our check above) and committed first.
+        if await tablespace_exists(conn, name):
+            return False
+        raise TieringRefused(
+            f"cannot create tablespace {name!r} at {location}: {type(e).__name__}: {e}") from e
     except asyncpg.exceptions.UndefinedFileError as e:  # 58P01: directory "..." does not exist
         raise TieringRefused(
             f"cannot create tablespace {name!r}: directory {location} does not exist inside the "
-            f"postgres container — is the cold dataset mounted there (docker-compose.zfs.yml binds "
-            f"it at /var/lib/postgresql/cold)? ({e})") from e
-    except asyncpg.exceptions.InsufficientPrivilegeError as e:  # 42501
-        text = str(e)
-        if "permission denied to create tablespace" in text:
-            raise TieringRefused(
-                f"cannot create tablespace {name!r}: the connecting role is not a superuser "
-                f"(CREATE TABLESPACE needs one) — create it as the postgres superuser: {sql}") from e
+            f"postgres container — docker-compose.zfs.yml binds the cold dataset at "
+            f"/var/lib/postgresql/cold; without the overlay, or with another "
+            f"cold_tablespace_location, mount or create the directory there first ({e})") from e
+    except asyncpg.exceptions.InsufficientPrivilegeError as e:  # 42501: mkdir/chmod on the location failed
         raise TieringRefused(
             f"cannot create tablespace {name!r}: directory {location} is not writable by the "
-            f"postgres server user — it must be owned by that user (uid 999 in the stock image: "
-            f"chown 999:999 the dataset's mountpoint) and not on a read-only mount ({e})") from e
+            f"postgres server user. With docker-compose.zfs.yml this is also what an UNMOUNTED cold "
+            f"dataset looks like (Compose binds the bare, root-owned mountpoint directory underneath "
+            f"it): check `zfs get mounted <dataset>` / `findmnt <host mountpoint>` first and mount it. "
+            f"Only a mounted dataset's root should be owned by that user (uid 999 in the stock image: "
+            f"chown 999:999 the mountpoint) and not on a read-only mount — never chown the bare "
+            f"directory, or the next cycle creates the tablespace on the underlying filesystem and the "
+            f"moved months vanish under the mount ({e})") from e
     except asyncpg.exceptions.ObjectInUseError as e:  # 55006: "... already in use as a tablespace"
         raise TieringRefused(
             f"cannot create tablespace {name!r}: directory {location} is not empty — it already "
             f"holds a PG_<version> tablespace directory (another tablespace, or one left behind by a "
             f"previous cluster); check \\db, then remove the stale directory or point "
             f"cold_tablespace_location elsewhere ({e})") from e
-    except asyncpg.exceptions.InvalidParameterValueError as e:  # 22023: not absolute / too long
+    except (asyncpg.exceptions.InvalidObjectDefinitionError,  # 42P17: not absolute / too long
+            asyncpg.exceptions.InvalidNameError) as e:  # 42602: a single quote in the location
         raise TieringRefused(
             f"cannot create tablespace {name!r}: PostgreSQL rejected the location {location!r}: {e}"
         ) from e
     except asyncpg.PostgresError as e:
         raise TieringRefused(
             f"cannot create tablespace {name!r} at {location}: {type(e).__name__}: {e}") from e
+    finally:
+        conn.remove_log_listener(_server_message)
+    await asyncio.sleep(0)  # asyncpg delivers log messages with call_soon
+    for message in notices:  # e.g. "tablespace location should not be inside the data directory"
+        logger.warning("tiering: CREATE TABLESPACE %s: %s: %s", name,
+                       getattr(message, "severity", "NOTICE"), message)
     logger.info("tiering: created tablespace %s at %s", name, location)
     return True
 
@@ -1012,78 +1058,116 @@ WHERE w.locktype = 'relation' AND w.relation = $1::oid AND NOT w.granted
 LIMIT 1
 """
 _LONG_HOLDER_SQL = """
-SELECT l.pid, a.xact_start, a.state, left(a.query, 60) AS query
+SELECT l.pid, l.relation::regclass::text AS relation, a.xact_start, a.state,
+       left(a.query, 60) AS query
 FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
-WHERE l.locktype = 'relation' AND l.relation = $1::oid AND l.granted
+WHERE l.locktype = 'relation' AND l.relation = ANY($1::oid[]) AND l.granted
   AND l.pid <> pg_backend_pid()
-  AND a.xact_start < now() - make_interval(secs => $2)
+  AND a.xact_start < clock_timestamp() - make_interval(secs => $2)
 ORDER BY a.xact_start
 LIMIT 1
 """
 # Longer than SWAP_LOCK_TIMEOUT: a transaction that has already outlived the
-# swap's lock timeout is not going to finish within it, so an attempt would
-# only make every request behind it wait for nothing.
+# swap's timeout is not going to finish within it, so an attempt would only
+# make every request behind it wait for nothing. Measured on the wall clock
+# (clock_timestamp()): the probe runs inside the move's transaction, where
+# now() is frozen at BEGIN — before the copy — and would make every holder
+# that started during the copy look brand new.
 LONG_HOLDER_SECONDS = 3.0
 
 
-async def _swap_blocker(conn: asyncpg.Connection, parent_oid: int, part_oid: int) -> Optional[str]:
-    """Why an ACCESS EXCLUSIVE request on the parent would be pointless right
-    now, or None. (1) A session waiting for OUR partition (blocked by the SHARE
-    lock) while holding a lock on the parent — e.g. the node-id backfill's
-    UPDATE through the parent — makes DETACH a certain deadlock. (2) A session
-    that has held a lock on the parent for a while (pg_dump, a long stats
-    query, an idle-in-transaction psql) will not release it within our lock
-    timeout, and every request that arrives meanwhile would queue behind us."""
+async def _swap_blocker(conn: asyncpg.Connection, *, parent_oid: int, part_oid: int,
+                        default_oid: Optional[int] = None) -> Optional[Tuple[str, str]]:
+    """Why an ACCESS EXCLUSIVE request for the swap would be pointless right
+    now, as (kind, reason), or None. Kind "waiter": a session waiting for OUR
+    partition (blocked by the SHARE lock) while holding a lock on the parent —
+    e.g. the node-id backfill's UPDATE through the parent — makes DETACH a
+    certain deadlock, and it cannot finish before this transaction ends. Kind
+    "holder": a session that has held a lock on the parent, the DEFAULT
+    partition or the partition (DETACH locks all three, in that order) for
+    longer than LONG_HOLDER_SECONDS — pg_dump, a long stats query, an
+    idle-in-transaction psql, a cursor over the month — will not release it
+    within the timeout, and every request that arrives meanwhile would queue
+    behind us."""
+    # pg_stat_activity is read once per transaction and reused by every later
+    # query in it: without this a session that started after the first probe
+    # would be invisible, and a pooled pid would show its previous transaction.
+    await conn.execute("SELECT pg_stat_clear_snapshot()")
     if await conn.fetchval(_DEADLOCK_WAITER_SQL, part_oid, parent_oid) is not None:
-        return "a session holding the parent is waiting for this partition (would deadlock)"
-    row = await conn.fetchrow(_LONG_HOLDER_SQL, parent_oid, LONG_HOLDER_SECONDS)
+        return ("waiter", "a session holding the parent is waiting for this partition (would deadlock)")
+    watched = [oid for oid in (parent_oid, default_oid, part_oid) if oid is not None]
+    row = await conn.fetchrow(_LONG_HOLDER_SQL, watched, LONG_HOLDER_SECONDS)
     if row is not None:
-        return (f"pid {row['pid']} ({row['state']}) has held a lock on the parent since "
-                f"{row['xact_start']:%H:%M:%S}: {row['query']!r}")
+        return ("holder", f"pid {row['pid']} ({row['state']}) has held a lock on {row['relation']} "
+                          f"since {row['xact_start']:%H:%M:%S}: {row['query']!r}")
     return None
 
 
 async def _swap(conn: asyncpg.Connection, *, parent: str, part: str, rep: str, old: str,
                 bound: str, original_indexes: List[str], scratch_to_final: Dict[str, str],
-                range_con: str, keep_original: bool, parent_oid: int, part_oid: int) -> int:
+                range_con: str, keep_original: bool, parent_oid: int, part_oid: int,
+                default_oid: Optional[int] = None) -> int:
     """Detach the original, rename it (and its indexes) aside, rename the copy
     (and its indexes) into place, re-attach with the verbatim bound. Each attempt
-    runs under a SAVEPOINT with SWAP_LOCK_TIMEOUT (2.5 s) as lock_timeout;
-    lock_timeout and a deadlock roll the attempt back, and the next attempt
-    follows a growing pause (swap_pause_seconds). The short timeout is what
-    bounds the stall other sessions see: the DETACH's ACCESS EXCLUSIVE request
-    on the parent makes every new query and insert on the parent queue behind
-    it while it waits for the queries in flight, so a long in-flight query (a
-    payload ILIKE over a month) can delay the move for up to SWAP_ATTEMPTS
-    attempts but never holds the API for more than one timeout at a time.
+    runs under a SAVEPOINT with SWAP_LOCK_TIMEOUT (2.5 s) as lock_timeout and,
+    for the DETACH, as statement_timeout: DETACH acquires ACCESS EXCLUSIVE on
+    the parent, then on the DEFAULT partition, then on the partition, and
+    lock_timeout applies to each acquisition separately, so the statement
+    timeout is what keeps one attempt from holding the parent (granted early)
+    while it waits a second timeout for the others. A timeout or a deadlock
+    rolls the attempt back, and the next attempt follows a growing pause
+    (swap_pause_seconds). That timeout is what bounds the stall other sessions
+    see: the DETACH's ACCESS EXCLUSIVE request on the parent makes every new
+    query and insert on the parent queue behind it while it waits for the
+    queries in flight, so a long in-flight query (a payload ILIKE over a
+    month) can delay the move for up to SWAP_ATTEMPTS attempts but never holds
+    the API for more than one timeout at a time.
     A deadlock arises when a parent-first writer (the node-id backfill's UPDATE
     through the parent) is queued on our SHARE lock while we ask for ACCESS
     EXCLUSIVE on the parent; PostgreSQL then aborts whichever side's
     deadlock_timeout check sees the cycle first — normally us, because the
     writer queued during the long copy, but a writer that queued within
     deadlock_timeout of the DETACH is aborted instead. The _swap_blocker probe
-    exists to avoid both: an attempt is skipped (counted, slept through) while
-    it sees such a waiter or a long-standing holder of the parent, so the queue
-    of requests behind a pending ACCESS EXCLUSIVE stays short. Returns the
-    number of attempts used."""
+    exists to avoid both: such a waiter can only finish after this transaction
+    ends, so the copy is given up at once (TieringBusy; the writer completes
+    unharmed and the month is re-copied on a later cycle), and an attempt is
+    skipped (counted, slept through) while a long-standing holder of the
+    parent, the DEFAULT partition or the partition is seen, so the queue of
+    requests behind a pending ACCESS EXCLUSIVE stays short. A cancel request
+    that arrives during the DETACH (pg_cancel_backend) ends the move like any
+    other error; only our own statement timeout is retried. Returns the number
+    of attempts used."""
     q = quote_ident
     attempts = int(SWAP_ATTEMPTS)
+    timeout_s = timeout_seconds(SWAP_LOCK_TIMEOUT)
     started = time.monotonic()
     for attempt in range(1, attempts + 1):
-        blocker = await _swap_blocker(conn, parent_oid, part_oid)
+        blocker = await _swap_blocker(conn, parent_oid=parent_oid, part_oid=part_oid,
+                                      default_oid=default_oid)
         if blocker is not None:
+            kind, why = blocker
+            if kind == "waiter":
+                logger.warning("tiering: swap of %s given up on attempt %d/%d: %s",
+                               part, attempt, attempts, why)
+                raise TieringBusy(
+                    f"{part}: {why}: it cannot finish before this transaction ends and would stay "
+                    f"blocked for as long as the swap waits; copy discarded, original untouched — "
+                    f"retry later")
             logger.warning("tiering: swap of %s postponed (attempt %d/%d): %s",
-                           part, attempt, attempts, blocker)
+                           part, attempt, attempts, why)
             if attempt >= attempts:
                 raise TieringBusy(f"{part}: parent table busy after {attempts} attempts over "
-                                  f"{time.monotonic() - started:.0f} s ({blocker}); copy discarded, "
+                                  f"{time.monotonic() - started:.0f} s ({why}); copy discarded, "
                                   f"original untouched")
             await asyncio.sleep(swap_pause_seconds(attempt))
             continue
         await conn.execute("SAVEPOINT tiering_swap")
+        attempt_started = time.monotonic()
         try:
             await conn.execute(f"SET LOCAL lock_timeout = {quote_literal(SWAP_LOCK_TIMEOUT)}")
+            await conn.execute(f"SET LOCAL statement_timeout = {quote_literal(SWAP_LOCK_TIMEOUT)}")
             await conn.execute(f"ALTER TABLE {q(parent)} DETACH PARTITION {q(part)}")
+            await conn.execute("SET LOCAL statement_timeout = 0")
             await conn.execute(f"ALTER TABLE {q(part)} RENAME TO {q(old)}")
             for idx in original_indexes:
                 await conn.execute(f"ALTER INDEX {q(idx)} RENAME TO {q(safe_name(idx, OLD_SUFFIX))}")
@@ -1095,10 +1179,18 @@ async def _swap(conn: asyncpg.Connection, *, parent: str, part: str, rep: str, o
             if not keep_original:
                 await conn.execute(f"DROP TABLE {q(old)}")
         except (asyncpg.exceptions.LockNotAvailableError,
-                asyncpg.exceptions.DeadlockDetectedError) as e:
+                asyncpg.exceptions.DeadlockDetectedError,
+                asyncpg.exceptions.QueryCanceledError) as e:
+            if (isinstance(e, asyncpg.exceptions.QueryCanceledError)
+                    and time.monotonic() - attempt_started < 0.8 * timeout_s):
+                raise  # a cancel request, not our statement timeout
             await conn.execute("ROLLBACK TO SAVEPOINT tiering_swap")
-            why = "deadlock" if isinstance(e, asyncpg.exceptions.DeadlockDetectedError) \
-                else f"lock_timeout ({SWAP_LOCK_TIMEOUT})"
+            if isinstance(e, asyncpg.exceptions.DeadlockDetectedError):
+                why = "deadlock"
+            elif isinstance(e, asyncpg.exceptions.QueryCanceledError):
+                why = f"statement_timeout ({SWAP_LOCK_TIMEOUT}) on the DETACH"
+            else:
+                why = f"lock_timeout ({SWAP_LOCK_TIMEOUT})"
             logger.warning("tiering: swap of %s hit %s on attempt %d/%d", part, why, attempt, attempts)
             if attempt >= attempts:
                 raise TieringBusy(
@@ -1227,6 +1319,24 @@ async def move_partition(conn: asyncpg.Connection, part: PartitionInfo, target: 
     for leftover in (rep, old):
         if await conn.fetchval("SELECT to_regclass($1)", q(leftover)) is not None:
             refuse(f"leftover relation {leftover} exists — review it and DROP it first")
+    default_part = await conn.fetchrow(
+        "SELECT c.oid::bigint AS oid, c.relname FROM pg_inherits i "
+        "JOIN pg_class c ON c.oid = i.inhrelid "
+        "WHERE i.inhparent = to_regclass($1) AND pg_get_expr(c.relpartbound, c.oid) = 'DEFAULT'",
+        q(parent))
+    default_oid: Optional[int] = None
+    if default_part is not None:
+        default_oid = int(default_part["oid"])
+        # ATTACH PARTITION checks that the DEFAULT partition holds no row of
+        # the month with a full scan of it (no CHECK constraint rules the month
+        # out), under the parent's ACCESS EXCLUSIVE lock and beyond any
+        # timeout; instant only while it is empty, as it is while the monthly
+        # partitions keep being created ahead of time.
+        if await conn.fetchval(f"SELECT EXISTS (SELECT 1 FROM {q(default_part['relname'])})"):
+            refuse(f"{default_part['relname']} holds rows (a month's partition was missing when they "
+                   f"arrived): the swap's ATTACH would validate it with a full scan under the "
+                   f"parent's ACCESS EXCLUSIVE lock; create the missing monthly partitions and move "
+                   f"those rows out of it first")
     if conn.is_in_transaction():
         raise TieringError("move_partition needs a connection with no open transaction")
 
@@ -1331,7 +1441,7 @@ async def move_partition(conn: asyncpg.Connection, part: PartitionInfo, target: 
             conn, parent=parent, part=part.name, rep=rep, old=old, bound=part.bound,
             original_indexes=original_indexes, scratch_to_final=scratch_to_final,
             range_con=range_con, keep_original=keep_original,
-            parent_oid=int(parent_oid), part_oid=int(part.oid))
+            parent_oid=int(parent_oid), part_oid=int(part.oid), default_oid=default_oid)
     except asyncpg.exceptions.LockNotAvailableError as e:
         # Any other lock_timeout inside the transaction (e.g. the CLI and the
         # scheduler racing for the same month) is "busy", not a failure.

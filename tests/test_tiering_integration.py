@@ -1019,10 +1019,166 @@ async def _ensure_tablespace_scenario(conn: asyncpg.Connection) -> None:
     with pytest.raises(TieringRefused) as excinfo:
         await ensure_cold_tablespace(conn, policy)
     assert "does not exist inside the postgres container" in str(excinfo.value)
-    assert "mounted" in str(excinfo.value) and missing in str(excinfo.value)
+    assert "mount" in str(excinfo.value) and missing in str(excinfo.value)
     assert not await tablespace_exists(conn, missing)
     with pytest.raises(TieringRefused) as excinfo:
         await ensure_cold_tablespace(conn, dataclasses.replace(policy, cold_tablespace_location=""))
     assert "cold_tablespace_location" in str(excinfo.value)
     assert not await tablespace_exists(conn, missing)
+    # Nothing is created while cold_filesystem fails the zfs/btrfs mount check
+    # (a tablespace on the bare mountpoint of an unmounted dataset would hide
+    # the moved months once the dataset mounts over it).
+    warning = "cold tablespace is on ext4 (/, holding cold_filesystem = '/mnt/meshinfo-cold') — months will move but not compress"
+    with pytest.raises(TieringRefused) as excinfo:
+        await ensure_cold_tablespace(conn, policy, fs_warning=warning)
+    assert warning in str(excinfo.value) and "hide the moved months" in str(excinfo.value)
+    assert not await tablespace_exists(conn, missing)
+    # A non-superuser role is told so before any DDL, from the session rather
+    # than from the server's (lc_messages-translated) 42501 text.
+    await conn.execute("SET ROLE pg_read_all_data")
+    try:
+        with pytest.raises(TieringRefused) as excinfo:
+            await ensure_cold_tablespace(conn, policy)
+        assert "not a superuser" in str(excinfo.value) and "CREATE TABLESPACE" in str(excinfo.value)
+    finally:
+        await conn.execute("RESET ROLE")
+    assert not await tablespace_exists(conn, missing)
     assert not conn.is_in_transaction()
+
+
+def test_long_holder_probe_measures_on_the_wall_clock_and_watches_the_partition():
+    """The swap probe runs inside the move's transaction, where now() is frozen
+    at BEGIN (before the copy) and pg_stat_activity is cached from its first
+    read: a holder that began after the move started must still be flagged
+    once it has held its lock for longer than the window, and a session that
+    holds the partition alone (a cursor over the month) counts as much as one
+    holding the parent — DETACH needs ACCESS EXCLUSIVE on both."""
+    _run(_probe_wall_clock_scenario)
+
+
+async def _probe_wall_clock_scenario(conn: asyncpg.Connection) -> None:
+    import storage.db.tiering as tiering_mod
+    saved = tiering_mod.LONG_HOLDER_SECONDS
+    tiering_mod.LONG_HOLDER_SECONDS = 0.5
+    holder = await asyncpg.connect(DSN, command_timeout=None)
+    try:
+        part = await _partition(conn, MQTT_JAN)
+        parent_oid = await conn.fetchval("SELECT 'mqtt_messages'::regclass::oid")
+        default_oid = await conn.fetchval("SELECT to_regclass('mqtt_messages_default')::oid")
+
+        async def probe():
+            return await tiering_mod._swap_blocker(conn, parent_oid=parent_oid, part_oid=part.oid,
+                                                   default_oid=default_oid)
+
+        tr = conn.transaction()
+        await tr.start()  # as move_partition: the probe runs inside the move's transaction
+        try:
+            await asyncio.sleep(1.0)  # now() in this transaction is now a second stale
+            assert await probe() is None
+            hold = holder.transaction()
+            await hold.start()
+            await holder.execute("LOCK TABLE mqtt_messages IN ACCESS SHARE MODE")
+            assert await probe() is None  # younger than the window
+            await asyncio.sleep(0.9)
+            blocker = await probe()  # older than the window, although younger than our BEGIN
+            assert blocker is not None and blocker[0] == "holder", blocker
+            assert "mqtt_messages" in blocker[1] and "has held a lock" in blocker[1]
+            await hold.rollback()
+            assert await probe() is None
+            hold = holder.transaction()
+            await hold.start()
+            await holder.execute(f"LOCK TABLE {MQTT_JAN} IN ACCESS SHARE MODE")  # the partition alone
+            await asyncio.sleep(0.9)
+            blocker = await probe()
+            assert blocker is not None and blocker[0] == "holder" and MQTT_JAN in blocker[1], blocker
+            await hold.rollback()
+        finally:
+            await tr.rollback()
+    finally:
+        tiering_mod.LONG_HOLDER_SECONDS = saved
+        await holder.close()
+    assert not conn.is_in_transaction()
+
+
+def test_deadlock_waiter_is_detected_and_released_at_once():
+    """A writer through the parent (the node-id backfill's UPDATE) that queued
+    on the copy's SHARE lock holds the parent and waits for the partition: the
+    probe reports it as a waiter, and once the move's transaction ends the
+    writer completes. _swap gives the copy up at once on that kind (unit
+    test); this checks the probe against the real lock graph."""
+    _run(_deadlock_waiter_scenario)
+
+
+async def _deadlock_waiter_scenario(conn: asyncpg.Connection) -> None:
+    import storage.db.tiering as tiering_mod
+    writer = await asyncpg.connect(DSN, command_timeout=None)
+    try:
+        part = await _partition(conn, MQTT_JAN)
+        parent_oid = await conn.fetchval("SELECT 'mqtt_messages'::regclass::oid")
+        row_id = _row_id(JAN, 0)
+        tr = conn.transaction()
+        await tr.start()
+        try:
+            await conn.execute(f"LOCK TABLE {MQTT_JAN} IN SHARE MODE")  # what the copy holds
+            # Through the parent: RowExclusive on the parent (granted) and on
+            # every partition — queued on ours.
+            update = asyncio.create_task(writer.execute(
+                "UPDATE mqtt_messages SET from_node_id = from_node_id WHERE id = $1", row_id))
+            deadline = time.monotonic() + 30
+            queued = False
+            while time.monotonic() < deadline:
+                queued = await conn.fetchval(
+                    "SELECT 1 FROM pg_locks WHERE relation = $1 AND NOT granted AND pid <> pg_backend_pid()",
+                    part.oid)
+                if queued:
+                    break
+                await asyncio.sleep(0.05)
+            assert queued, "the writer never queued on the partition"
+            blocker = await tiering_mod._swap_blocker(conn, parent_oid=parent_oid, part_oid=part.oid)
+            assert blocker is not None and blocker[0] == "waiter", blocker
+            assert not update.done()
+        finally:
+            await tr.rollback()  # what TieringBusy does: the writer goes through at once
+        assert await asyncio.wait_for(update, timeout=30) == "UPDATE 1"
+    finally:
+        await writer.close()
+    assert not conn.is_in_transaction()
+    res = await move_partition(conn, part, TABLESPACE, policy=POLICY)
+    assert res.status == "moved" and res.swap_attempts == 1
+
+
+def test_refused_while_the_default_partition_holds_rows():
+    """ATTACH PARTITION validates a non-empty DEFAULT partition with a full
+    scan under the parent's ACCESS EXCLUSIVE lock, which no timeout bounds:
+    the move is refused before the copy while rows sit there, and goes
+    through once they are gone."""
+    _run(_default_partition_scenario)
+
+
+async def _default_partition_scenario(conn: asyncpg.Connection) -> None:
+    default_name = await conn.fetchval(
+        "SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid "
+        "WHERE i.inhparent = 'mqtt_messages'::regclass AND pg_get_expr(c.relpartbound, c.oid) = 'DEFAULT'")
+    if default_name is None:
+        pytest.skip("mqtt_messages has no DEFAULT partition on this server")
+    assert not await conn.fetchval(f'SELECT EXISTS (SELECT 1 FROM "{default_name}")'), "DEFAULT partition not empty"
+    stray_at = datetime.datetime(2020, 6, 15, tzinfo=UTC)  # a month without a partition
+    assert await conn.fetchval("SELECT to_regclass('mqtt_messages_2020_06')") is None
+    stray_id = _row_id(JAN, 999_999)
+    part = await _partition(conn, MQTT_JAN)
+    await conn.execute(
+        "INSERT INTO mqtt_messages (id, topic, payload, qos, retain, timestamp, created_at) "
+        "VALUES ($1, 'msh/stray', 'stray-not-json', 0, false, $2, $3)",
+        stray_id, int(stray_at.timestamp()), stray_at)
+    try:
+        assert await conn.fetchval(f'SELECT count(*) FROM "{default_name}" WHERE id = $1', stray_id) == 1
+        with pytest.raises(TieringRefused) as excinfo:
+            await move_partition(conn, part, TABLESPACE, policy=POLICY)
+        assert f"{default_name} holds rows" in str(excinfo.value)
+        assert not conn.is_in_transaction()
+        assert await _scratch_objects(conn) == []
+        assert (await _partition(conn, MQTT_JAN)).oid == part.oid
+    finally:
+        await conn.execute("DELETE FROM mqtt_messages WHERE id = $1", stray_id)
+    res = await move_partition(conn, part, TABLESPACE, policy=POLICY)
+    assert res.status == "moved"

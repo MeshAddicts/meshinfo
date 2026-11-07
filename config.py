@@ -182,8 +182,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "cold_tablespace_location": "/var/lib/postgresql/cold",
             "tables": ["mqtt_messages", "packet_receptions"],
             "max_partitions_per_cycle": 1,
-            # Mount point of the cold dataset inside the app container, for a
-            # free-space check before each move; "" skips the check.
+            # Mount point of the cold dataset inside the app container, for the
+            # free-space check before each move, the hourly zfs/btrfs mount
+            # warning and the "do not create the tablespace on the wrong
+            # filesystem" guard; "" skips all three.
             "cold_filesystem": "",
             "min_free_mb": 2048,
         },

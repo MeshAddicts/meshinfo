@@ -14,7 +14,7 @@ Windows 10 workstation and should be read as orders of magnitude.
 
 | | |
 |---|---|
-| PostgreSQL | 18.4 (Debian `postgres:18` image), `shared_buffers=1GB`, defaults otherwise (`lab/lab-setup.sh`) |
+| PostgreSQL | 18.4 (Debian `postgres:18` image); `lab/lab-setup.sh` sets `shared_buffers=1GB`, `work_mem=16MB`, `maintenance_work_mem=256MB`, `effective_cache_size=3GB`, `max_wal_size=8GB`, `checkpoint_timeout=15min`, `max_locks_per_transaction=256`, `log_lock_waits=on`, `log_min_duration_statement=2000`. Sections 1–4 ran with `wal_level=minimal` (the copy skips WAL and the rebuilt partition's files are fsynced at `COMMIT`, under the parent lock: ~0.8 s per swap); section 4b was re-measured with the default `wal_level=replica`, which `lab-setup.sh` now sets |
 | Host | Docker Desktop 29.5 (WSL2 kernel 6.18, 24 CPUs assigned, 8 GB VM RAM), privileged container, loop-mounted images on the VM's ext4 disk |
 | Baseline FS | ext4 (`noatime`) holding `PGDATA` |
 | Compressing FS | btrfs loop mounts with `compress-force=zstd:3`, `compress-force=zstd:9`, `compress-force=lzo`; one tablespace on each (`ts_zstd3`, `ts_zstd9`, `ts_lzo`). ZFS itself is not loadable in this kernel; btrfs compresses per 128 KiB extent with 4 KiB sectors, i.e. roughly a ZFS `recordsize=128K` dataset, and the ZFS model below covers the other record sizes |
@@ -229,8 +229,12 @@ window page 1.2 / 6.1 / 1,117; permalink 1.3 / 9.6 / 1,194; 24 h stats 1.1 /
 2.4 / 806; writes 5.5 / 564 / 1,206. The 1–1.3 s maxima are the twelve swaps:
 `DETACH PARTITION` needs ACCESS EXCLUSIVE on the parent, so it waits for the
 readers in flight (a node-page query under this load can take 400 ms) while
-new requests queue behind it, and releases at commit; dropping the detached
-260 MB original is not the cost (measured separately: 29 ms). Everything else
+new requests queue behind it, and the lock is held until the commit — which
+in this run, under `wal_level=minimal`, fsynced the rebuilt partition's files
+first (~0.8 s; section 4b measures the same swap under the default
+`wal_level=replica`, where the commit takes tens of milliseconds); dropping
+the detached 260 MB original is not the cost (measured separately: 29 ms).
+Everything else
 is the copy's I/O competing with the readers. Three earlier loaded runs of the
 same script (before the review fixes, [`e2e_run.json`](e2e_run.json) is the
 final one) took 66–80 s with 10,641–16,861 requests, 0 errors every time,
@@ -283,9 +287,12 @@ with [`lab/project_production.py`](lab/project_production.py) and
   the inventory's own split instead (19.0 GB heap, 9.6 GB indexes at B-tree
   ratios, 0.5 GB other) as a cross-check — fresh lab indexes are tighter than
   bloated production ones, which is why it is not the headline;
-* the "conservative" rows inflate the compressed heap by 25 % to cover
-  payload entropy the synthetic archive cannot reproduce (unique text, real
-  positions, encrypted channels).
+* the "conservative" rows add 25 % to the whole compressed size, indexes
+  included (a heap-only haircut would give 11.6 / 7.5 GB at 18 months), to
+  cover payload entropy the synthetic archive cannot reproduce (unique text,
+  real positions, encrypted channels); the per-class cross-check applies its
+  25 % to the heap share only (11.4 / 7.3 GB conservative,
+  [`projection-split-m18.json`](projection-split-m18.json)).
 
 | layout | 12 months | 18 months | 24 months | reference |
 |---|---:|---:|---:|---:|

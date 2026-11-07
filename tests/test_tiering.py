@@ -65,6 +65,7 @@ from storage.db.tiering import (
     TieringVerifyError,
     TieringRefused,
     TieringBusy,
+    _swap,
 )
 
 UTC = datetime.timezone.utc
@@ -599,11 +600,19 @@ class TestTieringPolicyValidate:
         assert TieringPolicy().validate(raw=self.RAW_DEFAULTS) == []
         assert TieringPolicy.from_config(config_mod.DEFAULT_CONFIG).validate(raw=self.RAW_DEFAULTS) == []
 
-    @pytest.mark.parametrize("bad", ["cold space", "x;drop", "", "Meshinfo_Cold", "1cold", 'cold"', "a" * 64])
+    @pytest.mark.parametrize("bad", ["cold space", "x;drop", "", "Meshinfo_Cold", "1cold", 'cold"', "a" * 64,
+                                     "meshinfo_cold\n"])
     def test_bad_tablespace_identifier(self, bad):
         warns = TieringPolicy(cold_tablespace=bad).validate()
         assert len(warns) == 1
         assert "storage.tiering.cold_tablespace" in warns[0]
+
+    def test_trailing_newline_never_reaches_create_tablespace(self):
+        # re's $ matches before a final newline; a TOML "meshinfo_cold\n" would
+        # otherwise create a tablespace whose name ends in a newline.
+        assert IDENT_RE.match("meshinfo_cold\n") is None
+        policy = TieringPolicy.from_config(_tiering_cfg(cold_tablespace="meshinfo_cold\n"))
+        assert any("not a plain identifier" in w for w in policy.validate())
 
     def test_good_tablespace_identifiers(self):
         for good in ("meshinfo_cold", "pg_default", "_x", "cold2", "a" * 63):
@@ -1081,6 +1090,7 @@ class TestRunTieringContract:
     def _wire(self, monkeypatch, cycle, *, created=False, ensure_error=None, fs_warning=None):
         closed = []
         self.ensured = []
+        self.ensure_kwargs = []
         self.cycles = []
 
         class FakeConn:
@@ -1097,8 +1107,9 @@ class TestRunTieringContract:
                 raise cycle
             return cycle
 
-        async def fake_ensure(conn, policy):
+        async def fake_ensure(conn, policy, **kwargs):
             self.ensured.append(policy.cold_tablespace)
+            self.ensure_kwargs.append(kwargs)
             if ensure_error is not None:
                 raise ensure_error
             return created
@@ -1162,6 +1173,8 @@ class TestRunTieringContract:
         warned = [r for r in caplog.records if r.levelno == logging.WARNING and "not compress" in r.getMessage()]
         assert len(warned) == 2  # once per cycle, not once per process
         assert self.cycles == ["meshinfo_cold", "meshinfo_cold"]  # the cycle still runs
+        # ... but a missing tablespace is not created on that filesystem.
+        assert self.ensure_kwargs == [{"fs_warning": warning}] * 2
 
 
 # ── follow-up: the swap stall bound ──────────────────────────────────────────
@@ -1202,6 +1215,110 @@ class TestSwapBound:
         with pytest.raises(ValueError):
             timeout_seconds("soon")
 
+    @staticmethod
+    def _swap_conn(monkeypatch, **kwargs):
+        # A _SwapConn whose pauses between attempts are recorded, not slept.
+        conn = _SwapConn(**kwargs)
+        monkeypatch.setattr(tiering_mod, "swap_pause_seconds",
+                            lambda attempt, jitter=None: conn.slept.append(attempt) or 0.0)
+        return conn
+
+    def test_long_holder_probe_uses_the_wall_clock_over_all_three_relations(self):
+        # The probe runs inside the move's transaction, where now() is frozen at
+        # BEGIN (before the copy): a holder that started during the copy would
+        # never look old. DETACH locks the parent, the DEFAULT partition and the
+        # partition, so all three are watched.
+        sql = tiering_mod._LONG_HOLDER_SQL
+        assert "clock_timestamp()" in sql and "now()" not in sql
+        assert "ANY($1::oid[])" in sql
+
+    def test_deadlock_waiter_gives_the_copy_up_at_once(self, monkeypatch):
+        # A writer through the parent queued on our SHARE lock cannot finish
+        # before this transaction ends; sleeping through the schedule would
+        # only keep it blocked (the backfill's batches time out at 120 s).
+        conn = self._swap_conn(monkeypatch, waiter=True)
+        with pytest.raises(TieringBusy) as excinfo:
+            asyncio.run(_swap(conn, **_SWAP_ARGS))
+        assert "cannot finish before this transaction ends" in str(excinfo.value)
+        assert conn.probes == 1 and conn.slept == []
+        assert not any("SAVEPOINT" in s or "DETACH" in s for s in conn.executed)
+
+    def test_long_holder_postpones_every_attempt_then_busy(self, monkeypatch):
+        monkeypatch.setattr(tiering_mod, "SWAP_ATTEMPTS", 3)
+        conn = self._swap_conn(monkeypatch, holder=True)
+        with pytest.raises(TieringBusy) as excinfo:
+            asyncio.run(_swap(conn, **_SWAP_ARGS))
+        assert "busy after 3 attempts" in str(excinfo.value) and "mqtt_messages_default" in str(excinfo.value)
+        assert conn.probes == 3 and len(conn.slept) == 2
+        assert not any("SAVEPOINT" in s or "DETACH" in s for s in conn.executed)
+
+    def test_statement_timeout_caps_the_whole_detach_and_is_retried(self, monkeypatch):
+        # lock_timeout applies per lock acquisition (parent, DEFAULT partition,
+        # partition); statement_timeout on the DETACH caps the sum.
+        monkeypatch.setattr(tiering_mod, "SWAP_LOCK_TIMEOUT", "100ms")
+        cancelled = asyncpg.exceptions.QueryCanceledError("canceling statement due to statement timeout")
+        conn = self._swap_conn(monkeypatch, detach_errors=[cancelled], detach_delay=0.12)
+        assert asyncio.run(_swap(conn, **_SWAP_ARGS)) == 2
+        detach = [i for i, s in enumerate(conn.executed) if "DETACH PARTITION" in s]
+        assert len(detach) == 2
+        before_first = conn.executed[:detach[0]]
+        assert "SET LOCAL lock_timeout = '100ms'" in before_first
+        assert "SET LOCAL statement_timeout = '100ms'" in before_first
+        assert conn.executed[detach[0] + 1] == "ROLLBACK TO SAVEPOINT tiering_swap"
+        assert conn.executed[detach[1] + 1] == "SET LOCAL statement_timeout = 0"
+        assert conn.executed[-1] == "RELEASE SAVEPOINT tiering_swap"
+        assert len(conn.slept) == 1
+
+    def test_a_cancel_request_during_the_detach_is_not_retried(self, monkeypatch):
+        # pg_cancel_backend raises the same 57014 as our statement timeout;
+        # only a cancel that arrives after most of the timeout is taken for ours.
+        conn = self._swap_conn(monkeypatch, detach_errors=[asyncpg.exceptions.QueryCanceledError("canceling statement due to user request")])
+        with pytest.raises(asyncpg.exceptions.QueryCanceledError):
+            asyncio.run(_swap(conn, **_SWAP_ARGS))
+        assert "ROLLBACK TO SAVEPOINT tiering_swap" not in conn.executed
+
+
+class _SwapConn:
+    """asyncpg stand-in for _swap: answers the two pg_locks probes, records
+    the swap DDL and raises the queued detach_errors on successive DETACHes.
+    Pauses between attempts are recorded, not slept."""
+
+    def __init__(self, *, waiter=False, holder=False, detach_errors=(), detach_delay=0.0):
+        self.waiter, self.holder = waiter, holder
+        self.detach_errors = list(detach_errors)
+        self.detach_delay = detach_delay
+        self.executed = []
+        self.slept = []
+        self.probes = 0
+
+    async def execute(self, sql, *args):
+        self.executed.append(sql)
+        if "DETACH PARTITION" in sql:
+            if self.detach_delay:
+                await asyncio.sleep(self.detach_delay)
+            if self.detach_errors:
+                raise self.detach_errors.pop(0)
+        return ""
+
+    async def fetchval(self, sql, *args):
+        assert sql is tiering_mod._DEADLOCK_WAITER_SQL and args == (2, 1)
+        self.probes += 1
+        return 4242 if self.waiter else None
+
+    async def fetchrow(self, sql, *args):
+        assert sql is tiering_mod._LONG_HOLDER_SQL
+        assert args == ([1, 3, 2], LONG_HOLDER_SECONDS)  # parent, DEFAULT partition, partition
+        if self.holder:
+            return {"pid": 4242, "state": "idle in transaction", "relation": "mqtt_messages_default",
+                    "xact_start": datetime.datetime(2026, 1, 1, 12, 0, 0), "query": "SELECT 1"}
+        return None
+
+
+_SWAP_ARGS = dict(parent="mqtt_messages", part=PART, rep=REP, old=safe_name(PART, OLD_SUFFIX),
+                  bound="FOR VALUES FROM ('2025-01-01') TO ('2025-02-01')", original_indexes=["ix"],
+                  scratch_to_final={"ix_tiering": "ix"}, range_con="rc", keep_original=False,
+                  parent_oid=1, part_oid=2, default_oid=3)
+
 
 # ── follow-up: cold_tablespace_location, tablespace creation, mount check ────
 
@@ -1216,17 +1333,22 @@ class TestColdTablespaceLocation:
         assert TieringPolicy.from_config(cfg).cold_tablespace_location == "/mnt/cold"
         assert TieringPolicy.from_config(_tiering_cfg(cold_tablespace_location="")).cold_tablespace_location == ""
 
-    def test_non_string_is_ignored_with_a_warning(self):
+    def test_non_string_disables_creation_with_a_warning(self):
         raw = {"cold_tablespace_location": 7}
         policy = TieringPolicy.from_config({"storage": {"tiering": raw}})
-        assert policy.cold_tablespace_location == ""
+        assert policy.cold_tablespace_location == ""  # the never-create mode, not the default
         warns = policy.validate(raw=raw)
         assert len(warns) == 1
-        assert "storage.tiering.cold_tablespace_location" in warns[0] and "ignored" in warns[0]
+        assert "storage.tiering.cold_tablespace_location" in warns[0] and "will not create" in warns[0]
+        assert "ignored" not in warns[0]
 
-    def test_relative_path_warns(self):
-        warns = TieringPolicy(cold_tablespace_location="cold").validate()
-        assert len(warns) == 1 and "absolute path" in warns[0]
+    def test_relative_path_is_a_config_warning_only(self):
+        # The job cannot create the tablespace there (ensure_cold_tablespace
+        # refuses), but tiering runs once it exists: the bare validate() that
+        # run_cycle and the CLI gate on stays clean.
+        assert TieringPolicy(cold_tablespace_location="cold").validate() == []
+        warns = TieringPolicy(cold_tablespace_location="cold").validate(raw={"cold_tablespace_location": "cold"})
+        assert len(warns) == 1 and "absolute path" in warns[0] and "still runs" in warns[0]
         assert TieringPolicy(cold_tablespace_location="").validate() == []
         cfg = _validatable_base()
         cfg["storage"]["tiering"]["cold_tablespace_location"] = "relative/dir"
@@ -1283,24 +1405,51 @@ class TestCheckColdFilesystem:
         assert check_cold_filesystem(TieringPolicy(cold_filesystem="/mnt/x"), mounts_path=none) is None
 
 
-class _TablespaceConn:
-    """Minimal asyncpg stand-in for ensure_cold_tablespace: `exists` answers the
-    pg_tablespace probe, `error` is raised by the CREATE TABLESPACE."""
+class _ServerMessage:
+    def __init__(self, severity, text):
+        self.severity, self.text = severity, text
 
-    def __init__(self, exists=False, error=None, in_tx=False):
+    def __str__(self):
+        return self.text
+
+
+class _TablespaceConn:
+    """Minimal asyncpg stand-in for ensure_cold_tablespace: `exists` answers
+    the pg_tablespace probe (`exists_after` once the CREATE has raised),
+    `superuser` the is_superuser probe, `error` is raised by the CREATE
+    TABLESPACE and `messages` are the NOTICE/WARNING lines the server emits
+    with it (delivered the way asyncpg does, with call_soon)."""
+
+    def __init__(self, exists=False, error=None, in_tx=False, *, superuser=True, exists_after=None,
+                 messages=()):
         self.exists, self.error, self.in_tx = exists, error, in_tx
+        self.superuser, self.exists_after, self.messages = superuser, exists_after, list(messages)
         self.executed = []
+        self.listeners = []
 
     def is_in_transaction(self):
         return self.in_tx
 
+    def add_log_listener(self, callback):
+        self.listeners.append(callback)
+
+    def remove_log_listener(self, callback):
+        self.listeners.remove(callback)
+
     async def fetchval(self, sql, *args):
+        if "is_superuser" in sql:
+            return self.superuser
         assert "pg_tablespace" in sql
         return 1 if self.exists else None
 
     async def execute(self, sql, *args):
         self.executed.append(sql)
+        for message in self.messages:
+            for callback in self.listeners:
+                asyncio.get_running_loop().call_soon(callback, self, message)
         if self.error is not None:
+            if self.exists_after is not None:
+                self.exists = self.exists_after
             raise self.error
         return "CREATE TABLESPACE"
 
@@ -1317,6 +1466,7 @@ class TestEnsureColdTablespace:
         conn = _TablespaceConn()
         assert asyncio.run(ensure_cold_tablespace(conn, self.POLICY)) is True
         assert conn.executed == ["CREATE TABLESPACE \"meshinfo_cold\" LOCATION '/var/lib/postgresql/cold'"]
+        assert conn.listeners == []  # the log listener never outlives the CREATE
         conn = _TablespaceConn()
         asyncio.run(ensure_cold_tablespace(conn, dataclasses.replace(self.POLICY, cold_tablespace_location="/mnt/o'cold")))
         assert conn.executed == ["CREATE TABLESPACE \"meshinfo_cold\" LOCATION '/mnt/o''cold'"]
@@ -1342,20 +1492,78 @@ class TestEnsureColdTablespace:
             asyncio.run(ensure_cold_tablespace(_TablespaceConn(in_tx=True), self.POLICY))
         assert not isinstance(excinfo.value, TieringRefused)
 
-    def test_concurrent_creation_is_not_an_error(self):
-        conn = _TablespaceConn(error=asyncpg.exceptions.DuplicateObjectError('tablespace "meshinfo_cold" already exists'))
+    @pytest.mark.parametrize("error", [
+        # 42710: the other session's CREATE had committed before ours ran its name check.
+        asyncpg.exceptions.DuplicateObjectError('tablespace "meshinfo_cold" already exists'),
+        # 23505: the other CREATE was in flight (its pg_tablespace row invisible to our
+        # check) and committed first; the loser fails on pg_tablespace_spcname_index.
+        asyncpg.exceptions.UniqueViolationError(
+            'duplicate key value violates unique constraint "pg_tablespace_spcname_index"'),
+    ])
+    def test_concurrent_creation_is_not_an_error(self, error):
+        conn = _TablespaceConn(error=error, exists_after=True)
         assert asyncio.run(ensure_cold_tablespace(conn, self.POLICY)) is False
 
+    def test_unique_violation_without_the_tablespace_is_still_a_refusal(self):
+        error = asyncpg.exceptions.UniqueViolationError("duplicate key value violates unique constraint")
+        conn = _TablespaceConn(error=error, exists_after=False)
+        with pytest.raises(TieringRefused) as excinfo:
+            asyncio.run(ensure_cold_tablespace(conn, self.POLICY))
+        assert excinfo.value.__cause__ is error
+
+    def test_non_superuser_is_told_so_before_any_ddl(self):
+        # Decided from the session, not from the server's 42501 text (which
+        # lc_messages translates and which the chmod failure shares).
+        conn = _TablespaceConn(superuser=False)
+        with pytest.raises(TieringRefused) as excinfo:
+            asyncio.run(ensure_cold_tablespace(conn, self.POLICY))
+        assert "not a superuser" in str(excinfo.value) and "CREATE TABLESPACE" in str(excinfo.value)
+        assert conn.executed == []
+        assert asyncio.run(ensure_cold_tablespace(_TablespaceConn(exists=True, superuser=False), self.POLICY)) is False
+
+    def test_not_created_while_cold_filesystem_fails_the_mount_check(self):
+        warning = "cold tablespace is on ext4 (/, holding cold_filesystem = '/mnt/meshinfo-cold') — months will move but not compress"
+        conn = _TablespaceConn()
+        with pytest.raises(TieringRefused) as excinfo:
+            asyncio.run(ensure_cold_tablespace(conn, self.POLICY, fs_warning=warning))
+        assert warning in str(excinfo.value) and "hide the moved months" in str(excinfo.value)
+        assert conn.executed == []
+        assert asyncio.run(ensure_cold_tablespace(_TablespaceConn(exists=True), self.POLICY, fs_warning=warning)) is False
+
+    @pytest.mark.parametrize("message", [
+        'could not set permissions on directory "/var/lib/postgresql/cold": Operation not permitted',
+        'konnte Zugriffsrechte für Verzeichnis »/var/lib/postgresql/cold« nicht setzen: Die Operation ist nicht erlaubt',
+    ])
+    def test_unwritable_directory_names_the_unmounted_dataset_before_chown(self, message):
+        # With the overlay the directory always exists (Compose binds the bare
+        # mountpoint), so an unmounted dataset surfaces as this 42501 — and
+        # chowning the bare directory would put the tablespace on the root fs.
+        error = asyncpg.exceptions.InsufficientPrivilegeError(message)
+        with pytest.raises(TieringRefused) as excinfo:
+            asyncio.run(ensure_cold_tablespace(_TablespaceConn(error=error), self.POLICY))
+        text = str(excinfo.value)
+        assert "UNMOUNTED" in text and "owned by" in text and "never chown the bare directory" in text
+        assert text.index("mounted") < text.index("chown 999:999")
+        assert excinfo.value.__cause__ is error
+
+    def test_server_warnings_during_the_create_are_logged(self, caplog):
+        notice = _ServerMessage("WARNING", "tablespace location should not be inside the data directory")
+        conn = _TablespaceConn(messages=[notice])
+        with caplog.at_level(logging.WARNING, logger="storage.db.tiering"):
+            assert asyncio.run(ensure_cold_tablespace(conn, self.POLICY)) is True
+        warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("inside the data directory" in m and "meshinfo_cold" in m for m in warned)
+
     @pytest.mark.parametrize("error,needle", [
-        (asyncpg.exceptions.UndefinedFileError('directory "/var/lib/postgresql/cold" does not exist'), "mounted"),
-        (asyncpg.exceptions.InsufficientPrivilegeError('permission denied to create tablespace "meshinfo_cold"'),
-         "superuser"),
+        (asyncpg.exceptions.UndefinedFileError('directory "/var/lib/postgresql/cold" does not exist'), "mount"),
         (asyncpg.exceptions.InsufficientPrivilegeError(
             'could not set permissions on directory "/var/lib/postgresql/cold": Operation not permitted'),
          "owned by"),
         (asyncpg.exceptions.ObjectInUseError(
             'directory "/var/lib/postgresql/cold/PG_18_202507041" already in use as a tablespace'), "not empty"),
-        (asyncpg.exceptions.InvalidParameterValueError("tablespace location must be an absolute path"),
+        (asyncpg.exceptions.InvalidObjectDefinitionError('tablespace location "/var/lib/postgresql/cold" is too long'),
+         "rejected the location"),
+        (asyncpg.exceptions.InvalidNameError("tablespace location cannot contain single quotes"),
          "rejected the location"),
         (asyncpg.exceptions.DiskFullError("could not create directory: No space left on device"), "DiskFullError"),
     ])
@@ -1366,3 +1574,4 @@ class TestEnsureColdTablespace:
         text = str(excinfo.value)
         assert needle in text and "meshinfo_cold" in text
         assert excinfo.value.__cause__ is error
+        assert conn.listeners == []

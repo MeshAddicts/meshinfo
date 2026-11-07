@@ -17,6 +17,11 @@ SLOW_EVERY=${SLOW_EVERY:-12}
 SLOW_SCANS=${SLOW_SCANS:-4}
 cd /lab
 python3 /lab/digests.py --dsn $DSN --from 2026-02 --to 2026-07 --json /lab/stall_digest_before.json
+echo "[lab] wal_level: $(psql -h 127.0.0.1 -U postgres -d meshinfo -tAc 'show wal_level')"
+# Prime: one move onto $COLD_TS, so that each leg's reset below is a real
+# rebuild and both legs start from identical, just-rebuilt partitions
+# (bytes_before, index density) whatever the CONFIGS order.
+python3 $REPO/scripts/tier_partitions.py --dsn $DSN --tablespace $COLD_TS --cold-after-months 3 run --apply --all --json > /lab/stall_prime.json 2>/dev/null || true
 
 for CFG in ${CONFIGS:-new old}; do
   rm -f /lab/stop
@@ -54,8 +59,8 @@ print('[$CFG] api requests: ok', h['api_ok'], 'errors', h['total_errors'], 'p50'
 print('[$CFG] slow client:', h['ops'].get('slow'))
 print('[$CFG] slowest ordinary requests (s since start, op, ms):', h['slowest'][:10])
 PY
-  echo "[$CFG] swap log lines: $(grep -c -E 'postponed|hit lock_timeout|hit deadlock' /lab/stall_${CFG}_run.log || true)"
-  grep -E 'postponed|hit lock_timeout|hit deadlock|busy' /lab/stall_${CFG}_run.log | head -30 || true
+  echo "[$CFG] swap log lines: $(grep -c -E 'postponed|given up|hit lock_timeout|hit statement_timeout|hit deadlock' /lab/stall_${CFG}_run.log || true)"
+  grep -E 'postponed|given up|hit lock_timeout|hit statement_timeout|hit deadlock|busy' /lab/stall_${CFG}_run.log | head -30 || true
   python3 /lab/digests.py --dsn $DSN --from 2026-02 --to 2026-07 --json /lab/stall_${CFG}_digest_after.json
   python3 - <<PY
 import json
