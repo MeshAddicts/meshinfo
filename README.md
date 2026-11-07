@@ -111,12 +111,13 @@ The main configuration file is `config.toml`. Key sections:
 | `[broker]` | MQTT connection, topics, channel display mode and hashes, decoders |
 | `[server]` | Node ID, base URL, timezone, enrichment, graph settings |
 | `[storage.postgres]` | PostgreSQL connection and pool settings |
+| `[storage.tiering]` | Tiered cold storage: move closed months to a compressed ZFS tablespace |
 | `[mesh]` | Network name, region, coordinates, external tool links |
 | `[integrations.*]` | Discord bridge, reverse geocoding |
 
 See [config.toml.sample](config.toml.sample) for all options with inline documentation.
 
-For PostgreSQL-specific details, see [POSTGRES.md](POSTGRES.md).
+For PostgreSQL-specific details, see [POSTGRES.md](POSTGRES.md). To shrink a multi-year archive with ZFS compression and tiered cold storage for closed months, see [ZFS.md](ZFS.md).
 
 For the Coverage and Scan tools' propagation model (ITM + ITU-R clutter), see [RF-MODEL.md](RF-MODEL.md). To enable per-pixel land-cover-aware predictions, run the one-shot tile bake:
 

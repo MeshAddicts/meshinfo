@@ -358,6 +358,54 @@ on the host, not in the container). Environment variables (`KEEP_DAYS`,
 `BACKUP_DIR`, `REMOTE_TARGET`, `CONTAINER`, `DB_USER`, `DB_NAME`) override the
 config for one-off runs.
 
+## Tiered cold storage (ZFS)
+
+The archive only grows, and stock Postgres compresses nothing but TOASTed
+values. Running the cluster on a compressed ZFS dataset shrinks heap, indexes
+and WAL transparently — no schema or query change — and a second, cold-tuned
+dataset (128K records, `zstd-9`) does better still for the closed months that
+make up nearly all of the data. The tiering job moves each month's
+`mqtt_messages` / `packet_receptions` partitions into the `meshinfo_cold`
+tablespace on that dataset once the month is old enough. Setup (datasets,
+the `docker-compose.zfs.yml` overlay, the tablespace, moving an existing
+volume) and the full operator guide are in [ZFS.md](ZFS.md).
+
+```toml
+[storage.tiering]
+enabled = false                       # true: the app moves cold months hourly
+cold_after_months = 3                 # whole calendar months since the month closed
+cold_tablespace = "meshinfo_cold"     # CREATE TABLESPACE meshinfo_cold LOCATION '/var/lib/postgresql/cold'
+tables = ["mqtt_messages", "packet_receptions"]
+max_partitions_per_cycle = 1          # partitions moved per hourly cycle
+cold_filesystem = ""                  # e.g. "/mnt/meshinfo-cold" to enable the free-space check
+min_free_mb = 2048                    # free space to keep on cold_filesystem after a move
+```
+
+A month is cold once `cold_after_months` whole calendar months have elapsed
+since it closed; the current and the previous month never move. The CLI works
+whether or not the scheduler is enabled and is a dry run unless told
+otherwise:
+
+```sh
+docker compose exec meshinfo python scripts/tier_partitions.py status         # every month: hot/cold, tablespace, size
+docker compose exec meshinfo python scripts/tier_partitions.py plan           # what the next cycle would move
+docker compose exec meshinfo python scripts/tier_partitions.py run --apply    # move (dry run without --apply)
+docker compose exec meshinfo python scripts/tier_partitions.py --tablespace pg_default \
+  run --apply --partition mqtt_messages_2026_07                               # move a month back
+```
+
+Each partition moves in one transaction: the copy onto the cold tablespace
+runs under a SHARE lock, so **readers continue** and ingest into other months
+is unaffected; the swap that puts the copy in the original's place is
+metadata-only but takes a **brief ACCESS EXCLUSIVE lock on the parent**,
+waiting up to 20 s and retrying up to 6 times before giving up as `busy`
+(everything rolls back, nothing changes, the job retries next hour). Row
+counts are verified before the swap (`--deep-verify` adds a digest), the
+free-space guard assumes zero compression, and backups stay restorable
+anywhere: `migrate-postgres.sh` dumps with `pg_dump --no-tablespaces`, custom
+format dumps restore with `pg_restore --no-tablespaces`, and the job
+re-tiers what lands on `pg_default`.
+
 ## Security
 
 - Use strong passwords for PostgreSQL
