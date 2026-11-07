@@ -35,8 +35,11 @@ mix, ~570 B of payload text, 11 rows per 8 KiB page → 753 B per heap row, the
 production figure). Each packet gets 1–12 receptions (Poisson, mean 4.5; mapreports
 none) through the parent table, so some land in the next month's partition.
 Reception rows measure 105 B in the heap plus 104 B across their two B-trees
-(the `(gateway, created_at DESC)` index is 70 % of that); the reference "~155 B
-per reception" is between those two figures, so treat reception numbers as ±30 %.
+(the `(gateway, created_at DESC)` index is 70 % of that). **Production
+receptions are 176 B per heap row** (the reference "~155 B" sits between the
+two figures), so the synthetic receptions are under-sized by about 40 % in
+the heap — and `packet_receptions` is about a third of the real database
+(9.6 of 29.08 GB, section 5). Every reception-side size and ratio below is
 therefore indicative only; the authoritative number for an installation is
 `scripts/zfs_estimate.py` run on the live volume, which models the real files.
 The archive measured here was generated before a review fix that gives
@@ -263,41 +266,48 @@ Raw: [`e2e_run.json`](e2e_run.json), [`e2e_harness.json`](e2e_harness.json),
 ## 5. Projection onto the production inventory
 
 <!-- PROJECTION:START -->
-Production inventory: **29.08 GB of heap** on 2026-11-01. The projection
-applies the lab's per-class ratios from section 2 (hot = zstd-3@16K, cold =
-zstd-9@128K) with [`lab/project_production.py`](lab/project_production.py)
-and [`ratios.json`](ratios.json). Assumptions, all adjustable on the command line:
+Production inventory: **29.08 GB** on 2026-11-01 — `pg_database_size`, which
+already includes every index: 13.6 GB heap + 5.4 GB indexes for the canonical
+`mqtt_messages` partitions and 5.4 GB + 4.2 GB for `packet_receptions`,
+28.6 GB of the 29.08. The projection applies the lab's heap ratios from
+section 2 (hot zstd-3@16K 2.92×, cold zstd-9@128K 4.82×) to the whole size
+with [`lab/project_production.py`](lab/project_production.py) and
+[`ratios.json`](ratios.json). Assumptions, all adjustable on the command line:
 
 * every month carries the same volume, so with `M` months of history and
   `cold_after_months = 1` the cold share is `(M − 2) / M` (current + previous
   month hot); production's month count is not known here, so 12 / 18 / 24 are shown;
-* the "conservative" column inflates the compressed heap by 25 % to cover
+* the heap ratio is used for the whole database: the heap is the class that
+  compresses least (B-trees 3.07× / 5.81×, GIN 3.00× / 8.19× in the lab), so
+  this errs on the large side. The last row applies the per-class ratios to
+  the inventory's own split instead (19.0 GB heap, 9.6 GB indexes at B-tree
+  ratios, 0.5 GB other) as a cross-check — fresh lab indexes are tighter than
+  bloated production ones, which is why it is not the headline;
+* the "conservative" rows inflate the compressed heap by 25 % to cover
   payload entropy the synthetic archive cannot reproduce (unique text, real
-  positions, encrypted channels);
-* the reference projection counted the 29.08 GB heap only; the second block adds
-  indexes at the lab's proportion (B-trees 64 % of heap bytes, GIN 10 %), which is
-  what the whole data directory would occupy. Fresh lab indexes are tighter than
-  bloated production ones, so read it as a lower bound and prefer the real figure:
-  `SELECT pg_size_pretty(sum(pg_indexes_size(c.oid))) FROM pg_class c WHERE relname LIKE 'mqtt_messages_%' OR relname LIKE 'packet_receptions_%';`
+  positions, encrypted channels).
 
-| scope | layout | 12 months | 18 months | 24 months | reference |
-|---|---|---:|---:|---:|---:|
-| heap only (29.08 GB) | one zstd-3@16K dataset | 9.95 GB | 9.95 GB | 9.95 GB | 9.6 GB |
-| | … conservative (+25 %) | 12.4 GB | 12.4 GB | 12.4 GB | 11 GB |
-| | tiered 16K/zstd-3 + 128K/zstd-9, `cold_after_months=1` | 6.69 GB | 6.47 GB | 6.36 GB | 5.9 GB |
-| | … conservative | 8.36 GB | 8.08 GB | 7.95 GB | 7.0 GB |
-| heap + indexes (51.0 GB) | one zstd-3@16K dataset | 17.1 GB | 17.1 GB | 17.1 GB | |
-| | … conservative | 19.6 GB | 19.6 GB | 19.6 GB | |
-| | tiered, `cold_after_months=1` | 11.0 GB | 10.6 GB | 10.4 GB | |
-| | … conservative | 12.7 GB | 12.2 GB | 12.0 GB | |
-| | tiered, `cold_after_months=3` (18 months) | | 11.4 GB | | |
+| layout | 12 months | 18 months | 24 months | reference |
+|---|---:|---:|---:|---:|
+| one zstd-3@16K dataset | 9.95 GB | 9.95 GB | 9.95 GB | 9.6 GB |
+| … conservative (+25 %) | 12.4 GB | 12.4 GB | 12.4 GB | 11 GB |
+| tiered 16K/zstd-3 + 128K/zstd-9, `cold_after_months=1` | 6.69 GB | 6.47 GB | 6.36 GB | 5.9 GB |
+| … conservative | 8.36 GB | 8.08 GB | 7.95 GB | 7.0 GB |
+| tiered, `cold_after_months=3` | | 6.90 GB | | |
+| per-class cross-check, single / tiered (`cold_after_months=1`) | | 9.80 / 6.21 GB | | |
 
 Bottom line: a single 16K/zstd-3 dataset divides the archive by ~3; tiering
-closed months onto 128K/zstd-9 divides it by ~4.5–5 (the cold tier alone runs
+closed months onto 128K/zstd-9 divides it by ~4.5 (the cold tier alone runs
 at 5.2×, section 2) and the gap widens as history accumulates, because the hot
 share shrinks. The Citus-columnar branch reached 21.2 GB on the same inventory
 with heap-only compression and 10–90× regressions on filtered queries; here
-nothing about the plans changes (section 3).
+nothing about the plans changes (section 3). An earlier revision of this
+section treated the 29.08 GB as heap only and added indexes on top at the
+lab's proportion ("heap + indexes, 51 GB"); the inventory figure already
+contains them, so that scope double-counted the indexes and is withdrawn.
+Raw: [`projection-m12.json`](projection-m12.json), [`projection-m18.json`](projection-m18.json),
+[`projection-m24.json`](projection-m24.json), [`projection-m18-n3.json`](projection-m18-n3.json),
+[`projection-split-m18.json`](projection-split-m18.json).
 <!-- PROJECTION:END -->
 
 ### 4b. The swap stall bound
@@ -360,6 +370,6 @@ docker exec meshinfo-tiering-lab python3 /repo/scripts/zfs_estimate.py estimate 
     --catalog /lab/catalog.json --codec lz4 zstd-3 zstd-9 gzip-6 --recordsize 8K 16K 32K 64K 128K --json   # section 2
 docker exec meshinfo-tiering-lab /lab/lab-latency.sh           # section 3 (+ a move back with --tablespace pg_default)
 docker exec meshinfo-tiering-lab /lab/lab-e2e.sh               # section 4
-python3 lab/project_production.py --ratios ratios.json --heap-gb 29.08 --months 18 --cold-after-months 1   # section 5
 docker exec meshinfo-tiering-lab /lab/lab-stall.sh             # section 4b: the swap stall bound, shipped vs previous constants
+python3 lab/project_production.py --ratios ratios.json --database-gb 29.08 --months 18 --cold-after-months 1   # section 5
 ```

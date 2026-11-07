@@ -638,24 +638,24 @@ pay 10–40 ms per page query for extent decompression; plans do not change.
 
 ### Tiered projection (hot 16K/zstd-3 + cold 128K/zstd-9)
 
-Production inventory of 29.08 GB heap (2026-11-01), `cold_after_months = 1`,
-lab ratios per relation class (hot: heap 2.92×, B-tree 3.07×, GIN 3.00×; cold:
-heap 4.82×, B-tree 5.81×, GIN 8.19×); the hot share is two months of the
-history, so the gain grows as history accumulates. "Conservative" adds 25 %
-to the compressed heap for payload entropy the synthetic data cannot reproduce.
+Production inventory of 29.08 GB (`pg_database_size` on 2026-11-01 — heap
+and indexes together), `cold_after_months = 1`, the lab's heap ratios (hot
+2.92×, cold 4.82×) applied to the whole size; the heap is the class that
+compresses least (B-trees 3.07× / 5.81×, GIN 3.00× / 8.19× in the lab), so
+this errs on the large side. The hot share is two months of the history, so
+the gain grows as history accumulates. "Conservative" adds 25 % to the
+compressed size for payload entropy the synthetic data cannot reproduce.
 
-| scope | layout | 12 months of history | 18 months | 24 months |
-|---|---|---:|---:|---:|
-| heap only (29.08 GB) | one 16K/zstd-3 dataset | 9.95 GB | 9.95 GB | 9.95 GB |
-| | tiered | 6.69 GB | 6.47 GB | 6.36 GB |
-| | tiered, conservative | 8.36 GB | 8.08 GB | 7.95 GB |
-| heap + indexes at the lab proportion (51.0 GB) | one 16K/zstd-3 dataset | 17.1 GB | 17.1 GB | 17.1 GB |
-| | tiered | 11.0 GB | 10.6 GB | 10.4 GB |
-| | tiered, conservative | 12.7 GB | 12.2 GB | 12.0 GB |
+| layout | 12 months of history | 18 months | 24 months |
+|---|---:|---:|---:|
+| one 16K/zstd-3 dataset | 9.95 GB | 9.95 GB | 9.95 GB |
+| … conservative | 12.4 GB | 12.4 GB | 12.4 GB |
+| tiered | 6.69 GB | 6.47 GB | 6.36 GB |
+| tiered, conservative | 8.36 GB | 8.08 GB | 7.95 GB |
 
 The reference figures for the same inventory were 9.6 GB (one dataset) and
 5.9 GB (tiered); the Citus-columnar branch reached 21.2 GB with filtered-query
-regressions of 10–90×.
+regressions of 10–90×. `scripts/zfs_estimate.py` on the live volume is the
 authoritative figure for an installation.
 
 ### Move timing
