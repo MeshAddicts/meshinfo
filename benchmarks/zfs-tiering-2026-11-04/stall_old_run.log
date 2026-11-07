@@ -1,1 +1,1 @@
-tier_with_constants: SWAP_LOCK_TIMEOUT=20s SWAP_ATTEMPTS=6 LONG_HOLDER_SECONDS=5.0 old_pauses=True
+tier_with_constants: SWAP_LOCK_TIMEOUT=20s (20 s) SWAP_ATTEMPTS=6 LONG_HOLDER_SECONDS=5.0 old_pauses=True
