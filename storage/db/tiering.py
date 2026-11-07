@@ -483,7 +483,7 @@ def _is_int(value: Any) -> bool:
 @dataclasses.dataclass(frozen=True)
 class TieringPolicy:
     enabled: bool = False
-    cold_after_months: int = 3
+    cold_after_months: int = 1
     cold_tablespace: str = "meshinfo_cold"
     # Where the job creates cold_tablespace when it does not exist yet (a path
     # inside the postgres container; "" = never create it, an operator must).

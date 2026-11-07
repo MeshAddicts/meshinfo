@@ -173,8 +173,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         # scripts/tier_partitions.py drives the same job by hand regardless.
         "tiering": {
             "enabled": False,
-            # Keep this many closed months hot; older months are cold.
-            "cold_after_months": 3,
+            # A month is cold this many whole calendar months after it closed
+            # (the current and the previous month always stay hot); higher
+            # keeps more recent months uncompressed, at the cost of ratio.
+            "cold_after_months": 1,
             "cold_tablespace": "meshinfo_cold",
             # Created by the job on its first cycle when cold_tablespace does
             # not exist: the cold directory's path inside the postgres container

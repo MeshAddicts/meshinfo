@@ -367,7 +367,7 @@ with [`lab/project_production.py`](lab/project_production.py) and
 | … conservative (+25 %) | 12.4 GB | 12.4 GB | 12.4 GB | 11 GB |
 | tiered 16K/zstd-3 + 128K/zstd-9, `cold_after_months=1` | 6.69 GB | 6.47 GB | 6.36 GB | 5.9 GB |
 | … conservative | 8.36 GB | 8.08 GB | 7.95 GB | 7.0 GB |
-| tiered, `cold_after_months=3` | | 6.90 GB | | |
+| tiered, `cold_after_months=3` (the previous default) | | 6.90 GB | | |
 | per-class cross-check, single / tiered (`cold_after_months=1`) | | 9.80 / 6.21 GB | | |
 | cold-only: hot share untouched on the Docker volume, cold 128K/zstd-9 (`docker-compose.cold.yml`, btrfs or ZFS) | 9.87 GB | 8.59 GB | 7.95 GB | |
 | … conservative | 12.3 GB | 10.7 GB | 9.94 GB | |
