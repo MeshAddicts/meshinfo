@@ -761,8 +761,9 @@ async def ensure_cold_tablespace(conn: asyncpg.Connection, policy: TieringPolicy
         raise TieringRefused(
             f"not creating tablespace {name!r} at {location}: {fs_warning}; a tablespace created on "
             f"the wrong filesystem (the bare mountpoint of an unmounted dataset, say) would hide the "
-            f"moved months once the dataset mounts over it — mount the cold dataset and retry, or set "
-            f"cold_filesystem = \"\" to skip this check")
+            f"moved months once the dataset mounts over it — mount the cold filesystem, "
+            f"`docker compose restart postgres meshinfo` (a running container keeps the bare directory "
+            f"it was started with) and retry, or set cold_filesystem = \"\" to skip this check")
     if conn.is_in_transaction():
         raise TieringError("ensure_cold_tablespace needs a connection with no open transaction")
     sql = f"CREATE TABLESPACE {quote_ident(name)} LOCATION {quote_literal(location)}"
@@ -792,19 +793,22 @@ async def ensure_cold_tablespace(conn: asyncpg.Connection, policy: TieringPolicy
     except asyncpg.exceptions.UndefinedFileError as e:  # 58P01: directory "..." does not exist
         raise TieringRefused(
             f"cannot create tablespace {name!r}: directory {location} does not exist inside the "
-            f"postgres container — docker-compose.zfs.yml binds the cold dataset at "
-            f"/var/lib/postgresql/cold; without the overlay, or with another "
+            f"postgres container — the overlays (docker-compose.zfs.yml, docker-compose.cold.yml) "
+            f"bind the cold directory at /var/lib/postgresql/cold; without one, or with another "
             f"cold_tablespace_location, mount or create the directory there first ({e})") from e
     except asyncpg.exceptions.InsufficientPrivilegeError as e:  # 42501: mkdir/chmod on the location failed
         raise TieringRefused(
             f"cannot create tablespace {name!r}: directory {location} is not writable by the "
-            f"postgres server user. With docker-compose.zfs.yml this is also what an UNMOUNTED cold "
-            f"dataset looks like (Compose binds the bare, root-owned mountpoint directory underneath "
-            f"it): check `zfs get mounted <dataset>` / `findmnt <host mountpoint>` first and mount it. "
-            f"Only a mounted dataset's root should be owned by that user (uid 999 in the stock image: "
-            f"chown 999:999 the mountpoint) and not on a read-only mount — never chown the bare "
-            f"directory, or the next cycle creates the tablespace on the underlying filesystem and the "
-            f"moved months vanish under the mount ({e})") from e
+            f"postgres server user. With docker-compose.zfs.yml or docker-compose.cold.yml this is "
+            f"also what an UNMOUNTED cold filesystem looks like (Compose binds the bare, root-owned "
+            f"mountpoint directory underneath it): check `findmnt <host mountpoint>` first, mount it, "
+            f"then `docker compose restart postgres meshinfo` (a bind taken while it was unmounted keeps "
+            f"showing the bare directory); if the host mount is fine, check that the overlay is part of "
+            f"this compose invocation (`docker compose config` must show a bind at "
+            f"/var/lib/postgresql/cold). Only a mounted filesystem's root should be owned by that user "
+            f"(uid 999 in the stock image: chown 999:999 the mountpoint) and not on a read-only mount — "
+            f"never chown the bare directory, or the next cycle creates the tablespace on the underlying "
+            f"filesystem and the moved months vanish under the mount ({e})") from e
     except asyncpg.exceptions.ObjectInUseError as e:  # 55006: "... already in use as a tablespace"
         raise TieringRefused(
             f"cannot create tablespace {name!r}: directory {location} is not empty — it already "
@@ -1210,8 +1214,9 @@ async def _post_move(conn: asyncpg.Connection, part: str) -> Tuple[bool, int]:
     sets hint bits, the visibility map (index-only scans work again at once)
     and all-frozen, so readers never dirty the cold pages later and a
     copy-on-write filesystem never has to re-fragment them one 8 KiB page at
-    a time (measured: the cold tablespace compressed 3.5x instead of 4.6x when
-    concurrent readers set the hint bits instead). It also does what ANALYZE
+    a time (in the lab a month moved under heavy load came out at 3.4-4.1x
+    instead of 4.6x because its pages were written back piecemeal; the freeze
+    keeps readers from adding to that). It also does what ANALYZE
     alone would. Takes SHARE UPDATE EXCLUSIVE only — readers and writers
     continue. Best effort and bounded by a lock_timeout: the move is already
     committed, so a lock timeout or error degrades to ANALYZE and then to a

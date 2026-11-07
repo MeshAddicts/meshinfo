@@ -1,22 +1,26 @@
-# ZFS compression and tiered cold storage
+# Compressed history on ZFS or btrfs
 
 MeshInfo keeps the raw packet archive forever (`mqtt_messages` and
 `packet_receptions`, 98%+ of all rows), so the data volume only ever grows.
 This document covers two things that shrink it without changing the schema,
-the queries or the application:
+the queries or the application, on the two compressing filesystems the
+tiering job's mount check accepts, ZFS and btrfs:
 
 1. **Running Postgres on a compressed ZFS dataset.** The whole cluster — heap,
-   indexes, TOAST, WAL — is compressed transparently by the filesystem.
-   Postgres sees ordinary 8 KiB pages; nothing in the app changes.
-2. **Tiering closed months onto a second, cold-tuned dataset.** Once a month
-   is old enough, the app's tiering job moves its partitions into the
-   `meshinfo_cold` tablespace, which lives on a dataset with a larger record
-   size and a heavier codec. Current data stays on the hot dataset tuned for
-   random 8 KiB writes.
+   indexes, TOAST, WAL — is compressed by the filesystem. Postgres sees
+   ordinary 8 KiB pages; nothing in the app changes.
+2. **Tiering closed months onto a cold-tuned filesystem.** Once a month is
+   old enough, the app's tiering job moves its partitions into the
+   `meshinfo_cold` tablespace, which lives on a ZFS dataset or a btrfs
+   filesystem with a large record size and a heavy codec. Current data stays
+   where it is: on a hot dataset tuned for random 8 KiB writes, or — in the
+   cold-only layout — on the Docker volume it has always been on.
 
-Part 1 alone is worthwhile. Part 2 is optional and adds a step-change on top
-for the bulk of the archive, which after a couple of months is almost entirely
-closed months. Both are opt-in: a stack without the overlay and with
+Part 2 on its own is the lower-effort layout and the one most installs want
+("Choosing a layout" below): nothing moves except closed months, nothing is
+copied by hand, and rolling back is a short procedure with the scheduler
+switched off. Part 1 adds a hot dataset for the live months, WAL and
+catalog. Both are opt-in: a stack without an overlay and with
 `[storage.tiering] enabled = false` (the default) behaves exactly as before.
 
 Quick reference once set up:
@@ -26,7 +30,8 @@ docker compose exec meshinfo python scripts/tier_partitions.py status          #
 docker compose exec meshinfo python scripts/tier_partitions.py plan            # what the next cycle would move
 docker compose exec meshinfo python scripts/tier_partitions.py run             # dry run (default)
 docker compose exec meshinfo python scripts/tier_partitions.py run --apply     # really move
-zfs get compressratio,used,logicalused tank/meshinfo/pgdata tank/meshinfo/pgcold
+zfs get compressratio,used,logicalused tank/meshinfo/pgdata tank/meshinfo/pgcold   # ZFS datasets
+sudo compsize -x /srv/meshinfo/pgcold                                               # btrfs cold directory
 ```
 
 ## Why
@@ -49,9 +54,92 @@ nothing else updates history — so a closed month is effectively immutable and
 read in range scans. That is exactly the workload where a big record size and
 an expensive codec pay off and cost nothing at run time.
 
+## Choosing a layout
+
+The tiering job is filesystem-agnostic: it needs a directory mounted at
+`/var/lib/postgresql/cold` inside the `postgres` container, and its mount
+check accepts ZFS and btrfs. What differs between the layouts is how much of
+the database gets compressed and how much work the switch is.
+
+| layout | needs | compresses | lab ratio | production archive, 29 GB, 18 months |
+|---|---|---|---|---|
+| **Cold-only, btrfs** | a spare block device, partition or loop image file: `mkfs.btrfs`, mounted `compress-force=zstd:9,noatime`, one fstab line (`nofail`, ordered before Docker); `docker-compose.cold.yml`. Nothing to migrate; rollback is a `--tablespace pg_default` run with the scheduler off, then `DROP TABLESPACE` | the closed months only (with the default `cold_after_months = 1`: everything but the current and the previous month); the live cluster stays on its Docker volume, untouched | **5.3×** against the months' original size (3.12 GB → 593 MB, measured on btrfs `zstd:9` with `compsize`; heap 4.8×, B-trees 5.8×, trigram GIN 8.2×). On months the job has moved, `compsize` reads ≈ 4.6×: the rebuild packs the indexes by about a third, so the same bytes on disk are divided by a smaller logical size | ≈ 8.6 GB (10.7 GB conservative) |
+| **Cold-only, ZFS** | a dataset on an existing pool: `setup-zfs-datasets.sh --cold-only`; `docker-compose.cold.yml`. Nothing to migrate; same rollback | the same | **5.3×** (ZFS model, `zstd-9` at 128K: 5.26× against the 5.27× measured on btrfs; `zfs get compressratio` on the rebuilt months reads ≈ 4.6× for the same reason) | ≈ 8.6 GB (10.7 GB conservative) |
+| **Full ZFS** | ZFS on the host; two datasets (`setup-zfs-datasets.sh`); the stack stopped while the existing volume is rsynced onto the hot dataset; `docker-compose.zfs.yml` | everything: the live months, WAL and catalog on the hot dataset (16K / `zstd-3`), the closed months on the cold one (128K / `zstd-9`) | hot **3.0×** (model, `zstd-3` at 16K), cold **5.3×** | ≈ 6.5 GB (8.1 GB conservative) |
+
+Production figures: the lab's heap ratios applied to a 29.08 GB
+`pg_database_size` with 18 months of history and `cold_after_months = 1`
+(`lab/project_production.py` in the benchmark directory; "Measurements"
+below has 12 and 24 months). The cold-only layouts leave the two hot months
+uncompressed, which is where their extra ~2 GB comes from; the gap narrows
+as history accumulates and the hot share shrinks.
+
+Nothing is migrated in the cold-only layouts: mount the filesystem, `docker
+compose up -d` with the overlay, flip `enabled = true`, and the job moves
+closed months at one partition an hour (`run --apply --all` does it in one
+go). Rolling back is the cold-only rollback below: scheduler off,
+`tier_partitions.py --tablespace pg_default run --apply --all`, `DROP
+TABLESPACE meshinfo_cold`, then drop the overlay. The full layout buys the
+last ~25 % — the hot months at 3× instead of 1× — for the price of ZFS on
+the host and a stop-the-stack copy of the cluster.
+
+**Why btrfs is fine for the cold months and not recommended under the live
+cluster.** A cold month is written once by the move (sequentially, in
+128 KiB extents on a quiet server, then frozen by the post-move `VACUUM`)
+and only read afterwards — the workload a copy-on-write filesystem with
+per-extent compression handles best, and the lab measured the same 5.3× on
+btrfs as the ZFS model gives at 128K. The live cluster is the opposite:
+Postgres rewrites 8 KiB pages in place all day (ingest, hint bits, index
+updates, autovacuum, WAL), and on btrfs every such rewrite becomes a new,
+small, separately compressed extent — files fragment, range scans turn into
+seeks, and the ratio decays. The lab saw this on the cold tablespace itself
+when months were moved under heavy concurrent load: the copy's pages left
+shared buffers one 8 KiB page at a time and the tablespace came out at
+3.4–4.1× in three times as many extents, against 4.6× from a quiet move
+(benchmark README, section 4). The post-move `VACUUM (FREEZE)` keeps readers
+from dirtying the month afterwards but does not undo that layout;
+`sudo btrfs filesystem defragment -r -czstd -L 9 /srv/meshinfo/pgcold`
+coalesces it in seconds (`-L 9` needs kernel 6.15 / btrfs-progs 6.14 or
+newer — an older kernel rejects it, so drop it and the mount's level
+applies; on a newer kernel a bare `-czstd` recompresses at zstd level 3) —
+a live cluster would need that continuously. ZFS is copy-on-write too, but
+with fixed-size records, a tunable record size and the ARC it is the
+filesystem PostgreSQL is routinely run on compressed — and even there the
+hot dataset is tuned (16K records, `zstd-3`) rather than left at defaults.
+So: ZFS or btrfs for the cold months; ZFS with those properties, or plain
+ext4/xfs, under the cluster.
+
+**Docker volumes already on a ZFS or btrfs pool** (common on NAS-style
+hosts): there is nothing new to format. ZFS: create a dataset with the cold
+properties — `setup-zfs-datasets.sh --cold-only <pool>/meshinfo-cold
+/<pool>/meshinfo-cold`, or by hand `zfs create -o recordsize=128K -o
+compression=zstd-9 -o atime=off -o xattr=sa -o logbias=throughput
+<pool>/meshinfo-cold` — and point `MESHINFO_PGCOLD_DIR` at its mountpoint.
+btrfs: create a subvolume for the cold directory (`btrfs subvolume create
+/<pool>/meshinfo-cold`) and give it compression, either with
+`compress-force=zstd:9` in the mount options if the whole filesystem may be
+compressed, or as a property on the directory (`btrfs property set
+/<pool>/meshinfo-cold compression zstd`, inherited by everything written
+into it). The property selects only the codec: the level is the
+filesystem's `compress=` mount level, or zstd's default 3 when there is
+none, and a `zstd:9` suffix is accepted but silently ignored (`btrfs
+property get` echoes it back; files written underneath report plain
+`zstd`) — expect the lab's `zstd:3` figure, 5.0×, from the property, and
+5.3× only with `zstd:9` in the mount options. Either way `chown 999:999`
+the directory (the script does it; `zfs create` and `btrfs subvolume
+create` leave it root-owned, and the job's `CREATE TABLESPACE` then fails
+as "not writable"), and `findmnt -no FSTYPE -T <directory>` must print
+`zfs` or `btrfs` (`-T`, because a subvolume is not a mount point of its own
+and a plain `findmnt <directory>` prints nothing for it); that filesystem
+type is what the job's mount check sees through the overlay's bind.
+
 ## Dataset layout
 
-Two datasets under one parent, created by `scripts/setup-zfs-datasets.sh`:
+Two datasets under one parent, created by `scripts/setup-zfs-datasets.sh`, in
+the full ZFS layout. The cold-only layouts use the second row alone — a
+dataset from `setup-zfs-datasets.sh --cold-only`, or a btrfs filesystem
+mounted `compress-force=zstd:9` — at whatever host path `MESHINFO_PGCOLD_DIR`
+names:
 
 | Dataset | Mountpoint (default) | Container path | Properties | Holds |
 |---|---|---|---|---|
@@ -104,11 +192,143 @@ recordsize=...` does not rewrite existing files. That is fine for this design
 because every byte on the cold dataset is written fresh by a move, and the
 initial copy onto the hot dataset (below) rewrites the cluster at 16K.
 
+**The btrfs equivalent.** btrfs has no record size: it compresses per extent
+of up to 128 KiB with 4 KiB sectors, so `compress-force=zstd:9` behaves like
+the cold dataset's 128K / `zstd-9` (the lab measured 5.27× on btrfs with
+`compsize`; the ZFS model in `scripts/zfs_estimate.py` gives 5.26× at 128K /
+`zstd-9`, within 0.2 % — the lab could not load ZFS itself, so the ZFS side
+is modelled, as in the table below). Use `compress-force`, not `compress`:
+with plain `compress` btrfs stops compressing a file after an extent that
+did not shrink enough, and the benchmarks were run with `compress-force`.
+`noatime` for the same reason as `atime=off`.
+
 ## Setup
+
+The full ZFS layout is steps 1–5. A cold-only layout is the cold-only setup
+right below and then steps 4 and 5; steps 1–3 do not apply to it.
+
+### Cold-only setup
+
+**a. A compressed filesystem for the cold months**, owned by the postgres
+image's user (`999:999`). One of:
+
+- *btrfs on a spare block device or partition* (`/dev/sdX1` below is
+  formatted — the whole thing):
+
+  ```sh
+  sudo mkfs.btrfs -L meshinfo-cold /dev/sdX1
+  sudo mkdir -p /srv/meshinfo/pgcold
+  echo 'LABEL=meshinfo-cold  /srv/meshinfo/pgcold  btrfs  compress-force=zstd:9,noatime,nofail,x-systemd.device-timeout=30s,x-systemd.before=docker.service  0 0' | sudo tee -a /etc/fstab
+  sudo mount /srv/meshinfo/pgcold
+  sudo chown 999:999 /srv/meshinfo/pgcold && sudo chmod 750 /srv/meshinfo/pgcold
+  ```
+
+- *btrfs in a loop image file* when there is no spare device: the same thing
+  on a file, sized for the compressed archive plus headroom (at 5× a 20 GB
+  image holds some 100 GB of months), on ext4 or xfs — not on a filesystem
+  that would compress or snapshot the image a second time:
+
+  ```sh
+  sudo fallocate -l 20G /var/lib/meshinfo-cold.img               # preallocated: fails now if the room is not there
+  sudo mkfs.btrfs -L meshinfo-cold /var/lib/meshinfo-cold.img
+  sudo mkdir -p /srv/meshinfo/pgcold
+  echo '/var/lib/meshinfo-cold.img  /srv/meshinfo/pgcold  btrfs  loop,nodiscard,compress-force=zstd:9,noatime,nofail,x-systemd.before=docker.service  0 0' | sudo tee -a /etc/fstab
+  sudo mount /srv/meshinfo/pgcold
+  sudo chown 999:999 /srv/meshinfo/pgcold && sudo chmod 750 /srv/meshinfo/pgcold
+  ```
+
+  The job's free-space guard measures the btrfs inside the image, not what
+  the filesystem holding it has left, so the image must be fully backed: a
+  sparse image (`truncate`) would let a move fill the backing filesystem
+  with the guard still passing, and `nodiscard` keeps btrfs from punching
+  freed extents back out of the preallocation.
+
+- *a ZFS dataset* on an existing pool, with the cold properties, mounted and
+  chowned by the script:
+
+  ```sh
+  sudo scripts/setup-zfs-datasets.sh --cold-only <pool>/meshinfo-cold /srv/meshinfo/pgcold
+  scripts/setup-zfs-datasets.sh --cold-only <pool>/meshinfo-cold /srv/meshinfo/pgcold --dry-run   # preview
+  ```
+
+- *already on ZFS or btrfs* — a dataset or subvolume with compression, see
+  "Choosing a layout"; nothing to format.
+
+Whichever it is, `findmnt /srv/meshinfo/pgcold` must show `btrfs` or `zfs`
+(for a btrfs subvolume, which is not a mount point of its own, `findmnt -no
+FSTYPE -T /srv/meshinfo/pgcold` must print `btrfs` instead): that is what
+the job's mount check verifies from inside the container, and with it set
+(step 5) the job refuses to create the tablespace anywhere else. `nofail`
+keeps the host booting when the cold device or image is missing or broken —
+without it a failed fstab mount fails `local-fs.target` and the boot drops
+into emergency mode with no Docker and no ssh, to protect a filesystem that
+only holds compressed copies of closed months; the stack must come up and
+only the cold months fail, which is the UNMOUNTED line in step 4.
+`x-systemd.before=docker.service` keeps the mount attempt ordered before
+the Docker daemon, which `nofail` would otherwise drop, so the containers do
+not bind the bare mountpoint while a slow device is still appearing. A ZFS
+dataset needs neither: `zfs-mount.service` mounts it, and a failure there
+does not stop the boot. After a reboot, `docker compose exec postgres
+findmnt /var/lib/postgresql/cold` (or the check under "Upgrades") confirms
+the bind points at the real filesystem — if it does not, mount it and
+`docker compose restart postgres meshinfo` (step 4 explains why the restart
+is needed).
+
+**b. The overlay.** `docker-compose.cold.yml` binds that directory at
+`/var/lib/postgresql/cold` in `postgres` and read-only at `/mnt/meshinfo-cold`
+in `meshinfo`; the named volume stays exactly as it is. Put the path and the
+overlay in `.env` next to the compose files:
+
+```
+COMPOSE_FILE=docker-compose.yml:docker-compose.cold.yml
+MESHINFO_PGCOLD_DIR=/srv/meshinfo/pgcold
+```
+
+Naming the files — in `COMPOSE_FILE` or with `-f` — switches off Compose's
+automatic loading of `docker-compose.override.yml`. If you keep one
+(`docker-compose.yml` suggests it for the `127.0.0.1:5432` port map), list
+it too, before the overlay:
+`COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml:docker-compose.cold.yml`;
+`docker compose config` shows the merged result, so check that your
+override's settings are still in it.
+
+```sh
+docker compose config | grep -B2 'target: /var/lib/postgresql/cold'   # the bind is there
+docker compose up -d                                                  # recreates postgres and meshinfo with the binds
+```
+
+`MESHINFO_PGCOLD_DIR` has no default on purpose: without it `docker compose`
+refuses to start instead of binding an empty directory on the root
+filesystem. Nothing is migrated — the cluster has not moved — so this is a
+restart, not a maintenance window.
+
+**c. Steps 4 and 5 below.** The job creates the tablespace on its first
+enabled cycle; configure it with `cold_filesystem = "/mnt/meshinfo-cold"`.
+
+**Rolling back:** (1) set `[storage.tiering] enabled = false` and restart
+`meshinfo` first — while the scheduler runs, every month the CLI brings
+back is eligible again at the next hourly tick, and nothing coordinates the
+two ("Moving months back" below). (2) `tier_partitions.py --tablespace
+pg_default run --apply --all` brings every month back onto the Docker
+volume (same locking, same verification); this direction is not
+free-space-guarded, so the volume's filesystem needs room for
+`pg_tablespace_size('meshinfo_cold')` uncompressed, plus the WAL of each
+move; rerun on exit code 1 (busy). (3) `tier_partitions.py --tablespace
+pg_default plan --all` must report nothing left to move. (4) `docker compose
+exec postgres psql -U postgres -d meshinfo -c 'DROP TABLESPACE
+meshinfo_cold'` while the directory is still mounted: it refuses while
+anything is still on the tablespace, so it doubles as the check, and it
+removes the `PG_<version>_…` directory. A tablespace left defined would
+point at an empty directory inside the named volume once the bind is gone:
+harmless for queries, but the next enabled cycle would skip `CREATE
+TABLESPACE` and fail with `could not create directory` instead of one of
+the step-4 refusals. (5) Remove the overlay from `COMPOSE_FILE` and the
+fstab line, `docker compose up -d`; only then can the cold filesystem go.
 
 ### 1. Create the datasets
 
-On the ZFS host, as root:
+*Full ZFS layout — cold-only installs use the setup above instead.* On the
+ZFS host, as root:
 
 ```sh
 sudo scripts/setup-zfs-datasets.sh tank/meshinfo                # pool/parent of your choice
@@ -125,7 +345,8 @@ real mode refuses to run without it or without root.
 
 ### 2. Point the stack at them
 
-`docker-compose.zfs.yml` is an overlay on `docker-compose.yml`. It binds the
+*Full ZFS layout.* `docker-compose.zfs.yml` is an overlay on
+`docker-compose.yml`. It binds the
 hot dataset at `/var/lib/postgresql` (replacing the `meshinfo_pgdata` named
 volume mount), the cold dataset at `/var/lib/postgresql/cold`, and the cold
 dataset read-only into `meshinfo` at `/mnt/meshinfo-cold`:
@@ -148,11 +369,15 @@ MESHINFO_ZFS_COLD=/tank/meshinfo/pgcold
 With `COMPOSE_FILE` set, plain `docker compose up -d`, `docker compose exec
 …` and the maintenance scripts (which run `docker compose` underneath) all
 pick up the overlay. The named volume is no longer mounted; an existing
-`meshinfo_meshinfo_pgdata` volume stays on disk until you remove it.
+`meshinfo_meshinfo_pgdata` volume stays on disk until you remove it. If you
+keep a `docker-compose.override.yml`, list it in `COMPOSE_FILE` too, before
+the overlay — Compose stops loading it automatically once the files are
+named (see the cold-only setup).
 
 ### 3. Switching an existing Docker volume
 
-A fresh install just starts (step 2) and Postgres initialises the cluster on
+*Full ZFS layout — the cold-only layouts never move the cluster.* A fresh
+install just starts (step 2) and Postgres initialises the cluster on
 the hot dataset. An existing install has to carry its cluster across. The
 copy rewrites every block at 16K/zstd-3, so the hot dataset shows the full
 whole-database compression as soon as it finishes.
@@ -194,23 +419,39 @@ logs one actionable line and tries again an hour later; nothing moves until
 it is fixed:
 
 ```
-tiering: cycle not run: cannot create tablespace 'meshinfo_cold': directory /var/lib/postgresql/cold is not writable by the postgres server user. With docker-compose.zfs.yml this is also what an UNMOUNTED cold dataset looks like (Compose binds the bare, root-owned mountpoint directory underneath it): check `zfs get mounted <dataset>` / `findmnt <host mountpoint>` first and mount it. …
+tiering: cycle not run: cannot create tablespace 'meshinfo_cold': directory /var/lib/postgresql/cold is not writable by the postgres server user. With docker-compose.zfs.yml or docker-compose.cold.yml this is also what an UNMOUNTED cold filesystem looks like (Compose binds the bare, root-owned mountpoint directory underneath it): check `findmnt <host mountpoint>` first, mount it, then `docker compose restart postgres meshinfo` …
 tiering: cycle not run: not creating tablespace 'meshinfo_cold' at /var/lib/postgresql/cold: cold tablespace is on ext4 (/, holding cold_filesystem = '/mnt/meshinfo-cold') — months will move but not compress; a tablespace created on the wrong filesystem … would hide the moved months once the dataset mounts over it …
 tiering: cycle not run: cannot create tablespace 'meshinfo_cold': directory /var/lib/postgresql/cold is not empty — it already holds a PG_<version> tablespace directory …
 tiering: cycle not run: cannot create tablespace 'meshinfo_cold': the connecting role is not a superuser (CREATE TABLESPACE needs one) …
-tiering: cycle not run: cannot create tablespace 'meshinfo_cold': directory /var/lib/postgresql/cold does not exist inside the postgres container — docker-compose.zfs.yml binds the cold dataset at /var/lib/postgresql/cold; without the overlay, or with another cold_tablespace_location, mount or create the directory there first …
+tiering: cycle not run: cannot create tablespace 'meshinfo_cold': directory /var/lib/postgresql/cold does not exist inside the postgres container — the overlays (docker-compose.zfs.yml, docker-compose.cold.yml) bind the cold directory at /var/lib/postgresql/cold; without one, or with another cold_tablespace_location, mount or create the directory there first …
 ```
 
-With the overlay the directory inside the container always exists (Compose
-creates the host path if it has to), so a cold dataset that is not mounted —
-the pool imported late, a reboot before `zfs mount -a` — shows up as the
-first line, not as "does not exist". Do not `chown` the bare directory to
-make that line go away: the next cycle would create the tablespace on the
-root filesystem, and the moved months would vanish underneath the dataset
-the moment it mounts. With `cold_filesystem` set (the overlay's bind into
-`meshinfo`, step 5) the job notices on its own and creates nothing until the
-mount is right — the second line. The last line belongs to a stack without
-the overlay, or to another `cold_tablespace_location`.
+With either overlay the directory inside the container always exists
+(Compose creates the host path if it has to), so a cold filesystem that is
+not mounted — the pool imported late, a reboot before `zfs mount -a`, an
+fstab entry that did not mount — shows up as the first line, not as "does
+not exist". Mounting it on the host is only half the fix: a bind taken while
+the filesystem was unmounted keeps showing the bare directory for the life
+of the container (Docker binds are private by default, so a mount made on
+the host afterwards never appears inside), and a plain `docker compose up
+-d` does not recreate containers whose configuration is unchanged — after
+mounting, run `docker compose restart postgres meshinfo`. The same restart
+brings back cold months that were already moved; until then Postgres
+answers `could not open file` for them. Do not `chown` the bare directory
+to make the first line go away: the next cycle would create the tablespace
+on the root filesystem, and the moved months would vanish underneath the
+real filesystem the moment it mounts. With `cold_filesystem` set (the
+overlay's bind into `meshinfo`, step 5) the job notices on its own and
+creates nothing until the mount is right — the second line. The last line
+belongs to a stack that has never run with an overlay, or to another
+`cold_tablespace_location`; a cold-only stack that ran with the overlay once
+and then lost it (`docker compose -f docker-compose.yml up -d` by habit, or
+`COMPOSE_FILE` dropped from `.env`) shows the first line instead — Docker
+leaves the empty, root-owned mount point behind inside the named volume —
+or the second with `cold_filesystem` set, reported as `on overlay`. Before
+looking at the host mount, repeat the `docker compose config | grep
+'target: /var/lib/postgresql/cold'` check from the cold-only setup: no match
+means the bind is missing from this compose invocation, not from the host.
 
 Prefer to manage tablespaces by hand? Set `cold_tablespace_location = ""`
 (the job then only reports that the tablespace is missing) and create it
@@ -223,8 +464,10 @@ docker compose exec postgres psql -U postgres -d meshinfo -c '\db'
 ```
 
 Either way Postgres creates a version-specific subdirectory (`PG_18_…`)
-inside the location; a location that already holds one (another tablespace,
-or one left behind by a previous cluster) is refused.
+inside the location; a location that already holds one for the same major
+version (another tablespace of this cluster, or a re-initialised cluster of
+the same version) is refused. A previous major version's `PG_<old>_…`
+directory is not: the new cluster creates its own beside it (see Upgrades).
 
 ### 5. Configure the job
 
@@ -389,10 +632,13 @@ Each partition is one transaction:
    continue). One sequential pass sets hint bits, the visibility map (so
    index-only scans on the month are fast again immediately) and all-frozen,
    so no later reader ever dirties a cold page and anti-wraparound vacuums
-   never rewrite the month. This matters on a copy-on-write filesystem: in
-   the lab, letting concurrent readers set the hint bits instead rewrote the
-   month one 8 KiB page at a time and the cold tablespace compressed 3.5×
-   rather than 4.6× (see `benchmarks/`). The step is best effort — a lock
+   never rewrite the month. This matters on a copy-on-write filesystem,
+   where every later 8 KiB rewrite would come back as a separate short
+   extent: in the lab a move made under heavy concurrent load already came
+   out at 3.4–4.1× instead of 4.6× because its pages were written back
+   piecemeal (benchmark README, section 4; `btrfs filesystem defragment -r
+   -czstd -L 9` repairs it), and the freeze keeps readers from adding to
+   that afterwards. The step is best effort — a lock
    timeout (30 s) or error degrades to a plain `ANALYZE` with a warning, and
    autovacuum's insert trigger catches up later; `vacuumed` in the JSON
    result says which happened.
@@ -517,6 +763,10 @@ Postgres recovers from like a power loss. Always snapshot and roll back the
 two datasets **together** — the catalog on the hot dataset references files on
 the cold one, and a one-sided rollback leaves the database inconsistent.
 Snapshots are not a substitute for `pg_dump`: they live on the same pool.
+In the cold-only layouts the catalog lives on the Docker volume and only the
+tablespace on the compressed filesystem, so a snapshot of the cold filesystem
+alone (ZFS or btrfs) is never a consistent image of the database; the logical
+dumps are the backup there.
 
 ## Upgrades
 
@@ -527,10 +777,11 @@ mounted at `/var/lib/postgresql/cold` for every new `postgres` container,
 and the failure mode when it is not is **silent**: Postgres starts anyway
 (it only logs `could not open directory "pg_tblspc/…"`), and every query
 that touches a cold month then fails with `could not open file`. Without
-the overlay at all, Compose mounts the named volume instead and will happily
-initialise an empty cluster there. Treat `COMPOSE_FILE` in `.env` as
-mandatory once tiering has moved data, and after every restart check that
-the binds are in place and a cold month answers:
+the overlay at all, a full-ZFS stack mounts the named volume instead and will
+happily initialise an empty cluster there; a cold-only stack keeps its
+cluster but every cold month fails the same way. Treat `COMPOSE_FILE` in
+`.env` as mandatory once tiering has moved data, and after every restart
+check that the binds are in place and a cold month answers:
 
 ```sh
 docker compose config | grep -A2 'type: bind' | grep 'target: /var/lib/postgresql'
@@ -538,13 +789,28 @@ docker compose exec postgres psql -U postgres -d meshinfo -c '\db' \
   -c 'SELECT count(*) FROM mqtt_messages_2026_03;'   # any month status shows as COLD
 ```
 
+If the bind is there but the month does not answer, the cold filesystem was
+not mounted when the container started: mount it and `docker compose
+restart postgres meshinfo` (step 4).
+
 **PostgreSQL major versions.** The tablespace location is a path *inside the
 container* and stays the same across versions; Postgres keeps each major
 version's files in its own `PG_<major>_…` subdirectory under it, so a new
 version can neither see nor damage the old one's data. `migrate-postgres.sh`
-keeps working for installs that still use the named volume — its dump is
-taken with `--no-tablespaces`. On a bind-mounted ZFS install the script
-refuses to run (it detects the bind mount in the compose config, because its
+keeps working for installs that still use the named volume — the cold-only
+layouts included: it mounts the cold directory into its temporary dump
+container so that `pg_dump` can read the cold months, its dump is taken with
+`--no-tablespaces`, and the restore lands every month on `pg_default` for
+the job to re-tier — the whole archive, uncompressed, on the Docker volume,
+so the script first checks that the volume's filesystem has room for
+`pg_database_size` and refuses otherwise. The old version's `PG_<old>_…`
+subdirectory stays behind in the cold directory (PostgreSQL only refuses a
+location that holds one for the same major version); until it is removed it
+counts against the free-space guard, so `sudo rm -rf
+/srv/meshinfo/pgcold/PG_<old>_*` once the new cluster is verified (and the
+volume backup, if kept, is no longer needed — its cold months live there).
+On a full-ZFS install, with the cluster bind-mounted at `/var/lib/postgresql`,
+the script refuses to run (it detects that bind in the compose config, because its
 named-volume logic would otherwise migrate a stale leftover volume), so do
 the same steps by hand, with the snapshot as the rollback point; remove the
 old named volume (`docker volume rm <project>_meshinfo_pgdata`) once the
@@ -586,6 +852,8 @@ sudo zfs destroy -r tank/meshinfo@pre-upgrade
 ```sh
 # compression actually achieved, per dataset (logicalused = what Postgres thinks it wrote)
 zfs list -o name,used,logicalused,compressratio,recordsize,compression,avail -r tank/meshinfo
+# the same for a btrfs cold directory (package `compsize`: disk usage vs uncompressed, per codec)
+sudo compsize -x /srv/meshinfo/pgcold
 
 # where every month lives and how big it is on the Postgres side
 docker compose exec meshinfo python scripts/tier_partitions.py status
@@ -606,10 +874,16 @@ lock_timeout` / `hit statement_timeout` an attempt that met a query in
 flight), a tablespace that could not be created (step 4 lists the reasons),
 or `cold tablespace is on … — months will move but not compress`, which says
 the path in `cold_filesystem` is not on a ZFS/btrfs dataset in this
-container (and keeps the job from creating the tablespace there). `zfs get compressratio` on the cold
-dataset is the number to watch over time: it should hold steady as months are
-added, and a drop usually means a month was written with different
-properties (check `zfs get recordsize,compression`).
+container (and keeps the job from creating the tablespace there). `zfs get
+compressratio` on the cold dataset — `compsize` on a btrfs cold directory —
+is the number to watch over time: expect about 21–22 % (≈ 4.6×) on the
+months the job wrote (the 5.3× in "Choosing a layout" is against their
+pre-rebuild size), and watch for a drop from your own first reading: it
+should hold steady as months are added, and a drop usually means a month was
+written with different properties (check `zfs get recordsize,compression`,
+or the mount options on btrfs) — or, on btrfs, that a move ran under heavy
+load and left short extents (3.4–4.1×), which `btrfs filesystem defragment
+-r -czstd -L 9` repairs.
 
 ## Why not …
 
@@ -626,6 +900,9 @@ properties (check `zfs get recordsize,compression`).
 - **TimescaleDB / Hydra.** Same story with their own extension builds: not
   stock Postgres, and compressed chunks are read-mostly with their own rules
   for indexes and updates. ZFS gives most of the win with zero schema impact.
+- **btrfs under the whole cluster.** Fine for the write-once cold months,
+  not for a live cluster that rewrites pages in place — see "Choosing a
+  layout".
 - **One dataset only.** Perfectly fine, and the first thing to do. Cold
   months just leave compression on the table, because the ratio at 16K is
   bounded by the 4 KiB rounding described above and the hot codec is chosen
@@ -681,14 +958,18 @@ and indexes together), `cold_after_months = 1`, the lab's heap ratios (hot
 compresses least (B-trees 3.07× / 5.81×, GIN 3.00× / 8.19× in the lab), so
 this errs on the large side. The hot share is two months of the history, so
 the gain grows as history accumulates. "Conservative" adds 25 % to the
-compressed size for payload entropy the synthetic data cannot reproduce.
+compressed size for payload entropy the synthetic data cannot reproduce. The
+cold-only rows (`docker-compose.cold.yml`, ZFS or btrfs) leave the hot share
+uncompressed on the Docker volume.
 
 | layout | 12 months of history | 18 months | 24 months |
 |---|---:|---:|---:|
 | one 16K/zstd-3 dataset | 9.95 GB | 9.95 GB | 9.95 GB |
 | … conservative | 12.4 GB | 12.4 GB | 12.4 GB |
-| tiered | 6.69 GB | 6.47 GB | 6.36 GB |
+| tiered (full ZFS) | 6.69 GB | 6.47 GB | 6.36 GB |
 | tiered, conservative | 8.36 GB | 8.08 GB | 7.95 GB |
+| cold-only (hot untouched, cold 128K/zstd-9) | 9.87 GB | 8.59 GB | 7.95 GB |
+| cold-only, conservative | 12.3 GB | 10.7 GB | 9.94 GB |
 
 The reference figures for the same inventory were 9.6 GB (one dataset) and
 5.9 GB (tiered); the Citus-columnar branch reached 21.2 GB with filtered-query

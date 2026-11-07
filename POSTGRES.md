@@ -358,17 +358,18 @@ on the host, not in the container). Environment variables (`KEEP_DAYS`,
 `BACKUP_DIR`, `REMOTE_TARGET`, `CONTAINER`, `DB_USER`, `DB_NAME`) override the
 config for one-off runs.
 
-## Tiered cold storage (ZFS)
+## Tiered cold storage (ZFS or btrfs)
 
 The archive only grows, and stock Postgres compresses nothing but TOASTed
-values. Running the cluster on a compressed ZFS dataset shrinks heap, indexes
-and WAL transparently — no schema or query change — and a second, cold-tuned
-dataset (128K records, `zstd-9`) does better still for the closed months that
-make up nearly all of the data. The tiering job moves each month's
-`mqtt_messages` / `packet_receptions` partitions into the `meshinfo_cold`
-tablespace on that dataset once the month is old enough. Setup (datasets,
-the `docker-compose.zfs.yml` overlay, the tablespace, moving an existing
-volume) and the full operator guide are in [ZFS.md](ZFS.md).
+values. The tiering job moves each month's `mqtt_messages` /
+`packet_receptions` partitions into the `meshinfo_cold` tablespace once the
+month is old enough, and that tablespace lives on a compressed filesystem:
+in the cold-only layout a btrfs filesystem or a ZFS dataset holding just the
+closed months, with the cluster left on its Docker volume
+(`docker-compose.cold.yml`); in the full layout the whole cluster sits on a
+compressed ZFS dataset too (`docker-compose.zfs.yml`). No schema or query
+changes either way. Choosing a layout, setup, the tablespace, moving an
+existing volume and the full operator guide are in [ZFS.md](ZFS.md).
 
 ```toml
 [storage.tiering]

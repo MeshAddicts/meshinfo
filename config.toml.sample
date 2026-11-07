@@ -67,12 +67,12 @@ cold_after_months = 3                 # keep this many closed months hot; older 
 cold_tablespace = "meshinfo_cold"     # target tablespace; created by the job if missing
 cold_tablespace_location = "/var/lib/postgresql/cold"   # where it is created: the cold
                                       # dataset's path inside the postgres container
-                                      # (docker-compose.zfs.yml); "" = never create it
+                                      # (either overlay); "" = never create it
 tables = ["mqtt_messages", "packet_receptions"]   # archive tables to tier
 max_partitions_per_cycle = 1          # partitions moved per hourly cycle (at least 1)
 cold_filesystem = ""                  # mount point of the cold dataset inside the app
                                       # container, e.g. "/mnt/meshinfo-cold" with
-                                      # docker-compose.zfs.yml; "" skips the free-space check,
+                                      # either overlay; "" skips the free-space check,
                                       # the zfs/btrfs mount warning and the creation guard
 min_free_mb = 2048                    # refuse a move that would leave less than this free
                                       # on cold_filesystem (sized as if uncompressed)

@@ -71,6 +71,19 @@ if docker compose config 2>/dev/null | grep -A2 -E '^\s+- type: bind$' \
   exit 1
 fi
 
+# Cold-only tiered installs (ZFS.md, "Choosing a layout") keep the cluster in
+# the named volume and bind a directory on a compressed filesystem at
+# /var/lib/postgresql/cold for the meshinfo_cold tablespace. The temporary
+# dump container below needs that directory too, or pg_dump cannot read the
+# cold months. The tablespace path is the same inside every PostgreSQL version.
+COLD_DIR="$(docker compose config 2>/dev/null | grep -A2 -E '^\s+- type: bind$' \
+  | grep -B1 -E 'target: /var/lib/postgresql/cold$' | sed -nE 's/^\s+source: (.+)$/\1/p' | head -n1 || true)"
+COLD_MOUNT=()
+if [ -n "$COLD_DIR" ]; then
+  log "Cold tablespace directory: $COLD_DIR (bound into the dump container as /var/lib/postgresql/cold)"
+  COLD_MOUNT=(-v "${COLD_DIR}:/var/lib/postgresql/cold")
+fi
+
 VOLUME="${PGDATA_VOLUME:-}"
 if [ -z "$VOLUME" ]; then
   # Auto-detect the compose pgdata volume. Refuse to guess when a host runs
@@ -139,6 +152,7 @@ OLD_MOUNT="/var/lib/postgresql/data"
 [ "$OLD_VER" -ge 18 ] && OLD_MOUNT="/var/lib/postgresql"
 docker run -d --name "$TMP_PG" \
   -v "$VOLUME":"$OLD_MOUNT" \
+  ${COLD_MOUNT[@]+"${COLD_MOUNT[@]}"} \
   -e POSTGRES_PASSWORD="$DB_PASSWORD" \
   "postgres:${OLD_VER}" >/dev/null
 
@@ -153,10 +167,39 @@ for i in $(seq 1 60); do
   sleep 1
 done
 
+# Cold-only tiered installs: the restore puts the whole archive — the cold
+# months included, uncompressed — back onto the named volume before the
+# tiering job re-tiers it. Refuse now, before anything destructive, when the
+# filesystem behind the volume cannot hold that (SKIP_SPACE_CHECK=1 overrides).
+if [ -n "$COLD_DIR" ] && [ "${SKIP_SPACE_CHECK:-0}" != "1" ]; then
+  DB_BYTES="$(docker exec -e PGPASSWORD="$DB_PASSWORD" "$TMP_PG" \
+    psql -U "$DB_USER" -d "$DB_NAME" -Atc 'SELECT pg_database_size(current_database())' 2>/dev/null | tr -cd '0-9' || true)"
+  AVAIL_BYTES="$(docker exec "$TMP_PG" df -Pk "$OLD_MOUNT" 2>/dev/null | awk 'NR==2 {printf "%d", $4 * 1024}' || true)"
+  OLD_BYTES="$(docker exec "$TMP_PG" du -sk "$OLD_MOUNT" 2>/dev/null | awk '{printf "%d", $1 * 1024}' || true)"
+  [ "${KEEP_VOLUME_BACKUP:-0}" = "1" ] && OLD_BYTES=0       # the backup copy keeps those bytes allocated
+  if [ -n "$DB_BYTES" ] && [ -n "$AVAIL_BYTES" ]; then
+    NEED_BYTES=$(( DB_BYTES * 12 / 10 + 1073741824 ))        # the whole database, +20 % and 1 GiB for WAL and temp files
+    HAVE_BYTES=$(( AVAIL_BYTES + ${OLD_BYTES:-0} ))          # free now, plus what removing the old volume frees
+    if [ "$HAVE_BYTES" -lt "$NEED_BYTES" ]; then
+      err "Not enough space for the restore: the database is $(( DB_BYTES / 1048576 )) MiB, and on a cold-only"
+      err "tiered install every month is restored onto pg_default (the named volume) before the tiering"
+      err "job re-tiers the cold ones. The volume's filesystem has $(( HAVE_BYTES / 1048576 )) MiB (free plus the"
+      err "old volume); about $(( NEED_BYTES / 1048576 )) MiB are needed. Free space, or set SKIP_SPACE_CHECK=1."
+      err "The volume has NOT been modified."
+      exit 1
+    fi
+    log "Space check: database $(( DB_BYTES / 1048576 )) MiB, room for the restore $(( HAVE_BYTES / 1048576 )) MiB."
+  else
+    warn "Could not measure the database size or the free space — skipping the space check."
+  fi
+fi
+
 log "Dumping database '${DB_NAME}' → ${DUMP_FILE}"
 # --no-tablespaces: on tiered installs (ZFS.md) cold months live in the
 # meshinfo_cold tablespace, which does not exist in the fresh cluster. The
-# restore lands everything on pg_default; the tiering job re-tiers afterwards.
+# restore lands everything on pg_default; the tiering job re-tiers afterwards
+# (the old version's PG_<old>_* subdirectory stays in the cold directory
+# until an operator removes it; see the completion message).
 if ! docker exec -e PGPASSWORD="$DB_PASSWORD" "$TMP_PG" \
        pg_dump -U "$DB_USER" -d "$DB_NAME" --no-owner --no-privileges --no-tablespaces \
      | gzip > "$DUMP_FILE"; then
@@ -217,5 +260,11 @@ log "Migration complete — PostgreSQL ${OLD_VER} → ${NEW_VER}. 🎉"
 echo
 echo "  SQL dump kept at : ${DUMP_FILE}"
 [ "${KEEP_VOLUME_BACKUP:-0}" = "1" ] && echo "  Volume backup    : docker volume '${VOLUME}_oldpg_backup'"
+if [ -n "$COLD_DIR" ]; then
+  echo "  Cold tablespace  : the old cluster's copy of the cold months stays in ${COLD_DIR}/PG_${OLD_VER}_*;"
+  echo "                     the tiering job re-tiers into PG_${NEW_VER}_* beside it, and the free-space"
+  echo "                     guard counts the stale copy. Once the restore is verified (and the volume"
+  echo "                     backup, if kept, is no longer needed):  sudo rm -rf ${COLD_DIR}/PG_${OLD_VER}_*"
+fi
 echo
 echo "Start the full stack:  docker compose up -d"
