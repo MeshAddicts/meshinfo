@@ -17,6 +17,7 @@ import uuid
 from copy import deepcopy
 from typing import Any
 
+from storage.db.tiering import TieringPolicy
 from utils import normalize_node_id
 
 logger = logging.getLogger(__name__)
@@ -164,6 +165,24 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "password": "password",
             "min_pool_size": 1,
             "max_pool_size": 5,
+        },
+        # Tiered cold storage (ZFS.md): closed monthly partitions of the archive
+        # tables are rebuilt on a compressed "cold" tablespace once they are old
+        # enough and swapped in; readers keep working during the copy. The
+        # maintenance loop runs one cycle per hour when enabled;
+        # scripts/tier_partitions.py drives the same job by hand regardless.
+        "tiering": {
+            "enabled": False,
+            # Keep this many closed months hot; older months are cold.
+            "cold_after_months": 3,
+            # Must already exist (CREATE TABLESPACE ...; see ZFS.md).
+            "cold_tablespace": "meshinfo_cold",
+            "tables": ["mqtt_messages", "packet_receptions"],
+            "max_partitions_per_cycle": 1,
+            # Mount point of the cold dataset inside the app container, for a
+            # free-space check before each move; "" skips the check.
+            "cold_filesystem": "",
+            "min_free_mb": 2048,
         },
     },
     # Per-pixel land-cover clutter for coverage / scan (see RF-MODEL.md).
@@ -576,6 +595,16 @@ def validate(config: dict) -> list[str]:
             for n in denylist:
                 if normalize_node_id(n) is None:
                     warn(f"Config field 'storage.ingest_denylist' has an invalid node id {n!r} (expected hex like \"eba3d8e8\")")
+
+    # ── tiered cold storage (ZFS.md) ──────────────────────────────────
+    # TieringPolicy.from_config coerces/clamps every value and never raises;
+    # validate(raw=...) names each entry it ignored or clamped, plus a bad
+    # cold_tablespace identifier and an empty tables list.
+    check(_validate_type(config, "storage.tiering", dict))
+    tiering_cfg = storage_cfg.get("tiering")
+    if isinstance(tiering_cfg, dict):
+        for msg in TieringPolicy.from_config(config).validate(raw=tiering_cfg):
+            warn(msg)
 
     # ── backups ───────────────────────────────────────────────────────
     check(_validate_one_of(config, "backups.schedule", ["off", "daily", "weekly", "monthly"]))

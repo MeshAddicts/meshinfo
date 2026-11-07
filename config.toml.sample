@@ -53,6 +53,25 @@ password = "password"
 min_pool_size = 1                     # minimum database connection pool size
 max_pool_size = 5                     # maximum database connection pool size
 
+# Tiered cold storage (see ZFS.md). Once a month's archive partitions are old
+# enough, the app rebuilds them on a compressed "cold" tablespace and swaps
+# them in — readers keep working during the copy. The tablespace must already
+# exist (CREATE TABLESPACE meshinfo_cold LOCATION '/var/lib/postgresql/cold').
+# When enabled, the maintenance loop runs one cycle per hour; the same job can
+# be inspected and driven by hand with scripts/tier_partitions.py (status,
+# plan, run), which works even while enabled = false.
+[storage.tiering]
+enabled = false
+cold_after_months = 3                 # keep this many closed months hot; older months are cold
+cold_tablespace = "meshinfo_cold"     # target tablespace (must already exist)
+tables = ["mqtt_messages", "packet_receptions"]   # archive tables to tier
+max_partitions_per_cycle = 1          # partitions moved per hourly cycle (at least 1)
+cold_filesystem = ""                  # mount point of the cold dataset inside the app
+                                      # container, e.g. "/mnt/meshinfo-cold" with
+                                      # docker-compose.zfs.yml; "" skips the free-space check
+min_free_mb = 2048                    # refuse a move that would leave less than this free
+                                      # on cold_filesystem (sized as if uncompressed)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Server — Required
 # Core runtime identity and behavior.
