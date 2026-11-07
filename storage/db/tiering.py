@@ -448,7 +448,10 @@ class TieringPolicy:
         """Warnings (never exceptions). With the raw [storage.tiering] dict, also
         report every entry from_config ignored or clamped."""
         warnings: List[str] = []
-        if not IDENT_RE.match(self.cold_tablespace or ""):
+        raw_tablespace = self.cold_tablespace
+        if isinstance(raw, dict):
+            raw_tablespace = raw.get("cold_tablespace", self.cold_tablespace)
+        if isinstance(raw_tablespace, str) and not IDENT_RE.match(self.cold_tablespace or ""):
             warnings.append(
                 f"storage.tiering.cold_tablespace {self.cold_tablespace!r} is not a plain "
                 "identifier (lowercase letters, digits, underscore; at most 63 characters)"
@@ -489,11 +492,15 @@ class TieringPolicy:
                     f"storage.tiering.min_free_mb = {raw['min_free_mb']} is negative; using "
                     f"{TieringPolicy.min_free_mb}"
                 )
-            for key in ("cold_filesystem", "cold_tablespace"):
-                if key in raw and not isinstance(raw[key], str):
-                    warnings.append(
-                        f"storage.tiering.{key} must be a string (got {raw[key]!r}); ignored"
-                    )
+            if "cold_filesystem" in raw and not isinstance(raw["cold_filesystem"], str):
+                warnings.append(
+                    f"storage.tiering.cold_filesystem must be a string (got {raw['cold_filesystem']!r}); ignored"
+                )
+            if "cold_tablespace" in raw and not isinstance(raw["cold_tablespace"], str):
+                warnings.append(
+                    f"storage.tiering.cold_tablespace must be a string (got {raw['cold_tablespace']!r}); "
+                    "no cold tablespace is set, so tiering cannot run until it is fixed"
+                )
             tables_raw = raw.get("tables")
             if "tables" in raw and not isinstance(tables_raw, (list, tuple)):
                 warnings.append(
