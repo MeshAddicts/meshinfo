@@ -63,7 +63,10 @@ max_pool_size = 5                     # maximum database connection pool size
 [storage.tiering]
 enabled = false
 cold_after_months = 3                 # keep this many closed months hot; older months are cold
-cold_tablespace = "meshinfo_cold"     # target tablespace (must already exist)
+cold_tablespace = "meshinfo_cold"     # target tablespace; created by the job if missing
+cold_tablespace_location = "/var/lib/postgresql/cold"   # where it is created: the cold
+                                      # dataset's path inside the postgres container
+                                      # (docker-compose.zfs.yml); "" = never create it
 tables = ["mqtt_messages", "packet_receptions"]   # archive tables to tier
 max_partitions_per_cycle = 1          # partitions moved per hourly cycle (at least 1)
 cold_filesystem = ""                  # mount point of the cold dataset inside the app

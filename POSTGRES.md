@@ -374,7 +374,8 @@ volume) and the full operator guide are in [ZFS.md](ZFS.md).
 [storage.tiering]
 enabled = false                       # true: the app moves cold months hourly
 cold_after_months = 3                 # whole calendar months since the month closed
-cold_tablespace = "meshinfo_cold"     # CREATE TABLESPACE meshinfo_cold LOCATION '/var/lib/postgresql/cold'
+cold_tablespace = "meshinfo_cold"     # created by the job when missing, at …
+cold_tablespace_location = "/var/lib/postgresql/cold"   # … this path inside the postgres container
 tables = ["mqtt_messages", "packet_receptions"]
 max_partitions_per_cycle = 1          # partitions moved per hourly cycle
 cold_filesystem = ""                  # e.g. "/mnt/meshinfo-cold" to enable the free-space check

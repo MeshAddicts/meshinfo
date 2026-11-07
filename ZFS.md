@@ -177,10 +177,31 @@ root-only; `-aHAX` keeps ownership, modes, hard links, ACLs and xattrs, and
 the trailing slashes copy the *contents* (the `18/docker` subdirectory PG 18
 uses) rather than nesting a directory.
 
-### 4. Create the cold tablespace
+### 4. The cold tablespace
 
-The tiering job never creates tablespaces — where data lives is an operator
-decision. Create it once, pointing at the container path of the cold dataset:
+The tiering job creates the `meshinfo_cold` tablespace itself the first time
+it runs with `enabled = true` (so does `tier_partitions.py run --apply`):
+`CREATE TABLESPACE meshinfo_cold LOCATION '<cold_tablespace_location>'`,
+with `cold_tablespace_location = "/var/lib/postgresql/cold"` by default — the
+path the overlay binds the cold dataset to inside the `postgres` container.
+"Mount the dataset, flip `enabled`" is the whole operator path. It needs
+three things, all of which the setup script, the overlay and the stock
+compose file provide: the directory must exist (the dataset is mounted), it
+must be owned by the postgres user (`999:999`), and the app's database role
+must be a superuser (`POSTGRES_USER=postgres`). When one is missing the job
+logs one actionable line and tries again an hour later; nothing moves until
+it is fixed:
+
+```
+tiering: cycle not run: cannot create tablespace 'meshinfo_cold': directory /var/lib/postgresql/cold does not exist inside the postgres container — is the cold dataset mounted there (docker-compose.zfs.yml binds it at /var/lib/postgresql/cold)? …
+tiering: cycle not run: cannot create tablespace 'meshinfo_cold': directory /var/lib/postgresql/cold is not writable by the postgres server user — it must be owned by that user (uid 999 in the stock image: chown 999:999 the dataset's mountpoint) …
+tiering: cycle not run: cannot create tablespace 'meshinfo_cold': directory /var/lib/postgresql/cold is not empty — it already holds a PG_<version> tablespace directory …
+tiering: cycle not run: cannot create tablespace 'meshinfo_cold': the connecting role is not a superuser (CREATE TABLESPACE needs one) …
+```
+
+Prefer to manage tablespaces by hand? Set `cold_tablespace_location = ""`
+(the job then only reports that the tablespace is missing) and create it
+once yourself:
 
 ```sh
 docker compose exec postgres psql -U postgres -d meshinfo \
@@ -188,9 +209,9 @@ docker compose exec postgres psql -U postgres -d meshinfo \
 docker compose exec postgres psql -U postgres -d meshinfo -c '\db'
 ```
 
-Postgres creates a version-specific subdirectory (`PG_18_…`) inside the
-location, so the directory must exist, be owned by `postgres` and be
-writable — the setup script and the overlay take care of that.
+Either way Postgres creates a version-specific subdirectory (`PG_18_…`)
+inside the location; a location that already holds one (another tablespace,
+or one left behind by a previous cluster) is refused.
 
 ### 5. Configure the job
 
@@ -199,16 +220,19 @@ writable — the setup script and the overlay take care of that.
 enabled = true                        # scheduler runs hourly while true; the CLI works regardless
 cold_after_months = 3                 # a month is cold once this many whole calendar months
                                       # have elapsed since it closed (minimum 1)
-cold_tablespace = "meshinfo_cold"     # the tablespace created in step 4
+cold_tablespace = "meshinfo_cold"     # created by the job when missing (step 4)
+cold_tablespace_location = "/var/lib/postgresql/cold"   # where it is created; "" = by hand
 tables = ["mqtt_messages", "packet_receptions"]
 max_partitions_per_cycle = 1          # moves per hourly cycle; the rest wait for the next one
-cold_filesystem = "/mnt/meshinfo-cold"  # the overlay's read-only bind — enables the free-space check
+cold_filesystem = "/mnt/meshinfo-cold"  # the overlay's read-only bind — enables the free-space
+                                      # check and the hourly "is this really zfs/btrfs?" warning
 min_free_mb = 2048                    # keep at least this much free on cold_filesystem after a move
 ```
 
 The defaults shipped in `config.toml.sample` are the same except
-`enabled = false` and `cold_filesystem = ""` (no free-space check). Restart
-`meshinfo` after editing; the first cycle starts on the next maintenance tick.
+`enabled = false` and `cold_filesystem = ""` (no free-space check, no
+filesystem check). Restart `meshinfo` after editing; the first cycle starts on
+the next maintenance tick.
 
 ## Operating the tiering job
 
@@ -242,7 +266,11 @@ on every table for the whole dump, which the swap would have to wait out
 while every query queues behind it — the backup likewise waits for a running
 cycle) and while the startup node-id backfill is still working (its UPDATEs
 go through the parent table and would deadlock with the swap); both simply
-try again at the next hourly tick.
+try again at the next hourly tick. Every cycle also looks up the filesystem
+behind `cold_filesystem` in the container's `/proc/mounts`: when it is not
+`zfs` or `btrfs` the cycle still runs, but logs `tiering: cold tablespace is
+on ext4 (…) — months will move but not compress` once an hour until the
+mount is fixed (the overlay bind is missing, or points somewhere else).
 
 ### The CLI
 
@@ -510,7 +538,7 @@ sudo find /tank/meshinfo/pgcold -mindepth 1 -delete                  # snapshot 
 
 docker compose up -d --wait postgres                                 # new version initialises fresh; --wait = healthy
 docker compose exec postgres psql -U postgres -d meshinfo \
-  -c "CREATE TABLESPACE meshinfo_cold LOCATION '/var/lib/postgresql/cold';"
+  -c "CREATE TABLESPACE meshinfo_cold LOCATION '/var/lib/postgresql/cold';"   # optional: the job would create it
 gzip -dc backups/meshinfo-pg-pre-upgrade.sql.gz \
   | docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U postgres -d meshinfo -q
 docker compose up -d
@@ -538,7 +566,10 @@ docker compose exec postgres psql -U postgres -d meshinfo \
 across tablespaces — that only happens if something outside the job moved
 objects, since a move is all-or-nothing; running the job on that month fixes
 it. The hourly cycle logs `tiering: …` at INFO; a WARNING there means busy or
-refused (the message says which, and why). `zfs get compressratio` on the cold
+refused (the message says which, and why), a tablespace that could not be
+created (step 4 lists the reasons), or `cold tablespace is on … — months will
+move but not compress`, which says the path in `cold_filesystem` is not on a
+ZFS/btrfs dataset in this container. `zfs get compressratio` on the cold
 dataset is the number to watch over time: it should hold steady as months are
 added, and a drop usually means a month was written with different
 properties (check `zfs get recordsize,compression`).

@@ -39,6 +39,7 @@ import datetime
 import hashlib
 import logging
 import os
+import posixpath
 import random
 import re
 import shutil
@@ -68,6 +69,8 @@ SWAP_LOCK_TIMEOUT = "2500ms"
 SWAP_ATTEMPTS = 10
 SWAP_PAUSE_MAX_SECONDS = 20.0  # pauses: 1, 2, 4, 8, 16, 20, 20, ... (+ up to 1 s jitter)
 POST_MOVE_LOCK_TIMEOUT = "30s"  # VACUUM (FREEZE, ANALYZE) after the swap is best effort
+COMPRESSING_FILESYSTEMS = ("zfs", "btrfs")  # what cold_filesystem is expected to sit on
+PROC_MOUNTS = "/proc/mounts"
 
 UTC = datetime.timezone.utc
 
@@ -353,6 +356,53 @@ def swap_worst_case_seconds() -> float:
         swap_pause_seconds(a, jitter=1.0) for a in range(1, attempts))
 
 
+def _unescape_mount_field(text: str) -> str:
+    """/proc/mounts writes space, tab, newline and backslash as \\040 etc."""
+    return re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), text)
+
+
+def mount_fstype(path: str, mounts_text: str) -> Optional[Tuple[str, str]]:
+    """(mount point, filesystem type) of the mount that holds path, from
+    /proc/mounts-style text (`device mountpoint fstype options dump pass` per
+    line): the longest mount point that is path itself or one of its parents.
+    None when the text holds no such entry."""
+    target = posixpath.normpath("/" + str(path).strip().replace("\\", "/").lstrip("/"))
+    best: Optional[Tuple[str, str]] = None
+    for line in str(mounts_text).splitlines():
+        fields = line.split()
+        if len(fields) < 3:
+            continue
+        mountpoint = posixpath.normpath(_unescape_mount_field(fields[1]))
+        fstype = fields[2]
+        if target == mountpoint or target.startswith(mountpoint.rstrip("/") + "/"):
+            if best is None or len(mountpoint) >= len(best[0]):
+                best = (mountpoint, fstype)
+    return best
+
+
+def check_cold_filesystem(policy: "TieringPolicy", *, mounts_path: str = PROC_MOUNTS) -> Optional[str]:
+    """Warning text when [storage.tiering] cold_filesystem sits on a filesystem
+    that does not compress (anything but zfs or btrfs), else None. Read from
+    /proc/mounts, so there is nothing to check on hosts without it (macOS or
+    Windows development) or while cold_filesystem is unset."""
+    path = policy.cold_filesystem
+    if not path:
+        return None
+    try:
+        with open(mounts_path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return None
+    found = mount_fstype(path, text)
+    if found is None:
+        return None
+    mountpoint, fstype = found
+    if fstype.lower() in COMPRESSING_FILESYSTEMS:
+        return None
+    return (f"cold tablespace is on {fstype} ({mountpoint}, holding cold_filesystem = {path!r}) — "
+            f"months will move but not compress; expected a zfs or btrfs dataset there (see ZFS.md)")
+
+
 def range_check_sql(table: str, conname: str, lo: datetime.datetime, hi: datetime.datetime) -> str:
     """CHECK (created_at in [lo, hi)) so ATTACH PARTITION skips its validation scan."""
     return (
@@ -433,6 +483,9 @@ class TieringPolicy:
     enabled: bool = False
     cold_after_months: int = 3
     cold_tablespace: str = "meshinfo_cold"
+    # Where the job creates cold_tablespace when it does not exist yet (a path
+    # inside the postgres container; "" = never create it, an operator must).
+    cold_tablespace_location: str = "/var/lib/postgresql/cold"
     tables: Tuple[str, ...] = TIERABLE_TABLES
     max_partitions_per_cycle: int = 1
     cold_filesystem: str = ""
@@ -463,6 +516,9 @@ class TieringPolicy:
         tablespace = section.get("cold_tablespace", cls.cold_tablespace)
         tablespace = tablespace if isinstance(tablespace, str) else ""
 
+        location = section.get("cold_tablespace_location", cls.cold_tablespace_location)
+        location = location.strip() if isinstance(location, str) else ""
+
         tables_raw = section.get("tables", list(TIERABLE_TABLES))
         if isinstance(tables_raw, (list, tuple)):
             tables = tuple(t for t in TIERABLE_TABLES if t in tables_raw)
@@ -482,6 +538,7 @@ class TieringPolicy:
             enabled=enabled,
             cold_after_months=cold_after,
             cold_tablespace=tablespace,
+            cold_tablespace_location=location,
             tables=tables,
             max_partitions_per_cycle=per_cycle,
             cold_filesystem=cold_fs,
@@ -499,6 +556,11 @@ class TieringPolicy:
             warnings.append(
                 f"storage.tiering.cold_tablespace {self.cold_tablespace!r} is not a plain "
                 "identifier (lowercase letters, digits, underscore; at most 63 characters)"
+            )
+        if self.cold_tablespace_location and not self.cold_tablespace_location.startswith("/"):
+            warnings.append(
+                f"storage.tiering.cold_tablespace_location {self.cold_tablespace_location!r} is not "
+                "an absolute path inside the postgres container; the job cannot create the tablespace"
             )
         if not self.tables:
             warnings.append(
@@ -544,6 +606,11 @@ class TieringPolicy:
                 warnings.append(
                     f"storage.tiering.cold_tablespace must be a string (got {raw['cold_tablespace']!r}); "
                     "no cold tablespace is set, so tiering cannot run until it is fixed"
+                )
+            location_raw = raw.get("cold_tablespace_location")
+            if "cold_tablespace_location" in raw and not isinstance(location_raw, str):
+                warnings.append(
+                    f"storage.tiering.cold_tablespace_location must be a string (got {location_raw!r}); ignored"
                 )
             tables_raw = raw.get("tables")
             if "tables" in raw and not isinstance(tables_raw, (list, tuple)):
@@ -651,6 +718,69 @@ async def default_tablespace(conn: asyncpg.Connection) -> str:
 
 async def tablespace_exists(conn: asyncpg.Connection, name: str) -> bool:
     return bool(await conn.fetchval("SELECT 1 FROM pg_tablespace WHERE spcname = $1", name))
+
+
+async def ensure_cold_tablespace(conn: asyncpg.Connection, policy: TieringPolicy) -> bool:
+    """Create policy.cold_tablespace at policy.cold_tablespace_location when it
+    does not exist yet ("mount the dataset, flip enabled = true" is the whole
+    operator path). Returns True when it was created, False when it already
+    existed. Raises TieringRefused with an actionable message when it cannot be
+    created: no location configured, the directory is missing inside the
+    postgres container (dataset not mounted), not owned by the postgres user or
+    not writable, already holding a tablespace, or the connecting role is not a
+    superuser. CREATE TABLESPACE cannot run inside a transaction block."""
+    name = policy.cold_tablespace
+    if not IDENT_RE.match(name or ""):
+        raise TieringRefused(f"cold_tablespace {name!r} is not a plain identifier")
+    if await tablespace_exists(conn, name):
+        return False
+    location = policy.cold_tablespace_location
+    if not location:
+        raise TieringRefused(
+            f"tablespace {name!r} does not exist and storage.tiering.cold_tablespace_location is "
+            f"empty; create it by hand: CREATE TABLESPACE {quote_ident(name)} LOCATION "
+            f"'/var/lib/postgresql/cold' (see ZFS.md)")
+    if not location.startswith("/"):
+        raise TieringRefused(
+            f"tablespace {name!r} does not exist and cold_tablespace_location {location!r} is not "
+            "an absolute path inside the postgres container")
+    if conn.is_in_transaction():
+        raise TieringError("ensure_cold_tablespace needs a connection with no open transaction")
+    sql = f"CREATE TABLESPACE {quote_ident(name)} LOCATION {quote_literal(location)}"
+    try:
+        await conn.execute(sql)
+    except asyncpg.exceptions.DuplicateObjectError:
+        return False  # created by another session meanwhile
+    except asyncpg.exceptions.UndefinedFileError as e:  # 58P01: directory "..." does not exist
+        raise TieringRefused(
+            f"cannot create tablespace {name!r}: directory {location} does not exist inside the "
+            f"postgres container — is the cold dataset mounted there (docker-compose.zfs.yml binds "
+            f"it at /var/lib/postgresql/cold)? ({e})") from e
+    except asyncpg.exceptions.InsufficientPrivilegeError as e:  # 42501
+        text = str(e)
+        if "permission denied to create tablespace" in text:
+            raise TieringRefused(
+                f"cannot create tablespace {name!r}: the connecting role is not a superuser "
+                f"(CREATE TABLESPACE needs one) — create it as the postgres superuser: {sql}") from e
+        raise TieringRefused(
+            f"cannot create tablespace {name!r}: directory {location} is not writable by the "
+            f"postgres server user — it must be owned by that user (uid 999 in the stock image: "
+            f"chown 999:999 the dataset's mountpoint) and not on a read-only mount ({e})") from e
+    except asyncpg.exceptions.ObjectInUseError as e:  # 55006: "... already in use as a tablespace"
+        raise TieringRefused(
+            f"cannot create tablespace {name!r}: directory {location} is not empty — it already "
+            f"holds a PG_<version> tablespace directory (another tablespace, or one left behind by a "
+            f"previous cluster); check \\db, then remove the stale directory or point "
+            f"cold_tablespace_location elsewhere ({e})") from e
+    except asyncpg.exceptions.InvalidParameterValueError as e:  # 22023: not absolute / too long
+        raise TieringRefused(
+            f"cannot create tablespace {name!r}: PostgreSQL rejected the location {location!r}: {e}"
+        ) from e
+    except asyncpg.PostgresError as e:
+        raise TieringRefused(
+            f"cannot create tablespace {name!r} at {location}: {type(e).__name__}: {e}") from e
+    logger.info("tiering: created tablespace %s at %s", name, location)
+    return True
 
 
 _PARTITIONS_SQL = """

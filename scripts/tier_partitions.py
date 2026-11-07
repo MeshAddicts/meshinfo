@@ -12,6 +12,9 @@ pauses. storage/db/tiering.py does the work — one transaction per partition,
 so a failure leaves the original untouched — and this is the operator's
 front end.
 
+`run --apply` creates the cold tablespace at [storage.tiering]
+cold_tablespace_location when it does not exist yet, exactly like the hourly
+job; `plan` and dry runs only report that it is missing.
 
     status    every monthly partition: HOT/COLD by policy, tablespace(s),
               table/index/total size, "(partial!)" when split across
@@ -79,10 +82,12 @@ from storage.db.tiering import (  # noqa: E402
     TieringBusy,
     TieringPolicy,
     TieringRefused,
+    check_cold_filesystem,
     cold_cutoff,
     db_now,
     default_tablespace,
     dsn_from_config,
+    ensure_cold_tablespace,
     human_bytes,
     is_cold,
     list_all_partitions,
@@ -467,10 +472,25 @@ async def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         await set_session(conn)
         now = (await db_now(conn)).astimezone(datetime.timezone.utc)
+        cold_target = target == policy.cold_tablespace
+        if cold_target and args.command != "status":
+            fs_warning = check_cold_filesystem(policy)
+            if fs_warning:
+                _err(f"warning: {fs_warning}")
         if args.command != "status" and not await tablespace_exists(conn, target):
-            _err(f"tablespace {target!r} does not exist "
-                 "(CREATE TABLESPACE ... LOCATION '/var/lib/postgresql/cold'; see ZFS.md)")
-            return EXIT_USAGE
+            if cold_target and args.command == "run" and args.apply:
+                # The operator path is "mount the dataset, flip enabled = true":
+                # a real run creates the tablespace just like the hourly job.
+                await ensure_cold_tablespace(conn, policy)
+                _err(f"created tablespace {target} at {policy.cold_tablespace_location}")
+            else:
+                if cold_target and policy.cold_tablespace_location:
+                    hint = (f"; `run --apply` (or the hourly job) creates it at "
+                            f"{policy.cold_tablespace_location} — storage.tiering.cold_tablespace_location")
+                else:
+                    hint = " (CREATE TABLESPACE ... LOCATION '/var/lib/postgresql/cold'; see ZFS.md)"
+                _err(f"tablespace {target!r} does not exist{hint}")
+                return EXIT_USAGE
         if args.command == "status":
             return await cmd_status(conn, args, policy, now)
         if args.command == "plan":
