@@ -1,1 +1,0 @@
-{"source":"lab model (scripts/zfs_estimate.py) 2026-11-04: hot = zstd-3@16K, cold = zstd-9@128K; logical bytes from the lab cluster (heap only, the reference method)","classes":{"heap":{"logical":1792335872,"hot":2.924,"cold":4.82}}}
