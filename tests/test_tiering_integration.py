@@ -37,6 +37,7 @@ from storage.db.tiering import (
     cold_cutoff,
     db_now,
     default_tablespace,
+    ensure_cold_tablespace,
     is_cold,
     list_partitions,
     month_bounds,
@@ -1003,3 +1004,25 @@ async def _stall_bound_scenario(conn: asyncpg.Connection) -> None:
         await prober.close()
 
 
+def test_cold_tablespace_creation_against_the_server():
+    """ensure_cold_tablespace leaves an existing tablespace alone, refuses with
+    an actionable message when the location is not a directory on the server
+    (nothing created), and refuses without a location."""
+    _run(_ensure_tablespace_scenario)
+
+
+async def _ensure_tablespace_scenario(conn: asyncpg.Connection) -> None:
+    assert await ensure_cold_tablespace(conn, POLICY) is False
+    missing = "meshinfo_tiering_no_such_tablespace"
+    policy = dataclasses.replace(POLICY, cold_tablespace=missing,
+                                 cold_tablespace_location="/nonexistent/meshinfo-tiering-test")
+    with pytest.raises(TieringRefused) as excinfo:
+        await ensure_cold_tablespace(conn, policy)
+    assert "does not exist inside the postgres container" in str(excinfo.value)
+    assert "mounted" in str(excinfo.value) and missing in str(excinfo.value)
+    assert not await tablespace_exists(conn, missing)
+    with pytest.raises(TieringRefused) as excinfo:
+        await ensure_cold_tablespace(conn, dataclasses.replace(policy, cold_tablespace_location=""))
+    assert "cold_tablespace_location" in str(excinfo.value)
+    assert not await tablespace_exists(conn, missing)
+    assert not conn.is_in_transaction()

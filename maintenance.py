@@ -12,10 +12,13 @@ separate manual step: scripts/compact_mqtt_partitions.py.
 
 Tiering: with [storage.tiering] enabled = true, run_tiering moves at most
 max_partitions_per_cycle closed, cold monthly partitions of the archive tables
-onto the cold tablespace once an hour. storage/db/tiering.py does the work on
-a dedicated connection with no command timeout (the app pool's 10 s would kill
-the copy); one transaction per partition, so a failure leaves the original in
-place. main.maintenance_loop never runs a cycle alongside a backup (pg_dump
+onto the cold tablespace once an hour, creating that tablespace at
+cold_tablespace_location on the first cycle if it does not exist yet, and
+warning on every cycle when cold_filesystem is not on a compressing
+filesystem. storage/db/tiering.py does the work on a dedicated connection
+with no command timeout (the app pool's 10 s would kill the copy); one
+transaction per partition, so a failure leaves the original in place.
+main.maintenance_loop never runs a cycle alongside a backup (pg_dump
 holds ACCESS SHARE on every table, which the swap would queue behind) or
 while the startup node-id backfill is still running (its UPDATEs through the
 parent would deadlock with the swap). scripts/tier_partitions.py drives the
@@ -33,7 +36,15 @@ from typing import Any, Dict, Optional
 
 import asyncpg
 
-from storage.db.tiering import CycleResult, TieringError, TieringPolicy, connect_kwargs, run_cycle
+from storage.db.tiering import (
+    CycleResult,
+    TieringError,
+    TieringPolicy,
+    check_cold_filesystem,
+    connect_kwargs,
+    ensure_cold_tablespace,
+    run_cycle,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -150,9 +161,11 @@ def tiering_due(config: Dict[str, Any]) -> bool:
 async def run_tiering(config: Dict[str, Any]) -> Optional[CycleResult]:
     """One tiering cycle (storage.db.tiering.run_cycle with the configured
     policy: no dry run, no deep verify, max_partitions_per_cycle moves) on a
-    dedicated asyncpg connection without a command timeout. Returns the
-    CycleResult, or None when the cycle could not run at all; never raises
-    (cancellation aside). The next attempt is an hour away either way."""
+    dedicated asyncpg connection without a command timeout. Creates the cold
+    tablespace first when it is missing, and warns when cold_filesystem is not
+    on zfs/btrfs. Returns the CycleResult, or None when the cycle could not run
+    at all; never raises (cancellation aside). The next attempt is an hour away
+    either way."""
     global _next_tiering_attempt_monotonic
     _next_tiering_attempt_monotonic = time.monotonic() + TIERING_INTERVAL_SEC
 
@@ -160,12 +173,20 @@ async def run_tiering(config: Dict[str, Any]) -> Optional[CycleResult]:
     kwargs = connect_kwargs(config)
     conn: Optional[asyncpg.Connection] = None
     try:
+        fs_warning = check_cold_filesystem(policy)
+        if fs_warning:
+            logger.warning("tiering: %s", fs_warning)
         conn = await asyncpg.connect(**kwargs)
+        if await ensure_cold_tablespace(conn, policy):
+            logger.warning("tiering: created tablespace %s at %s (set cold_tablespace_location = "
+                           "\"\" to manage tablespaces by hand)",
+                           policy.cold_tablespace, policy.cold_tablespace_location)
         result = await run_cycle(conn, policy)
     except asyncio.CancelledError:
         raise
     except TieringError as e:
-        # run_cycle refuses to start on a bad policy (e.g. cold_tablespace).
+        # A bad policy, or a cold tablespace that does not exist and cannot be
+        # created (dataset not mounted, directory not writable, no superuser).
         logger.warning("tiering: cycle not run: %s", e)
         return None
     except (OSError, asyncpg.PostgresError, asyncpg.InterfaceError) as e:

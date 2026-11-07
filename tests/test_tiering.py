@@ -16,12 +16,14 @@ import time
 import tomllib
 from pathlib import Path
 
+import asyncpg
 import pytest
 
 import config as config_mod
 import maintenance
 import storage.db.tiering as tiering_mod
 from storage.db.tiering import (
+    COMPRESSING_FILESYSTEMS,
     IDENT_RE,
     LONG_HOLDER_SECONDS,
     MAX_IDENT,
@@ -34,17 +36,21 @@ from storage.db.tiering import (
     CycleResult,
     MoveResult,
     PartitionInfo,
+    TieringError,
     TieringPolicy,
     add_months,
+    check_cold_filesystem,
     clone_index_sql,
     cold_cutoff,
     connect_kwargs,
     constraint_index_sql,
     dsn_from_config,
+    ensure_cold_tablespace,
     human_bytes,
     is_cold,
     month_bounds,
     month_label,
+    mount_fstype,
     parse_bounds,
     partition_month,
     quote_ident,
@@ -502,17 +508,20 @@ class TestTieringPolicyFromConfig:
         assert policy.enabled is False
         assert policy.cold_after_months == 3
         assert policy.cold_tablespace == "meshinfo_cold"
+        assert policy.cold_tablespace_location == "/var/lib/postgresql/cold"
         assert policy.tables == TIERABLE_TABLES == ("mqtt_messages", "packet_receptions")
         assert policy.max_partitions_per_cycle == 1
         assert policy.cold_filesystem == ""
         assert policy.min_free_mb == 2048
 
     def test_reads_every_key(self):
-        cfg = _tiering_cfg(cold_after_months=6, cold_tablespace="cold2", tables=["packet_receptions"],
-                           max_partitions_per_cycle=4, cold_filesystem="/mnt/meshinfo-cold", min_free_mb=0)
+        cfg = _tiering_cfg(cold_after_months=6, cold_tablespace="cold2", cold_tablespace_location="/mnt/cold2",
+                           tables=["packet_receptions"], max_partitions_per_cycle=4,
+                           cold_filesystem="/mnt/meshinfo-cold", min_free_mb=0)
         assert TieringPolicy.from_config(cfg) == TieringPolicy(
-            enabled=True, cold_after_months=6, cold_tablespace="cold2", tables=("packet_receptions",),
-            max_partitions_per_cycle=4, cold_filesystem="/mnt/meshinfo-cold", min_free_mb=0)
+            enabled=True, cold_after_months=6, cold_tablespace="cold2", cold_tablespace_location="/mnt/cold2",
+            tables=("packet_receptions",), max_partitions_per_cycle=4, cold_filesystem="/mnt/meshinfo-cold",
+            min_free_mb=0)
 
     def test_enabled_accepts_bools_only(self):
         assert TieringPolicy.from_config(_tiering_cfg(enabled=True)).enabled is True
@@ -718,6 +727,7 @@ def test_sample_config_tiering_block_matches_defaults():
         "enabled": False,
         "cold_after_months": 3,
         "cold_tablespace": "meshinfo_cold",
+        "cold_tablespace_location": "/var/lib/postgresql/cold",
         "tables": ["mqtt_messages", "packet_receptions"],
         "max_partitions_per_cycle": 1,
         "cold_filesystem": "",
@@ -1068,8 +1078,10 @@ class TestRunTieringContract:
     def teardown_method(self):
         maintenance._next_tiering_attempt_monotonic = 0.0
 
-    def _wire(self, monkeypatch, cycle):
+    def _wire(self, monkeypatch, cycle, *, created=False, ensure_error=None, fs_warning=None):
         closed = []
+        self.ensured = []
+        self.cycles = []
 
         class FakeConn:
             async def close(self, timeout=None):
@@ -1080,12 +1092,21 @@ class TestRunTieringContract:
             return FakeConn()
 
         async def fake_cycle(conn, policy):
+            self.cycles.append(policy.cold_tablespace)
             if isinstance(cycle, Exception):
                 raise cycle
             return cycle
 
+        async def fake_ensure(conn, policy):
+            self.ensured.append(policy.cold_tablespace)
+            if ensure_error is not None:
+                raise ensure_error
+            return created
+
         monkeypatch.setattr(maintenance.asyncpg, "connect", fake_connect)
         monkeypatch.setattr(maintenance, "run_cycle", fake_cycle)
+        monkeypatch.setattr(maintenance, "ensure_cold_tablespace", fake_ensure)
+        monkeypatch.setattr(maintenance, "check_cold_filesystem", lambda policy: fs_warning)
         return closed
 
     def test_unexpected_error_returns_none_and_closes(self, monkeypatch, caplog):
@@ -1102,6 +1123,45 @@ class TestRunTieringContract:
         closed = self._wire(monkeypatch, result)
         assert asyncio.run(maintenance.run_tiering(_tiering_cfg(enabled=True))) is result
         assert closed == [10]
+        assert self.ensured == ["meshinfo_cold"] and self.cycles == ["meshinfo_cold"]
+
+    def test_missing_tablespace_is_created_before_the_cycle(self, monkeypatch, caplog):
+        result = CycleResult(results=[], target=TS, dry_run=False)
+        closed = self._wire(monkeypatch, result, created=True)
+        with caplog.at_level(logging.INFO, logger="maintenance"):
+            assert asyncio.run(maintenance.run_tiering(_tiering_cfg(enabled=True))) is result
+        assert self.ensured == ["meshinfo_cold"] and self.cycles == ["meshinfo_cold"]
+        assert closed == [10]
+        created = [r for r in caplog.records if "created tablespace meshinfo_cold" in r.getMessage()]
+        assert created and created[0].levelno == logging.WARNING
+        assert "/var/lib/postgresql/cold" in created[0].getMessage()
+
+    def test_tablespace_that_cannot_be_created_skips_the_cycle(self, monkeypatch, caplog):
+        refusal = TieringRefused("cannot create tablespace 'meshinfo_cold': directory "
+                                 "/var/lib/postgresql/cold does not exist inside the postgres container")
+        closed = self._wire(monkeypatch, CycleResult(results=[], target=TS, dry_run=False),
+                            ensure_error=refusal)
+        cfg = _tiering_cfg(enabled=True)
+        with caplog.at_level(logging.WARNING, logger="maintenance"):
+            assert asyncio.run(maintenance.run_tiering(cfg)) is None
+        assert self.cycles == []  # no cycle without a tablespace
+        assert closed == [10]  # the connection is still closed
+        assert maintenance.tiering_due(cfg) is False  # and the hourly backoff is armed
+        messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("cycle not run" in m and "does not exist inside the postgres container" in m for m in messages)
+
+    def test_non_compressing_cold_filesystem_warns_every_cycle(self, monkeypatch, caplog):
+        result = CycleResult(results=[], target=TS, dry_run=False)
+        warning = "cold tablespace is on ext4 (/, holding cold_filesystem = '/mnt/meshinfo-cold') — months will move but not compress"
+        self._wire(monkeypatch, result, fs_warning=warning)
+        cfg = _tiering_cfg(enabled=True, cold_filesystem="/mnt/meshinfo-cold")
+        with caplog.at_level(logging.WARNING, logger="maintenance"):
+            assert asyncio.run(maintenance.run_tiering(cfg)) is result
+            maintenance._next_tiering_attempt_monotonic = 0.0
+            assert asyncio.run(maintenance.run_tiering(cfg)) is result
+        warned = [r for r in caplog.records if r.levelno == logging.WARNING and "not compress" in r.getMessage()]
+        assert len(warned) == 2  # once per cycle, not once per process
+        assert self.cycles == ["meshinfo_cold", "meshinfo_cold"]  # the cycle still runs
 
 
 # ── follow-up: the swap stall bound ──────────────────────────────────────────
@@ -1143,3 +1203,166 @@ class TestSwapBound:
             timeout_seconds("soon")
 
 
+# ── follow-up: cold_tablespace_location, tablespace creation, mount check ────
+
+class TestColdTablespaceLocation:
+    def test_default_is_the_overlay_mount_point(self):
+        assert TieringPolicy().cold_tablespace_location == "/var/lib/postgresql/cold"
+        assert (TieringPolicy.from_config(config_mod.DEFAULT_CONFIG).cold_tablespace_location
+                == "/var/lib/postgresql/cold")
+
+    def test_read_and_stripped(self):
+        cfg = _tiering_cfg(cold_tablespace_location=" /mnt/cold ")
+        assert TieringPolicy.from_config(cfg).cold_tablespace_location == "/mnt/cold"
+        assert TieringPolicy.from_config(_tiering_cfg(cold_tablespace_location="")).cold_tablespace_location == ""
+
+    def test_non_string_is_ignored_with_a_warning(self):
+        raw = {"cold_tablespace_location": 7}
+        policy = TieringPolicy.from_config({"storage": {"tiering": raw}})
+        assert policy.cold_tablespace_location == ""
+        warns = policy.validate(raw=raw)
+        assert len(warns) == 1
+        assert "storage.tiering.cold_tablespace_location" in warns[0] and "ignored" in warns[0]
+
+    def test_relative_path_warns(self):
+        warns = TieringPolicy(cold_tablespace_location="cold").validate()
+        assert len(warns) == 1 and "absolute path" in warns[0]
+        assert TieringPolicy(cold_tablespace_location="").validate() == []
+        cfg = _validatable_base()
+        cfg["storage"]["tiering"]["cold_tablespace_location"] = "relative/dir"
+        assert len(_tiering_warnings(cfg)) == 1
+
+
+MOUNTS = (
+    "overlay / overlay rw,relatime 0 0\n"
+    "proc /proc proc rw 0 0\n"
+    "tank/meshinfo/pgcold /mnt/meshinfo-cold zfs ro,xattr,posixacl 0 0\n"
+    "/dev/sdb1 /mnt/meshinfo-cold/nested ext4 rw 0 0\n"
+    "/dev/sdc1 /mnt/with\\040space btrfs rw 0 0\n"
+)
+
+
+class TestMountFstype:
+    def test_longest_matching_mount_point_wins(self):
+        assert mount_fstype("/mnt/meshinfo-cold", MOUNTS) == ("/mnt/meshinfo-cold", "zfs")
+        assert mount_fstype("/mnt/meshinfo-cold/sub/dir", MOUNTS) == ("/mnt/meshinfo-cold", "zfs")
+        assert mount_fstype("/mnt/meshinfo-cold/nested/x", MOUNTS) == ("/mnt/meshinfo-cold/nested", "ext4")
+
+    def test_sibling_prefix_is_not_a_parent(self):
+        assert mount_fstype("/mnt/meshinfo-cold2", MOUNTS) == ("/", "overlay")
+
+    def test_root_fallback_and_octal_escapes(self):
+        assert mount_fstype("/var/lib/postgresql/cold", MOUNTS) == ("/", "overlay")
+        assert mount_fstype("/mnt/with space/x", MOUNTS) == ("/mnt/with space", "btrfs")
+
+    def test_trailing_slash_and_empty_text(self):
+        assert mount_fstype("/mnt/meshinfo-cold/", MOUNTS) == ("/mnt/meshinfo-cold", "zfs")
+        assert mount_fstype("/mnt/meshinfo-cold", "") is None
+        assert mount_fstype("/mnt/meshinfo-cold", "garbage line\n") is None
+
+
+class TestCheckColdFilesystem:
+    def _check(self, tmp_path, mounts, path="/mnt/meshinfo-cold"):
+        f = tmp_path / "mounts"
+        f.write_text(mounts, encoding="utf-8")
+        return check_cold_filesystem(TieringPolicy(cold_filesystem=path), mounts_path=str(f))
+
+    def test_zfs_and_btrfs_are_fine(self, tmp_path):
+        assert self._check(tmp_path, MOUNTS) is None
+        assert self._check(tmp_path, MOUNTS, "/mnt/with space") is None
+        assert set(COMPRESSING_FILESYSTEMS) == {"zfs", "btrfs"}
+
+    def test_other_filesystems_warn(self, tmp_path):
+        warning = self._check(tmp_path, MOUNTS, "/mnt/meshinfo-cold/nested")
+        assert "ext4" in warning and "/mnt/meshinfo-cold/nested" in warning and "not compress" in warning
+        assert "overlay" in self._check(tmp_path, MOUNTS, "/var/lib/postgresql/cold")
+
+    def test_unset_path_or_missing_mounts_file_is_silent(self, tmp_path):
+        none = str(tmp_path / "no-such-mounts")
+        assert check_cold_filesystem(TieringPolicy(cold_filesystem=""), mounts_path=none) is None
+        assert check_cold_filesystem(TieringPolicy(cold_filesystem="/mnt/x"), mounts_path=none) is None
+
+
+class _TablespaceConn:
+    """Minimal asyncpg stand-in for ensure_cold_tablespace: `exists` answers the
+    pg_tablespace probe, `error` is raised by the CREATE TABLESPACE."""
+
+    def __init__(self, exists=False, error=None, in_tx=False):
+        self.exists, self.error, self.in_tx = exists, error, in_tx
+        self.executed = []
+
+    def is_in_transaction(self):
+        return self.in_tx
+
+    async def fetchval(self, sql, *args):
+        assert "pg_tablespace" in sql
+        return 1 if self.exists else None
+
+    async def execute(self, sql, *args):
+        self.executed.append(sql)
+        if self.error is not None:
+            raise self.error
+        return "CREATE TABLESPACE"
+
+
+class TestEnsureColdTablespace:
+    POLICY = TieringPolicy(cold_tablespace="meshinfo_cold", cold_tablespace_location="/var/lib/postgresql/cold")
+
+    def test_existing_tablespace_is_left_alone(self):
+        conn = _TablespaceConn(exists=True)
+        assert asyncio.run(ensure_cold_tablespace(conn, self.POLICY)) is False
+        assert conn.executed == []
+
+    def test_created_with_quoted_name_and_literal_location(self):
+        conn = _TablespaceConn()
+        assert asyncio.run(ensure_cold_tablespace(conn, self.POLICY)) is True
+        assert conn.executed == ["CREATE TABLESPACE \"meshinfo_cold\" LOCATION '/var/lib/postgresql/cold'"]
+        conn = _TablespaceConn()
+        asyncio.run(ensure_cold_tablespace(conn, dataclasses.replace(self.POLICY, cold_tablespace_location="/mnt/o'cold")))
+        assert conn.executed == ["CREATE TABLESPACE \"meshinfo_cold\" LOCATION '/mnt/o''cold'"]
+
+    def test_no_location_refuses_with_the_manual_command(self):
+        conn = _TablespaceConn()
+        with pytest.raises(TieringRefused) as excinfo:
+            asyncio.run(ensure_cold_tablespace(conn, dataclasses.replace(self.POLICY, cold_tablespace_location="")))
+        assert "cold_tablespace_location" in str(excinfo.value) and "CREATE TABLESPACE" in str(excinfo.value)
+        assert conn.executed == []
+
+    def test_relative_location_and_bad_identifier_refuse(self):
+        with pytest.raises(TieringRefused) as excinfo:
+            asyncio.run(ensure_cold_tablespace(
+                _TablespaceConn(), dataclasses.replace(self.POLICY, cold_tablespace_location="cold")))
+        assert "absolute path" in str(excinfo.value)
+        with pytest.raises(TieringRefused):
+            asyncio.run(ensure_cold_tablespace(
+                _TablespaceConn(), dataclasses.replace(self.POLICY, cold_tablespace="x;drop")))
+
+    def test_inside_a_transaction_is_a_programming_error(self):
+        with pytest.raises(TieringError) as excinfo:
+            asyncio.run(ensure_cold_tablespace(_TablespaceConn(in_tx=True), self.POLICY))
+        assert not isinstance(excinfo.value, TieringRefused)
+
+    def test_concurrent_creation_is_not_an_error(self):
+        conn = _TablespaceConn(error=asyncpg.exceptions.DuplicateObjectError('tablespace "meshinfo_cold" already exists'))
+        assert asyncio.run(ensure_cold_tablespace(conn, self.POLICY)) is False
+
+    @pytest.mark.parametrize("error,needle", [
+        (asyncpg.exceptions.UndefinedFileError('directory "/var/lib/postgresql/cold" does not exist'), "mounted"),
+        (asyncpg.exceptions.InsufficientPrivilegeError('permission denied to create tablespace "meshinfo_cold"'),
+         "superuser"),
+        (asyncpg.exceptions.InsufficientPrivilegeError(
+            'could not set permissions on directory "/var/lib/postgresql/cold": Operation not permitted'),
+         "owned by"),
+        (asyncpg.exceptions.ObjectInUseError(
+            'directory "/var/lib/postgresql/cold/PG_18_202507041" already in use as a tablespace'), "not empty"),
+        (asyncpg.exceptions.InvalidParameterValueError("tablespace location must be an absolute path"),
+         "rejected the location"),
+        (asyncpg.exceptions.DiskFullError("could not create directory: No space left on device"), "DiskFullError"),
+    ])
+    def test_server_errors_become_actionable_refusals(self, error, needle):
+        conn = _TablespaceConn(error=error)
+        with pytest.raises(TieringRefused) as excinfo:
+            asyncio.run(ensure_cold_tablespace(conn, self.POLICY))
+        text = str(excinfo.value)
+        assert needle in text and "meshinfo_cold" in text
+        assert excinfo.value.__cause__ is error

@@ -175,8 +175,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "enabled": False,
             # Keep this many closed months hot; older months are cold.
             "cold_after_months": 3,
-            # Must already exist (CREATE TABLESPACE ...; see ZFS.md).
             "cold_tablespace": "meshinfo_cold",
+            # Created by the job on its first cycle when cold_tablespace does
+            # not exist: the cold dataset's path inside the postgres container
+            # (docker-compose.zfs.yml). "" never creates it (see ZFS.md).
+            "cold_tablespace_location": "/var/lib/postgresql/cold",
             "tables": ["mqtt_messages", "packet_receptions"],
             "max_partitions_per_cycle": 1,
             # Mount point of the cold dataset inside the app container, for a
