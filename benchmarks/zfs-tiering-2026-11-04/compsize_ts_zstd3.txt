@@ -1,0 +1,4 @@
+Processed 143 files, 20681 regular extents (20681 refs), 0 inline.
+Type       Perc     Disk Usage   Uncompressed Referenced  
+TOTAL       22%     609312768    2687787008   2687451136  
+zstd        22%     609312768    2687787008   2687451136  
