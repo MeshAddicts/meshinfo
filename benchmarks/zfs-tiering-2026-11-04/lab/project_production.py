@@ -24,8 +24,10 @@ Assumptions (stated in the benchmark README):
   * every month carries the same volume, so with M months of history and
     cold_after_months = n the cold share is (M - n - 1) / M (current + n closed
     months stay hot);
-  * the "haircut" inflates the compressed heap by the given fraction to cover
-    payload entropy the synthetic archive cannot reproduce.
+  * the "haircut" inflates the compressed size of the haircutted rows by the
+    given fraction — the whole database (indexes included) in the default mode,
+    the heap row only with --heap-gb/--index-gb — to cover payload entropy the
+    synthetic archive cannot reproduce.
 """
 import argparse
 import json
@@ -97,7 +99,7 @@ def main():
         print(f"  {c['class']:24s} logical {c['logical_gb']:6.2f} GB  single {c['single_gb']:6.2f} GB  "
               f"tiered {c['tiered_gb']:6.2f} GB")
     print(f"single dataset zstd-3@16K: {out['single_dataset_gb']} GB "
-          f"({out['single_dataset_conservative_gb']} GB with a {int(a.haircut * 100)}% heap haircut)")
+          f"({out['single_dataset_conservative_gb']} GB with a {int(a.haircut * 100)}% haircut)")
     print(f"tiered 16K/zstd-3 + 128K/zstd-9: {out['tiered_gb']} GB "
           f"({out['tiered_conservative_gb']} GB conservative)")
     if a.json:

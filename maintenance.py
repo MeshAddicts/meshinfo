@@ -161,9 +161,11 @@ def tiering_due(config: Dict[str, Any]) -> bool:
 async def run_tiering(config: Dict[str, Any]) -> Optional[CycleResult]:
     """One tiering cycle (storage.db.tiering.run_cycle with the configured
     policy: no dry run, no deep verify, max_partitions_per_cycle moves) on a
-    dedicated asyncpg connection without a command timeout. Creates the cold
-    tablespace first when it is missing, and warns when cold_filesystem is not
-    on zfs/btrfs. Returns the CycleResult, or None when the cycle could not run
+    dedicated asyncpg connection without a command timeout. Warns when
+    cold_filesystem is not on zfs/btrfs, and creates the cold tablespace first
+    when it is missing (not while that warning stands: a tablespace on the
+    wrong filesystem would hide the moved months once the dataset mounts over
+    it). Returns the CycleResult, or None when the cycle could not run
     at all; never raises (cancellation aside). The next attempt is an hour away
     either way."""
     global _next_tiering_attempt_monotonic
@@ -177,7 +179,7 @@ async def run_tiering(config: Dict[str, Any]) -> Optional[CycleResult]:
         if fs_warning:
             logger.warning("tiering: %s", fs_warning)
         conn = await asyncpg.connect(**kwargs)
-        if await ensure_cold_tablespace(conn, policy):
+        if await ensure_cold_tablespace(conn, policy, fs_warning=fs_warning):
             logger.warning("tiering: created tablespace %s at %s (set cold_tablespace_location = "
                            "\"\" to manage tablespaces by hand)",
                            policy.cold_tablespace, policy.cold_tablespace_location)
@@ -186,7 +188,8 @@ async def run_tiering(config: Dict[str, Any]) -> Optional[CycleResult]:
         raise
     except TieringError as e:
         # A bad policy, or a cold tablespace that does not exist and cannot be
-        # created (dataset not mounted, directory not writable, no superuser).
+        # created (dataset not mounted, directory not writable, no superuser,
+        # cold_filesystem not on zfs/btrfs).
         logger.warning("tiering: cycle not run: %s", e)
         return None
     except (OSError, asyncpg.PostgresError, asyncpg.InterfaceError) as e:

@@ -60,8 +60,9 @@ Two datasets under one parent, created by `scripts/setup-zfs-datasets.sh`:
 
 `<pool>` is whatever your pool is called; `tank` is only the overlay's default.
 The cold dataset is also bind-mounted read-only into the `meshinfo` container
-so the job can check free space before it copies a month (see
-`cold_filesystem` below).
+so the job can check free space before it copies a month, confirm every cycle
+that the mount really is zfs/btrfs, and refuse to create the tablespace on
+anything else (see `cold_filesystem` below).
 
 ### Why those properties
 
@@ -186,18 +187,30 @@ with `cold_tablespace_location = "/var/lib/postgresql/cold"` by default — the
 path the overlay binds the cold dataset to inside the `postgres` container.
 "Mount the dataset, flip `enabled`" is the whole operator path. It needs
 three things, all of which the setup script, the overlay and the stock
-compose file provide: the directory must exist (the dataset is mounted), it
+compose file provide: the cold dataset must be mounted on the host, its root
 must be owned by the postgres user (`999:999`), and the app's database role
 must be a superuser (`POSTGRES_USER=postgres`). When one is missing the job
 logs one actionable line and tries again an hour later; nothing moves until
 it is fixed:
 
 ```
-tiering: cycle not run: cannot create tablespace 'meshinfo_cold': directory /var/lib/postgresql/cold does not exist inside the postgres container — is the cold dataset mounted there (docker-compose.zfs.yml binds it at /var/lib/postgresql/cold)? …
-tiering: cycle not run: cannot create tablespace 'meshinfo_cold': directory /var/lib/postgresql/cold is not writable by the postgres server user — it must be owned by that user (uid 999 in the stock image: chown 999:999 the dataset's mountpoint) …
+tiering: cycle not run: cannot create tablespace 'meshinfo_cold': directory /var/lib/postgresql/cold is not writable by the postgres server user. With docker-compose.zfs.yml this is also what an UNMOUNTED cold dataset looks like (Compose binds the bare, root-owned mountpoint directory underneath it): check `zfs get mounted <dataset>` / `findmnt <host mountpoint>` first and mount it. …
+tiering: cycle not run: not creating tablespace 'meshinfo_cold' at /var/lib/postgresql/cold: cold tablespace is on ext4 (/, holding cold_filesystem = '/mnt/meshinfo-cold') — months will move but not compress; a tablespace created on the wrong filesystem … would hide the moved months once the dataset mounts over it …
 tiering: cycle not run: cannot create tablespace 'meshinfo_cold': directory /var/lib/postgresql/cold is not empty — it already holds a PG_<version> tablespace directory …
 tiering: cycle not run: cannot create tablespace 'meshinfo_cold': the connecting role is not a superuser (CREATE TABLESPACE needs one) …
+tiering: cycle not run: cannot create tablespace 'meshinfo_cold': directory /var/lib/postgresql/cold does not exist inside the postgres container — docker-compose.zfs.yml binds the cold dataset at /var/lib/postgresql/cold; without the overlay, or with another cold_tablespace_location, mount or create the directory there first …
 ```
+
+With the overlay the directory inside the container always exists (Compose
+creates the host path if it has to), so a cold dataset that is not mounted —
+the pool imported late, a reboot before `zfs mount -a` — shows up as the
+first line, not as "does not exist". Do not `chown` the bare directory to
+make that line go away: the next cycle would create the tablespace on the
+root filesystem, and the moved months would vanish underneath the dataset
+the moment it mounts. With `cold_filesystem` set (the overlay's bind into
+`meshinfo`, step 5) the job notices on its own and creates nothing until the
+mount is right — the second line. The last line belongs to a stack without
+the overlay, or to another `cold_tablespace_location`.
 
 Prefer to manage tablespaces by hand? Set `cold_tablespace_location = ""`
 (the job then only reports that the tablespace is missing) and create it
@@ -225,14 +238,15 @@ cold_tablespace_location = "/var/lib/postgresql/cold"   # where it is created; "
 tables = ["mqtt_messages", "packet_receptions"]
 max_partitions_per_cycle = 1          # moves per hourly cycle; the rest wait for the next one
 cold_filesystem = "/mnt/meshinfo-cold"  # the overlay's read-only bind — enables the free-space
-                                      # check and the hourly "is this really zfs/btrfs?" warning
+                                      # check, the hourly "is this really zfs/btrfs?" warning and
+                                      # the guard against creating the tablespace anywhere else
 min_free_mb = 2048                    # keep at least this much free on cold_filesystem after a move
 ```
 
 The defaults shipped in `config.toml.sample` are the same except
 `enabled = false` and `cold_filesystem = ""` (no free-space check, no
-filesystem check). Restart `meshinfo` after editing; the first cycle starts on
-the next maintenance tick.
+filesystem check, no creation guard). Restart `meshinfo` after editing; the
+first cycle starts on the next maintenance tick.
 
 ## Operating the tiering job
 
@@ -345,23 +359,31 @@ Each partition is one transaction:
 5. Swap: detach the original, rename it and its indexes aside, rename the
    copy and its indexes to the original names, attach the copy using the
    original partition bound (the range `CHECK` lets Postgres skip the
-   validation scan), drop the `CHECK`, drop the original (unless
+   validation scan of the copy; the DEFAULT partition is checked too, under
+   the same lock, which is why the job refuses to move anything while that
+   partition holds rows — it is empty as long as the monthly partitions keep
+   being created ahead of time), drop the `CHECK`, drop the original (unless
    `--keep-original`). **This step is metadata-only and takes milliseconds,
    but it needs a brief ACCESS EXCLUSIVE lock on the parent table**, and
    while that request waits for the queries already running, every new query
    and insert on `mqtt_messages` / `packet_receptions` queues behind it. The
-   job therefore waits at most **2.5 s** per attempt (`lock_timeout`) and
-   rolls the attempt back to a savepoint if a query in flight is still
-   running then: a long query — a payload `ILIKE` over a month — can delay a
-   move, but no request ever waits behind the swap for longer than those
-   2.5 s plus the swap itself. It retries up to 10 times with growing pauses
-   (1, 2, 4, 8, 16, then 20 s, plus up to a second of jitter), and skips an
-   attempt outright while `pg_locks` shows a transaction that has already
-   held the parent for longer than the timeout (it would not be granted
-   anyway) or a writer that would deadlock with it. If all ten attempts fail
-   — about two and a half minutes — the whole transaction, copy included,
-   rolls back and the result is **busy**; the next hourly cycle starts over.
-   Nothing is ever left half-swapped.
+   job therefore waits at most **2.5 s** per attempt — `lock_timeout`, and
+   `statement_timeout` on the `DETACH`, which takes that lock on the parent,
+   then on the DEFAULT partition, then on the month, so that one timeout
+   covers all three — and rolls the attempt back to a savepoint if a query in
+   flight is still running then: a long query — a payload `ILIKE` over a
+   month — can delay a move, but no request ever waits behind the swap for
+   longer than those 2.5 s plus the swap itself. It retries up to 10 times
+   with growing pauses (1, 2, 4, 8, 16, then 20 s, plus up to a second of
+   jitter), skips an attempt outright while `pg_locks` shows a transaction
+   that has already held the parent, the DEFAULT partition or the month for
+   longer than the timeout (it would not be granted anyway), and gives the
+   copy up at once when a writer through the parent — the node-id backfill's
+   `UPDATE` — is queued behind its SHARE lock: the two would deadlock, and
+   every second of waiting would only keep that writer blocked. If all ten
+   attempts fail — about two and a half minutes — the whole transaction, copy
+   included, rolls back and the result is **busy**; the next hourly cycle
+   starts over. Nothing is ever left half-swapped.
 6. After commit: `VACUUM (FREEZE, ANALYZE)` the new partition while its pages
    are still cached (SHARE UPDATE EXCLUSIVE only — readers and ingest
    continue). One sequential pass sets hint bits, the visibility map (so
@@ -381,13 +403,18 @@ the moved month exactly as before. The partition keeps its name, so nothing
 that refers to `mqtt_messages_2026_07` notices.
 
 **Worst case for the API.** One swap attempt can hold new requests on the
-parent for `lock_timeout` (2.5 s) plus the milliseconds of the swap itself;
-the pause before the next attempt lets that queue drain, so the stall is
-never longer than that, however long the query the swap is waiting for. A
-move whose every attempt collides with such queries is given up as busy
-after ten attempts (about 2.5 minutes, the copy's I/O being the only cost)
-and retried an hour later; ingest inserts queue the same way as queries and
-resume unharmed (the app pool's 10 s command timeout is never reached).
+parent for the 2.5 s timeout plus the swap's own hold, which lasts from the
+`DETACH` to the `COMMIT`: a few milliseconds of catalog work and the commit's
+WAL flush, tens of milliseconds on the default `wal_level = replica` (about
+0.8 s under `wal_level = minimal`, which fsyncs the rebuilt partition's files
+at commit instead of logging the copy). The pause before the next attempt
+lets that queue drain, so the stall is never longer than that, however long
+the query the swap is waiting for; it assumes empty DEFAULT partitions,
+which the job enforces (step 5). A move whose every attempt collides with
+such queries is given up as busy after ten attempts (about 2.5 minutes, the
+copy's I/O being the only cost) and retried an hour later; ingest inserts
+queue the same way as queries and resume unharmed (the app pool's 10 s
+command timeout is never reached).
 <!-- STALL:START -->
 Measured in the lab (`benchmarks/zfs-tiering-2026-11-04/lab/lab-stall.sh`:
 six readers, two writers, plus a client that holds the parent for 3–5 s
@@ -566,10 +593,13 @@ docker compose exec postgres psql -U postgres -d meshinfo \
 across tablespaces — that only happens if something outside the job moved
 objects, since a move is all-or-nothing; running the job on that month fixes
 it. The hourly cycle logs `tiering: …` at INFO; a WARNING there means busy or
-refused (the message says which, and why), a tablespace that could not be
-created (step 4 lists the reasons), or `cold tablespace is on … — months will
-move but not compress`, which says the path in `cold_filesystem` is not on a
-ZFS/btrfs dataset in this container. `zfs get compressratio` on the cold
+refused (the message says which, and why — `swap of … postponed` is a long
+holder of the parent, `given up` a writer queued behind the copy, `hit
+lock_timeout` / `hit statement_timeout` an attempt that met a query in
+flight), a tablespace that could not be created (step 4 lists the reasons),
+or `cold tablespace is on … — months will move but not compress`, which says
+the path in `cold_filesystem` is not on a ZFS/btrfs dataset in this
+container (and keeps the job from creating the tablespace there). `zfs get compressratio` on the cold
 dataset is the number to watch over time: it should hold steady as months are
 added, and a drop usually means a month was written with different
 properties (check `zfs get recordsize,compression`).

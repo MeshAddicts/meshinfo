@@ -7,8 +7,9 @@ Closed months of mqtt_messages and packet_receptions that are older than
 compressed ZFS dataset behind `meshinfo_cold`) and swapped in. Readers keep
 working during the copy; only the sub-second swap at the end takes an
 exclusive lock on the parent, waiting at most 2.5 s per attempt (no request
-ever queues behind it for longer) and retrying up to 10 times with growing
-pauses. storage/db/tiering.py does the work — one transaction per partition,
+ever queues behind it for longer), retrying up to 10 times with growing
+pauses and giving up at once when a writer through the parent is queued
+behind the copy. storage/db/tiering.py does the work — one transaction per partition,
 so a failure leaves the original untouched — and this is the operator's
 front end.
 
@@ -473,6 +474,7 @@ async def main(argv: Optional[Sequence[str]] = None) -> int:
         await set_session(conn)
         now = (await db_now(conn)).astimezone(datetime.timezone.utc)
         cold_target = target == policy.cold_tablespace
+        fs_warning = None
         if cold_target and args.command != "status":
             fs_warning = check_cold_filesystem(policy)
             if fs_warning:
@@ -480,13 +482,18 @@ async def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.command != "status" and not await tablespace_exists(conn, target):
             if cold_target and args.command == "run" and args.apply:
                 # The operator path is "mount the dataset, flip enabled = true":
-                # a real run creates the tablespace just like the hourly job.
-                await ensure_cold_tablespace(conn, policy)
+                # a real run creates the tablespace just like the hourly job
+                # (and, like it, not while cold_filesystem fails the mount check).
+                await ensure_cold_tablespace(conn, policy, fs_warning=fs_warning)
                 _err(f"created tablespace {target} at {policy.cold_tablespace_location}")
             else:
                 if cold_target and policy.cold_tablespace_location:
                     hint = (f"; `run --apply` (or the hourly job) creates it at "
                             f"{policy.cold_tablespace_location} — storage.tiering.cold_tablespace_location")
+                elif cold_target:
+                    hint = (" (storage.tiering.cold_tablespace_location is empty, so neither `run "
+                            "--apply` nor the hourly job creates it: CREATE TABLESPACE ... LOCATION "
+                            "'/var/lib/postgresql/cold'; see ZFS.md)")
                 else:
                     hint = " (CREATE TABLESPACE ... LOCATION '/var/lib/postgresql/cold'; see ZFS.md)"
                 _err(f"tablespace {target!r} does not exist{hint}")

@@ -49,7 +49,7 @@ max_locks_per_transaction = 256
 log_min_duration_statement = 2000
 log_lock_waits = on
 log_line_prefix = '%m [%p] '
-wal_level = minimal
+wal_level = replica   # the server default; README sections 1-4 ran with minimal (0.8 s fsync hold per swap)
 max_wal_senders = 0
 CONF
 fi

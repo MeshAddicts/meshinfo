@@ -29,10 +29,12 @@ Backups of a tiered database restore anywhere, with one rule: restore
 **without tablespace assignments**. `scripts/migrate-postgres.sh` already
 dumps with `pg_dump --no-tablespaces`; for the in-app scheduled dumps and
 `scripts/backup_db.sh` put the flag on the restore side,
-`pg_restore --no-tablespaces -U postgres -d meshinfo <dump>`, or create the
-tablespace first. Either way every partition lands on `pg_default` and the
-job re-tiers the cold months on its own (or `run --apply --all` does it in
-one go).
+`pg_restore --no-tablespaces -U postgres -d meshinfo <dump>`. Every partition
+then lands on `pg_default` and the job re-tiers the cold months on its own
+(or `run --apply --all` does it in one go). Creating the tablespace first and
+restoring without the flag also works: those dumps record which months were
+cold, so `pg_restore` puts them straight back onto `meshinfo_cold` and there
+is nothing left to re-tier.
 
 ## Per-node flood guard
 

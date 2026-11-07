@@ -378,7 +378,7 @@ cold_tablespace = "meshinfo_cold"     # created by the job when missing, at …
 cold_tablespace_location = "/var/lib/postgresql/cold"   # … this path inside the postgres container
 tables = ["mqtt_messages", "packet_receptions"]
 max_partitions_per_cycle = 1          # partitions moved per hourly cycle
-cold_filesystem = ""                  # e.g. "/mnt/meshinfo-cold" to enable the free-space check
+cold_filesystem = ""                  # e.g. "/mnt/meshinfo-cold": free-space check + zfs/btrfs mount check
 min_free_mb = 2048                    # free space to keep on cold_filesystem after a move
 ```
 
@@ -399,8 +399,9 @@ Each partition moves in one transaction: the copy onto the cold tablespace
 runs under a SHARE lock, so **readers continue** and ingest into other months
 is unaffected; the swap that puts the copy in the original's place is
 metadata-only but takes a **brief ACCESS EXCLUSIVE lock on the parent**,
-waiting at most 2.5 s per attempt (so no request ever queues behind it for
-longer) and retrying up to 10 times with growing pauses before giving up as
+waiting at most 2.5 s per attempt (`lock_timeout`, plus `statement_timeout`
+on the `DETACH` so that no request ever queues behind it for longer) and
+retrying up to 10 times with growing pauses before giving up as
 `busy` (everything rolls back, nothing changes, the job retries next hour). Row
 counts are verified before the swap (`--deep-verify` adds a digest), the
 free-space guard assumes zero compression, and backups stay restorable

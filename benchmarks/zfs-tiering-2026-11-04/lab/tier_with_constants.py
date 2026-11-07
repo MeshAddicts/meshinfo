@@ -11,6 +11,7 @@ pre-follow-up pause of min(5, attempt) seconds between attempts.
 import argparse
 import importlib.util
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -29,6 +30,10 @@ def main() -> int:
     ap.add_argument("cli", nargs=argparse.REMAINDER)
     a = ap.parse_args()
     if a.swap_lock_timeout:
+        secs = tiering.timeout_seconds(a.swap_lock_timeout)  # ValueError on garbage
+        if not re.search(r"[a-zA-Z]", a.swap_lock_timeout):
+            ap.error(f"--swap-lock-timeout {a.swap_lock_timeout!r} has no unit: PostgreSQL reads a bare "
+                     f"number as milliseconds ({secs:g} s); write e.g. 20s or 2500ms")
         tiering.SWAP_LOCK_TIMEOUT = a.swap_lock_timeout
     if a.swap_attempts:
         tiering.SWAP_ATTEMPTS = a.swap_attempts
@@ -36,7 +41,8 @@ def main() -> int:
         tiering.LONG_HOLDER_SECONDS = a.long_holder_seconds
     if a.old_pauses:
         tiering.swap_pause_seconds = lambda attempt, jitter=None: float(min(5, attempt))
-    print(f"tier_with_constants: SWAP_LOCK_TIMEOUT={tiering.SWAP_LOCK_TIMEOUT} SWAP_ATTEMPTS={tiering.SWAP_ATTEMPTS} "
+    print(f"tier_with_constants: SWAP_LOCK_TIMEOUT={tiering.SWAP_LOCK_TIMEOUT} "
+          f"({tiering.timeout_seconds(tiering.SWAP_LOCK_TIMEOUT):g} s) SWAP_ATTEMPTS={tiering.SWAP_ATTEMPTS} "
           f"LONG_HOLDER_SECONDS={tiering.LONG_HOLDER_SECONDS} old_pauses={a.old_pauses}", file=sys.stderr)
     spec = importlib.util.spec_from_file_location("tier_partitions", REPO / "scripts" / "tier_partitions.py")
     module = importlib.util.module_from_spec(spec)

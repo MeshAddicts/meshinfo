@@ -5,7 +5,7 @@
 #
 #   postgres   hot dataset   -> /var/lib/postgresql        cluster, WAL, live months
 #              cold dataset  -> /var/lib/postgresql/cold   the meshinfo_cold tablespace
-#   meshinfo   cold dataset  -> /mnt/meshinfo-cold (ro)    free-space guard only;
+#   meshinfo   cold dataset  -> /mnt/meshinfo-cold (ro)    free-space guard, zfs/btrfs mount check;
 #                                set cold_filesystem = "/mnt/meshinfo-cold" in [storage.tiering]
 #
 # Usage (every time — the overlay must accompany docker-compose.yml):
