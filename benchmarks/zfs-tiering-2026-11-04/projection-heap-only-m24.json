@@ -1,0 +1,1 @@
+{"production_logical_gb":29.08,"cold_fraction":0.917,"single_dataset_gb":9.95,"single_dataset_conservative_gb":12.43,"tiered_gb":6.36,"tiered_conservative_gb":7.95,"classes":[{"class":"heap","logical_gb":29.08,"single_gb":9.95,"tiered_gb":6.36}],"inputs":{"heap_gb":29.08,"months":24,"cold_after_months":1,"haircut":0.25}}
