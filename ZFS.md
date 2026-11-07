@@ -417,13 +417,20 @@ queue the same way as queries and resume unharmed (the app pool's 10 s
 command timeout is never reached).
 <!-- STALL:START -->
 Measured in the lab (`benchmarks/zfs-tiering-2026-11-04/lab/lab-stall.sh`:
-six readers, two writers, plus a client that holds the parent for 3–5 s
-every 12 s with a payload `ILIKE` over a month, while all six months move):
-two of the twelve swaps met such a scan, the longest any ordinary request
-waited was **2.51 s** (the lock timeout), nothing exceeded 3 s, and both
-moves completed on their second attempt. With the previous 20 s / 6-attempt
-constants one such collision held every request behind the swap for 5.7 s.
-Details in the benchmark README, section 4b.
+six readers, two writers, plus a client that holds the parent for 4–7 s
+every 12 s with a payload `ILIKE` over a month, while all six months move;
+PostgreSQL's default `wal_level = replica`): the three attempts that would
+have met such a scan were postponed by the probe instead, none hit the
+timeout, and the longest any ordinary request waited behind a swap was
+**0.8 s** — the ACCESS EXCLUSIVE request waiting for node-page queries in
+flight. The longest request of the run, 1.87 s, was one such node page that
+then ran for another second under the copy's I/O; nothing exceeded 3 s in
+14,319 requests, with 0 errors. The swap's own hold, measured alone, is
+33 ms for a 263 MB month (27 ms on the way back). An earlier measurement,
+under `wal_level = minimal` and before the probe was fixed to use the wall
+clock, had one collision each way: 2.51 s under the shipped timeout against
+5.7 s under the previous 20 s one. Details in the benchmark README, section
+4b.
 <!-- STALL:END -->
 
 **Disk during a move:** both copies exist until the commit — the original on
@@ -713,9 +720,12 @@ rebuild of freshly ingested months packs the indexes by a third (3.11 GB →
 dense indexes compress less per byte and the on-disk size stays ~588 MB.
 
 The swap stall bound (benchmark README, section 4b): with a client holding the
-parent for 3–5 s every 12 s on top of the same load, the longest wait of an
-ordinary request was 2.51 s under the shipped 2.5 s per-attempt lock timeout
-(two collisions, both moves completed on their second attempt, 0 errors in
-11,260 requests) against 5.7 s under the previous 20 s timeout.
+parent for 4–7 s every 12 s on top of the same load and the default
+`wal_level = replica`, the probe postponed the three attempts that would have
+met a scan, no attempt timed out, the longest wait behind a swap was 0.8 s
+and the longest request 1.87 s (0 of 14,319 over 3 s, 0 errors); the swap's
+own hold is 33 ms for a 263 MB month. An earlier measurement under
+`wal_level = minimal` gave 2.51 s under the shipped 2.5 s timeout against
+5.7 s under the previous 20 s one.
 
 <!-- BENCH:END -->

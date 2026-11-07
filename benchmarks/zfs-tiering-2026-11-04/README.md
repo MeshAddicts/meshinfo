@@ -267,6 +267,73 @@ Raw: [`e2e_run.json`](e2e_run.json), [`e2e_harness.json`](e2e_harness.json),
 [`defrag_harness.json`](defrag_harness.json), [`defrag_run.json`](defrag_run.json).
 <!-- E2E:END -->
 
+### 4b. The swap stall bound
+
+<!-- STALL:START -->
+The swap's `DETACH PARTITION` needs ACCESS EXCLUSIVE on the parent. While
+that request waits for the queries already running, every new query and
+insert on the parent queues behind it, so the per-attempt timeout is what
+bounds the stall an API user can see, and the number of attempts bounds how
+long a move can be delayed. `lab/lab-stall.sh` measures both: the e2e load
+of section 4 (6 readers + 2 writers) plus one more client that every 12 s
+holds ACCESS SHARE on `mqtt_messages` for 3.5–7 s (four payload `ILIKE`
+sequential scans over the cold month inside one transaction — the "long
+in-flight query"), while `run --apply --all` moves the six months onto
+`ts_zstd9`; then everything is moved back and the run repeated with the
+previous constants through `lab/tier_with_constants.py`. Both legs start
+from freshly rebuilt partitions (the script primes them once), and this run
+used PostgreSQL's default `wal_level = replica` (sections 1–4 ran with the
+lab's earlier `minimal`; see Setup).
+
+| swap constants | moves | swaps that met a scan | longest ordinary request | > 3 s | > 1 s | requests queued behind a swap | p50 / p99 | errors |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| shipped: 2.5 s per attempt (`lock_timeout`, and `statement_timeout` on the DETACH), 10 attempts, pauses 1/2/4/8/16/20 s, wall-clock probe | 12 in 55.8 s | 3 attempts postponed by the probe (two months, completed on attempts 3 and 2); none timed out | **1.87 s** — a node page: ~0.7 s queued behind one swap, then ~1.1 s of its own under the copy's I/O | 0 | 1 | 8, at one swap, 0.70–0.78 s | 3.0 / 93 ms | 0 of 14,319 |
+| previous: 20 s, 6 attempts, pauses ≤ 5 s, probe against `now()` | 12 in 32.2 s | 0 (the slow client's 5 scans fell between the swaps) | 2.16 s — a node page during the warm-up, before any move | 0 | 2 | 0 | 1.8 / 134 ms | 0 of 10,051 |
+
+What the shipped leg shows: the probe now sees the slow client's scan
+although it started during the copy (the first measurement's probe compared
+against `now()`, which is frozen at the move's BEGIN, and never fired —
+finding 1 of the second-pass review), so the three attempts that would have
+met a scan were postponed instead of queueing every request for the timeout:
+the swap log carries `postponed … has held a lock on mqtt_messages since …`
+three times and `hit lock_timeout` never. The one stall of the run is the
+`mqtt_messages_2026_03` swap, whose ACCESS EXCLUSIVE request waited about
+0.7 s for node-page queries in flight (p99 269 ms under this load, a few
+reaching 0.5–0.9 s while the WAL-logged copy competes for I/O): all eight
+clients queued 0.70–0.78 s there, and the node page among them went on to
+take 1.87 s in total. The swap's own hold is not visible at all: measured on
+the idle server with a prober hitting the parent every 5 ms
+(`lab/hold_probe.py`), moving `mqtt_messages_2026_02` (250 k rows, 263 MB,
+9 indexes) held the parent for **33 ms** on the way to the cold tablespace
+and 27 ms on the way back ([`hold_to_cold.json`](hold_to_cold.json),
+[`hold_back.json`](hold_back.json)) — DETACH, renames, ATTACH, DROP and the
+commit's WAL flush together. Under `wal_level = minimal` the same hold was
+~0.8 s (the commit fsyncs the rebuilt partition's files first), which the
+first measurement of this section — longest wait 2.51 s with the shipped
+constants against 5.70 s with the previous ones, one collision each way —
+had folded into "the swap itself".
+
+The previous-constants leg met no scan this time (5 scans, 12 swaps, none
+overlapping), so its row cannot show the 5.7 s stall the first measurement
+did; its longest request happened during the warm-up. Whole-row digests were
+identical before and after both legs, nothing was busy or failed, and the
+slow client's own scans completed every time (its transactions cause the
+stalls; they are never their victims). Wall times and p50 are not a
+controlled pair: the shipped leg ran first, straight after the prime and the
+reset had written about 5 GB of WAL, with the checkpoint that follows. The
+aggregate p99 sits at the edge of the ~1 % of requests that meet a swap at
+all and is not comparable between legs either; "longest request", "> 1 s"
+and "> 3 s" are the comparison. Worst case by construction: a move whose
+every attempt meets such a scan is given up as busy after ten attempts
+(~2.5 min of pauses and timeouts) and retried an hour later; no single
+request ever waits longer than the 2.5 s timeout plus the swap's hold.
+
+Raw: [`stall_new_harness.json`](stall_new_harness.json), [`stall_new_run.json`](stall_new_run.json),
+[`stall_new_run.log`](stall_new_run.log), [`stall_old_harness.json`](stall_old_harness.json),
+[`stall_old_run.json`](stall_old_run.json), [`stall_old_run.log`](stall_old_run.log),
+[`stall_prime.json`](stall_prime.json).
+<!-- STALL:END -->
+
 ## 5. Projection onto the production inventory
 
 <!-- PROJECTION:START -->
@@ -317,48 +384,6 @@ Raw: [`projection-m12.json`](projection-m12.json), [`projection-m18.json`](proje
 [`projection-split-m18.json`](projection-split-m18.json).
 <!-- PROJECTION:END -->
 
-### 4b. The swap stall bound
-
-<!-- STALL:START -->
-The swap's `DETACH PARTITION` needs ACCESS EXCLUSIVE on the parent. While
-that request waits for the queries already running, every new query and
-insert on the parent queues behind it, so the per-attempt `lock_timeout` is
-what bounds the stall an API user can see, and the number of attempts bounds
-how long a move can be delayed. `lab/lab-stall.sh` measures both: the e2e
-load of section 4 (6 readers + 2 writers) plus one more client that every
-12 s holds ACCESS SHARE on `mqtt_messages` for 3.3–5.5 s (four payload
-`ILIKE` sequential scans over the cold month inside one transaction — the
-"long in-flight query"), while `run --apply --all` moves the six months onto
-`ts_zstd9`; then everything is moved back and the run repeated with the
-previous constants through `lab/tier_with_constants.py`.
-
-| swap constants | moves | swaps that met a scan | longest wait of an ordinary request | requests > 3 s | > 1 s | p50 / p99 | errors |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| shipped: `lock_timeout` 2.5 s per attempt, 10 attempts, pauses 1/2/4/8/16/20 s | 12 in 50.2 s | 2, each completed on attempt 2 | **2.51 s** | 0 | 16 | 1.3 / 529 ms | 0 of 11,260 |
-| previous: 20 s, 6 attempts, pauses ≤ 5 s | 12 in 44.5 s | 1, granted after ~5 s inside attempt 1 | **5.70 s** | 8 | 9 | 1.4 / 229 ms | 0 of 10,433 |
-
-With the shipped constants each collision cost the queued requests exactly
-the lock timeout (the ten slowest requests, 2.48–2.51 s, all sit at the two
-swap timestamps and span every operation: page, node, permalink, cold-month
-window and the writers' inserts) and cost the move a pause plus a second
-attempt (7.6 s and 8.2 s instead of ~4 s for those two months). With the
-previous constants the one collision held every request behind the swap
-until the scan finished — 5.7 s here, up to 20 s in general — which is the
-behaviour the bound removes. The copy phase never shows in the request
-latencies (SHARE lock only; p50 1.3–1.4 ms in both runs), whole-row digests
-were identical before and after each run, nothing was busy or failed, and
-the slow client's own scans completed every time (its transactions cause
-the stall; they are never its victims). Worst case by construction: a move
-whose every attempt meets such a scan is given up as busy after ten attempts
-(~2.5 min of pauses and timeouts) and retried an hour later; no single
-request ever waits longer than the 2.5 s timeout plus the swap's own
-milliseconds.
-
-Raw: [`stall_new_harness.json`](stall_new_harness.json), [`stall_new_run.json`](stall_new_run.json),
-[`stall_new_run.log`](stall_new_run.log), [`stall_old_harness.json`](stall_old_harness.json),
-[`stall_old_run.json`](stall_old_run.json), [`stall_old_run.log`](stall_old_run.log).
-<!-- STALL:END -->
-
 ## Reproducing
 
 ```sh
@@ -378,5 +403,7 @@ docker exec meshinfo-tiering-lab python3 /repo/scripts/zfs_estimate.py estimate 
 docker exec meshinfo-tiering-lab /lab/lab-latency.sh           # section 3 (+ a move back with --tablespace pg_default)
 docker exec meshinfo-tiering-lab /lab/lab-e2e.sh               # section 4
 docker exec meshinfo-tiering-lab /lab/lab-stall.sh             # section 4b: the swap stall bound, shipped vs previous constants
+#    (an existing lab from before lab-setup.sh switched to wal_level=replica: ALTER SYSTEM SET wal_level = 'replica' + pg_ctl restart first)
+#    the swap's hold alone: python3 /lab/hold_probe.py --dsn ... --stop-file /lab/hold.stop --json /lab/hold.json & then one `run --apply --partition ...`
 python3 lab/project_production.py --ratios ratios.json --database-gb 29.08 --months 18 --cold-after-months 1   # section 5
 ```

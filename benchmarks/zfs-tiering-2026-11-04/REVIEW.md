@@ -52,7 +52,7 @@ there — and were judged by hand.
 | 26 | tests | low | `test_tiering_integration.py` | unverified | refusal checks ran on *live* partitions without `dry_run` | **APPLIED** — `dry_run=True` on every live-partition call |
 | 27 | tests | low | `test_tiering_integration.py` | unverified | the post-move ANALYZE was never asserted | **APPLIED** — asserts `vacuumed`, `reltuples` and `age(relfrozenxid)` |
 | 28 | pg-semantics | medium | `tiering.py` `_swap` | C/C/C | DETACH deadlocks with any parent-first multi-partition writer; 40P01 not treated as busy | **APPLIED** — same fix as #10 |
-| 29 | pg-semantics | medium | `tiering.py` `_swap` | C/C/C | each swap attempt queued every read and insert on the parent for up to 20 s, six times, behind any long ACCESS SHARE holder | **FIXED-NOW** — the `pg_locks` long-holder probe was applied earlier; the stall bound itself is this close-out: `lock_timeout` 2.5 s per attempt, 10 attempts, pauses 1/2/4/8/16/20 s (+ jitter); measured 2.51 s vs 5.7 s (README section 4b) |
+| 29 | pg-semantics | medium | `tiering.py` `_swap` | C/C/C | each swap attempt queued every read and insert on the parent for up to 20 s, six times, behind any long ACCESS SHARE holder | **FIXED-NOW** — the `pg_locks` long-holder probe was applied earlier; the stall bound itself is this close-out: `lock_timeout` 2.5 s per attempt, 10 attempts, pauses 1/2/4/8/16/20 s (+ jitter); first measured at 2.51 s vs 5.7 s, re-measured after the second pass — longest wait behind a swap 0.8 s, no timeouts (README section 4b) |
 | 30 | pg-semantics | low | `constraint_index_sql` | C/C/C | `USING INDEX TABLESPACE` after `DEFERRABLE` is a syntax error, so such a PK/UNIQUE failed every move | **APPLIED** |
 | 31 | pg-semantics | low | move_partition `CREATE TABLE (LIKE …)` | C/R/C | storage parameters, comments and ownership were lost by the rebuild | **APPLIED** — `INCLUDING COMMENTS`, reloptions copied, `OWNER TO` |
 | 32 | pg-semantics | low | `tiering.py` post-commit | C/R/C/R/C/R † | ANALYZE only, while ZFS.md promised `VACUUM (FREEZE, ANALYZE)` | **APPLIED** — `VACUUM (FREEZE, ANALYZE)` after the commit (a documented deviation from the brief: without it index-only scans on a rebuilt month cost a heap visit per entry and readers re-dirty the cold pages) |
@@ -69,7 +69,7 @@ close-out or fixed in it.
 
 | item | what changed | verification |
 |---|---|---|
-| Bound the swap stall | `SWAP_LOCK_TIMEOUT` 20 s → **2.5 s** per attempt, `SWAP_ATTEMPTS` 6 → **10**, pauses 1/2/4/8/16/20 s plus up to 1 s jitter (`swap_pause_seconds`), the long-holder probe window 5 s → 3 s (just above the timeout); worst case documented in ZFS.md ("What a move does", step 5 and the paragraph after the list) | unit `TestSwapBound`; integration `test_swap_attempt_never_stalls_other_sessions_longer_than_the_lock_timeout` (a probe query queued behind the swap returns within the timeout); lab `lab-stall.sh`: longest ordinary request 2.51 s (shipped) vs 5.70 s (previous), 0 errors, digests identical |
+| Bound the swap stall | `SWAP_LOCK_TIMEOUT` 20 s → **2.5 s** per attempt, `SWAP_ATTEMPTS` 6 → **10**, pauses 1/2/4/8/16/20 s plus up to 1 s jitter (`swap_pause_seconds`), the long-holder probe window 5 s → 3 s (just above the timeout); worst case documented in ZFS.md ("What a move does", step 5 and the paragraph after the list) | unit `TestSwapBound`; integration `test_swap_attempt_never_stalls_other_sessions_longer_than_the_lock_timeout` (a probe query queued behind the swap returns within the timeout); lab `lab-stall.sh`: first run (`wal_level = minimal`) longest ordinary request 2.51 s (shipped) vs 5.70 s (previous); re-run after the second pass (`wal_level = replica`, wall-clock probe): three attempts postponed, none timed out, longest wait behind a swap 0.8 s, longest request 1.87 s, the swap's own hold 33 ms; 0 errors and identical digests both times |
 | 51 GB double count | the 29.08 GB production figure is `pg_database_size` and already contains the indexes; the "heap + indexes / 51 GB" scope, the 17.1 GB / 10–12 GB claims and `projection-full-*.json` are withdrawn from the benchmark README, ZFS.md and the PR body; `project_production.py` now takes `--database-gb` and applies the heap ratios to the whole size (per-class split as an optional cross-check: 9.80 / 6.21 GB at 18 months) | regenerated `projection-m12/18/24.json`, `projection-m18-n3.json`, `projection-split-m18.json` |
 | Reception calibration note | README "Synthetic archive": synthetic reception heap rows are 105 B against 176 B in production (about 40 % under-sized), receptions are about a third of the real database, and `scripts/zfs_estimate.py` on the live volume is the authoritative number | — |
 | Operator path: mount + flip | new `[storage.tiering] cold_tablespace_location` (default `/var/lib/postgresql/cold`, the overlay's mount point; `""` = never create); `ensure_cold_tablespace()` creates the tablespace on the first enabled cycle and on `run --apply`, with actionable refusals for a missing directory (dataset not mounted), a directory not owned by the postgres user or read-only, a directory already holding a tablespace, a non-superuser role, a relative location; `check_cold_filesystem()` reads `/proc/mounts` and warns every cycle when `cold_filesystem` is not on zfs/btrfs ("months will move but not compress"); ZFS.md step 4/5, config.toml.sample, POSTGRES.md | unit `TestEnsureColdTablespace` (every refusal path against a stub connection raising the server's errors: 58P01 missing directory, 42501 not writable, 55006 already a tablespace, 42P17 / 42602 rejected location, 42710 and 23505 created concurrently → False, non-superuser and mount-check refusals before any DDL, in-transaction → programming error, relative and empty location, the successful CREATE and its logged server warnings), `TestCheckColdFilesystem`, `TestMountFstype`, `TestColdTablespaceLocation`, run_tiering contract tests; integration `test_cold_tablespace_creation_against_the_server` (an existing tablespace left alone; a missing directory, an empty location, a failed mount check and a non-superuser role — `SET ROLE pg_read_all_data` — refused with nothing created; it does not perform a creation, since a test cannot prepare an empty postgres-owned directory inside the container); every error path and the real creation (twice) were additionally exercised by hand against PostgreSQL 18.4 with a throwaway script that is not committed (missing dir, root-owned dir, dir already a tablespace, non-superuser, relative, empty, inside a transaction) |
@@ -127,27 +127,34 @@ review fixes", the re-measurement the commit "re-measure the stall bound".
 ## Verification of this close-out
 
 <!-- VERIFY:START -->
-- `python -m pytest -q tests`: 614 passed, 33 skipped (the two new integration
+- `python -m pytest -q tests`: 628 passed, 36 skipped (the integration
   scenarios skip without the environment variables).
 - `tests/test_tiering_integration.py` against a disposable PostgreSQL 18.4
   (`postgres:18`, the real schema from the lab's `schema_full.sql`; the
-  `meshinfo_cold` tablespace was created by `ensure_cold_tablespace()` itself):
-  15 passed.
+  `meshinfo_cold` tablespace was created by `ensure_cold_tablespace()`
+  itself): 18 passed — the first pass's 15 plus the wall-clock probe, the
+  deadlock waiter and the DEFAULT-partition guard.
 - `ensure_cold_tablespace()` exercised on that server for every refusal
   path: missing directory, root-owned directory, relative and empty
-  location, a directory already holding a tablespace, a non-superuser role,
-  inside a transaction; then the real creation, twice (second call: exists).
+  location, a directory already holding a tablespace, a non-superuser role
+  (`SET ROLE pg_read_all_data`, in the committed integration test), a failed
+  mount check, inside a transaction; then the real creation, twice (second
+  call: exists).
 - CLI: `plan` and a dry `run` report the missing tablespace with the hint and
   exit 2; `run --apply` creates it and continues; `--json` stdout stays pure
   JSON (the creation line goes to stderr).
 - pyflakes clean on every changed Python file; `bash -n` on the shell
-  scripts; `docker compose -f docker-compose.yml -f docker-compose.zfs.yml
-  config` parses.
-- Lab (`lab/lab-stall.sh`, README section 4b): shipped constants — longest
-  ordinary request 2.51 s, none over 3 s, 0 errors in 11,260 requests, 12
-  partitions moved, digests identical; previous constants — 5.70 s, 8 over
-  3 s.
-- Every intermediate commit of this close-out is pyflakes-clean and green on
-  the unit suite (the per-concern split was rehearsed in a scratch worktree
-  before it was committed).
+  scripts; `git diff --check` clean.
+- Lab (`lab/lab-stall.sh`, README section 4b), re-run after the second pass
+  under `wal_level = replica`: shipped constants — 12 moves, three attempts
+  postponed by the probe behind the slow client's scans, none timed out,
+  longest wait behind a swap 0.8 s, longest request 1.87 s, none over 3 s,
+  0 errors in 14,319 requests, digests identical; the swap's own hold alone
+  (`lab/hold_probe.py`) 33 ms to the cold tablespace and 27 ms back for a
+  263 MB month. The first run (`wal_level = minimal`): 2.51 s vs 5.70 s.
+- Commits: the five close-out commits (review fixes, swap bound, operator
+  path, docs/projection correction, upgrading notes — each pyflakes-clean
+  and green on the unit suite, the split rehearsed in a scratch worktree
+  before it was committed), then "second-pass review fixes" and the
+  re-measurement.
 <!-- VERIFY:END -->
