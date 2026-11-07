@@ -374,7 +374,7 @@ existing volume and the full operator guide are in [ZFS.md](ZFS.md).
 ```toml
 [storage.tiering]
 enabled = false                       # true: the app moves cold months hourly
-cold_after_months = 3                 # whole calendar months since the month closed
+cold_after_months = 1                 # whole calendar months since the month closed; current + previous stay hot
 cold_tablespace = "meshinfo_cold"     # created by the job when missing, at …
 cold_tablespace_location = "/var/lib/postgresql/cold"   # … this path inside the postgres container
 tables = ["mqtt_messages", "packet_receptions"]
@@ -384,7 +384,8 @@ min_free_mb = 2048                    # free space to keep on cold_filesystem af
 ```
 
 A month is cold once `cold_after_months` whole calendar months have elapsed
-since it closed; the current and the previous month never move. The CLI works
+since it closed; the current and the previous month never move (default 1;
+higher keeps more recent months uncompressed, at the cost of ratio). The CLI works
 whether or not the scheduler is enabled and is a dry run unless told
 otherwise:
 

@@ -16,10 +16,13 @@ a stack without either overlay behaves exactly as before.
 ```toml
 [storage.tiering]
 enabled = false                        # true: move cold months hourly
-cold_after_months = 3                  # whole calendar months since the month closed
+cold_after_months = 1                  # whole calendar months since the month closed; current + previous stay hot
 cold_tablespace = "meshinfo_cold"      # created by the job at cold_tablespace_location
 cold_tablespace_location = "/var/lib/postgresql/cold"
 ```
+
+Raising `cold_after_months` keeps more recent months hot and uncompressed, at
+the cost of compression ratio; 1 is the default and the smallest value.
 
 Setup (the datasets, the overlay, carrying an existing volume across) and the
 operator guide are in [ZFS.md](ZFS.md); `scripts/tier_partitions.py status`

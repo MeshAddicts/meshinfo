@@ -507,7 +507,7 @@ class TestTieringPolicyFromConfig:
         policy = TieringPolicy.from_config(config_mod.DEFAULT_CONFIG)
         assert policy == TieringPolicy()
         assert policy.enabled is False
-        assert policy.cold_after_months == 3
+        assert policy.cold_after_months == 1
         assert policy.cold_tablespace == "meshinfo_cold"
         assert policy.cold_tablespace_location == "/var/lib/postgresql/cold"
         assert policy.tables == TIERABLE_TABLES == ("mqtt_messages", "packet_receptions")
@@ -536,7 +536,7 @@ class TestTieringPolicyFromConfig:
         assert TieringPolicy.from_config(_tiering_cfg(cold_after_months=0)).cold_after_months == 1
         assert TieringPolicy.from_config(_tiering_cfg(cold_after_months=-7)).cold_after_months == 1
         for bad in ("3", 3.5, None, True):
-            assert TieringPolicy.from_config(_tiering_cfg(cold_after_months=bad)).cold_after_months == 3
+            assert TieringPolicy.from_config(_tiering_cfg(cold_after_months=bad)).cold_after_months == 1
 
     def test_cold_tablespace_is_taken_verbatim_or_emptied(self):
         assert TieringPolicy.from_config(_tiering_cfg(cold_tablespace="cold2")).cold_tablespace == "cold2"
@@ -589,7 +589,7 @@ class TestTieringPolicyFromConfig:
         assert over.tables == base.tables and over.enabled is base.enabled
         assert base == TieringPolicy()  # untouched
         assert base.with_overrides(cold_after_months=6).cold_tablespace == "meshinfo_cold"
-        assert base.with_overrides(cold_tablespace="pg_default").cold_after_months == 3
+        assert base.with_overrides(cold_tablespace="pg_default").cold_after_months == 1
 
 
 class TestTieringPolicyValidate:
@@ -734,7 +734,7 @@ def test_sample_config_tiering_block_matches_defaults():
     assert sample["storage"]["tiering"] == config_mod.DEFAULT_CONFIG["storage"]["tiering"]
     assert sample["storage"]["tiering"] == {
         "enabled": False,
-        "cold_after_months": 3,
+        "cold_after_months": 1,
         "cold_tablespace": "meshinfo_cold",
         "cold_tablespace_location": "/var/lib/postgresql/cold",
         "tables": ["mqtt_messages", "packet_receptions"],

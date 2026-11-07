@@ -68,8 +68,9 @@ the database gets compressed and how much work the switch is.
 | **Full ZFS** | ZFS on the host; two datasets (`setup-zfs-datasets.sh`); the stack stopped while the existing volume is rsynced onto the hot dataset; `docker-compose.zfs.yml` | everything: the live months, WAL and catalog on the hot dataset (16K / `zstd-3`), the closed months on the cold one (128K / `zstd-9`) | hot **3.0×** (model, `zstd-3` at 16K), cold **5.3×** | ≈ 6.5 GB (8.1 GB conservative) |
 
 Production figures: the lab's heap ratios applied to a 29.08 GB
-`pg_database_size` with 18 months of history and `cold_after_months = 1`
-(`lab/project_production.py` in the benchmark directory; "Measurements"
+`pg_database_size` with 18 months of history and the default
+`cold_after_months = 1` (`lab/project_production.py` in the benchmark
+directory; "Measurements"
 below has 12 and 24 months). The cold-only layouts leave the two hot months
 uncompressed, which is where their extra ~2 GB comes from; the gap narrows
 as history accumulates and the hot share shrinks.
@@ -474,8 +475,10 @@ directory is not: the new cluster creates its own beside it (see Upgrades).
 ```toml
 [storage.tiering]
 enabled = true                        # scheduler runs hourly while true; the CLI works regardless
-cold_after_months = 3                 # a month is cold once this many whole calendar months
-                                      # have elapsed since it closed (minimum 1)
+cold_after_months = 1                 # a month is cold once this many whole calendar months have
+                                      # elapsed since it closed (minimum 1: the current and the
+                                      # previous month always stay hot); higher keeps more recent
+                                      # months uncompressed, at the cost of ratio
 cold_tablespace = "meshinfo_cold"     # created by the job when missing (step 4)
 cold_tablespace_location = "/var/lib/postgresql/cold"   # where it is created; "" = by hand
 tables = ["mqtt_messages", "packet_receptions"]
@@ -499,12 +502,17 @@ A month is cold once `cold_after_months` whole calendar months have elapsed
 since it closed. The **current month never moves** (it is still being written)
 and the **previous month never moves either** (`cold_after_months` is clamped
 to at least 1), so there is always a hot runway for the `--tablespace
-pg_default` path to bring data back.
+pg_default` path to bring data back. The default is 1: everything but the
+current and the previous month is cold. The dial only goes one way — a higher
+value keeps more recent months hot and uncompressed (worth it when the last
+few months are queried heavily and the hot filesystem is the faster one), at
+the cost of compression ratio: in the cold-only layouts every extra hot
+month is one more month of the archive stored at 1× instead of about 5×.
 
 | today | `cold_after_months` | cutoff | cold (will move) | hot (stays) |
 |---|---|---|---|---|
+| 2026-11-04 | 1 (default) | 2026-10-01 | September 2026 and older | Oct, Nov |
 | 2026-11-04 | 3 | 2026-08-01 | July 2026 and older | Aug, Sep, Oct, Nov |
-| 2026-11-04 | 1 | 2026-10-01 | September 2026 and older | Oct, Nov |
 | 2026-01-15 | 3 | 2025-10-01 | September 2025 and older | Oct, Nov, Dec, Jan |
 
 "Today" is the database clock in UTC, so the boundary is the UTC month

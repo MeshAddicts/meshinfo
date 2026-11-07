@@ -23,9 +23,9 @@ live on disk, and those are often reachable from different places:
     #    zstd need `pip install lz4` / `pip install zstandard`, gzip needs
     #    nothing:
     python3 scripts/zfs_estimate.py estimate \\
-        --pgdata /var/lib/docker/volumes/meshinfo_postgres_data/_data \\
+        --pgdata "$(docker volume inspect -f '{{.Mountpoint}}' meshinfo_meshinfo_pgdata)" \\
         --catalog catalog.json --codec lz4 zstd-3 zstd-9 --recordsize 16K 128K \\
-        --hot zstd-3@16K --cold zstd-9@128K --cold-after-months 3 --sample 4
+        --hot zstd-3@16K --cold zstd-9@128K --cold-after-months 1 --sample 4
 
 The model
 ---------
@@ -819,8 +819,8 @@ def build_parser() -> argparse.ArgumentParser:
     es.add_argument("--json", action="store_true", help="one compact JSON document instead of tables")
     es.add_argument("--hot", help="setting for hot files, e.g. zstd-3@16K (with --cold)")
     es.add_argument("--cold", help="setting for cold partition months, e.g. zstd-9@128K (with --hot)")
-    es.add_argument("--cold-after-months", type=int, default=3,
-                    help="months before the current one that stay hot (default 3)")
+    es.add_argument("--cold-after-months", type=int, default=1,
+                    help="months before the current one that stay hot (default 1, the job's default)")
     es.add_argument("--now", help="YYYY-MM-DD clock for the cold cutoff (default: today, UTC)")
     es.add_argument("--verbose", action="store_true", help="one line per file on stderr")
     es.set_defaults(func=cmd_estimate)
