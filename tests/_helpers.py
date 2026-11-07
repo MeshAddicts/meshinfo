@@ -53,6 +53,10 @@ class FakePgStorage:
     def node_over_budget(self, node_id) -> bool:
         return node_id in self.over_budget_nodes
 
+    def backfill_running(self) -> bool:
+        # The tiering scheduler waits for the startup node-id backfill; the fake never runs one.
+        return False
+
     def idless_repeat(self, msg) -> bool:
         if self.idless_repeats > 0:
             self.idless_repeats -= 1
