@@ -398,8 +398,9 @@ Each partition moves in one transaction: the copy onto the cold tablespace
 runs under a SHARE lock, so **readers continue** and ingest into other months
 is unaffected; the swap that puts the copy in the original's place is
 metadata-only but takes a **brief ACCESS EXCLUSIVE lock on the parent**,
-waiting up to 20 s and retrying up to 6 times before giving up as `busy`
-(everything rolls back, nothing changes, the job retries next hour). Row
+waiting at most 2.5 s per attempt (so no request ever queues behind it for
+longer) and retrying up to 10 times with growing pauses before giving up as
+`busy` (everything rolls back, nothing changes, the job retries next hour). Row
 counts are verified before the swap (`--deep-verify` adds a digest), the
 free-space guard assumes zero compression, and backups stay restorable
 anywhere: `migrate-postgres.sh` dumps with `pg_dump --no-tablespaces`, custom

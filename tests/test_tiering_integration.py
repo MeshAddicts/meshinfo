@@ -47,6 +47,7 @@ from storage.db.tiering import (
     safe_name,
     set_session,
     tablespace_exists,
+    timeout_seconds,
 )
 
 DSN = os.environ.get("MESHINFO_TIERING_TEST_DSN", "")
@@ -947,3 +948,58 @@ async def _long_holder_scenario(conn: asyncpg.Connection) -> None:
     assert await _scratch_objects(conn) == []
     res = await move_partition(conn, same, TABLESPACE, policy=POLICY)
     assert res.status == "moved" and res.swap_attempts == 1
+
+
+def test_swap_attempt_never_stalls_other_sessions_longer_than_the_lock_timeout():
+    """While a long query holds ACCESS SHARE on the parent, the swap's pending
+    ACCESS EXCLUSIVE makes every new query on the parent queue behind it — for
+    at most SWAP_LOCK_TIMEOUT, after which the attempt rolls back and the
+    queue drains. A probe query issued while the swap is waiting must return
+    within that timeout plus a margin, and the move still completes on a
+    later attempt once the long query is gone."""
+    _run(_stall_bound_scenario)
+
+
+async def _stall_bound_scenario(conn: asyncpg.Connection) -> None:
+    import storage.db.tiering as tiering_mod
+    timeout_s = timeout_seconds(tiering_mod.SWAP_LOCK_TIMEOUT)
+    assert timeout_s <= 3.0, tiering_mod.SWAP_LOCK_TIMEOUT
+    saved = (tiering_mod.SWAP_ATTEMPTS, tiering_mod.LONG_HOLDER_SECONDS)
+    # Force a real attempt behind the holder (the long-holder probe would otherwise skip it).
+    tiering_mod.SWAP_ATTEMPTS, tiering_mod.LONG_HOLDER_SECONDS = 4, 1e9
+    holder = await asyncpg.connect(DSN, command_timeout=None)
+    prober = await asyncpg.connect(DSN, command_timeout=None)
+    try:
+        mover_pid = await conn.fetchval("SELECT pg_backend_pid()")
+        parent_oid = await prober.fetchval("SELECT 'mqtt_messages'::regclass::oid")
+        hold = holder.transaction()
+        await hold.start()
+        await holder.execute("LOCK TABLE mqtt_messages IN ACCESS SHARE MODE")  # the long query
+        part = await _partition(conn, MQTT_JAN)
+        mover = asyncio.create_task(move_partition(conn, part, TABLESPACE, policy=POLICY))
+        try:
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline:  # until the swap's ACCESS EXCLUSIVE request is queued
+                queued = await prober.fetchval(
+                    "SELECT 1 FROM pg_locks WHERE pid = $1 AND relation = $2 "
+                    "AND mode = 'AccessExclusiveLock' AND NOT granted", mover_pid, parent_oid)
+                if queued:
+                    break
+                await asyncio.sleep(0.05)
+            assert queued, "the swap never asked for the parent lock"
+            started = time.monotonic()
+            await prober.fetchval("SELECT count(*) FROM mqtt_messages WHERE false")  # queues behind the swap
+            waited = time.monotonic() - started
+            assert waited <= timeout_s + 1.5, f"a query waited {waited:.1f}s behind the swap"
+        finally:
+            await hold.rollback()  # the long query ends; the next attempt goes through
+        res = await asyncio.wait_for(mover, timeout=90)
+        assert res.status == "moved" and res.swap_attempts >= 2, res
+        assert (await _partition(conn, MQTT_JAN)).on_tablespace(TABLESPACE)
+        assert not conn.is_in_transaction()
+    finally:
+        tiering_mod.SWAP_ATTEMPTS, tiering_mod.LONG_HOLDER_SECONDS = saved
+        await holder.close()
+        await prober.close()
+
+

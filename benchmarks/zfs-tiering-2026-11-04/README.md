@@ -37,6 +37,8 @@ none) through the parent table, so some land in the next month's partition.
 Reception rows measure 105 B in the heap plus 104 B across their two B-trees
 (the `(gateway, created_at DESC)` index is 70 % of that); the reference "~155 B
 per reception" is between those two figures, so treat reception numbers as ±30 %.
+therefore indicative only; the authoritative number for an installation is
+`scripts/zfs_estimate.py` run on the live volume, which models the real files.
 The archive measured here was generated before a review fix that gives
 mapreports (5 % of packets, no packet id) the one-reception-per-gateway that
 ingest records for them; with the shipped generator the same command yields
@@ -298,6 +300,48 @@ with heap-only compression and 10–90× regressions on filtered queries; here
 nothing about the plans changes (section 3).
 <!-- PROJECTION:END -->
 
+### 4b. The swap stall bound
+
+<!-- STALL:START -->
+The swap's `DETACH PARTITION` needs ACCESS EXCLUSIVE on the parent. While
+that request waits for the queries already running, every new query and
+insert on the parent queues behind it, so the per-attempt `lock_timeout` is
+what bounds the stall an API user can see, and the number of attempts bounds
+how long a move can be delayed. `lab/lab-stall.sh` measures both: the e2e
+load of section 4 (6 readers + 2 writers) plus one more client that every
+12 s holds ACCESS SHARE on `mqtt_messages` for 3.3–5.5 s (four payload
+`ILIKE` sequential scans over the cold month inside one transaction — the
+"long in-flight query"), while `run --apply --all` moves the six months onto
+`ts_zstd9`; then everything is moved back and the run repeated with the
+previous constants through `lab/tier_with_constants.py`.
+
+| swap constants | moves | swaps that met a scan | longest wait of an ordinary request | requests > 3 s | > 1 s | p50 / p99 | errors |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| shipped: `lock_timeout` 2.5 s per attempt, 10 attempts, pauses 1/2/4/8/16/20 s | 12 in 50.2 s | 2, each completed on attempt 2 | **2.51 s** | 0 | 16 | 1.3 / 529 ms | 0 of 11,260 |
+| previous: 20 s, 6 attempts, pauses ≤ 5 s | 12 in 44.5 s | 1, granted after ~5 s inside attempt 1 | **5.70 s** | 8 | 9 | 1.4 / 229 ms | 0 of 10,433 |
+
+With the shipped constants each collision cost the queued requests exactly
+the lock timeout (the ten slowest requests, 2.48–2.51 s, all sit at the two
+swap timestamps and span every operation: page, node, permalink, cold-month
+window and the writers' inserts) and cost the move a pause plus a second
+attempt (7.6 s and 8.2 s instead of ~4 s for those two months). With the
+previous constants the one collision held every request behind the swap
+until the scan finished — 5.7 s here, up to 20 s in general — which is the
+behaviour the bound removes. The copy phase never shows in the request
+latencies (SHARE lock only; p50 1.3–1.4 ms in both runs), whole-row digests
+were identical before and after each run, nothing was busy or failed, and
+the slow client's own scans completed every time (its transactions cause
+the stall; they are never its victims). Worst case by construction: a move
+whose every attempt meets such a scan is given up as busy after ten attempts
+(~2.5 min of pauses and timeouts) and retried an hour later; no single
+request ever waits longer than the 2.5 s timeout plus the swap's own
+milliseconds.
+
+Raw: [`stall_new_harness.json`](stall_new_harness.json), [`stall_new_run.json`](stall_new_run.json),
+[`stall_new_run.log`](stall_new_run.log), [`stall_old_harness.json`](stall_old_harness.json),
+[`stall_old_run.json`](stall_old_run.json), [`stall_old_run.log`](stall_old_run.log).
+<!-- STALL:END -->
+
 ## Reproducing
 
 ```sh
@@ -317,4 +361,5 @@ docker exec meshinfo-tiering-lab python3 /repo/scripts/zfs_estimate.py estimate 
 docker exec meshinfo-tiering-lab /lab/lab-latency.sh           # section 3 (+ a move back with --tablespace pg_default)
 docker exec meshinfo-tiering-lab /lab/lab-e2e.sh               # section 4
 python3 lab/project_production.py --ratios ratios.json --heap-gb 29.08 --months 18 --cold-after-months 1   # section 5
+docker exec meshinfo-tiering-lab /lab/lab-stall.sh             # section 4b: the swap stall bound, shipped vs previous constants
 ```

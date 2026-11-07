@@ -17,7 +17,9 @@ partition as a new table on the target tablespace and swapping it in:
     CHECK; drop the original (unless keep_original) — retried under a
     SAVEPOINT whenever the swap hits lock_timeout or a deadlock, and skipped
     while pg_locks shows a certain deadlock or a long-standing holder of the
-    parent (so requests never queue behind a hopeless ACCESS EXCLUSIVE)
+    parent (so requests never queue behind a hopeless ACCESS EXCLUSIVE); the
+    per-attempt lock_timeout bounds how long any other session can wait
+    behind the swap, the attempt count bounds how long a move may be delayed
     COMMIT; then VACUUM (FREEZE, ANALYZE) <part> outside the transaction
 
 `ALTER TABLE ... SET TABLESPACE` would hold ACCESS EXCLUSIVE for the whole
@@ -37,6 +39,7 @@ import datetime
 import hashlib
 import logging
 import os
+import random
 import re
 import shutil
 import time
@@ -54,9 +57,16 @@ MAX_IDENT = 63
 SCRATCH_SUFFIX = "_tiering"  # replacement table / cloned index scratch names
 OLD_SUFFIX = "_tiering_old"  # detached original (kept only with keep_original)
 RANGE_SUFFIX = "_tiering_range"  # transient CHECK on the replacement
-SWAP_ATTEMPTS = 6
 COPY_LOCK_TIMEOUT = "5s"
-SWAP_LOCK_TIMEOUT = "20s"
+# The swap's DETACH needs ACCESS EXCLUSIVE on the parent: while it waits for the
+# queries in flight, every new query and insert on the parent queues behind it.
+# A short per-attempt lock_timeout therefore bounds the stall other sessions can
+# ever see; many attempts with growing pauses let a long in-flight query (a
+# payload ILIKE over a month) delay the move without ever stalling the API for
+# more than SWAP_LOCK_TIMEOUT at a time.
+SWAP_LOCK_TIMEOUT = "2500ms"
+SWAP_ATTEMPTS = 10
+SWAP_PAUSE_MAX_SECONDS = 20.0  # pauses: 1, 2, 4, 8, 16, 20, 20, ... (+ up to 1 s jitter)
 POST_MOVE_LOCK_TIMEOUT = "30s"  # VACUUM (FREEZE, ANALYZE) after the swap is best effort
 
 UTC = datetime.timezone.utc
@@ -307,6 +317,40 @@ def _ts_literal(dt: datetime.datetime) -> str:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
     return dt.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S+00")
+
+
+_TIMEOUT_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(us|ms|s|min|h|d)?\s*$", re.IGNORECASE)
+_TIMEOUT_UNITS = {"us": 1e-6, "ms": 1e-3, "s": 1.0, "min": 60.0, "h": 3600.0, "d": 86400.0}
+
+
+def timeout_seconds(text: str) -> float:
+    """Seconds in a PostgreSQL lock_timeout/statement_timeout literal
+    ('2500ms', '2.5s', '20s', '1min'; a bare number is milliseconds)."""
+    m = _TIMEOUT_RE.match(str(text))
+    if not m:
+        raise ValueError(f"not a PostgreSQL timeout literal: {text!r}")
+    return float(m.group(1)) * _TIMEOUT_UNITS[(m.group(2) or "ms").lower()]
+
+
+def swap_pause_seconds(attempt: int, *, jitter: Optional[float] = None) -> float:
+    """Pause after failed swap attempt number `attempt` (1-based): 1, 2, 4, 8,
+    16 s, then SWAP_PAUSE_MAX_SECONDS, plus up to one second of jitter so the
+    retries never fall into step with a periodic query. Over SWAP_ATTEMPTS
+    attempts the pauses add up to about two minutes: that is how long a move
+    can be delayed before it is reported busy, while other sessions never wait
+    behind it for longer than SWAP_LOCK_TIMEOUT at a time."""
+    base = min(float(SWAP_PAUSE_MAX_SECONDS), 2.0 ** (max(1, int(attempt)) - 1))
+    if jitter is None:
+        jitter = random.random()
+    return base + max(0.0, min(1.0, float(jitter)))
+
+
+def swap_worst_case_seconds() -> float:
+    """Upper bound on the time a move spends in the swap phase before giving up
+    as busy: every attempt times out and every pause is taken."""
+    attempts = int(SWAP_ATTEMPTS)
+    return attempts * timeout_seconds(SWAP_LOCK_TIMEOUT) + sum(
+        swap_pause_seconds(a, jitter=1.0) for a in range(1, attempts))
 
 
 def range_check_sql(table: str, conname: str, lo: datetime.datetime, hi: datetime.datetime) -> str:
@@ -846,7 +890,10 @@ WHERE l.locktype = 'relation' AND l.relation = $1::oid AND l.granted
 ORDER BY a.xact_start
 LIMIT 1
 """
-LONG_HOLDER_SECONDS = 5.0
+# Longer than SWAP_LOCK_TIMEOUT: a transaction that has already outlived the
+# swap's lock timeout is not going to finish within it, so an attempt would
+# only make every request behind it wait for nothing.
+LONG_HOLDER_SECONDS = 3.0
 
 
 async def _swap_blocker(conn: asyncpg.Connection, parent_oid: int, part_oid: int) -> Optional[str]:
@@ -871,28 +918,37 @@ async def _swap(conn: asyncpg.Connection, *, parent: str, part: str, rep: str, o
                 range_con: str, keep_original: bool, parent_oid: int, part_oid: int) -> int:
     """Detach the original, rename it (and its indexes) aside, rename the copy
     (and its indexes) into place, re-attach with the verbatim bound. Each attempt
-    runs under a SAVEPOINT with a 20 s lock_timeout; lock_timeout and a deadlock
-    roll the attempt back and retry. A deadlock arises when a parent-first
-    writer (the node-id backfill's UPDATE through the parent) is queued on our
-    SHARE lock while we ask for ACCESS EXCLUSIVE on the parent; PostgreSQL then
-    aborts whichever side's deadlock_timeout check sees the cycle first —
-    normally us, because the writer queued during the long copy, but a writer
-    that queued within deadlock_timeout of the DETACH is aborted instead. The
-    _swap_blocker probe exists to avoid both: an attempt is skipped (counted,
-    slept through) while it sees such a waiter or a long-standing holder of the
-    parent, so the queue of requests behind a pending ACCESS EXCLUSIVE stays
-    short. Returns the number of attempts used."""
+    runs under a SAVEPOINT with SWAP_LOCK_TIMEOUT (2.5 s) as lock_timeout;
+    lock_timeout and a deadlock roll the attempt back, and the next attempt
+    follows a growing pause (swap_pause_seconds). The short timeout is what
+    bounds the stall other sessions see: the DETACH's ACCESS EXCLUSIVE request
+    on the parent makes every new query and insert on the parent queue behind
+    it while it waits for the queries in flight, so a long in-flight query (a
+    payload ILIKE over a month) can delay the move for up to SWAP_ATTEMPTS
+    attempts but never holds the API for more than one timeout at a time.
+    A deadlock arises when a parent-first writer (the node-id backfill's UPDATE
+    through the parent) is queued on our SHARE lock while we ask for ACCESS
+    EXCLUSIVE on the parent; PostgreSQL then aborts whichever side's
+    deadlock_timeout check sees the cycle first — normally us, because the
+    writer queued during the long copy, but a writer that queued within
+    deadlock_timeout of the DETACH is aborted instead. The _swap_blocker probe
+    exists to avoid both: an attempt is skipped (counted, slept through) while
+    it sees such a waiter or a long-standing holder of the parent, so the queue
+    of requests behind a pending ACCESS EXCLUSIVE stays short. Returns the
+    number of attempts used."""
     q = quote_ident
     attempts = int(SWAP_ATTEMPTS)
+    started = time.monotonic()
     for attempt in range(1, attempts + 1):
         blocker = await _swap_blocker(conn, parent_oid, part_oid)
         if blocker is not None:
             logger.warning("tiering: swap of %s postponed (attempt %d/%d): %s",
                            part, attempt, attempts, blocker)
             if attempt >= attempts:
-                raise TieringBusy(f"{part}: parent table busy after {attempts} attempts "
-                                  f"({blocker}); copy discarded, original untouched")
-            await asyncio.sleep(min(5, attempt))
+                raise TieringBusy(f"{part}: parent table busy after {attempts} attempts over "
+                                  f"{time.monotonic() - started:.0f} s ({blocker}); copy discarded, "
+                                  f"original untouched")
+            await asyncio.sleep(swap_pause_seconds(attempt))
             continue
         await conn.execute("SAVEPOINT tiering_swap")
         try:
@@ -916,10 +972,10 @@ async def _swap(conn: asyncpg.Connection, *, parent: str, part: str, rep: str, o
             logger.warning("tiering: swap of %s hit %s on attempt %d/%d", part, why, attempt, attempts)
             if attempt >= attempts:
                 raise TieringBusy(
-                    f"{part}: could not complete the swap ({why}) after {attempts} attempts; "
-                    f"copy discarded, original untouched"
+                    f"{part}: could not complete the swap ({why}) after {attempts} attempts over "
+                    f"{time.monotonic() - started:.0f} s; copy discarded, original untouched"
                 ) from e
-            await asyncio.sleep(min(5, attempt))
+            await asyncio.sleep(swap_pause_seconds(attempt))
             continue
         await conn.execute("RELEASE SAVEPOINT tiering_swap")
         return attempt

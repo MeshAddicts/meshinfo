@@ -319,12 +319,21 @@ Each partition is one transaction:
    original partition bound (the range `CHECK` lets Postgres skip the
    validation scan), drop the `CHECK`, drop the original (unless
    `--keep-original`). **This step is metadata-only and takes milliseconds,
-   but it needs a brief ACCESS EXCLUSIVE lock on the parent table**, so
-   queries and inserts on `mqtt_messages` / `packet_receptions` wait for it.
-   The job waits at most 20 s for that lock and retries up to 6 times (with
-   short pauses, rolling back to a savepoint in between); if it still cannot
-   get it the whole transaction — copy included — rolls back and the result
-   is **busy**. Nothing is ever left half-swapped.
+   but it needs a brief ACCESS EXCLUSIVE lock on the parent table**, and
+   while that request waits for the queries already running, every new query
+   and insert on `mqtt_messages` / `packet_receptions` queues behind it. The
+   job therefore waits at most **2.5 s** per attempt (`lock_timeout`) and
+   rolls the attempt back to a savepoint if a query in flight is still
+   running then: a long query — a payload `ILIKE` over a month — can delay a
+   move, but no request ever waits behind the swap for longer than those
+   2.5 s plus the swap itself. It retries up to 10 times with growing pauses
+   (1, 2, 4, 8, 16, then 20 s, plus up to a second of jitter), and skips an
+   attempt outright while `pg_locks` shows a transaction that has already
+   held the parent for longer than the timeout (it would not be granted
+   anyway) or a writer that would deadlock with it. If all ten attempts fail
+   — about two and a half minutes — the whole transaction, copy included,
+   rolls back and the result is **busy**; the next hourly cycle starts over.
+   Nothing is ever left half-swapped.
 6. After commit: `VACUUM (FREEZE, ANALYZE)` the new partition while its pages
    are still cached (SHARE UPDATE EXCLUSIVE only — readers and ingest
    continue). One sequential pass sets hint bits, the visibility map (so
@@ -342,6 +351,25 @@ Every index is re-attached to the parent's partitioned index automatically on
 attach, the row trigger is cloned, and inserts through the parent route into
 the moved month exactly as before. The partition keeps its name, so nothing
 that refers to `mqtt_messages_2026_07` notices.
+
+**Worst case for the API.** One swap attempt can hold new requests on the
+parent for `lock_timeout` (2.5 s) plus the milliseconds of the swap itself;
+the pause before the next attempt lets that queue drain, so the stall is
+never longer than that, however long the query the swap is waiting for. A
+move whose every attempt collides with such queries is given up as busy
+after ten attempts (about 2.5 minutes, the copy's I/O being the only cost)
+and retried an hour later; ingest inserts queue the same way as queries and
+resume unharmed (the app pool's 10 s command timeout is never reached).
+<!-- STALL:START -->
+Measured in the lab (`benchmarks/zfs-tiering-2026-11-04/lab/lab-stall.sh`:
+six readers, two writers, plus a client that holds the parent for 3–5 s
+every 12 s with a payload `ILIKE` over a month, while all six months move):
+two of the twelve swaps met such a scan, the longest any ordinary request
+waited was **2.51 s** (the lock timeout), nothing exceeded 3 s, and both
+moves completed on their second attempt. With the previous 20 s / 6-attempt
+constants one such collision held every request behind the swap for 5.7 s.
+Details in the benchmark README, section 4b.
+<!-- STALL:END -->
 
 **Disk during a move:** both copies exist until the commit — the original on
 hot, the new one on cold — and the copy is WAL-logged, so expect roughly the
@@ -597,6 +625,7 @@ to the compressed heap for payload entropy the synthetic data cannot reproduce.
 The reference figures for the same inventory were 9.6 GB (one dataset) and
 5.9 GB (tiered); the Citus-columnar branch reached 21.2 GB with filtered-query
 regressions of 10–90×.
+authoritative figure for an installation.
 
 ### Move timing
 
@@ -621,5 +650,11 @@ pg_default` moved everything back (55 s) with the digests identical again. The f
 rebuild of freshly ingested months packs the indexes by a third (3.11 GB →
 2.69 GB logical); on a compressing filesystem that is a logical gain only — the
 dense indexes compress less per byte and the on-disk size stays ~588 MB.
+
+The swap stall bound (benchmark README, section 4b): with a client holding the
+parent for 3–5 s every 12 s on top of the same load, the longest wait of an
+ordinary request was 2.51 s under the shipped 2.5 s per-attempt lock timeout
+(two collisions, both moves completed on their second attempt, 0 errors in
+11,260 requests) against 5.7 s under the previous 20 s timeout.
 
 <!-- BENCH:END -->

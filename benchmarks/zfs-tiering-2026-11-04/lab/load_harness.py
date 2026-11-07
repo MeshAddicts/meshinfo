@@ -8,6 +8,14 @@ the parent tables, exactly like ingest. Records latencies and errors.
     python3 load_harness.py --dsn ... --seconds 120 --readers 6 --writers 2 \
         --cold-month 2026-06 --json out.json
 Stops early when --stop-file appears.
+
+--slow-every N adds a "slow" client: every N seconds it holds ACCESS SHARE on
+mqtt_messages for several seconds (a payload ILIKE sequential scan over the
+cold month, --slow-scans times inside one transaction) — the long in-flight
+query that the swap's ACCESS EXCLUSIVE request has to wait for, during which
+every other request on the parent queues behind the swap. Its own latency is
+reported as op "slow"; the api_* figures exclude it, so api_max_ms is the
+longest stall any ordinary request saw.
 """
 import argparse
 import asyncio
@@ -41,9 +49,16 @@ class Stats:
         self.lat = {}
         self.errors = {}
         self.error_samples = []
+        self.t0 = time.time()
+        self.slowest = []  # (seconds since start, op, latency) of the slowest ordinary requests
 
     def ok(self, op, dt):
         self.lat.setdefault(op, []).append(dt)
+        if op != "slow":
+            self.slowest.append((round(time.time() - self.t0, 1), op, dt))
+            if len(self.slowest) > 400:
+                self.slowest.sort(key=lambda s: -s[2])
+                del self.slowest[40:]
 
     def err(self, op, e):
         self.errors[op] = self.errors.get(op, 0) + 1
@@ -66,7 +81,44 @@ class Stats:
         out["all_p50_ms"] = round(pct(allv, 50) * 1000, 2) if allv else None
         out["all_p99_ms"] = round(pct(allv, 99) * 1000, 2) if allv else None
         out["all_max_ms"] = round(max(allv) * 1000, 2) if allv else None
+        # The ordinary requests only (the slow client's scans are the cause, not the symptom).
+        api = [x for op, v in self.lat.items() if op != "slow" for x in v]
+        out["api_ok"] = len(api)
+        out["api_p50_ms"] = round(pct(api, 50) * 1000, 2) if api else None
+        out["api_p99_ms"] = round(pct(api, 99) * 1000, 2) if api else None
+        out["api_max_ms"] = round(max(api) * 1000, 2) if api else None
+        out["api_over_1s"] = sum(1 for x in api if x > 1.0)
+        out["api_over_3s"] = sum(1 for x in api if x > 3.0)
+        self.slowest.sort(key=lambda s: -s[2])
+        out["slowest"] = [(t, op, round(dt * 1000, 1)) for t, op, dt in self.slowest[:40]]
         return out
+
+
+SLOW_SCAN_SQL = ("SELECT count(*) FROM mqtt_messages WHERE created_at >= $1 AND created_at < $2 "
+                 "AND payload ILIKE '%zzqx-needle-that-never-matches%'")
+
+
+async def slow_reader(dsn, stats, stop, lo, hi, every, scans):
+    """Every `every` seconds: one transaction that sequentially scans the cold
+    month `scans` times with a payload ILIKE — several seconds of ACCESS SHARE
+    on the parent, the realistic worst case for the swap's lock request."""
+    conn = await asyncpg.connect(dsn, command_timeout=None)
+    try:
+        while not stop.is_set():
+            t0 = time.perf_counter()
+            try:
+                async with conn.transaction():
+                    for _ in range(scans):
+                        await conn.fetchval(SLOW_SCAN_SQL, lo, hi)
+                stats.ok("slow", time.perf_counter() - t0)
+            except Exception as e:  # noqa: BLE001
+                stats.err("slow", e)
+            remaining = every - (time.perf_counter() - t0)
+            while remaining > 0 and not stop.is_set():
+                await asyncio.sleep(min(0.5, remaining))
+                remaining -= 0.5
+    finally:
+        await conn.close()
 
 
 async def reader(dsn, stats, stop, cold_lo, cold_hi, node_ids, row_ids, rnd):
@@ -161,11 +213,17 @@ async def main():
     ap.add_argument("--stop-file", default="")
     ap.add_argument("--json", default="")
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--slow-every", type=float, default=0,
+                    help="seconds between the slow client's whole-month ILIKE scans (0 = no slow client)")
+    ap.add_argument("--slow-scans", type=int, default=4,
+                    help="scans per slow transaction (each a few hundred ms warm; together they hold ACCESS SHARE)")
     a = ap.parse_args()
     y, m = int(a.cold_month[:4]), int(a.cold_month[5:7])
     import datetime
     lo = datetime.datetime(y, m, 10, tzinfo=datetime.timezone.utc)
     hi = lo + datetime.timedelta(days=3)
+    month_lo = datetime.datetime(y, m, 1, tzinfo=datetime.timezone.utc)
+    month_hi = datetime.datetime(y + (m == 12), m % 12 + 1, 1, tzinfo=datetime.timezone.utc)
     conn = await asyncpg.connect(a.dsn)
     node_ids = [r[0] for r in await conn.fetch(
         "SELECT from_node_id FROM mqtt_messages WHERE created_at >= $1 AND created_at < $2 AND from_node_id IS NOT NULL "
@@ -184,7 +242,11 @@ async def main():
              for i in range(a.readers)]
     tasks += [asyncio.create_task(writer(a.dsn, stats, stop, random.Random(a.seed + 100 + i), topic_ids))
               for i in range(a.writers)]
+    if a.slow_every > 0:
+        tasks.append(asyncio.create_task(slow_reader(a.dsn, stats, stop, month_lo, month_hi,
+                                                     a.slow_every, max(1, a.slow_scans))))
     t0 = time.time()
+    stats.t0 = t0
     while time.time() - t0 < a.seconds:
         if a.stop_file and os.path.exists(a.stop_file):
             break
@@ -194,6 +256,7 @@ async def main():
     out = stats.summary()
     out["seconds"] = round(time.time() - t0, 1)
     out["readers"], out["writers"] = a.readers, a.writers
+    out["slow_every"], out["slow_scans"] = a.slow_every, a.slow_scans
     print(json.dumps(out, indent=1))
     if a.json:
         with open(a.json, "w") as f:
