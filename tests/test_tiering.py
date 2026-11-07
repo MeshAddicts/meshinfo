@@ -643,6 +643,18 @@ class TestTieringPolicyValidate:
         assert len(warns) == 1 and "storage.tiering.tables" in warns[0]  # empty after filtering
         assert TieringPolicy.from_config(_tiering_cfg(cold_after_months=0)).validate() == []
 
+    def test_non_string_tablespace_name_warns_once_and_says_tiering_cannot_run(self):
+        # Review finding: the value becomes '' (tiering cannot run), it is not "ignored"
+        # and the default does not apply; and the identifier check must not fire a second time.
+        raw = {"cold_tablespace": 7}
+        policy = TieringPolicy.from_config({"storage": {"tiering": raw}})
+        assert policy.cold_tablespace == ""
+        warns = policy.validate(raw=raw)
+        assert len(warns) == 1 and "cannot run" in warns[0] and "ignored" not in warns[0]
+        # Without the raw section the empty identifier is still reported.
+        warns = policy.validate()
+        assert len(warns) == 1 and "not a plain identifier" in warns[0]
+
 
 # ── config.validate() ────────────────────────────────────────────────────────
 
