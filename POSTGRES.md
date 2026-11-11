@@ -203,6 +203,63 @@ Notes:
   re-initialises empty, `docker compose up -d postgres`, then restore —
   `gzip -dc backups/<dump>.sql.gz | docker compose exec -T postgres psql -U postgres -d meshinfo`.
 
+## Before bumping the PostgreSQL major
+
+For maintainers, not operators. The stack is pinned to one PostgreSQL major
+on purpose, and three things keep it there until someone decides otherwise:
+the `postgres:18` image in `docker-compose.yml` and `docker-compose-dev.yml`;
+a Renovate rule (`renovate.json`) that parks a major update in the Dependency
+Dashboard until its box is ticked, instead of opening a PR; and
+`tests/test_postgres_major.py`, which fails CI when a pinned major — the
+compose files, any CI service image, the `postgresql-client-<major>` package
+in the `Dockerfile` — differs from the value recorded in that test. If you
+are here because that test failed, do not just change the recorded value:
+
+- **Why the repo stays on one major.** Every PostgreSQL major is supported
+  for five years — 18 until 2030-11-14 — and its fixes arrive as minor
+  releases through the floating `postgres:18` tag, with an ordinary `docker
+  compose pull`. Nothing needs doing until then; a newer major brings
+  features, not safety.
+- **What a bump costs today.** Majors have incompatible on-disk formats, so
+  every install has to run `scripts/migrate-postgres.sh` once ("Upgrading
+  PostgreSQL major versions" above): dump with a temporary container of the
+  old version, recreate the volume, restore. On a tiered install
+  ([ZFS.md](ZFS.md)) it dumps with `--no-tablespaces`, so the restore puts
+  the whole archive back onto the hot volume, uncompressed — the script
+  refuses up front when that will not fit — and only afterwards does the
+  tiering job re-tier the cold months, one partition an hour by default (on
+  a full-ZFS install the script declines to run and ZFS.md has the same
+  steps by hand). For a large archive that is a long maintenance window and
+  the whole database's size free on the hot volume.
+- **The planned improvement** — a design note; none of it exists yet.
+  Upgrade in place with `pg_upgrade --link` instead of dumping and
+  restoring. From 18 on, the official image keeps each cluster in
+  `/var/lib/postgresql/<major>/docker` inside the one volume, so the old and
+  the new cluster share a filesystem and hard links work. Run it from a
+  two-version image built in this repository — `FROM postgres:<new>` plus
+  the `postgresql-<old>` package from the PostgreSQL apt repository — with
+  the image's entrypoint bypassed, so that nothing initialises or starts a
+  server around `pg_upgrade`. Tablespaces are linked in place: the cold
+  tablespace gets a `PG_<new>_…` directory beside `PG_<old>_…` on the same
+  compressed filesystem, so cold months stay cold and nothing is rewritten.
+  `--check` first; a backup gate (no upgrade without a fresh, verified dump,
+  because the old cluster cannot be used again once the new one has
+  started); dump-and-restore stays as the path for clusters below 18, whose
+  images keep the cluster directly in a volume mounted at
+  `/var/lib/postgresql/data`.
+- **The steps, in this order.**
+  1. Implement that and test old → new on the default layout and on a
+     cold-only layout (ZFS.md, "Choosing a layout"), with real data and a
+     populated cold tablespace.
+  2. Add the UPGRADING.md entry: what operators run, how long it takes, how
+     to roll back.
+  3. Update the recorded value — `RECORDED_POSTGRES_MAJOR` in
+     `tests/test_postgres_major.py` — together with
+     `postgresql-client-<major>` in the `Dockerfile` (`pg_dump` refuses a
+     server newer than itself, which would break the in-app backups).
+  4. Approve the bump in Renovate's Dependency Dashboard. Its PR changes the
+     images; CI turns green only once that PR also carries step 3.
+
 ## Partitioning the mqtt_messages archive
 
 `mqtt_messages` is the raw packet firehose and dominates the database — it
