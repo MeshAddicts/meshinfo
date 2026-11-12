@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+# Stand-in for zfs in the lab (the lab kernel has no ZFS). A dataset is the
+# file $ZFS_STUB_STATE/datasets/<name, with % for />, holding property=value
+# lines. "Mounting" makes the mountpoint directory and sets mounted=yes and a
+# mountorder= line (a counter: what was mounted last is on top); stubs/findmnt
+# then answers for that directory as a ZFS mount (a mountedat= line plays a
+# mountpoint=legacy dataset that fstab mounts there, a mountoptions= line the
+# options it is mounted with). Every call is logged to calls.log, which is
+# what the suite checks the delegated commands in.
+#
+# Played as the real one does it: zfs set mountpoint= and zfs mount -a mount
+# a dataset only when its canmount is on; zfs mount NAME also one that is
+# noauto; none mounts a dataset whose keystatus= line says unavailable, unless
+# it is zfs mount -l. Not played: -o on zfs create, an alternate root, a pool
+# without a feature (stubs/zpool answers for those two; the script asks it
+# before it creates anything).
+#
+# $ZFS_STUB_STATE/version holds the OpenZFS release played (2.2.7 when the
+# file is not there). The 2.3 series answers "on" for a dataset whose xattr is
+# sa, as the real one does: on means sa there.
+set -euo pipefail
+state="${ZFS_STUB_STATE:?ZFS_STUB_STATE is not set}"
+mkdir -p "$state/datasets"
+echo "zfs $*" >> "$state/calls.log"
+version="$(cat "$state/version" 2>/dev/null || echo 2.2.7)"
+
+file_of() { printf '%s/datasets/%s\n' "$state" "${1//\//%}"; }
+get() { sed -n "s/^$2=//p" "$(file_of "$1")" | tail -n 1; }
+put() {
+  local file
+  file="$(file_of "$1")"
+  sed -i "/^$2=/d" "$file"
+  echo "$2=$3" >> "$file"
+}
+# mount_it NAME [load-key]: mount the dataset if it can be; 1 with zfs's own
+# message when it cannot.
+mount_it() {
+  local order
+  case "$(get "$1" mountpoint)" in
+    /*) ;;
+    *) put "$1" mounted no; return 0 ;;   # legacy, none
+  esac
+  if [ "$(get "$1" canmount)" = off ]; then
+    echo "cannot mount '$1': 'canmount' property is set to 'off'" >&2
+    return 1
+  fi
+  if [ "$(get "$1" keystatus)" = unavailable ]; then
+    if [ "${2:-}" != load-key ]; then
+      echo "cannot mount '$1': encryption key not loaded" >&2
+      return 1
+    fi
+    put "$1" keystatus available
+  fi
+  mkdir -p "$(get "$1" mountpoint)"
+  # $state/no-mount: play a dataset that does not mount, whatever is asked
+  if [ -e "$state/no-mount" ]; then put "$1" mounted no; return 0; fi
+  order=$(( $(cat "$state/mount-counter" 2>/dev/null || echo 0) + 1 ))
+  echo "$order" > "$state/mount-counter"
+  put "$1" mounted yes
+  put "$1" mountorder "$order"
+}
+# canmount=on, which is also what a dataset file without the line plays
+mounts_by_itself() {
+  case "$(get "$1" canmount)" in
+    on|'') return 0 ;;
+  esac
+  return 1
+}
+# a pool's root dataset is there without a file of its own
+is_pool() { [ -f "$state/pools" ] && grep -qxF -- "$1" "$state/pools"; }
+must_exist() {
+  if [ ! -f "$(file_of "$1")" ] && ! is_pool "$1"; then
+    echo "cannot open '$1': dataset does not exist" >&2
+    exit 1
+  fi
+}
+all_names() {
+  local file name
+  for file in "$state"/datasets/*; do
+    [ -f "$file" ] || continue
+    name="$(basename "$file")"
+    printf '%s\n' "${name//%//}"
+  done
+}
+
+command="${1:-}"
+shift || true
+case "$command" in
+  list)
+    # zfs list [-H] [-o COLUMNS] [DATASET]: one line per dataset, columns tab-separated
+    columns=name
+    dataset=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -o) columns="$2"; shift 2 ;;
+        -*) shift ;;
+        *)  dataset="$1"; shift ;;
+      esac
+    done
+    names=()
+    if [ -n "$dataset" ]; then
+      must_exist "$dataset"
+      names=("$dataset")
+    else
+      while IFS= read -r name; do names+=("$name"); done < <(all_names)
+    fi
+    IFS=, read -r -a wanted <<<"$columns"
+    for name in ${names[@]+"${names[@]}"}; do
+      line=""
+      for column in "${wanted[@]}"; do
+        if [ "$column" = name ]; then value="$name"; else value="$(get "$name" "$column")"; fi
+        line="${line:+$line	}${value:--}"
+      done
+      echo "$line"
+    done ;;
+  create)
+    name="${*: -1}"
+    if [ -f "$(file_of "$name")" ]; then
+      echo "cannot create '$name': dataset already exists" >&2
+      exit 1
+    fi
+    printf 'mountpoint=/%s\ncompression=off\nrecordsize=128K\natime=on\nxattr=on\nlogbias=latency\ncompressratio=1.00x\ncanmount=on\nmounted=no\n' "$name" > "$(file_of "$name")"
+    mount_it "$name" || true ;;
+  set)
+    assignment="$1"
+    name="$2"
+    must_exist "$name"
+    put "$name" "${assignment%%=*}" "${assignment#*=}"
+    # a new mountpoint takes the dataset to it — one that ZFS mounts by itself
+    if [ "${assignment%%=*}" = mountpoint ]; then
+      if mounts_by_itself "$name"; then mount_it "$name" 2>/dev/null || true; else put "$name" mounted no; fi
+    fi ;;
+  get)
+    # zfs get -H -o value|source|value,source PROPERTY DATASET. The source
+    # is "local" unless the dataset file has a PROPERTY.source= line
+    # ("temporary" plays a value that zfs took from the mount instead of the
+    # property, "received" a copy that was received with its properties).
+    name="${*: -1}"
+    property="${*: -2:1}"
+    columns=value
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -o) columns="$2"; shift 2 ;;
+        *)  shift ;;
+      esac
+    done
+    must_exist "$name"
+    value="$(get "$name" "$property")"
+    if [ "$property" = xattr ] && [ "$value" = sa ] && [[ "$version" == 2.3.* ]]; then value=on; fi
+    if [ "$property" = type ] && [ -z "$value" ]; then value=filesystem; fi
+    if [ -z "$value" ]; then exit 0; fi
+    source="$(get "$name" "$property.source")"
+    case "$columns" in
+      value,source) printf '%s\t%s\n' "$value" "${source:-local}" ;;
+      source)       printf '%s\n' "${source:-local}" ;;
+      *)            printf '%s\n' "$value" ;;
+    esac ;;
+  version)
+    printf 'zfs-%s-1\nzfs-kmod-%s-1\n' "$version" "$version" ;;
+  mount)
+    # zfs mount [-l] NAME | zfs mount [-l] -a
+    key=""
+    all=0
+    name=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -a)      all=1 ;;
+        -l)      key=load-key ;;
+        -la|-al) all=1; key=load-key ;;
+        -*)      ;;
+        *)       name="$1" ;;
+      esac
+      shift
+    done
+    if [ "$all" -eq 1 ]; then
+      # every dataset ZFS mounts by itself; one whose key is not loaded is passed over without a word
+      while IFS= read -r name; do
+        mounts_by_itself "$name" || continue
+        [ "$(get "$name" mounted)" != yes ] || continue
+        mount_it "$name" ${key:+"$key"} 2>/dev/null || true
+      done < <(all_names)
+    else
+      must_exist "$name"
+      if [ "$(get "$name" mounted)" = yes ]; then
+        echo "cannot mount '$name': filesystem already mounted" >&2
+        exit 1
+      fi
+      mount_it "$name" ${key:+"$key"}
+    fi ;;
+  unmount|umount)
+    name="${*: -1}"
+    must_exist "$name"
+    put "$name" mounted no ;;
+  *)
+    echo "zfs stub: '$command' is not implemented" >&2
+    exit 2 ;;
+esac

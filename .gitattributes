@@ -20,6 +20,8 @@
 *.sample             text eol=lf
 .gitignore           text eol=lf
 .gitattributes       text eol=lf
+# shell scripts without an extension (they run inside a Linux container)
+/tests/cold_storage_lab/stubs/*  text eol=lf
 
 /frontend/.yarn/**            linguist-vendored
 /frontend/.yarn/releases/*    binary

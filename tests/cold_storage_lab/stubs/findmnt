@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# Stand-in for findmnt in the ZFS part of the lab: answers as a ZFS mount for
+# the mountpoints of the stub datasets (stubs/zfs) — for a dataset with a
+# mountedat= line, the place where fstab mounts it; with the options of its
+# mountoptions= line — and hands every other question to the real findmnt.
+# A mount is asked for by its place (-M, -T) or by the dataset (-S).
+#
+# As the real one answers for ZFS: datasets mounted at one place are a line
+# each for -M, the one mounted last — the one on top — last (the order is
+# their mountorder= line, which stubs/zfs writes), and -T answers for the top
+# one only; a mountpoint is compared resolved, because ZFS keeps the property
+# as it was typed (a trailing slash, a symlink on the way) and mounts at the
+# real place; and under -r a space in a dataset name is written \x20. A
+# dataset file with an under=TYPE line plays a mount of that type beneath the
+# dataset (an automount point: under=autofs), which -M lists first.
+set -euo pipefail
+# the real one: the findmnt that PATH has without this directory, wherever in
+# PATH this directory is
+here="$(cd "$(dirname "$0")" && pwd)"
+others=""
+IFS=: read -r -a entries <<<"$PATH"
+for entry in "${entries[@]}"; do
+  if [ -n "$entry" ] && [ "$entry" != "$here" ] && [ "$entry" != "$(dirname "$0")" ]; then others="${others:+$others:}$entry"; fi
+done
+real="$(PATH="$others" command -v findmnt)" || { echo "findmnt stand-in: there is no real findmnt on PATH" >&2; exit 127; }
+state="${ZFS_STUB_STATE:-}"
+if [ -z "$state" ] || [ ! -d "$state/datasets" ]; then exec "$real" "$@"; fi
+
+target=""
+source=""
+exact=0
+raw=0
+columns="TARGET,SOURCE,FSTYPE,OPTIONS"
+args=("$@")
+i=0
+while [ "$i" -lt "${#args[@]}" ]; do
+  arg="${args[$i]}"
+  case "$arg" in
+    --mountpoint) exact=1; i=$((i + 1)); target="${args[$i]:-}" ;;
+    --target)     i=$((i + 1)); target="${args[$i]:-}" ;;
+    --source)     i=$((i + 1)); source="${args[$i]:-}" ;;
+    --output)     i=$((i + 1)); columns="${args[$i]:-}" ;;
+    --raw)        raw=1 ;;
+    --*)          ;;
+    -*)
+      # short options, also several in one word (-rn); one that takes a value is the last of its word
+      case "$arg" in *r*) raw=1 ;; esac
+      case "$arg" in
+        *M) exact=1; i=$((i + 1)); target="${args[$i]:-}" ;;
+        *T) i=$((i + 1)); target="${args[$i]:-}" ;;
+        *S) i=$((i + 1)); source="${args[$i]:-}" ;;
+        *o) i=$((i + 1)); columns="${args[$i]:-}" ;;
+      esac ;;
+  esac
+  i=$((i + 1))
+done
+if [ -z "$target" ] && [ -z "$source" ]; then exec "$real" "$@"; fi
+
+resolved() { realpath -m -- "$1" 2>/dev/null || printf '%s\n' "$1"; }
+if [ -n "$target" ]; then target="$(resolved "$target")"; fi
+
+# every mounted dataset that answers the question: depth of its mountpoint, order, name, mountpoint, options
+found=""
+for file in "$state"/datasets/*; do
+  [ -f "$file" ] || continue
+  [ "$(sed -n 's/^mounted=//p' "$file" | tail -n 1)" = yes ] || continue
+  mountpoint="$(sed -n 's/^mountedat=//p' "$file" | tail -n 1)"
+  if [ -z "$mountpoint" ]; then mountpoint="$(sed -n 's/^mountpoint=//p' "$file" | tail -n 1)"; fi
+  case "$mountpoint" in
+    /*) mountpoint="$(resolved "$mountpoint")" ;;
+    *)  continue ;;
+  esac
+  name="$(basename "$file")"
+  name="${name//%//}"
+  if [ -n "$source" ]; then
+    [ "$source" = "$name" ] || continue
+  elif [ "$target" != "$mountpoint" ] && { [ "$exact" -eq 1 ] || [ "${target#"$mountpoint"/}" = "$target" ]; }; then
+    continue
+  fi
+  order="$(sed -n 's/^mountorder=//p' "$file" | tail -n 1)"
+  options="$(sed -n 's/^mountoptions=//p' "$file" | tail -n 1)"
+  found="$found${#mountpoint}	${order:-0}	$name	$mountpoint	${options:-rw,xattr,posixacl}	zfs
+"
+  under="$(sed -n 's/^under=//p' "$file" | tail -n 1)"
+  if [ -n "$under" ] && [ "$exact" -eq 1 ] && [ -z "$source" ]; then
+    found="$found${#mountpoint}	-1	systemd-1	$mountpoint	rw,relatime	$under
+"
+  fi
+done
+if [ -z "$found" ]; then exec "$real" "$@"; fi
+found="$(printf '%s' "$found" | sort -t '	' -k1,1n -k2,2n -k3,3)"
+# -T: the filesystem the path is on — the deepest mountpoint, and what is on top there
+if [ -z "$source" ] && [ "$exact" -eq 0 ]; then found="$(tail -n 1 <<<"$found")"; fi
+
+IFS=, read -r -a wanted <<<"$columns"
+while IFS='	' read -r _ _ name mountpoint options fstype; do
+  if [ "$raw" -eq 1 ]; then
+    name="${name//\\/\\x5c}"
+    name="${name// /\\x20}"
+  fi
+  line=""
+  for column in "${wanted[@]}"; do
+    case "$column" in
+      SOURCE)  value="$name" ;;
+      FSTYPE)  value="$fstype" ;;
+      TARGET)  value="$mountpoint" ;;
+      OPTIONS) value="$options" ;;
+      *)       value="-" ;;
+    esac
+    line="${line:+$line }$value"
+  done
+  printf '%s\n' "$line"
+done <<<"$found"
