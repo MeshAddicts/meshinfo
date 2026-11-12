@@ -46,6 +46,11 @@
       "matchUpdateTypes": ["major"],
       "groupName": "postgresql",
       "dependencyDashboardApproval": true
+    },
+    {
+      "description": "A Python minor moves everywhere at once: the Dockerfiles, .tool-versions and the CI Python in tests.yml are one pull request. It stays open and red while a runtime dependency does not allow the new minor (meshtastic 2.7.x requires <3.15) and merges itself once the tests pass on it and the image builds.",
+      "matchDepNames": ["python"],
+      "groupName": "python-version"
     }
   ],
   "customManagers": [
