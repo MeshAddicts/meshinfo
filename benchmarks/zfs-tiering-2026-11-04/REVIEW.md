@@ -206,3 +206,20 @@ with the fixes folded in, so the shape stays "layout / overlay / docs" then
   before it was committed), then "second-pass review fixes" and the
   re-measurement.
 <!-- VERIFY:END -->
+
+## Deferred
+
+Left open when `scripts/setup-cold-storage.sh` was wrapped up (2026-11-12);
+one line each, none of them blocks the script's use.
+
+- Eleven findings of the last review of the script were fixed but never checked by a second reader, because that pass was cut short: a tablespace in a directory below the top of the cold directory, an fstab line for a dataset that is not made yet, the "unknown" fstab class in `status`, a ZFS without zstd, and seven about the lab (stand-in defaults, fstab lines left by an interrupted run, a pool recorded before it is made, loop-device bookkeeping, the comparison of other pools, the stand-in's way out, four checks that pinned nothing).
+- The final tree ran on real pools with OpenZFS 2.3.9 only; 2.2.11 and 2.4.4 ran an earlier revision, natively on Alpine.
+- No test reboots a host: `zpool export`/`import` and `mount` stand in for it, and `systemctl daemon-reload` runs only against a stand-in.
+- `setup-zfs-datasets.sh` still creates a dataset and then sets its properties one by one; a single `zfs create -o …` would leave nothing behind when a property is refused, and no empty `/POOL/NAME` directory.
+- The dry-run plan prints nothing under "what that script runs" when the delegated script refuses its arguments; it should show that script's own message.
+- Mount advice for an fstab line of a dataset whose mountpoint is another path names two ways out; the third (remove the line and use the dataset where it is, with `--mountpoint`) is not named.
+- That a copy's key is not loaded is said in `status` only; the two warnings of setup and ZFS.md still speak of "zfs mount -a at boot unless its canmount is noauto".
+- A received copy is told from the cold dataset by where its `mountpoint` property comes from; a cold dataset restored from a backup is "received" too, and a copy given its mountpoint by hand is "local", so it is a hint, and the messages say so only by naming both datasets.
+- `status` does not ask the database which reading applies when an unmounted dataset has a bare cold directory that is not empty; it gives the mount command and says to look into the directory first.
+- ZFS.md says the script names "the ZFS dataset that has the path and is not mounted" as what to bring back; the message now adds "if it is the cold dataset" and a second reading for a copy.
+- The lab suite does not retry a `docker compose exec` that the runtime could not start (seen once, exit 126, in the nested Docker of an emulated guest).

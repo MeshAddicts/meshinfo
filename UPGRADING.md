@@ -24,6 +24,13 @@ cold_tablespace_location = "/var/lib/postgresql/cold"
 Raising `cold_after_months` keeps more recent months hot and uncompressed, at
 the cost of compression ratio; 1 is the default and the smallest value.
 
+For the cold-only layout, `sudo scripts/setup-cold-storage.sh` prepares the
+compressed filesystem and `.env` on the Docker host in one command — it
+inspects the host, prints its plan and asks before changing anything
+(`--dry-run` only looks) — and ends with the two steps that remain: in
+`[storage.tiering]`, `enabled = true` and `cold_filesystem =
+"/mnt/meshinfo-cold"`; then `docker compose up -d`.
+
 Setup (the datasets, the overlay, carrying an existing volume across) and the
 operator guide are in [ZFS.md](ZFS.md); `scripts/tier_partitions.py status`
 shows where every month lives and `run --apply` moves months by hand (a dry

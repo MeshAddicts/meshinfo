@@ -13,7 +13,8 @@
 # an empty directory on the root filesystem, and the tiering job would either
 # refuse every cycle (with cold_filesystem set) or create the tablespace on
 # the wrong filesystem. Put it in .env next to the compose files, together
-# with COMPOSE_FILE so that every compose command picks the overlay up:
+# with COMPOSE_FILE so that every compose command picks the overlay up
+# (`sudo scripts/setup-cold-storage.sh` prepares the directory and writes both):
 #
 #   COMPOSE_FILE=docker-compose.yml:docker-compose.cold.yml
 #   MESHINFO_PGCOLD_DIR=/srv/meshinfo/pgcold

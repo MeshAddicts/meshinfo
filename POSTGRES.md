@@ -425,8 +425,12 @@ in the cold-only layout a btrfs filesystem or a ZFS dataset holding just the
 closed months, with the cluster left on its Docker volume
 (`docker-compose.cold.yml`); in the full layout the whole cluster sits on a
 compressed ZFS dataset too (`docker-compose.zfs.yml`). No schema or query
-changes either way. Choosing a layout, setup, the tablespace, moving an
-existing volume and the full operator guide are in [ZFS.md](ZFS.md).
+changes either way. For the cold-only layout, `sudo
+scripts/setup-cold-storage.sh` prepares the filesystem and `.env` in one
+command — a ZFS dataset, a btrfs subvolume or a btrfs loop image, by what
+the host has — and ends by printing the two lines to add below (`--dry-run`
+only looks). Choosing a layout, setup, the tablespace, moving an existing
+volume and the full operator guide are in [ZFS.md](ZFS.md).
 
 ```toml
 [storage.tiering]

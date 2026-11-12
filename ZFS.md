@@ -75,10 +75,12 @@ below has 12 and 24 months). The cold-only layouts leave the two hot months
 uncompressed, which is where their extra ~2 GB comes from; the gap narrows
 as history accumulates and the hot share shrinks.
 
-Nothing is migrated in the cold-only layouts: mount the filesystem, `docker
-compose up -d` with the overlay, flip `enabled = true`, and the job moves
-closed months at one partition an hour (`run --apply --all` does it in one
-go). Rolling back is the cold-only rollback below: scheduler off,
+Nothing is migrated in the cold-only layouts: `sudo
+scripts/setup-cold-storage.sh` prepares the filesystem and `.env` in one
+command, whichever of the two the host calls for ("Cold-only setup"); then
+`docker compose up -d` with the overlay, flip `enabled = true`, and the job
+moves closed months at one partition an hour (`run --apply --all` does it in
+one go). Rolling back is the cold-only rollback below: scheduler off,
 `tier_partitions.py --tablespace pg_default run --apply --all`, `DROP
 TABLESPACE meshinfo_cold`, then drop the overlay. The full layout buys the
 last ~25 % — the hot months at 3× instead of 1× — for the price of ZFS on
@@ -179,10 +181,15 @@ irrelevant. `zstd-9` compresses several times slower than `zstd-3` but
 decompresses at the same speed, which is the only side that matters after the
 move.
 
-**The rest.** `atime=off` avoids a metadata write on every read.
+**The rest.** `atime=off` avoids a metadata write on every read (on
+Alpine and other musl systems `zfs get atime` prints `on`, source
+`temporary`, for a mounted dataset that has it off; `findmnt` shows the
+`noatime` that is in effect).
 `xattr=sa` stores extended attributes in the inode instead of hidden
 directories (the Docker daemon and PG's own file operations touch xattrs
-occasionally; this is the standard Linux setting). `logbias=latency` on the
+occasionally; this is the standard Linux setting; OpenZFS 2.3 made it the
+meaning of `on`, and `zfs get xattr` prints `on` there for a dataset that
+was set to `sa`). `logbias=latency` on the
 hot dataset keeps WAL fsyncs on the fast path (and on a SLOG if you have one);
 `logbias=throughput` on the cold dataset tells ZFS not to funnel the bulk
 copy's large writes through the ZIL. Leave `sync`, `primarycache` and
@@ -210,6 +217,158 @@ right below and then steps 4 and 5; steps 1–3 do not apply to it.
 
 ### Cold-only setup
 
+**One command.** On the Docker host, as root, from the checkout the stack
+runs from:
+
+```sh
+sudo scripts/setup-cold-storage.sh --dry-run   # what it found and what it would do; changes nothing
+sudo scripts/setup-cold-storage.sh             # the same, then it asks, does it and verifies
+```
+
+The script inspects the host, prints what it found and its plan, asks for
+confirmation (`--yes` answers it), does the work, verifies the result and
+ends with the two steps that remain — the `[storage.tiering]` lines for
+`config.toml` (step 5; the script never edits that file) and `docker compose
+up -d` — or says that nothing remains. It takes the first layout below that
+applies; the flag forces one.
+
+| layout | taken when | what the script does |
+|---|---|---|
+| an existing directory | `--existing DIR` only: a directory you already made on btrfs or ZFS with compression on, for hosts whose own storage UI manages datasets | creates no storage; checks the filesystem and its compression, sets owner and mode |
+| btrfs on a spare device | `--device /dev/…` only | `mkfs.btrfs`, the fstab line, the mount. A device that carries any filesystem or partition-table signature is refused unless `--force` is given, which erases it — also the signature of a volume group, array or encrypted volume that is not in use at that moment. A device that is in use — mounted, active swap, or with another device built on it (an active volume group, an assembled array, an opened encrypted volume) — is refused always |
+| a ZFS dataset | the host has a ZFS pool; `--zfs POOL/DATASET` names the dataset and is required when there are several pools | runs `scripts/setup-zfs-datasets.sh --cold-only`, never on the pool's root dataset |
+| a btrfs subvolume | the filesystem that will hold the cold directory is already btrfs; `--subvolume` | `btrfs subvolume create` and the compression property ("Choosing a layout") |
+| btrfs in a loop image | everything else (ext4, xfs, …); `--image PATH`, default `/var/lib/meshinfo-cold.img`, and `--size` | `fallocate`, `mkfs.btrfs`, the fstab line, the mount |
+
+Whatever the layout, the cold directory (`--mountpoint`; by default what
+`.env` already names as `MESHINFO_PGCOLD_DIR`, else `/srv/meshinfo/pgcold`)
+ends up owned by `999:999` with mode `750` (PostgreSQL tightens that to `700`
+when the job creates the tablespace), `findmnt -no FSTYPE -T` prints `btrfs`
+or `zfs` for it and compression is on. `.env` gets `MESHINFO_PGCOLD_DIR` and
+the overlay in `COMPOSE_FILE`: an existing value is kept, and so are the
+files a running stack was started with and the override file Compose loads by
+itself; the file is copied to `.env.bak-<time>` first, and a change after
+which `docker compose config` fails is taken back (`--no-env` leaves `.env`
+alone and prints the two lines instead).
+
+Running the script again is safe: what is there is verified and reported,
+never reformatted or recreated. Without a layout flag it recognises what is
+mounted at the cold directory, an fstab line of its own for it, a subvolume
+it made, and a directory on btrfs or ZFS with compression on that `.env`
+names, that holds the tablespace or that already belongs to `999:999`, which
+it takes as it is. It never puts a new filesystem where an earlier one
+belongs, and never adopts a bare directory in its place: when the running
+database already has the cold tablespace and the tablespace's `PG_…`
+directory is not in the cold directory (a pool that was not imported, an
+fstab entry that did not mount), it creates and adopts nothing, `--existing`
+included, and says what to bring back: the filesystem, or the ZFS dataset
+that has the path and is not mounted. (Its own fstab line that did not
+mount, it mounts.) That comes first also when the catalog shows nothing
+stored on the tablespace yet — the job creates the tablespace before any
+month is due, so on a young install that is the ordinary state; dropping it
+("Rolling back", step 4) is named only then, and only for a filesystem that
+is gone for good. The same holds for a filesystem that is mounted at the
+cold directory without the tablespace's directory in it: it is not the one
+the database's files are on, and the script does not call it ready. A
+tablespace that the database has at a path the overlay does not bind is
+refused as well: the job would move the months there, not here. When `.env`
+names the directory, nothing is there and the database cannot be asked, it
+refuses too, and naming the layout says that a new one is meant.
+
+Anything that differs from what it would have made is refused, with what to
+do about it: another fstab entry for the mountpoint, a ZFS dataset that has
+the path as its mountpoint but is not mounted (over a cold directory that is
+in use this is a warning instead, and the advice is to keep that dataset
+from mounting), a file at the image path that is not its image or that
+another mountpoint already uses, a dataset or subvolume with other
+properties, a dataset with `mountpoint=legacy` (one that its own fstab line
+mounts can be adopted with `--existing`; the line must not carry `zfsutil`,
+which `mount` turns down for such a dataset), a mountpoint with files in it
+(a tablespace's `PG_…` directory is recognised: the advice is then never to
+empty it), and two btrfs or ZFS filesystems mounted one over the other at
+the cold directory — or, where the cold directory is a plain directory of a
+larger filesystem, at the place where that one is mounted: a received copy
+of the dataset that kept its mountpoint and was mounted as well. Which of
+the two ends on top can change from one boot to the next; the way out is to
+stop the stack, `umount` the directory until nothing is mounted there, give
+the copy another mountpoint or `canmount=off`, and mount the cold one again.
+The copy can also end up mounted alone, in the cold dataset's place — after
+a boot at which the cold dataset did not mount (its key was not loaded, its
+pool came late). A dataset whose mountpoint came with a `zfs receive` is a
+copy: when one is mounted at the cold directory while another dataset with
+that mountpoint is not, the script does not take the mounted one for the
+cold dataset unless it is named, and gives the way to swap the two. It also
+refuses to run without root, without the tools it needs (it names the
+package for the distribution family) or without btrfs in the kernel, and
+refuses an image path that is itself on btrfs or ZFS or in memory (tmpfs), a
+dataset whose parent does not exist yet, a path that leads — as typed or
+through a symlink — to a name `/etc/fstab` could not hold unquoted, a size
+on which no move could ever pass the job's guard, and a stack that already
+runs the full ZFS layout.
+
+For the ZFS layout it asks the pool about two things before it creates
+anything. A pool that is imported with an alternate root (`altroot`, as
+storage appliances import theirs) puts that root in front of every
+mountpoint a dataset is given. And a pool without the zstd feature — made by
+an older ZFS and not upgraded, or held to a compatibility set — cannot take
+`zstd-9`: `zpool set feature@zstd_compress=enabled POOL` adds that one
+feature, for good, and is not for a pool the boot loader reads. On either
+pool, and on a ZFS from before 2.0, which has no zstd at all, the script
+sets up no dataset and says how to go on — with `--existing`, for a dataset
+made in the host's own way. Dataset and pool names are held to letters,
+digits and `. _ - :`; ZFS itself also takes a space, and such a dataset is
+adopted with `--existing` as well. A cold dataset that nothing would mount
+after a reboot (`canmount=noauto`, or `mountpoint=legacy`, without an fstab
+line for it) is a warning: it is mounted now. The script's ZFS layout was
+exercised on real pools with OpenZFS 2.3.9; 2.2.11 and 2.4.4 ran an earlier
+revision of it, and other releases only the stand-ins of
+`tests/cold_storage_lab`.
+
+```sh
+sudo scripts/setup-cold-storage.sh status          # the layout, size, used and free, the compression ratio, the
+                                                   # fstab entry, whether the running containers see the mount
+sudo scripts/setup-cold-storage.sh grow --to 40G   # enlarge a loop image, online
+```
+
+`status` exits non-zero when something needs attention — the filesystem is
+not mounted or is mounted read-only, a container was started before it was
+and still shows the bare directory (step 4), the overlay is missing from
+`COMPOSE_FILE`, the image is no longer fully allocated, larger than the
+filesystem inside it, or gone from its path, the database has the tablespace
+while its `PG_…` directory is not in the cold directory, another ZFS dataset
+would mount over the directory (or over the filesystem it is a directory
+of) at the next boot, is mounted over it already, or is mounted in the cold
+dataset's place, or nothing would mount the cold dataset after a reboot
+(`canmount=noauto` or `mountpoint=legacy` without an fstab line, or a line
+that `mount` turns down). Where a dataset is what has to be mounted, the
+command it gives is `zfs mount -l`, which also loads the key of an encrypted
+one — `zfs mount -a` passes over a dataset whose key is not loaded without a
+word. While two filesystems are mounted one over the other it never advises
+restarting the containers: a restart gives them whatever is on top.
+
+**How big should the image be?** The disk holds the image's size, not its
+contents: the file is preallocated, so a 20 GiB image takes 20 GiB from the
+day it is made, whatever is in it. With the stack running, the script works
+the size out from the database and prints its reasoning: the smallest image
+on which the job's free-space guard (step 5: the partition's uncompressed
+size plus `min_free_mb`) passes for every month that is due to move, in the
+order the job moves them and assuming 4× for what is already inside, plus
+what a new btrfs keeps to itself (about half a gigabyte; two above 50 GiB),
+plus 10 %, rounded up to a whole GiB and never under 4 GiB. Without a
+running stack it takes 20 GiB. `--size` overrides either, down to the
+smallest image on which a move can pass at all (3 GiB with the default
+`min_free_mb`); when it is less than the database calls for, the script says
+so. The filesystem holding the image must have that much free and 3 GiB more, or
+the script refuses with the numbers. Only an image has a size: `--size` is
+not taken together with `--device`, `--zfs`, `--subvolume` or `--existing`,
+and where the layout the script picks by itself is not an image, it says
+that the size is not used. Later months need more room as they
+close: `grow --to SIZE` enlarges the image while everything keeps running
+(`fallocate`, `losetup -c`, `btrfs filesystem resize max`); for a device or
+a ZFS dataset it says what to do instead.
+
+**What the script does**, for doing it by hand or checking it afterwards:
+
 **a. A compressed filesystem for the cold months**, owned by the postgres
 image's user (`999:999`). One of:
 
@@ -225,15 +384,16 @@ image's user (`999:999`). One of:
   ```
 
 - *btrfs in a loop image file* when there is no spare device: the same thing
-  on a file, sized for the compressed archive plus headroom (at 5× a 20 GB
-  image holds some 100 GB of months), on ext4 or xfs — not on a filesystem
-  that would compress or snapshot the image a second time:
+  on a file (at 5× a 20 GiB image holds some 100 GB of months; see "How big
+  should the image be?" above), on ext4 or xfs — not on a filesystem that
+  would compress or snapshot the image a second time:
 
   ```sh
   sudo fallocate -l 20G /var/lib/meshinfo-cold.img               # preallocated: fails now if the room is not there
+  sudo chmod 600 /var/lib/meshinfo-cold.img                      # it holds the months' data
   sudo mkfs.btrfs -L meshinfo-cold /var/lib/meshinfo-cold.img
   sudo mkdir -p /srv/meshinfo/pgcold
-  echo '/var/lib/meshinfo-cold.img  /srv/meshinfo/pgcold  btrfs  loop,nodiscard,compress-force=zstd:9,noatime,nofail,x-systemd.before=docker.service  0 0' | sudo tee -a /etc/fstab
+  echo '/var/lib/meshinfo-cold.img  /srv/meshinfo/pgcold  btrfs  loop,nodiscard,X-fstrim.notrim,compress-force=zstd:9,noatime,nofail,x-systemd.before=docker.service  0 0' | sudo tee -a /etc/fstab
   sudo mount /srv/meshinfo/pgcold
   sudo chown 999:999 /srv/meshinfo/pgcold && sudo chmod 750 /srv/meshinfo/pgcold
   ```
@@ -241,19 +401,35 @@ image's user (`999:999`). One of:
   The job's free-space guard measures the btrfs inside the image, not what
   the filesystem holding it has left, so the image must be fully backed: a
   sparse image (`truncate`) would let a move fill the backing filesystem
-  with the guard still passing, and `nodiscard` keeps btrfs from punching
-  freed extents back out of the preallocation.
+  with the guard still passing. `nodiscard` keeps btrfs from punching freed
+  extents back out of the preallocation, and `X-fstrim.notrim` keeps the
+  periodic `fstrim` away (a weekly timer on most distributions, which trims
+  what fstab lists): a single `fstrim` of the mount hands every unused block
+  of the image back to the filesystem underneath. `status` reports an image
+  that is no longer fully allocated; `fallocate -l <size> <image>` backs it
+  again in place.
 
 - *a ZFS dataset* on an existing pool, with the cold properties, mounted and
-  chowned by the script:
+  chowned by `setup-zfs-datasets.sh`:
 
   ```sh
   sudo scripts/setup-zfs-datasets.sh --cold-only <pool>/meshinfo-cold /srv/meshinfo/pgcold
   scripts/setup-zfs-datasets.sh --cold-only <pool>/meshinfo-cold /srv/meshinfo/pgcold --dry-run   # preview
   ```
 
-- *already on ZFS or btrfs* — a dataset or subvolume with compression, see
-  "Choosing a layout"; nothing to format.
+- *already on btrfs* — a subvolume with the compression property, nothing
+  to format ("Choosing a layout" has what the property does and does not
+  select):
+
+  ```sh
+  sudo btrfs subvolume create /srv/meshinfo/pgcold
+  sudo btrfs property set /srv/meshinfo/pgcold compression zstd
+  sudo chown 999:999 /srv/meshinfo/pgcold && sudo chmod 750 /srv/meshinfo/pgcold
+  ```
+
+- *a directory your storage UI made* on btrfs or ZFS, with compression
+  switched on there: only `chown 999:999` and `chmod 750` are left to do
+  (`--existing DIR`).
 
 Whichever it is, `findmnt /srv/meshinfo/pgcold` must show `btrfs` or `zfs`
 (for a btrfs subvolume, which is not a mount point of its own, `findmnt -no
@@ -324,7 +500,9 @@ point at an empty directory inside the named volume once the bind is gone:
 harmless for queries, but the next enabled cycle would skip `CREATE
 TABLESPACE` and fail with `could not create directory` instead of one of
 the step-4 refusals. (5) Remove the overlay from `COMPOSE_FILE` and the
-fstab line, `docker compose up -d`; only then can the cold filesystem go.
+fstab line (with the comment line the script wrote above it), `docker
+compose up -d`; only then can the cold filesystem go — `umount` it and
+delete the image file, or destroy the dataset or subvolume.
 
 ### 1. Create the datasets
 
@@ -436,7 +614,9 @@ the filesystem was unmounted keeps showing the bare directory for the life
 of the container (Docker binds are private by default, so a mount made on
 the host afterwards never appears inside), and a plain `docker compose up
 -d` does not recreate containers whose configuration is unchanged — after
-mounting, run `docker compose restart postgres meshinfo`. The same restart
+mounting, run `docker compose restart postgres meshinfo` (`sudo
+scripts/setup-cold-storage.sh status` says, per container, whether it sees
+the filesystem, the bare directory, or no bind at all). The same restart
 brings back cold months that were already moved; until then Postgres
 answers `could not open file` for them. Do not `chown` the bare directory
 to make the first line go away: the next cycle would create the tablespace
@@ -858,6 +1038,11 @@ sudo zfs destroy -r tank/meshinfo@pre-upgrade
 ## Monitoring
 
 ```sh
+# a cold-only layout in one look: what is set up, size, used and free, the compression ratio,
+# the fstab entry, and whether postgres and meshinfo see the mount (exits non-zero when
+# something needs attention)
+sudo scripts/setup-cold-storage.sh status
+
 # compression actually achieved, per dataset (logicalused = what Postgres thinks it wrote)
 zfs list -o name,used,logicalused,compressratio,recordsize,compression,avail -r tank/meshinfo
 # the same for a btrfs cold directory (package `compsize`: disk usage vs uncompressed, per codec)

@@ -117,7 +117,7 @@ The main configuration file is `config.toml`. Key sections:
 
 See [config.toml.sample](config.toml.sample) for all options with inline documentation.
 
-For PostgreSQL-specific details, see [POSTGRES.md](POSTGRES.md). To shrink a multi-year archive by moving closed months onto a compressed filesystem (ZFS or btrfs), see [ZFS.md](ZFS.md).
+For PostgreSQL-specific details, see [POSTGRES.md](POSTGRES.md). To shrink a multi-year archive by moving closed months onto a compressed filesystem (ZFS or btrfs), see [ZFS.md](ZFS.md); `sudo scripts/setup-cold-storage.sh` prepares that filesystem in one command — a ZFS dataset, a btrfs subvolume or a btrfs loop image, whichever the host calls for.
 
 For the Coverage and Scan tools' propagation model (ITM + ITU-R clutter), see [RF-MODEL.md](RF-MODEL.md). To enable per-pixel land-cover-aware predictions, run the one-shot tile bake:
 
