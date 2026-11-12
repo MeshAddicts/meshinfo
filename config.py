@@ -166,29 +166,20 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "min_pool_size": 1,
             "max_pool_size": 5,
         },
-        # Tiered cold storage (ZFS.md): closed monthly partitions of the archive
-        # tables are rebuilt on a compressed "cold" tablespace once they are old
-        # enough and swapped in; readers keep working during the copy. The
-        # maintenance loop runs one cycle per hour when enabled;
-        # scripts/tier_partitions.py drives the same job by hand regardless.
+        # Tiered cold storage (ZFS.md): old monthly partitions move to a compressed tablespace.
         "tiering": {
             "enabled": False,
-            # A month is cold this many whole calendar months after it closed
-            # (the current and the previous month always stay hot); higher
-            # keeps more recent months uncompressed, at the cost of ratio.
+            # Whole calendar months after a month closed before it turns cold (the
+            # current and the previous month always stay hot).
             "cold_after_months": 1,
             "cold_tablespace": "meshinfo_cold",
-            # Created by the job on its first cycle when cold_tablespace does
-            # not exist: the cold directory's path inside the postgres container
-            # (docker-compose.zfs.yml / docker-compose.cold.yml). "" never
-            # creates it (see ZFS.md).
+            # Where the job creates cold_tablespace when it is missing: the cold
+            # directory inside the postgres container. "" never creates it.
             "cold_tablespace_location": "/var/lib/postgresql/cold",
             "tables": ["mqtt_messages", "packet_receptions"],
             "max_partitions_per_cycle": 1,
             # Mount point of the cold dataset inside the app container, for the
-            # free-space check before each move, the hourly zfs/btrfs mount
-            # warning and the "do not create the tablespace on the wrong
-            # filesystem" guard; "" skips all three.
+            # free-space and filesystem checks; "" skips them.
             "cold_filesystem": "",
             "min_free_mb": 2048,
         },
@@ -605,9 +596,7 @@ def validate(config: dict) -> list[str]:
                     warn(f"Config field 'storage.ingest_denylist' has an invalid node id {n!r} (expected hex like \"eba3d8e8\")")
 
     # ── tiered cold storage (ZFS.md) ──────────────────────────────────
-    # TieringPolicy.from_config coerces/clamps every value and never raises;
-    # validate(raw=...) names each entry it ignored or clamped, plus a bad
-    # cold_tablespace identifier and an empty tables list.
+    # TieringPolicy.from_config never raises; validate(raw=...) names what it ignored or clamped.
     check(_validate_type(config, "storage.tiering", dict))
     tiering_cfg = storage_cfg.get("tiering")
     if isinstance(tiering_cfg, dict):

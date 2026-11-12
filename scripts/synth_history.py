@@ -121,10 +121,9 @@ FIRMWARE = ("2.5.20.4c97351", "2.6.4.b89355f", "2.6.11.60ec05e", "2.7.4.c2dfba2"
 LAT0, LON0 = 386000000, -1214000000
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+# --- helpers ---
 
 def _dsn_from_config(path: Path) -> str:
-    """Build a DSN from config.toml's [storage.postgres] section."""
     try:
         import tomllib
     except ImportError:  # Python < 3.11: pass --dsn instead
@@ -199,7 +198,7 @@ def weighted_pick(rng: random.Random, items: Tuple[Tuple[str, float], ...]) -> s
     return items[-1][0]
 
 
-# ── population ───────────────────────────────────────────────────────────────
+# --- population ---
 
 class Population:
     """Nodes, gateways and topics shared by every month of one seed."""
@@ -289,7 +288,7 @@ class Population:
         return chosen
 
 
-# ── message generator ────────────────────────────────────────────────────────
+# --- message generator ---
 
 def _position_payload(rng: random.Random) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
@@ -442,8 +441,7 @@ class Generator:
 
     def _envelope(self, rng: random.Random, kind: str, node: str, gateway: str,
                   preset: str, created_at: datetime.datetime, packet_id: Optional[int]) -> Dict[str, Any]:
-        """The per-packet message dict as handle_log hands it to write_mqtt_message:
-        MessageToJson's sorted MeshPacket keys first, then the keys mqtt.py adds."""
+        """The per-packet dict as handle_log gives it to write_mqtt_message: sorted MeshPacket keys, then mqtt.py's."""
         pop = self.pop
         rx_time = int(created_at.timestamp()) - rng.randint(0, 3)
         legacy = rng.random() < 0.08           # pre-2.3 firmware: hop_start absent
@@ -506,9 +504,8 @@ class Generator:
         copy = dict(canonical)
         copy["sender"] = gateway
         copy["topic"] = topic
-        # Typed reception columns never need a patch, so the RF envelope varies
-        # freely; only the deviations below (and a canonical heard without an RF
-        # reading) produce an `extras` patch - see --extras-rate.
+        # Typed reception columns never need a patch; only the deviations below (and
+        # a canonical copy heard without an RF reading) produce an `extras` patch.
         deviation = rng.random() < self.extras_rate
         no_rf = deviation and rng.random() < 0.2
         for k in ("rx_rssi", "rx_snr", "rssi", "snr"):
@@ -555,8 +552,7 @@ class Generator:
         return copy
 
     def packets(self, month: datetime.date, count: int) -> Iterator[Tuple[Dict[str, Any], datetime.datetime, List[Dict[str, Any]]]]:
-        """Yield (canonical message, created_at, [per-copy messages incl. the
-        canonical one]) for `count` packets, in created_at order."""
+        """Yield (canonical message, created_at, all copies incl. the canonical one) for count packets, in created_at order."""
         rng = self.month_rng(month)
         pop = self.pop
         stamps = sorted(self._created_at(rng, month) for _ in range(count))
@@ -564,8 +560,6 @@ class Generator:
             kind = weighted_pick(rng, TYPE_MIX)
             node = pop.pick_node(rng)
             preset = weighted_pick(rng, tuple((name, share) for name, _, share in PRESETS))
-            # Mapreports have no packet id; ingest dedups them by content and
-            # still records one reception per distinct gateway, like any packet.
             n_copies = max(1, poisson(rng, self.mean_receptions))
             gateways = pop.pick_gateways(rng, preset, n_copies)
             packet_id = None if kind == "mapreport" else rng.getrandbits(32) or 1
@@ -605,8 +599,7 @@ class Generator:
 
     def rows(self, month: datetime.date, count: int, ids: Iterator[int],
              rng_recv: random.Random) -> Iterator[Tuple[tuple, List[tuple]]]:
-        """Yield (mqtt row, [reception rows with the topic STRING in the
-        topic_id slot]) per packet; the caller interns topics and COPYs."""
+        """Yield (mqtt row, reception rows with the topic string in the topic_id slot) per packet; the caller interns topics."""
         for msg, created_at, copies in self.packets(month, count):
             row_id = next(ids)
             payload_text = json.dumps(msg, ensure_ascii=False)
@@ -635,7 +628,7 @@ class Generator:
             yield mqtt_row, receptions
 
 
-# ── database side ────────────────────────────────────────────────────────────
+# --- database side ---
 
 async def partition_exists(conn: asyncpg.Connection, name: str) -> bool:
     return await conn.fetchval("SELECT to_regclass($1) IS NOT NULL", name)
@@ -738,8 +731,7 @@ async def month_stats(conn: asyncpg.Connection, month: datetime.date) -> List[Tu
 
 
 async def trigger_mismatches(conn: asyncpg.Connection, month: datetime.date) -> int:
-    """Rows whose from/to/packet_id columns differ from what the node-id trigger
-    derives from the payload — must be 0 for the generator to be faithful."""
+    """Rows whose from/to/packet_id columns differ from what the node-id trigger derives; must be 0."""
     name = f"mqtt_messages_{month_label(month)}"
     if not await partition_exists(conn, name):
         return 0
@@ -752,7 +744,7 @@ async def trigger_mismatches(conn: asyncpg.Connection, month: datetime.date) -> 
     ))
 
 
-# ── CLI ──────────────────────────────────────────────────────────────────────
+# --- CLI ---
 
 def _print_sample(gen: Generator, month: datetime.date) -> None:
     """One packet of every kind, with the byte length the archive would store."""
@@ -862,7 +854,7 @@ async def main() -> int:
                 print(f"refusing: {table} is not a partitioned table (relkind={relkind!r})")
                 return 2
 
-        # ── preconditions / plan ───────────────────────────────────────────
+        # preconditions / plan
         to_create: List[str] = []
         busy: List[str] = []
         for m in all_months:
@@ -885,7 +877,7 @@ async def main() -> int:
             print("dry run complete - nothing written")
             return 0
 
-        # ── load ───────────────────────────────────────────────────────────
+        # load
         for m in all_months:
             for table in ("mqtt_messages", "packet_receptions"):
                 if await ensure_partition(conn, table, m):
@@ -899,14 +891,13 @@ async def main() -> int:
                   f"({n_extras} with extras, {100.0 * n_extras / max(n_recv, 1):.1f}%) "
                   f"in {time.monotonic() - t_month:.1f}s")
         print(f"interned {len(topic_cache)} topic(s) in mqtt_topics")
-        # Leave the partitions the way autovacuum would (stats, visibility map,
-        # trailing empty pages from COPY's bulk extension truncated when they
-        # exceed 1/16 of the relation) so the footprint below is steady state.
+        # Leave the partitions as autovacuum would (stats, visibility map, COPY's
+        # trailing empty pages truncated) so the footprint below is steady state.
         for m in all_months:
             for table in ("mqtt_messages", "packet_receptions"):
                 await conn.execute(f"VACUUM (ANALYZE) {table}_{month_label(m)}")
 
-        # ── report ─────────────────────────────────────────────────────────
+        # report
         print("per-month heap footprint (pg_relation_size / count):")
         for m in all_months:
             for name, rows, heap in await month_stats(conn, m):

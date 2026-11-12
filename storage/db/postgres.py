@@ -470,9 +470,7 @@ class PostgresStorage:
             logger.debug("DB unavailable; queued %s for retry (%d pending)", kind, len(self._write_retry))
 
     def backfill_running(self) -> bool:
-        """True while the startup node-id backfill task is alive. The tiering
-        scheduler waits for it: its batched UPDATEs go through the parent table
-        and would deadlock with a partition swap."""
+        """True while the startup node-id backfill runs; its UPDATEs through the parent would deadlock with a partition swap."""
         task = self._backfill_task
         return task is not None and not task.done()
 

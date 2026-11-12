@@ -96,18 +96,15 @@ async def maintenance_loop(config, data, interval_seconds: float = MAINTENANCE_I
                 await data.pg_storage.ensure_mqtt_partitions()
             # Backups run whenever the newest dump is older than the schedule —
             # a single-flight background task; a multi-GB dump must not stall this loop.
-            # Never alongside a tiering cycle: pg_dump holds ACCESS SHARE on every
-            # table for the whole dump, which the swap's ACCESS EXCLUSIVE would
-            # queue behind (and every query behind that).
+            # Never alongside a tiering cycle: pg_dump holds ACCESS SHARE on every table,
+            # and the swap's ACCESS EXCLUSIVE (and every query behind it) would queue on it.
             backup_running = backup_task is not None and not backup_task.done()
             tiering_running = tiering_task is not None and not tiering_task.done()
             if not backup_running and not tiering_running and maintenance.backup_due(config):
                 backup_task = asyncio.create_task(maintenance.run_backup(config))
                 backup_running = True
-            # Tiered cold storage (ZFS.md): hourly, single-flight, on its own
-            # connection — copying a multi-GB partition must not stall this loop.
-            # Waits for a running backup and for the startup node-id backfill
-            # (its UPDATEs through the parent would deadlock with the swap).
+            # Tiered cold storage (ZFS.md): single-flight, off this loop. Waits for a backup
+            # and for the node-id backfill, whose UPDATEs would deadlock with the swap.
             if (not tiering_running and not backup_running
                     and not data.pg_storage.backfill_running()
                     and maintenance.tiering_due(config)):

@@ -136,14 +136,10 @@ def _redact_dsn(dsn: str) -> str:
     return urlunsplit(u._replace(netloc=f"{userinfo.split(':', 1)[0]}:***@{hostport}"))
 
 
-# ----------------------------------------------------------------------------
-# Command line
-# ----------------------------------------------------------------------------
+# --- Command line ---
 
 def _add_global_options(ap: argparse.ArgumentParser, *, after_command: bool = False) -> None:
-    """The global options. They belong before the command; each command accepts
-    them too, with SUPPRESS defaults so a command-level parse only overrides
-    what was actually given there."""
+    """The global options; each command takes them too, with SUPPRESS defaults so it only overrides what was given there."""
     def default(value: Any) -> Any:
         return argparse.SUPPRESS if after_command else value
 
@@ -203,9 +199,7 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
-# ----------------------------------------------------------------------------
-# Output helpers
-# ----------------------------------------------------------------------------
+# --- Output helpers ---
 
 def _print_table(headers: Sequence[str], rows: Sequence[Sequence[str]],
                  right: Sequence[int] = ()) -> None:
@@ -250,7 +244,6 @@ def _totals_line(parts: List[PartitionInfo]) -> str:
 
 
 def _format_result(res: MoveResult) -> str:
-    """One streamed line per MoveResult."""
     reason = res.reason
     if reason.startswith(res.partition + ": "):
         reason = reason[len(res.partition) + 2:]
@@ -270,9 +263,7 @@ def _format_result(res: MoveResult) -> str:
     return f"{res.status:<13} {res.partition:<27} {detail}"
 
 
-# ----------------------------------------------------------------------------
-# Commands
-# ----------------------------------------------------------------------------
+# --- Commands ---
 
 async def cmd_status(conn: asyncpg.Connection, args: argparse.Namespace, policy: TieringPolicy,
                      now: datetime.datetime) -> int:
@@ -398,13 +389,10 @@ async def cmd_run(conn: asyncpg.Connection, args: argparse.Namespace, policy: Ti
     return EXIT_FAILED if any(r.status in FAILURE_STATUSES for r in cycle.results) else EXIT_OK
 
 
-# ----------------------------------------------------------------------------
-# Entry point
-# ----------------------------------------------------------------------------
+# --- Entry point ---
 
 def _load_config(path: Path) -> dict:
-    """tomllib-load path when it exists; a missing file means built-in defaults
-    (the CLI is also used from hosts without a config.toml, with --dsn)."""
+    """Load config.toml when it exists; a missing file means built-in defaults (the CLI also runs with just --dsn)."""
     if not path.is_file():
         return {}
     with open(path, "rb") as f:
@@ -439,9 +427,8 @@ async def main(argv: Optional[Sequence[str]] = None) -> int:
     except (OSError, tomllib.TOMLDecodeError) as e:
         _err(f"cannot read config {config_path}: {e}")
         return EXIT_USAGE
-    # --tablespace is the destination of THIS invocation only; the policy keeps
-    # the configured cold tablespace so the free-space guard (which protects
-    # the cold dataset) still knows which target it applies to.
+    # --tablespace is this invocation's destination only: the policy keeps the
+    # configured cold tablespace so the free-space guard still knows its target.
     policy = TieringPolicy.from_config(config).with_overrides(cold_after_months=args.cold_after_months)
     if args.tablespace is not None and not IDENT_RE.match(args.tablespace):
         _err(f"--tablespace {args.tablespace!r} is not a plain identifier")
@@ -481,9 +468,7 @@ async def main(argv: Optional[Sequence[str]] = None) -> int:
                 _err(f"warning: {fs_warning}")
         if args.command != "status" and not await tablespace_exists(conn, target):
             if cold_target and args.command == "run" and args.apply:
-                # The operator path is "mount the dataset, flip enabled = true":
-                # a real run creates the tablespace just like the hourly job
-                # (and, like it, not while cold_filesystem fails the mount check).
+                # A real run creates the tablespace like the hourly job does (not while the mount check fails).
                 await ensure_cold_tablespace(conn, policy, fs_warning=fs_warning)
                 _err(f"created tablespace {target} at {policy.cold_tablespace_location}")
             else:
@@ -514,8 +499,7 @@ async def main(argv: Optional[Sequence[str]] = None) -> int:
 
 
 def _quiet_stdout() -> None:
-    """stdout is a closed pipe (| head): point it at devnull so the interpreter's
-    exit-time flush cannot fail noisily."""
+    """stdout is a closed pipe (| head): point it at devnull so the exit-time flush cannot fail noisily."""
     try:
         os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
     except OSError:

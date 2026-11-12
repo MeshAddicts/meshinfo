@@ -55,9 +55,8 @@ BACKUP_INTERVAL_DAYS = {"daily": 1, "weekly": 7, "monthly": 30}
 # Failure backoff so a broken pg_dump doesn't retry every maintenance tick.
 _next_backup_attempt_monotonic = 0.0
 
-# Tiering runs at most once an hour. Cadence and failure backoff share one
-# clock, armed at the START of every run: a cycle that moved a month, found
-# nothing to do, or could not even reach the database all wait an hour.
+# At most once an hour. Cadence and failure backoff share one clock, armed at
+# the start of every run, so a failed cycle also waits an hour.
 TIERING_INTERVAL_SEC = 3600
 _next_tiering_attempt_monotonic = 0.0
 
@@ -151,23 +150,14 @@ async def run_backup(config: Dict[str, Any]) -> Optional[Path]:
 
 
 def tiering_due(config: Dict[str, Any]) -> bool:
-    """True when [storage.tiering] is enabled and the hourly cadence / failure
-    backoff has elapsed (the CLI is not gated by this — see tier_partitions.py)."""
+    """True when tiering is enabled and the hourly cadence / failure backoff has elapsed."""
     if not TieringPolicy.from_config(config).enabled:
         return False
     return time.monotonic() >= _next_tiering_attempt_monotonic
 
 
 async def run_tiering(config: Dict[str, Any]) -> Optional[CycleResult]:
-    """One tiering cycle (storage.db.tiering.run_cycle with the configured
-    policy: no dry run, no deep verify, max_partitions_per_cycle moves) on a
-    dedicated asyncpg connection without a command timeout. Warns when
-    cold_filesystem is not on zfs/btrfs, and creates the cold tablespace first
-    when it is missing (not while that warning stands: a tablespace on the
-    wrong filesystem would hide the moved months once the dataset mounts over
-    it). Returns the CycleResult, or None when the cycle could not run
-    at all; never raises (cancellation aside). The next attempt is an hour away
-    either way."""
+    """One tiering cycle on a dedicated connection; returns the CycleResult, or None when it could not run. Never raises."""
     global _next_tiering_attempt_monotonic
     _next_tiering_attempt_monotonic = time.monotonic() + TIERING_INTERVAL_SEC
 
@@ -187,9 +177,7 @@ async def run_tiering(config: Dict[str, Any]) -> Optional[CycleResult]:
     except asyncio.CancelledError:
         raise
     except TieringError as e:
-        # A bad policy, or a cold tablespace that does not exist and cannot be
-        # created (dataset not mounted, directory not writable, no superuser,
-        # cold_filesystem not on zfs/btrfs).
+        # A bad policy, or a cold tablespace that is missing and cannot be created.
         logger.warning("tiering: cycle not run: %s", e)
         return None
     except (OSError, asyncpg.PostgresError, asyncpg.InterfaceError) as e:

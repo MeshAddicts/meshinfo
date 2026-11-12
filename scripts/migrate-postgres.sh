@@ -61,9 +61,8 @@ docker compose version >/dev/null 2>&1 || {
   exit 1
 }
 
-# Tiered ZFS installs (ZFS.md) bind-mount the datasets at /var/lib/postgresql
-# instead of using the named volume; migrating a leftover named volume would
-# restore a stale copy over nothing useful. Those installs follow ZFS.md.
+# Tiered ZFS installs (ZFS.md) bind-mount datasets at /var/lib/postgresql: a
+# leftover named volume would be a stale copy. Those installs follow ZFS.md.
 if docker compose config 2>/dev/null | grep -A2 -E '^\s+- type: bind$' \
      | grep -qE 'target: /var/lib/postgresql$'; then
   err "The compose config bind-mounts /var/lib/postgresql (tiered ZFS install)."
@@ -71,11 +70,8 @@ if docker compose config 2>/dev/null | grep -A2 -E '^\s+- type: bind$' \
   exit 1
 fi
 
-# Cold-only tiered installs (ZFS.md, "Choosing a layout") keep the cluster in
-# the named volume and bind a directory on a compressed filesystem at
-# /var/lib/postgresql/cold for the meshinfo_cold tablespace. The temporary
-# dump container below needs that directory too, or pg_dump cannot read the
-# cold months. The tablespace path is the same inside every PostgreSQL version.
+# Cold-only installs (ZFS.md) bind a directory at /var/lib/postgresql/cold for
+# the meshinfo_cold tablespace: the dump container needs it to read the cold months.
 COLD_DIR="$(docker compose config 2>/dev/null | grep -A2 -E '^\s+- type: bind$' \
   | grep -B1 -E 'target: /var/lib/postgresql/cold$' | sed -nE 's/^\s+source: (.+)$/\1/p' | head -n1 || true)"
 COLD_MOUNT=()
@@ -167,10 +163,8 @@ for i in $(seq 1 60); do
   sleep 1
 done
 
-# Cold-only tiered installs: the restore puts the whole archive — the cold
-# months included, uncompressed — back onto the named volume before the
-# tiering job re-tiers it. Refuse now, before anything destructive, when the
-# filesystem behind the volume cannot hold that (SKIP_SPACE_CHECK=1 overrides).
+# Cold-only installs: the restore puts the cold months back, uncompressed, on the
+# named volume. Refuse before anything destructive when they cannot fit.
 if [ -n "$COLD_DIR" ] && [ "${SKIP_SPACE_CHECK:-0}" != "1" ]; then
   DB_BYTES="$(docker exec -e PGPASSWORD="$DB_PASSWORD" "$TMP_PG" \
     psql -U "$DB_USER" -d "$DB_NAME" -Atc 'SELECT pg_database_size(current_database())' 2>/dev/null | tr -cd '0-9' || true)"
@@ -195,11 +189,8 @@ if [ -n "$COLD_DIR" ] && [ "${SKIP_SPACE_CHECK:-0}" != "1" ]; then
 fi
 
 log "Dumping database '${DB_NAME}' → ${DUMP_FILE}"
-# --no-tablespaces: on tiered installs (ZFS.md) cold months live in the
-# meshinfo_cold tablespace, which does not exist in the fresh cluster. The
-# restore lands everything on pg_default; the tiering job re-tiers afterwards
-# (the old version's PG_<old>_* subdirectory stays in the cold directory
-# until an operator removes it; see the completion message).
+# --no-tablespaces: meshinfo_cold does not exist in the fresh cluster, so the
+# restore lands on pg_default and the tiering job re-tiers afterwards.
 if ! docker exec -e PGPASSWORD="$DB_PASSWORD" "$TMP_PG" \
        pg_dump -U "$DB_USER" -d "$DB_NAME" --no-owner --no-privileges --no-tablespaces \
      | gzip > "$DUMP_FILE"; then

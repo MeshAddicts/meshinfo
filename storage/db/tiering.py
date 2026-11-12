@@ -1,39 +1,8 @@
-"""
-Tiered cold storage for the partitioned archive tables (see ZFS.md).
+"""Tiered cold storage for the partitioned archive tables (see ZFS.md).
 
-Closed monthly partitions of mqtt_messages / packet_receptions are relocated
-between tablespaces (hot pool <-> compressed cold pool) by rebuilding each
-partition as a new table on the target tablespace and swapping it in:
-
-    SET LOCAL lock_timeout / statement_timeout / default_tablespace
-    LOCK TABLE <part> IN SHARE MODE            -- readers continue, writers wait
-    CREATE TABLE <part>_tiering (LIKE <part> ...) TABLESPACE <target>
-    INSERT INTO <part>_tiering SELECT * FROM <part>
-    <clone every index onto the target tablespace under scratch names>
-    <transient range CHECK so ATTACH can skip its validation scan>
-    <count and optional deep-hash verification>
-    DETACH <part>; rename the original and its indexes aside; rename the copy
-    and its indexes into place; ATTACH with the original bound; drop the
-    CHECK; drop the original (unless keep_original) — retried under a
-    SAVEPOINT whenever the swap hits its timeout or a deadlock, postponed
-    while pg_locks shows a long-standing holder of the parent, the DEFAULT
-    partition or the month (so requests never queue behind a hopeless ACCESS
-    EXCLUSIVE), and given up at once when a writer through the parent is
-    queued behind our SHARE lock (a certain deadlock); the per-attempt
-    timeout bounds how long any other session can wait behind the swap, the
-    attempt count bounds how long a move may be delayed
-    COMMIT; then VACUUM (FREEZE, ANALYZE) <part> outside the transaction
-
-`ALTER TABLE ... SET TABLESPACE` would hold ACCESS EXCLUSIVE for the whole
-rewrite; this dance needs it only for the sub-second swap at the end. One
-transaction per partition: any failure rolls back and leaves the original
-untouched. Everything that talks to the catalog lives here — maintenance.py
-(scheduler) and scripts/tier_partitions.py (CLI) are thin callers.
-
-Connections must be dedicated `asyncpg.connect(..., command_timeout=None)`
-sessions (the app pool's 10 s command timeout would kill the copy); call
-`set_session()` once per connection so partition-bound text is stable.
-"""
+A closed monthly partition is rebuilt on the target tablespace and swapped in,
+one transaction each: unlike SET TABLESPACE, only the swap needs ACCESS EXCLUSIVE.
+Use dedicated connections (command_timeout=None) and call set_session() once."""
 
 import asyncio
 import dataclasses
@@ -61,12 +30,8 @@ SCRATCH_SUFFIX = "_tiering"  # replacement table / cloned index scratch names
 OLD_SUFFIX = "_tiering_old"  # detached original (kept only with keep_original)
 RANGE_SUFFIX = "_tiering_range"  # transient CHECK on the replacement
 COPY_LOCK_TIMEOUT = "5s"
-# The swap's DETACH needs ACCESS EXCLUSIVE on the parent: while it waits for the
-# queries in flight, every new query and insert on the parent queues behind it.
-# A short per-attempt lock_timeout therefore bounds the stall other sessions can
-# ever see; many attempts with growing pauses let a long in-flight query (a
-# payload ILIKE over a month) delay the move without ever stalling the API for
-# more than SWAP_LOCK_TIMEOUT at a time.
+# DETACH waits for ACCESS EXCLUSIVE on the parent with every new query queued
+# behind it: a short timeout bounds that stall, many attempts outlast long queries.
 SWAP_LOCK_TIMEOUT = "2500ms"
 SWAP_ATTEMPTS = 10
 SWAP_PAUSE_MAX_SECONDS = 20.0  # pauses: 1, 2, 4, 8, 16, 20, 20, ... (+ up to 1 s jitter)
@@ -99,25 +64,18 @@ class TieringVerifyError(TieringError):
     """Row count / digest mismatch between original and copy; transaction rolled back."""
 
 
-# ----------------------------------------------------------------------------
-# Pure helpers (no I/O)
-# ----------------------------------------------------------------------------
+# --- Pure helpers (no I/O) ---
 
 def quote_ident(name: str) -> str:
-    """Double-quote an SQL identifier, doubling embedded double quotes."""
     return '"' + str(name).replace('"', '""') + '"'
 
 
 def quote_literal(text: str) -> str:
-    """Single-quote an SQL string literal, doubling embedded single quotes."""
     return "'" + str(text).replace("'", "''") + "'"
 
 
 def safe_name(base: str, suffix: str) -> str:
-    """base + suffix when that fits PostgreSQL's 63-byte identifier limit;
-    otherwise a truncated base plus a 4-hex sha1 tag so distinct long bases
-    (e.g. two 59-char per-partition index names) never collapse onto the same
-    silently-truncated scratch name."""
+    """base + suffix, cut to 63 bytes with a 4-hex sha1 tag so long bases stay distinct."""
     if len(base) + len(suffix) <= MAX_IDENT:
         return base + suffix
     keep = MAX_IDENT - len(suffix) - 5
@@ -179,8 +137,7 @@ def _month_of(now: Any) -> datetime.date:
 
 
 def cold_cutoff(now: Any, cold_after_months: int) -> datetime.date:
-    """First day of (now's month - max(1, cold_after_months)); months STRICTLY
-    before it are cold. (2026-11-03, 3) -> 2026-08-01: July cold, August hot."""
+    """First day of (now's month - max(1, cold_after_months)); months strictly before it are cold."""
     try:
         n = int(cold_after_months)
     except (TypeError, ValueError):
@@ -189,7 +146,6 @@ def cold_cutoff(now: Any, cold_after_months: int) -> datetime.date:
 
 
 def is_cold(month: datetime.date, now: Any, cold_after_months: int) -> bool:
-    """True when month lies strictly before cold_cutoff(now, cold_after_months)."""
     return month.replace(day=1) < cold_cutoff(now, cold_after_months)
 
 
@@ -232,8 +188,7 @@ def _parse_timestamp(text: str) -> Optional[datetime.datetime]:
 
 
 def parse_bounds(bound_expr: str) -> Optional[Tuple[datetime.datetime, datetime.datetime]]:
-    """pg_get_expr(relpartbound) text -> (lo, hi) aware UTC datetimes.
-    'DEFAULT', MINVALUE/MAXVALUE bounds and anything unparsable -> None."""
+    """Partition bound text -> (lo, hi) in aware UTC; None for DEFAULT, MINVALUE/MAXVALUE or unparsable."""
     if not isinstance(bound_expr, str):
         return None
     m = _BOUND_RE.match(bound_expr)
@@ -250,11 +205,7 @@ _INDEXDEF_RE = re.compile(r"^CREATE (UNIQUE )?INDEX (\S+) ON (\S+) (USING .+)$",
 
 
 def _predicate_offset(rest: str) -> int:
-    """Offset of the top-level ` WHERE ` (the partial-index predicate) in the
-    tail of a pg_get_indexdef definition, or -1. Skips anything inside
-    parentheses, single-quoted literals and double-quoted identifiers, so a
-    ' WHERE ' inside an index expression or a literal is never mistaken for
-    the predicate."""
+    """Offset of the top-level ` WHERE ` in an indexdef tail, or -1; parentheses and quoted text are skipped."""
     depth = 0
     i = 0
     n = len(rest)
@@ -283,10 +234,7 @@ def _predicate_offset(rest: str) -> int:
 
 
 def clone_index_sql(indexdef: str, *, new_index: str, new_table: str, tablespace: str) -> str:
-    """Rewrite pg_get_indexdef output for a clone: new (quoted) index name, new
-    (unqualified, quoted) table, and TABLESPACE inserted before the trailing
-    WHERE predicate (grammar order) or appended. UNIQUE, USING, the column
-    list and INCLUDE/WITH clauses are kept verbatim."""
+    """pg_get_indexdef output rewritten for the clone: new index and table names, TABLESPACE before any WHERE."""
     m = _INDEXDEF_RE.match(indexdef.strip())
     if not m:
         raise ValueError(f"unrecognised index definition: {indexdef!r}")
@@ -306,10 +254,7 @@ _CONSTRAINT_CHARACTERISTICS_RE = re.compile(
 
 
 def constraint_index_sql(table: str, conname: str, condef: str, tablespace: str) -> str:
-    """ADD CONSTRAINT for a PK/UNIQUE constraint whose backing index lands on
-    tablespace. USING INDEX TABLESPACE must precede the constraint
-    characteristics (DEFERRABLE / INITIALLY ...) in the grammar, so a
-    pg_get_constraintdef that carries them is split there."""
+    """ADD CONSTRAINT for a PK/UNIQUE; USING INDEX TABLESPACE goes before DEFERRABLE / INITIALLY (grammar order)."""
     m = _CONSTRAINT_CHARACTERISTICS_RE.search(condef)
     head, tail = (condef[:m.start()], condef[m.start():]) if m else (condef, "")
     return (
@@ -329,8 +274,7 @@ _TIMEOUT_UNITS = {"us": 1e-6, "ms": 1e-3, "s": 1.0, "min": 60.0, "h": 3600.0, "d
 
 
 def timeout_seconds(text: str) -> float:
-    """Seconds in a PostgreSQL lock_timeout/statement_timeout literal
-    ('2500ms', '2.5s', '20s', '1min'; a bare number is milliseconds)."""
+    """Seconds in a PostgreSQL timeout literal ('2500ms', '2.5s', '1min'; a bare number is milliseconds)."""
     m = _TIMEOUT_RE.match(str(text))
     if not m:
         raise ValueError(f"not a PostgreSQL timeout literal: {text!r}")
@@ -338,12 +282,7 @@ def timeout_seconds(text: str) -> float:
 
 
 def swap_pause_seconds(attempt: int, *, jitter: Optional[float] = None) -> float:
-    """Pause after failed swap attempt number `attempt` (1-based): 1, 2, 4, 8,
-    16 s, then SWAP_PAUSE_MAX_SECONDS, plus up to one second of jitter so the
-    retries never fall into step with a periodic query. Over SWAP_ATTEMPTS
-    attempts the pauses add up to about two minutes: that is how long a move
-    can be delayed before it is reported busy, while other sessions never wait
-    behind it for longer than SWAP_LOCK_TIMEOUT at a time."""
+    """Pause after failed swap attempt N (1-based): 1, 2, 4, 8, 16 s, then the maximum, plus up to 1 s of jitter."""
     base = min(float(SWAP_PAUSE_MAX_SECONDS), 2.0 ** (max(1, int(attempt)) - 1))
     if jitter is None:
         jitter = random.random()
@@ -351,8 +290,7 @@ def swap_pause_seconds(attempt: int, *, jitter: Optional[float] = None) -> float
 
 
 def swap_worst_case_seconds() -> float:
-    """Upper bound on the time a move spends in the swap phase before giving up
-    as busy: every attempt times out and every pause is taken."""
+    """Upper bound on the swap phase: every attempt times out and every pause is taken."""
     attempts = int(SWAP_ATTEMPTS)
     return attempts * timeout_seconds(SWAP_LOCK_TIMEOUT) + sum(
         swap_pause_seconds(a, jitter=1.0) for a in range(1, attempts))
@@ -364,10 +302,7 @@ def _unescape_mount_field(text: str) -> str:
 
 
 def mount_fstype(path: str, mounts_text: str) -> Optional[Tuple[str, str]]:
-    """(mount point, filesystem type) of the mount that holds path, from
-    /proc/mounts-style text (`device mountpoint fstype options dump pass` per
-    line): the longest mount point that is path itself or one of its parents.
-    None when the text holds no such entry."""
+    """(mount point, fstype) of the longest /proc/mounts-style entry that is path or a parent of it, else None."""
     target = posixpath.normpath("/" + str(path).strip().replace("\\", "/").lstrip("/"))
     best: Optional[Tuple[str, str]] = None
     for line in str(mounts_text).splitlines():
@@ -383,10 +318,7 @@ def mount_fstype(path: str, mounts_text: str) -> Optional[Tuple[str, str]]:
 
 
 def check_cold_filesystem(policy: "TieringPolicy", *, mounts_path: str = PROC_MOUNTS) -> Optional[str]:
-    """Warning text when [storage.tiering] cold_filesystem sits on a filesystem
-    that does not compress (anything but zfs or btrfs), else None. Read from
-    /proc/mounts, so there is nothing to check on hosts without it (macOS or
-    Windows development) or while cold_filesystem is unset."""
+    """Warning text when cold_filesystem is not on zfs or btrfs, else None (also None without /proc/mounts)."""
     path = policy.cold_filesystem
     if not path:
         return None
@@ -430,8 +362,7 @@ def _port(value: Any) -> int:
 
 
 def connect_kwargs(config: dict) -> dict:
-    """asyncpg.connect(**kwargs) for a dedicated maintenance session: no command
-    timeout (the app pool's 10 s would kill the copy), 30 s connect timeout."""
+    """asyncpg.connect() kwargs for a maintenance session: no command timeout (a copy outlives the pool's 10 s)."""
     pg = _pg_section(config)
     return {
         "host": str(pg.get("host", "postgres")),
@@ -472,9 +403,7 @@ def human_bytes(n: int) -> str:
     return f"{sign}{value:.2f} EB"  # unreachable; keeps the type checker calm
 
 
-# ----------------------------------------------------------------------------
-# Policy ([storage.tiering] in config.toml)
-# ----------------------------------------------------------------------------
+# --- Policy ([storage.tiering] in config.toml) ---
 
 def _is_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
@@ -495,9 +424,7 @@ class TieringPolicy:
 
     @classmethod
     def from_config(cls, config: dict) -> "TieringPolicy":
-        """Build from config["storage"]["tiering"] (missing -> defaults), coercing
-        every value defensively. Never raises; validate(raw=...) reports what
-        was ignored or clamped."""
+        """Build from config["storage"]["tiering"]; never raises — validate(raw=...) reports what was ignored or clamped."""
         section: Any = {}
         try:
             if isinstance(config, dict):
@@ -548,8 +475,7 @@ class TieringPolicy:
         )
 
     def validate(self, raw: Optional[dict] = None) -> List[str]:
-        """Warnings (never exceptions). With the raw [storage.tiering] dict, also
-        report every entry from_config ignored or clamped."""
+        """Warnings, never exceptions; with the raw section also what from_config ignored or clamped."""
         warnings: List[str] = []
         raw_tablespace = self.cold_tablespace
         if isinstance(raw, dict):
@@ -645,9 +571,7 @@ class TieringPolicy:
         return dataclasses.replace(self, **changes) if changes else self
 
 
-# ----------------------------------------------------------------------------
-# Catalog model and queries
-# ----------------------------------------------------------------------------
+# --- Catalog model and queries ---
 
 @dataclasses.dataclass
 class PartitionInfo:
@@ -711,7 +635,6 @@ async def set_session(conn: asyncpg.Connection) -> None:
 
 
 async def db_now(conn: asyncpg.Connection) -> datetime.datetime:
-    """The database clock (aware)."""
     return await conn.fetchval("SELECT now()")
 
 
@@ -729,19 +652,7 @@ async def tablespace_exists(conn: asyncpg.Connection, name: str) -> bool:
 
 async def ensure_cold_tablespace(conn: asyncpg.Connection, policy: TieringPolicy, *,
                                  fs_warning: Optional[str] = None) -> bool:
-    """Create policy.cold_tablespace at policy.cold_tablespace_location when it
-    does not exist yet ("mount the dataset, flip enabled = true" is the whole
-    operator path). Returns True when it was created, False when it already
-    existed. Raises TieringRefused with an actionable message when it cannot be
-    created: no location configured, the directory is missing inside the
-    postgres container (a stack without the overlay, or another location), not
-    owned by the postgres user or not writable (with the overlay that is what an
-    UNMOUNTED cold dataset looks like: Compose binds the bare, root-owned
-    mountpoint directory underneath it), already holding a tablespace, or the
-    connecting role is not a superuser. With fs_warning (what
-    check_cold_filesystem returned) nothing is created either: a tablespace
-    created on the wrong filesystem would hide the moved months once the dataset
-    mounts over it. CREATE TABLESPACE cannot run inside a transaction block."""
+    """Create policy.cold_tablespace when missing (True) or refuse with the reason; must run outside a transaction."""
     name = policy.cold_tablespace
     if not IDENT_RE.match(name or ""):
         raise TieringRefused(f"cold_tablespace {name!r} is not a plain identifier")
@@ -877,10 +788,7 @@ def _partition_sort_key(p: "PartitionInfo") -> tuple:
 
 
 async def _fetch_partition_rows(conn: asyncpg.Connection, table: str) -> Tuple[list, list]:
-    """Partition + index catalog rows. pg_total_relation_size() takes ACCESS SHARE,
-    so a concurrent ACCESS EXCLUSIVE holder (a move's swap, a DROP) would block us
-    indefinitely; outside a caller transaction we bound the wait with lock_timeout
-    and surface it as TieringBusy."""
+    """Partition and index catalog rows; the size functions' lock wait is bounded and surfaces as TieringBusy."""
     async def run() -> Tuple[list, list]:
         parts = await conn.fetch(_PARTITIONS_SQL, table)
         oids = [int(r["oid"]) for r in parts]
@@ -901,8 +809,7 @@ async def _fetch_partition_rows(conn: asyncpg.Connection, table: str) -> Tuple[l
 
 async def list_partitions(conn: asyncpg.Connection, table: str, *,
                           default_ts: Optional[str] = None) -> List[PartitionInfo]:
-    """Every partition of table with resolved tablespaces and sizes; monthly ones
-    first (by month), then the rest by name."""
+    """Every partition of table with resolved tablespaces and sizes: monthly ones by month, then the rest by name."""
     if default_ts is None:
         default_ts = await default_tablespace(conn)
     parts, index_rows = await _fetch_partition_rows(conn, table)
@@ -947,9 +854,7 @@ async def list_all_partitions(conn: asyncpg.Connection, tables: Iterable[str]) -
     return out
 
 
-# ----------------------------------------------------------------------------
-# Planning
-# ----------------------------------------------------------------------------
+# --- Planning ---
 
 @dataclasses.dataclass
 class PlanItem:
@@ -972,10 +877,7 @@ def _layout_reason(p: PartitionInfo, head: str) -> str:
 async def plan(conn: asyncpg.Connection, policy: TieringPolicy, *, target: Optional[str] = None,
                now: Any = None, only: Optional[Iterable[str]] = None,
                limit: Optional[int] = None) -> List[PlanItem]:
-    """Monthly partitions of policy.tables that a cycle would move to target
-    (default policy.cold_tablespace), oldest first. A closed month may always
-    move to the database default tablespace (that is how months move back);
-    moving to any other tablespace requires the month to be cold by policy."""
+    """Monthly partitions a cycle would move to target, oldest first; only cold months may leave the default tablespace."""
     target = target or policy.cold_tablespace
     if now is None:
         now = await db_now(conn)
@@ -999,9 +901,7 @@ async def plan(conn: asyncpg.Connection, policy: TieringPolicy, *, target: Optio
     return items
 
 
-# ----------------------------------------------------------------------------
-# The move
-# ----------------------------------------------------------------------------
+# --- The move ---
 
 @dataclasses.dataclass
 class MoveResult:
@@ -1009,7 +909,7 @@ class MoveResult:
     table: str
     month: Optional[datetime.date]
     target: str
-    status: MoveStatus  # "moved" | "dry-run" | "skipped" | "refused" | "busy" | "verify-failed" | "failed"
+    status: MoveStatus
     reason: str = ""
     rows: int = 0
     bytes_before: int = 0  # pg_total_relation_size
@@ -1028,9 +928,7 @@ class MoveResult:
 
 
 def _free_bytes(path: str) -> int:
-    """Free bytes for an unprivileged writer on the filesystem holding path.
-    os.statvfs where it exists (Linux containers); shutil.disk_usage reports the
-    same f_bavail * f_frsize figure on platforms without it."""
+    """Free bytes for an unprivileged writer on the filesystem holding path."""
     statvfs = getattr(os, "statvfs", None)
     if statvfs is not None:
         st = statvfs(path)
@@ -1071,31 +969,16 @@ WHERE l.locktype = 'relation' AND l.relation = ANY($1::oid[]) AND l.granted
 ORDER BY a.xact_start
 LIMIT 1
 """
-# Longer than SWAP_LOCK_TIMEOUT: a transaction that has already outlived the
-# swap's timeout is not going to finish within it, so an attempt would only
-# make every request behind it wait for nothing. Measured on the wall clock
-# (clock_timestamp()): the probe runs inside the move's transaction, where
-# now() is frozen at BEGIN — before the copy — and would make every holder
-# that started during the copy look brand new.
+# Holders older than the swap timeout will not finish within it. Use
+# clock_timestamp(): now() is frozen at the move's BEGIN.
 LONG_HOLDER_SECONDS = 3.0
 
 
 async def _swap_blocker(conn: asyncpg.Connection, *, parent_oid: int, part_oid: int,
                         default_oid: Optional[int] = None) -> Optional[Tuple[str, str]]:
-    """Why an ACCESS EXCLUSIVE request for the swap would be pointless right
-    now, as (kind, reason), or None. Kind "waiter": a session waiting for OUR
-    partition (blocked by the SHARE lock) while holding a lock on the parent —
-    e.g. the node-id backfill's UPDATE through the parent — makes DETACH a
-    certain deadlock, and it cannot finish before this transaction ends. Kind
-    "holder": a session that has held a lock on the parent, the DEFAULT
-    partition or the partition (DETACH locks all three, in that order) for
-    longer than LONG_HOLDER_SECONDS — pg_dump, a long stats query, an
-    idle-in-transaction psql, a cursor over the month — will not release it
-    within the timeout, and every request that arrives meanwhile would queue
-    behind us."""
-    # pg_stat_activity is read once per transaction and reused by every later
-    # query in it: without this a session that started after the first probe
-    # would be invisible, and a pooled pid would show its previous transaction.
+    """Why a swap attempt is pointless now, or None: ("waiter", …) is a certain deadlock, ("holder", …) a long-held lock."""
+    # pg_stat_activity is cached per transaction: without this, sessions started
+    # after the first probe stay invisible and pooled pids show a stale transaction.
     await conn.execute("SELECT pg_stat_clear_snapshot()")
     if await conn.fetchval(_DEADLOCK_WAITER_SQL, part_oid, parent_oid) is not None:
         return ("waiter", "a session holding the parent is waiting for this partition (would deadlock)")
@@ -1111,36 +994,8 @@ async def _swap(conn: asyncpg.Connection, *, parent: str, part: str, rep: str, o
                 bound: str, original_indexes: List[str], scratch_to_final: Dict[str, str],
                 range_con: str, keep_original: bool, parent_oid: int, part_oid: int,
                 default_oid: Optional[int] = None) -> int:
-    """Detach the original, rename it (and its indexes) aside, rename the copy
-    (and its indexes) into place, re-attach with the verbatim bound. Each attempt
-    runs under a SAVEPOINT with SWAP_LOCK_TIMEOUT (2.5 s) as lock_timeout and,
-    for the DETACH, as statement_timeout: DETACH acquires ACCESS EXCLUSIVE on
-    the parent, then on the DEFAULT partition, then on the partition, and
-    lock_timeout applies to each acquisition separately, so the statement
-    timeout is what keeps one attempt from holding the parent (granted early)
-    while it waits a second timeout for the others. A timeout or a deadlock
-    rolls the attempt back, and the next attempt follows a growing pause
-    (swap_pause_seconds). That timeout is what bounds the stall other sessions
-    see: the DETACH's ACCESS EXCLUSIVE request on the parent makes every new
-    query and insert on the parent queue behind it while it waits for the
-    queries in flight, so a long in-flight query (a payload ILIKE over a
-    month) can delay the move for up to SWAP_ATTEMPTS attempts but never holds
-    the API for more than one timeout at a time.
-    A deadlock arises when a parent-first writer (the node-id backfill's UPDATE
-    through the parent) is queued on our SHARE lock while we ask for ACCESS
-    EXCLUSIVE on the parent; PostgreSQL then aborts whichever side's
-    deadlock_timeout check sees the cycle first — normally us, because the
-    writer queued during the long copy, but a writer that queued within
-    deadlock_timeout of the DETACH is aborted instead. The _swap_blocker probe
-    exists to avoid both: such a waiter can only finish after this transaction
-    ends, so the copy is given up at once (TieringBusy; the writer completes
-    unharmed and the month is re-copied on a later cycle), and an attempt is
-    skipped (counted, slept through) while a long-standing holder of the
-    parent, the DEFAULT partition or the partition is seen, so the queue of
-    requests behind a pending ACCESS EXCLUSIVE stays short. A cancel request
-    that arrives during the DETACH (pg_cancel_backend) ends the move like any
-    other error; only our own statement timeout is retried. Returns the number
-    of attempts used."""
+    """Swap the copy in under a SAVEPOINT (detach, renames, attach), retried after growing pauses; returns the attempts.
+    DETACH takes three locks in turn and lock_timeout counts each separately, hence the statement_timeout on it."""
     q = quote_ident
     attempts = int(SWAP_ATTEMPTS)
     timeout_s = timeout_seconds(SWAP_LOCK_TIMEOUT)
@@ -1209,18 +1064,8 @@ async def _swap(conn: asyncpg.Connection, *, parent: str, part: str, rep: str, o
 
 
 async def _post_move(conn: asyncpg.Connection, part: str) -> Tuple[bool, int]:
-    """After the commit: VACUUM (FREEZE, ANALYZE) the rebuilt partition while
-    its pages are still cached, then read its new size. One sequential pass
-    sets hint bits, the visibility map (index-only scans work again at once)
-    and all-frozen, so readers never dirty the cold pages later and a
-    copy-on-write filesystem never has to re-fragment them one 8 KiB page at
-    a time (in the lab a month moved under heavy load came out at 3.4-4.1x
-    instead of 4.6x because its pages were written back piecemeal; the freeze
-    keeps readers from adding to that). It also does what ANALYZE
-    alone would. Takes SHARE UPDATE EXCLUSIVE only — readers and writers
-    continue. Best effort and bounded by a lock_timeout: the move is already
-    committed, so a lock timeout or error degrades to ANALYZE and then to a
-    warning (autovacuum catches up eventually). Returns (vacuumed, bytes)."""
+    """VACUUM (FREEZE, ANALYZE) the rebuilt partition after the commit, best effort; returns (vacuumed, bytes).
+    Freezing now keeps readers from dirtying cold pages later, which a copy-on-write filesystem would re-fragment."""
     q = quote_ident
     vacuumed = False
     bytes_after = 0
@@ -1262,12 +1107,7 @@ async def move_partition(conn: asyncpg.Connection, part: PartitionInfo, target: 
                          policy: TieringPolicy, dry_run: bool = False, keep_original: bool = False,
                          deep_verify: bool = False,
                          now: Optional[datetime.datetime] = None) -> MoveResult:
-    """Rebuild one closed monthly partition on tablespace target and swap it in
-    (one transaction; see the module docstring). Raises TieringRefused (nothing
-    changed), TieringBusy (lock_timeout; nothing changed), TieringVerifyError
-    (count/digest mismatch; rolled back); any other exception also rolls back.
-    Returns status "skipped" when already on target, "dry-run" when dry_run.
-    The passed PartitionInfo is stale after a successful move (new oid/tablespace)."""
+    """Rebuild one closed monthly partition on target and swap it in (one transaction); part is stale after a move."""
     started = time.monotonic()
     q = quote_ident
 
@@ -1279,7 +1119,7 @@ async def move_partition(conn: asyncpg.Connection, part: PartitionInfo, target: 
         return MoveResult(partition=part.name, table=part.table, month=part.month, target=target,
                           status=status, seconds=round(time.monotonic() - started, 3), **fields)
 
-    # ── preconditions (nothing touched) ──────────────────────────────────
+    # preconditions (nothing touched)
     if not isinstance(target, str) or not target:
         refuse("no target tablespace given")
     if part.bound.strip().upper() == "DEFAULT":
@@ -1332,11 +1172,8 @@ async def move_partition(conn: asyncpg.Connection, part: PartitionInfo, target: 
     default_oid: Optional[int] = None
     if default_part is not None:
         default_oid = int(default_part["oid"])
-        # ATTACH PARTITION checks that the DEFAULT partition holds no row of
-        # the month with a full scan of it (no CHECK constraint rules the month
-        # out), under the parent's ACCESS EXCLUSIVE lock and beyond any
-        # timeout; instant only while it is empty, as it is while the monthly
-        # partitions keep being created ahead of time.
+        # ATTACH scans the DEFAULT partition for rows of the month under the parent's
+        # ACCESS EXCLUSIVE lock, beyond any timeout: instant only while it is empty.
         if await conn.fetchval(f"SELECT EXISTS (SELECT 1 FROM {q(default_part['relname'])})"):
             refuse(f"{default_part['relname']} holds rows (a month's partition was missing when they "
                    f"arrived): the swap's ATTACH would validate it with a full scan under the "
@@ -1409,7 +1246,6 @@ async def move_partition(conn: asyncpg.Connection, part: PartitionInfo, target: 
         tag = await conn.execute(f"INSERT INTO {q(rep)} SELECT * FROM {q(part.name)}")
         rows_copied = _rows_from_tag(tag)
 
-        # Clone every index under a 63-byte-safe scratch name; remember the final name.
         scratch_to_final: Dict[str, str] = {}
         original_indexes: List[str] = []
         for ix in indexes:
@@ -1460,7 +1296,7 @@ async def move_partition(conn: asyncpg.Connection, part: PartitionInfo, target: 
     else:
         await tr.commit()
 
-    # ── outside the transaction ──────────────────────────────────────────
+    # outside the transaction
     vacuumed, bytes_after = await _post_move(conn, part.name)
     result = finish("moved", reason=f"moved to {target}", rows=src_count,
                     bytes_before=bytes_before, bytes_after=bytes_after, indexes=len(indexes),
@@ -1473,9 +1309,7 @@ async def move_partition(conn: asyncpg.Connection, part: PartitionInfo, target: 
     return result
 
 
-# ----------------------------------------------------------------------------
-# Cycle
-# ----------------------------------------------------------------------------
+# --- Cycle ---
 
 @dataclasses.dataclass
 class CycleResult:
@@ -1551,10 +1385,8 @@ async def run_cycle(conn: asyncpg.Connection, policy: TieringPolicy, *, target: 
                     keep_original: bool = False, deep_verify: bool = False,
                     max_partitions: Optional[int] = None, now: Any = None,
                     on_result: Optional[Callable[[MoveResult], None]] = None) -> CycleResult:
-    """One tiering pass. Targeted (`only` = partition names) or planned (oldest
-    eligible first). Only "moved"/"dry-run" count toward max_partitions (None =
-    policy.max_partitions_per_cycle, 0 = unlimited). Busy, verify failures and
-    unexpected errors stop the cycle; refusals are recorded and skipped over."""
+    """One tiering pass, over `only` or the plan (oldest first); refusals are skipped, busy and failures stop it.
+    max_partitions counts "moved"/"dry-run" only (None = policy.max_partitions_per_cycle, 0 = unlimited)."""
     await set_session(conn)
     problems = policy.validate()
     if problems:

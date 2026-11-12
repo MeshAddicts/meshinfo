@@ -1,37 +1,8 @@
 #!/usr/bin/env bash
-#
 # setup-cold-storage.sh — one command that prepares the compressed filesystem
 # MeshInfo's tiered cold storage moves closed months onto (ZFS.md, "Cold-only
-# setup"), on whatever the host offers. Run it as root on the Docker host:
-#
-#   sudo scripts/setup-cold-storage.sh                 # inspect, print the plan, ask, do it, verify
-#   sudo scripts/setup-cold-storage.sh --dry-run       # print what was found and the plan; change nothing
-#   sudo scripts/setup-cold-storage.sh status          # what is set up, how full, do the containers see it
-#   sudo scripts/setup-cold-storage.sh grow --to 40G   # enlarge a loop image online
-#
-# The first layout that applies is used; a flag forces one:
-#
-#   --existing DIR       adopt a directory that is already on btrfs or ZFS with
-#                        compression on (hosts that manage datasets in their own
-#                        UI); no storage is created
-#   --device DEV         btrfs on a spare block device or partition
-#   --zfs POOL/DATASET   a ZFS dataset, created through setup-zfs-datasets.sh
-#                        --cold-only; chosen by itself when the host has one pool
-#   --subvolume          a btrfs subvolume with the compression property; chosen
-#                        by itself when the cold directory's filesystem is btrfs
-#   --image PATH         btrfs in a preallocated loop image; chosen by itself on
-#                        everything else (ext4, xfs, ...)
-#
-# Every layout ends the same way: the cold directory (--mountpoint; by default
-# what .env already names as MESHINFO_PGCOLD_DIR, else /srv/meshinfo/pgcold)
-# is owned by 999:999 with mode 750, `findmnt -no FSTYPE -T` prints btrfs or
-# zfs for it, compression is on, and .env binds it into the stack through
-# docker-compose.cold.yml. Re-running is safe: what is already there is
-# verified and reported, never reformatted or recreated, and anything that
-# differs from what the script would have created is refused. config.toml is
-# never edited: the script ends with the two steps that remain, or says that
-# nothing does.
-#
+# setup"). Run it as root on the Docker host; --help shows the usage. Re-running
+# is safe: what is there is verified, never recreated. config.toml is never edited.
 set -euo pipefail
 export LC_ALL=C
 unset CDPATH   # exported, it makes cd print the directory, and $(cd ... && pwd) then holds two lines
@@ -49,10 +20,8 @@ DEFAULT_MOUNTPOINT=/srv/meshinfo/pgcold
 DEFAULT_IMAGE=/var/lib/meshinfo-cold.img
 OWNER=999:999          # the postgres user of the official image
 DIR_MODE=750
-# The fstab options ZFS.md documents for a device and for an image
-# (tests/test_setup_cold_storage.py holds the two against each other). For an
-# image, nodiscard and X-fstrim.notrim keep btrfs and the periodic fstrim from
-# punching the preallocation back out of the file.
+# The fstab options ZFS.md documents (the unit tests compare the two). For an
+# image, nodiscard and X-fstrim.notrim keep the preallocation from being punched out.
 FSTAB_OPTS_DEVICE='compress-force=zstd:9,noatime,nofail,x-systemd.device-timeout=30s,x-systemd.before=docker.service'
 FSTAB_OPTS_IMAGE='loop,nodiscard,X-fstrim.notrim,compress-force=zstd:9,noatime,nofail,x-systemd.before=docker.service'
 # The cold properties setup-zfs-datasets.sh gives a dataset (COLD_PROPS there).
@@ -69,9 +38,8 @@ DEFAULT_IMAGE_BYTES=$((20 * GIB))   # when the database cannot be asked
 MIN_IMAGE_BYTES=$((4 * GIB))        # floor of a computed size
 HOST_RESERVE_BYTES=$((3 * GIB))     # left free on the filesystem holding an image
 ASSUMED_RATIO=4                     # compression assumed for what is already inside
-# What a new, empty btrfs does not report as free (its first metadata and
-# system chunks): 529 MiB up to 50 GiB and 2065 MiB above, measured with
-# btrfs-progs 6.14; rounded up here.
+# What a new, empty btrfs does not report as free (first metadata and system
+# chunks): 529 MiB up to 50 GiB, 2065 MiB above (btrfs-progs 6.14); rounded up.
 BTRFS_OWN_BYTES=$((560 * MIB))
 BTRFS_OWN_BYTES_LARGE=$((2100 * MIB))
 BTRFS_LARGE_FROM=$((50 * GIB))
@@ -143,7 +111,7 @@ Subcommands:
 EOF
 }
 
-# --- Pure helpers (no side effects; the unit tests source this file) ---------
+# --- Pure helpers (no side effects; the unit tests source this file) ---
 
 # human_bytes N: "20.0 GiB".
 human_bytes() {
@@ -172,9 +140,8 @@ parse_size() {
 
 round_up_gib() { echo $(( (($1 + GIB - 1) / GIB) * GIB )); }
 
-# image_bytes_for NEEDED: the image on which NEEDED bytes are free when it is
-# new (plus what btrfs keeps to itself), + 10 %, rounded up to a whole GiB, at
-# least the minimum.
+# image_bytes_for NEEDED: the image on which NEEDED bytes are free when new
+# (plus btrfs's own share), + 10 %, rounded up to a whole GiB, at least the minimum.
 image_bytes_for() {
   local with_own sized
   with_own=$(( $1 + BTRFS_OWN_BYTES ))
@@ -187,12 +154,8 @@ image_bytes_for() {
   echo "$sized"
 }
 
-# simulate_guard MIN_FREE_BYTES RATIO, with "name bytes" lines on stdin in the
-# job's order: the job refuses a move unless the partition's uncompressed size
-# plus min_free_mb is free, and what it moved earlier is assumed to sit inside
-# at 1/RATIO of its size. Prints the smallest filesystem on which every move
-# passes, then the partition that needs it, its size, what is inside by then,
-# the number of partitions and their total size.
+# simulate_guard MIN_FREE_BYTES RATIO < "name bytes" in the job's order; earlier moves count at 1/RATIO of their size.
+# Prints: smallest filesystem that passes every move, the partition needing it, its size, the fill then, count, total.
 simulate_guard() {
   awk -v minfree="$1" -v ratio="$2" '
     NF >= 2 {
@@ -212,9 +175,8 @@ fstab_line_device() { printf 'LABEL=%s  %s  btrfs  %s  0 0\n' "$LABEL" "$1" "$FS
 fstab_entries() {
   local line source target mounted
   [ -f "$1" ] || return 0
-  # What is mounted now is spelled the way the kernel spells it, with no
-  # symlink left in it: such a target is compared as written and never
-  # touched (a network mount whose server is away would hang the look).
+  # Mounted targets are compared as the kernel spells them and never touched: a
+  # network mount whose server is away would hang the look.
   mounted="$(findmnt -rn -o TARGET 2>/dev/null || true)"
   while IFS= read -r line || [ -n "$line" ]; do
     read -r source target _ <<<"$line" || true
@@ -230,8 +192,7 @@ fstab_entries() {
 }
 
 # fstab_key LINES: source, mountpoint, type and options of each, single-spaced,
-# with the symlinks in the two paths resolved (a line written by hand may
-# spell them differently from the one this script would write).
+# with symlinks in the two paths resolved (a hand-written line may spell them differently).
 fstab_key() {
   local line source target type options
   while IFS= read -r line; do
@@ -257,8 +218,7 @@ fstab_targets_of() {
   done < "$1"
 }
 
-# normalize_path PATH: doubled slashes, "." components and trailing slashes
-# removed.
+# normalize_path PATH: doubled slashes, "." components and trailing slashes removed.
 normalize_path() {
   local path="$1"
   while [[ "$path" == *//* ]]; do path="${path//\/\//\/}"; done
@@ -268,9 +228,8 @@ normalize_path() {
   printf '%s\n' "$path"
 }
 
-# plain_path PATH: 0 when PATH is absolute, has no ".." component and is made
-# of letters, digits and . _ - / only, so that it can go into /etc/fstab and
-# .env unquoted (a colon would split source from target in the overlay's bind).
+# plain_path PATH: absolute, no "..", only letters, digits and . _ - /, so it can go into
+# /etc/fstab and .env unquoted (a colon would split source from target in the bind).
 plain_path() { [[ "$1" =~ ^/[A-Za-z0-9._/-]*$ ]] && [ "$1" != / ] && [[ "/$1/" != */../* ]]; }
 
 nearest_existing() {
@@ -342,9 +301,8 @@ install_hint() {
   esac
 }
 
-# env_get FILE KEY: the value of the last active KEY=... line of a .env file,
-# quotes removed; status 1 when there is none. (The awk programs here use
-# [ \t], not [[:space:]]: mawk 1.3.3 does not know the class.)
+# env_get FILE KEY: value of the last active KEY=... line, quotes removed; status 1 when none.
+# (The awk programs use [ \t], not [[:space:]]: mawk 1.3.3 does not know the class.)
 env_get() {
   [ -f "$1" ] || return 1
   awk -v key="$2" '
@@ -359,9 +317,8 @@ env_get() {
     END { if (!found) exit 1; print value }' "$1"
 }
 
-# env_set FILE KEY VALUE: rewrite the last active KEY= line in place, keeping
-# its quoting, a comment after the value and the line ending, or append one.
-# The file keeps its inode, owner and mode.
+# env_set FILE KEY VALUE: rewrite the last active KEY= line in place (quoting, trailing
+# comment and line ending kept) or append one. The file keeps its inode, owner and mode.
 env_set() {
   local file="$1" key="$2" new
   # No temporary file: the new text comes back through a pipe (the "." keeps
@@ -393,12 +350,8 @@ env_set() {
   printf '%s' "${new%.}" > "$file" || die "could not write $file (is its filesystem full?) — the copy made before this change holds what it had"
 }
 
-# compose_file_with_overlay CURRENT SEPARATOR OVERRIDE_FILE: the COMPOSE_FILE
-# value that includes the cold overlay. An existing value is kept and the
-# overlay appended; with none, docker-compose.yml, an existing override file
-# (naming the files switches off its automatic loading) and the overlay.
-# Status 3: CURRENT already lists the overlay. Status 4: it lists the full
-# ZFS overlay, which binds the same path.
+# compose_file_with_overlay CURRENT SEPARATOR OVERRIDE_FILE: COMPOSE_FILE with the cold overlay appended (with no
+# CURRENT: docker-compose.yml, an existing override file, the overlay). Status 3: already listed; 4: the ZFS overlay is.
 compose_file_with_overlay() {
   local current="$1" sep="$2" override="$3" entry
   local -a entries=()
@@ -418,9 +371,8 @@ compose_file_with_overlay() {
   printf '%s%s%s\n' "$current" "$sep" "$OVERLAY"
 }
 
-# tiering_raw FILE KEY: the value of KEY in the [storage.tiering] table of a
-# config.toml, as written ("key = value" lines only: no dotted keys, no
-# inline tables); status 1 when it is not there.
+# tiering_raw FILE KEY: KEY's value in the [storage.tiering] table of a config.toml, as written
+# ("key = value" lines only: no dotted keys, no inline tables); status 1 when it is not there.
 tiering_raw() {
   [ -f "$1" ] || return 1
   awk -v key="$2" '
@@ -447,9 +399,8 @@ tiering_setting() {
   printf '%s\n' "$value"
 }
 
-# tiering_unreadable FILE: 0 when FILE sets tiering in a form the helpers
-# above do not read: not in a [storage.tiering] table of its own (a dotted
-# key, an inline table), or with quoted keys in it.
+# tiering_unreadable FILE: 0 when FILE sets tiering in a form the helpers above do not
+# read (a dotted key, an inline table, quoted keys).
 tiering_unreadable() {
   [ -f "$1" ] || return 1
   awk '
@@ -461,11 +412,10 @@ tiering_unreadable() {
     END { exit !((mentioned && !header) || quoted) }' "$1"
 }
 
-# --- Host inspection ----------------------------------------------------------
+# --- Host inspection ---
 
-# real_tool NAME: on PATH and not a busybox applet (busybox mount hands the
-# x-systemd.* fstab options to the kernel, which rejects them; its losetup
-# and blkid lack the options used here).
+# real_tool NAME: on PATH and not a busybox applet (busybox mount passes x-systemd.* options
+# to the kernel, which rejects them; its losetup and blkid lack the options used here).
 real_tool() {
   local path
   path="$(command -v "$1" 2>/dev/null)" || return 1
@@ -549,9 +499,8 @@ owner_note() {
 # loop_backing_file LOOP_DEVICE: the path of the file behind it.
 loop_backing_file() { losetup -n -O BACK-FILE "$1" 2>/dev/null | sed -e 's/[[:space:]]*$//' -e 's/ (deleted)$//' | head -n 1 || true; }
 
-# loop_file_deleted LOOP_DEVICE: the kernel marks the file behind it as
-# deleted — it was removed, or replaced at its path (a restore, rsync without
-# --inplace) — and the mount still writes to the file that is gone.
+# loop_file_deleted LOOP_DEVICE: the backing file was removed or replaced at its path
+# (a restore, rsync without --inplace), and the mount still writes to the file that is gone.
 loop_file_deleted() {
   local file
   file="$(losetup -n -O BACK-FILE "$1" 2>/dev/null | sed -e 's/[[:space:]]*$//' | head -n 1 || true)"
@@ -567,11 +516,8 @@ same_directory() {
   esac
 }
 
-# loop_is_image LOOP_DEVICE BACKING_FILE: a btrfs on a loop device is the
-# image layout when fstab mounts the backing file at the cold directory, and
-# the device layout when fstab mounts it by label (a loop device that was
-# attached by hand and passed as --device). Without an fstab entry the loop
-# device's autoclear flag tells the two apart: mount -o loop sets it.
+# loop_is_image LOOP_DEVICE BACKING_FILE: image layout when fstab mounts the backing file here, device layout when
+# it mounts by label (a hand-attached loop passed as --device); without an entry, autoclear (mount -o loop) decides.
 loop_is_image() {
   local entry fstab_source
   entry="$(fstab_entries "$FSTAB" "$MOUNTPOINT")"
@@ -591,8 +537,7 @@ zfs_pools() {
   zpool list -H -o name 2>/dev/null || true
 }
 
-# pool_altroot POOL: the alternate root the pool is imported with, or nothing.
-# ZFS puts it in front of every mountpoint a dataset of that pool is given.
+# pool_altroot POOL: the pool's altroot (prefixed to its mountpoints), or nothing.
 pool_altroot() {
   local value
   value="$(zpool get -H -o value altroot "$1" 2>/dev/null || true)"
@@ -602,17 +547,13 @@ pool_altroot() {
   esac
 }
 
-# shown NAME: a dataset name as it goes into a command that is printed for
-# the operator: as it is, or in quotes when it has a space.
+# shown NAME: a dataset name for a printed command, quoted when it has a space.
 shown() {
   if plain_dataset "$1"; then printf '%s\n' "$1"; else printf "'%s'\n" "$1"; fi
 }
 
-# unmounted_datasets_here: the ZFS datasets that have the cold directory as
-# their mountpoint without being mounted, one name a line. One that can never
-# be mounted (canmount=off) claims nothing. ZFS keeps the property as it was
-# typed — with a trailing slash, through a symlink — and mounts at the real
-# place, so the paths are compared resolved.
+# unmounted_datasets_here: datasets with the cold directory as mountpoint that are not mounted (canmount=off
+# claims nothing), one name a line. ZFS keeps the property as typed, so paths are compared resolved.
 unmounted_datasets_here() {
   local name mountpoint mounted canmount
   command -v zfs >/dev/null 2>&1 || return 0
@@ -627,12 +568,8 @@ unmounted_datasets_here() {
   done < <(zfs list -H -o name,mountpoint,mounted,canmount 2>/dev/null || true)
 }
 
-# unmounted_datasets_above: nothing is mounted at the cold directory itself,
-# which is a directory of the filesystem mounted at CUR_PARENT. The ZFS
-# datasets that ZFS would mount by itself (canmount=on) at CUR_PARENT, or at
-# a directory between it and the cold directory — over what holds the cold
-# directory — one a line: the name, a tab, the mountpoint. One that is noauto
-# is left out: boot environments are kept that way.
+# unmounted_datasets_above: canmount=on datasets ZFS would mount at CUR_PARENT or between it and the cold
+# directory, over what holds it; "name<TAB>mountpoint" a line. noauto ones (boot environments) are left out.
 unmounted_datasets_above() {
   local name mountpoint mounted canmount
   [ -n "${CUR_PARENT:-}" ] || return 0
@@ -650,21 +587,16 @@ unmounted_datasets_above() {
   done < <(zfs list -H -o name,mountpoint,mounted,canmount 2>/dev/null || true)
 }
 
-# mountpoint_received DATASET: the dataset has its mountpoint from a zfs
-# receive: it is a copy that was received with its properties (zfs send -p or
-# -R). One that this script made, or that was made by hand, has it "local".
+# mountpoint_received DATASET: its mountpoint came with a zfs receive (send -p or -R), so it
+# is a copy; one made by this script or by hand has it "local".
 mountpoint_received() {
   local source
   source="$(zfs get -H -o source mountpoint "$1" 2>/dev/null || true)"
   [[ "$source" == received* ]]
 }
 
-# copy_is_mounted DATASET: DATASET has the cold directory as its mountpoint
-# and is not mounted, while another dataset is mounted there (CUR_SOURCE).
-# True when what is mounted looks like the copy and DATASET like the cold
-# dataset: the mounted one's mountpoint came with a zfs receive, DATASET's
-# did not. That happens when the cold dataset did not mount at boot (its key
-# was not loaded, its canmount is noauto, its pool came late) and the copy did.
+# copy_is_mounted DATASET: another dataset is mounted here whose mountpoint was received while DATASET's was
+# not — the copy mounted at boot and the cold dataset did not (key not loaded, noauto, pool late).
 copy_is_mounted() {
   [ "$CUR_KIND" = zfs ] && [ "$CUR_SOURCE" != "$1" ] && mountpoint_received "$CUR_SOURCE" && ! mountpoint_received "$1"
 }
@@ -675,16 +607,14 @@ swap_note() {
   echo "stop the stack (docker compose stop postgres meshinfo), unmount the directory (umount $MOUNTPOINT), keep $1 from mounting there again (zfs set canmount=off $(shown "$1"), or give it another mountpoint), mount $2 (zfs mount -l $(shown "$2")) and start the stack (docker compose up -d)"
 }
 
-# cold_dir_in_use: the cold directory is in use: something is mounted there,
-# it is a subvolume, or it holds the tablespace. A bare mountpoint with a
-# stray file in it is not.
+# cold_dir_in_use: something is mounted there, it is a subvolume, or it holds the
+# tablespace. A bare mountpoint with a stray file in it is not in use.
 cold_dir_in_use() {
   [ "$CUR_MOUNTED" -eq 1 ] || [ "$CUR_KIND" = subvolume ] || compgen -G "$MOUNTPOINT/PG_*" >/dev/null
 }
 
-# not_mounted_at_boot DATASET: for a dataset mounted at the cold directory
-# that no fstab line mounts: why ZFS will not mount it after a reboot either —
-# or nothing, when it will.
+# not_mounted_at_boot DATASET (mounted here, no fstab line): why ZFS will not mount it
+# after a reboot either — or nothing, when it will.
 not_mounted_at_boot() {
   if [ "$(zfs get -H -o value mountpoint "$1" 2>/dev/null || true)" = legacy ]; then
     echo "the dataset $1 has mountpoint=legacy and $FSTAB has no line for it: it is mounted now, but nothing mounts it after a reboot. Add the line: ${1// /\\040}  $MOUNTPOINT  zfs  defaults,nofail  0 0"
@@ -693,27 +623,20 @@ not_mounted_at_boot() {
   fi
 }
 
-# plain_dataset NAME: a dataset name this script passes on to zfs and reads
-# back from findmnt: letters, digits and . _ - : in each part. ZFS itself
-# also takes a space, which findmnt writes as \x20.
+# plain_dataset NAME: letters, digits and . _ - : per part, as this script passes names to zfs
+# and reads them back from findmnt (ZFS also takes a space, which findmnt writes as \x20).
 plain_dataset() { [[ "$1" =~ ^[A-Za-z0-9._:-]+(/[A-Za-z0-9._:-]+)*$ ]]; }
 
-# zfs_on_means_sa: this OpenZFS prints a dataset's xattr=sa as "on". That is
-# the 2.3 series, where on came to mean sa; before, on meant dir, and from 2.4
-# zfs get prints sa again.
+# zfs_on_means_sa: this OpenZFS prints xattr=sa as "on" — the 2.3 series; before, on
+# meant dir, and from 2.4 zfs get prints sa again.
 zfs_on_means_sa() {
   local version
   version="$(zfs version 2>/dev/null | head -n 1 || true)"
   [[ "$version" == zfs-2.3.* ]]
 }
 
-# zfs_has_property DATASET NAME=VALUE: the dataset has that property; if not,
-# ZFS_FOUND is what was found instead. Two answers of zfs get are not taken
-# at face value. OpenZFS 2.3 prints xattr=sa as "on". And a value whose source
-# is "temporary" is what the mount says, not the property — which a zfs built
-# against musl (Alpine) gets wrong for a mount that is noatime: it reads
-# "atime" into that option and prints atime=on. For atime the mount itself is
-# asked then.
+# zfs_has_property DATASET NAME=VALUE; ZFS_FOUND is what was found instead. Not taken at face value: xattr "on" on
+# OpenZFS 2.3 (= sa), and a "temporary" atime, which a musl-built zfs misreads from noatime — the mount is asked.
 zfs_has_property() {
   local value="" source="" options
   IFS=$'\t' read -r value source < <(zfs get -H -o value,source "${2%%=*}" "$1" 2>/dev/null) || true
@@ -730,17 +653,8 @@ zfs_has_property() {
   return 1
 }
 
-# zfs_fstab_entry FSTAB_LINES DATASET: what an fstab entry for the cold
-# directory is to the ZFS dataset there. mount takes a zfs line in two cases
-# only: a dataset with mountpoint=legacy and a line without the zfsutil
-# option ("legacy": that line is what mounts it), and a dataset whose
-# mountpoint is not legacy with a line that carries zfsutil ("own": for a
-# dataset that has the directory as its mountpoint, the mount ZFS makes
-# itself). The other two it turns down: "legacy-zfsutil", and "refused" for a
-# dataset whose mountpoint is not legacy with a line without zfsutil.
-# "unknown": a line for the dataset, whose mountpoint property cannot be read
-# (it is not there, or its pool is not). "other": a line for something else.
-# fstab writes a space in a name as \040.
+# zfs_fstab_entry FSTAB_LINES DATASET: legacy | own (mount takes the line: legacy without zfsutil, own mountpoint with
+# it) | legacy-zfsutil | refused (mount turns it down) | unknown (mountpoint unreadable) | other. fstab writes a space as \040.
 zfs_fstab_entry() {
   local source type options mountpoint zfsutil=0
   if [ "$(wc -l <<<"$1")" -ne 1 ]; then echo other; return 0; fi
@@ -760,9 +674,8 @@ zfs_fstab_entry() {
   esac
 }
 
-# mount_advice FSTAB_LINES: how to mount what an fstab entry for the cold
-# directory names, when it is not mounted. "mount DIR" — unless the entry is a
-# zfs line that mount turns down, or one for a dataset that cannot be asked.
+# mount_advice FSTAB_LINES: how to mount what the fstab entry names when it is not mounted: "mount DIR",
+# unless it is a zfs line that mount turns down or one for a dataset that cannot be asked.
 mount_advice() {
   local source type value pool
   read -r source _ type _ <<<"$1" || true
@@ -796,15 +709,12 @@ mount_advice() {
   echo "mount $MOUNTPOINT"
 }
 
-# bring_back_hint: what brings a cold filesystem back, where fstab has no
-# line for the cold directory (so "mount DIR" is not it). zfs mount -a passes
-# over a dataset whose key is not loaded, without a word.
+# bring_back_hint: what brings a cold filesystem back when fstab has no line for it.
+# zfs mount -a silently passes over a dataset whose key is not loaded.
 bring_back_hint() { echo "for a ZFS dataset zpool import and zfs mount -a, after zfs load-key NAME where it is encrypted; otherwise mount the filesystem that holds it"; }
 
-# compression_of DIR: prints how compression is switched on for DIR (a mount
-# option, the btrfs property or the ZFS property) and returns 0; prints why it
-# is off, and what turns it on, and returns 1; prints why that cannot be told
-# and returns 2.
+# compression_of DIR: 0 and how compression is on (mount option, btrfs or ZFS property); 1 and
+# why it is off and what turns it on; 2 and why that cannot be told.
 compression_of() {
   local dir="$1" options option property dataset value
   case "$(fstype_of "$dir")" in
@@ -862,15 +772,8 @@ compression_of() {
   return 1
 }
 
-# detect_current: what is at the cold directory now. Sets CUR_KIND to image,
-# device, zfs or subvolume (ours, by the look of it), foreign (another
-# filesystem is mounted there) or none, and CUR_MOUNTED, CUR_SOURCE,
-# CUR_FSTYPE, CUR_IMAGE, CUR_IMAGE_GONE (the image was deleted or replaced
-# while mounted), CUR_STACK (the filesystems, bottom first, when more than
-# one btrfs or ZFS is mounted one over the other) and CUR_STACK_AT (where:
-# the cold directory, or — when nothing is mounted at the cold directory
-# itself — CUR_PARENT, the place where the filesystem that holds it is
-# mounted; CUR_PARENT stays empty when that is /).
+# detect_current: sets CUR_KIND (image, device, zfs, subvolume, foreign, none), CUR_MOUNTED, CUR_SOURCE, CUR_FSTYPE,
+# CUR_IMAGE, CUR_IMAGE_GONE, CUR_STACK (stacked btrfs/ZFS mounts, bottom first), CUR_STACK_AT and CUR_PARENT ("" for /).
 detect_current() {
   local line lines target
   CUR_KIND=none; CUR_MOUNTED=0; CUR_SOURCE=""; CUR_FSTYPE=""; CUR_IMAGE=""; CUR_IMAGE_GONE=0; CUR_STACK=""; CUR_STACK_AT=""; CUR_PARENT=""
@@ -882,10 +785,8 @@ detect_current() {
     CUR_SOURCE="${CUR_SOURCE%%\[*}"
     CUR_SOURCE="$(printf '%b' "$CUR_SOURCE")"   # findmnt -r writes a space in a name as \x20
     CUR_FSTYPE="${line##* }"
-    # The last line is what is on top. A second dataset with the same
-    # mountpoint (a received copy) that zfs mount -a or a boot mounted too
-    # gives two; a tmpfs or an automount point underneath does not count,
-    # nor does the same filesystem bound over itself.
+    # The last line is on top. Two datasets with one mountpoint (a received copy) give two lines;
+    # a tmpfs or automount point underneath does not count, nor the same filesystem bound over itself.
     CUR_STACK="$(stack_in "$lines")"
     if [ -n "$CUR_STACK" ]; then CUR_STACK_AT="$MOUNTPOINT"; fi
     case "$CUR_FSTYPE" in
@@ -919,16 +820,15 @@ detect_current() {
   fi
 }
 
-# stack_in LINES: LINES is what findmnt -rn -M DIR -o SOURCE,FSTYPE printed.
-# When more than one btrfs or ZFS is mounted there, their sources, bottom
-# first; nothing otherwise.
+# stack_in LINES (findmnt -rn -M DIR -o SOURCE,FSTYPE): the sources, bottom first, when
+# more than one btrfs or ZFS is mounted there; nothing otherwise.
 stack_in() {
   if [ "$(awk '$NF == "zfs" || $NF == "btrfs" { print $1 }' <<<"$1" | sort -u | wc -l)" -gt 1 ]; then
     printf '%b\n' "$(awk '$NF == "zfs" || $NF == "btrfs" { printf "%s%s", sep, $1; sep = ", " }' <<<"$1")"
   fi
 }
 
-# --- Docker and the database ---------------------------------------------------
+# --- Docker and the database ---
 
 have_docker() { command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; }
 
@@ -946,9 +846,8 @@ service_container() {
   printf '%s\n' "$id"
 }
 
-# running_config_files: the compose files the running stack was started with
-# (Compose records them on each container), relative to PROJECT_DIR where they
-# are inside it, joined with SEPARATOR; nothing when the stack is not running.
+# running_config_files: the compose files the running stack was started with (from the container
+# labels), relative to PROJECT_DIR where inside it, joined with SEPARATOR; nothing when it is not running.
 running_config_files() {
   local cid files file out=""
   cid="$(service_container postgres)" || return 0
@@ -1003,10 +902,8 @@ inspect_running_stack() {
   fi
 }
 
-# The partitions a cycle of the tiering job would move, in its order (oldest
-# month first, mqtt_messages before packet_receptions), with the size the
-# job's free-space guard uses for each. The CASE keeps the month from being
-# parsed out of names that are not monthly (the DEFAULT partition's).
+# What a cycle of the tiering job would move, in its order, with the size its free-space guard
+# uses. The CASE keeps names that are not monthly (the DEFAULT partition's) from being parsed.
 COLD_PARTITIONS_SQL="
 SELECT c.relname || ' ' || pg_total_relation_size(c.oid)
 FROM pg_inherits i
@@ -1023,10 +920,8 @@ WHERE p.oid IN (to_regclass('mqtt_messages'), to_regclass('packet_receptions'))
 ORDER BY right(c.relname, 7), CASE p.relname WHEN 'mqtt_messages' THEN 0 ELSE 1 END, c.relname;
 "
 
-# db_query CONTAINER COLD_AFTER_MONTHS COLD_TABLESPACE TABLES: runs the SQL on
-# stdin in the stack's database, with those three as the psql variables
-# cold_after, cold_ts and tables; fails when the database cannot be asked.
-# Nothing is printed unless the whole query went through.
+# db_query CONTAINER COLD_AFTER_MONTHS COLD_TABLESPACE TABLES: runs the SQL on stdin with those as the psql
+# variables cold_after, cold_ts, tables. Prints nothing unless the whole query went through.
 db_query() {
   local sql out attempt rc started
   # shellcheck disable=SC2016  # expanded by the shell inside the container
@@ -1035,12 +930,8 @@ db_query() {
     sh "$2" "$3" "$4")
   if command -v timeout >/dev/null 2>&1; then run=(timeout "$DB_TIME_LIMIT" "${run[@]}"); fi
   sql="$(cat)"
-  # A server that is only just starting refuses for a moment, and the official
-  # image initialises a new cluster under a temporary server that answers and
-  # is then shut down again: ask up to three times, a moment apart. A query
-  # that ran into the time limit is not asked again — told by the time it
-  # took, because timeout reports that differently from one build to another
-  # (124 from coreutils, 143 from busybox).
+  # A server that is just starting refuses for a moment (the image's init server answers, then stops): ask up to
+  # three times. A query that hit the time limit is not repeated — told by its duration, as timeout's status varies.
   for attempt in 1 2 3; do
     rc=0
     started="$SECONDS"
@@ -1078,10 +969,8 @@ cold_tablespace_name() {
   printf '%s\n' "$name"
 }
 
-# cold_tablespace_in_database: 0 when the running database has the cold
-# tablespace defined (whether anything is stored on it is what
-# cold_tablespace_relations asks), 1 when it has not, 2 when it cannot be
-# asked. Asked once (TABLESPACE_STATE).
+# cold_tablespace_in_database: 0 when the running database has the cold tablespace defined, 1 when
+# not, 2 when it cannot be asked. Asked once (TABLESPACE_STATE).
 cold_tablespace_in_database() {
   local cid answer
   if [ -z "$TABLESPACE_STATE" ]; then
@@ -1098,9 +987,8 @@ cold_tablespace_in_database() {
   return "$TABLESPACE_STATE"
 }
 
-# cold_tablespace_relations: how many tables and indexes of the stack's
-# database the catalog places on the cold tablespace; prints nothing when the
-# database cannot be asked.
+# cold_tablespace_relations: how many tables and indexes the catalog places on the cold
+# tablespace; prints nothing when the database cannot be asked.
 cold_tablespace_relations() {
   local cid answer
   have_docker || return 0
@@ -1110,13 +998,8 @@ cold_tablespace_relations() {
   if [[ "$answer" =~ ^[0-9]+$ ]]; then printf '%s\n' "$answer"; fi
 }
 
-# cold_tablespace_place: where the cold tablespace of the running database is,
-# seen from the host; sets TABLESPACE_PLACE. "here": its PG_... directory is
-# in the cold directory — at the top, or below it where
-# cold_tablespace_location names a directory under the bind. "away": it
-# belongs in the cold directory and is not there (also when the database does
-# not say where it is). "elsewhere": it is at a path the cold overlay does not
-# bind; TABLESPACE_LOCATION is that path.
+# cold_tablespace_place: sets TABLESPACE_PLACE. "here": its PG_... directory is in the cold directory (top, or below
+# where cold_tablespace_location says); "away": it belongs here and is not; "elsewhere": at TABLESPACE_LOCATION, not bound.
 cold_tablespace_place() {
   local cid sub
   TABLESPACE_PLACE=away; TABLESPACE_LOCATION=""
@@ -1138,15 +1021,8 @@ cold_tablespace_place() {
   return 0
 }
 
-# storage_away_note: the refusal for a database that has the cold tablespace
-# while its directory is not in the cold directory. Bringing the filesystem
-# back is always the first answer: a tablespace with nothing on it yet is the
-# ordinary state of a young install (the job creates it before any month is
-# due), not a leftover. DROP TABLESPACE is named only when the catalog places
-# nothing on it — with the filesystem away PostgreSQL drops one that is in use
-# without complaint — and only for a filesystem that is gone for good. A ZFS
-# dataset that has the path and is not mounted is what to mount, if it is
-# the cold dataset; it may also be a copy of it.
+# storage_away_note: the refusal when the database has the cold tablespace and its directory is not here. Bring the
+# filesystem back first; DROP TABLESPACE only when the catalog places nothing on it (PostgreSQL drops a used one silently).
 storage_away_note() {
   local name relations claims has where what=them
   name="$(cold_tablespace_name)"
@@ -1170,17 +1046,13 @@ storage_away_note() {
   fi
 }
 
-# storage_elsewhere_note: the refusal for a database whose cold tablespace is
-# at a path the cold overlay does not bind (cold_tablespace_place has said
-# "elsewhere" and left the path in TABLESPACE_LOCATION).
+# storage_elsewhere_note: the refusal when the cold tablespace is at a path the cold overlay does not bind.
 storage_elsewhere_note() {
   echo "the running database already has the tablespace $(cold_tablespace_name) at $TABLESPACE_LOCATION, which is not under $PG_COLD_PATH, where the overlay binds the cold directory: the job moves the months there, and what is prepared at $MOUNTPOINT would not be used. To have the cold months here, move them back and drop the tablespace first (ZFS.md, \"Rolling back\"), and leave cold_tablespace_location at its default."
 }
 
-# refuse_tablespace_not_here: the running database has the cold tablespace and
-# its directory is not in the cold directory: nothing is created or adopted.
-# Returns when the database has no such tablespace, cannot be asked, or has
-# it right here.
+# refuse_tablespace_not_here: nothing is created or adopted while the running database's cold tablespace
+# is not in the cold directory. Returns when there is no such tablespace, it cannot be asked, or it is here.
 refuse_tablespace_not_here() {
   cold_tablespace_in_database || return 0
   cold_tablespace_place
@@ -1204,9 +1076,8 @@ too_small_note() {
   echo "$(human_bytes "$1") is too small to ever take a month: before a move the job wants min_free_mb ($(numeric_setting min_free_mb "$DEFAULT_MIN_FREE_MB") MiB) free on top of the partition's own size, and a new btrfs keeps about $(human_bytes "$BTRFS_OWN_BYTES") to itself. The smallest that makes sense here is $(human_bytes "$2")"
 }
 
-# database_calls_for: asks the running database what the job is going to move.
-# Sets DB_BYTES, the image size that calls for, and DB_REASONING; without a
-# database to ask, DB_BYTES stays empty and DB_WHY_NOT says why.
+# database_calls_for: asks the running database what the job will move. Sets DB_BYTES (the image size
+# that calls for) and DB_REASONING; without a database DB_BYTES stays empty and DB_WHY_NOT says why.
 database_calls_for() {
   local cid rows min_free_mb cold_after cold_ts tables raw word needed name bytes before count total
   DB_BYTES=""; DB_REASONING=(); DB_WHY_NOT=""
@@ -1216,10 +1087,8 @@ database_calls_for() {
   cold_after="$(numeric_setting cold_after_months "$DEFAULT_COLD_AFTER_MONTHS")"
   if [ "$cold_after" -lt 1 ]; then cold_after=1; fi
   cold_ts="$(cold_tablespace_name)"
-  # As the job takes it: tables narrows the two archive tables only when it is
-  # a list (read here when it is written on one line) that names exactly one
-  # of them. Everything else counts both, which can only make the image
-  # larger than needed.
+  # As the job takes it: tables narrows the archive tables only as a one-line list naming exactly
+  # one of them. Everything else counts both, which can only make the image larger than needed.
   tables=""
   raw="$(tiering_raw "$PROJECT_DIR/config.toml" tables 2>/dev/null || true)"
   case "$raw" in
@@ -1280,7 +1149,7 @@ decide_image_size() {
   SIZE_REASONING+=("the disk holds this size permanently, whatever is inside; later months need more room: grow --to SIZE enlarges it online")
 }
 
-# --- Arguments ------------------------------------------------------------------
+# --- Arguments ---
 
 choose() {
   if [ -n "$CHOICE" ] && [ "$CHOICE" != "$1" ]; then
@@ -1399,8 +1268,8 @@ resolve_mountpoint() {
   plain_path "$MOUNTPOINT" || die "the cold directory (from $MOUNTPOINT_FROM) resolves to '$MOUNTPOINT', which must be made of letters, digits and . _ - / only (it goes into /etc/fstab and .env unquoted) — choose another --mountpoint"
 }
 
-# --- Planning: one inspect_* per layout. Each refuses what it must, and adds
-# --- the steps that are still missing to PLAN; nothing is changed here. ---------
+# --- Planning ---
+# One inspect_* per layout: each refuses what it must and adds the missing steps to PLAN; nothing is changed here.
 
 plan() { PLAN+=("$1"); }
 
@@ -1439,8 +1308,7 @@ refuse_occupied() {
   die "$MOUNTPOINT is not empty and is not $1 — $2. Empty it or choose another --mountpoint."
 }
 
-# require_only_tablespace DIR: refuse when DIR holds anything but PostgreSQL's
-# own tablespace directories.
+# require_only_tablespace DIR: refuse when DIR holds anything but PostgreSQL's tablespace directories.
 require_only_tablespace() {
   local entry
   while read -r entry; do
@@ -1594,9 +1462,8 @@ inspect_device() {
     die "$MOUNTPOINT is already the mount of another device, $CUR_SOURCE — choose another --mountpoint"
   fi
   plan_btrfs_module
-  # Low-level probing, never the blkid cache. A partition always answers with
-  # PART_ENTRY_* tags: they describe its entry in the partition table around
-  # it, not anything inside it, so they are not a signature.
+  # Low-level probing, never the blkid cache. A partition always answers with PART_ENTRY_* tags,
+  # which describe its partition-table entry, not a signature inside it.
   probe="$(blkid -p -o export "$DEVICE" 2>/dev/null)" || probe_rc=$?
   type="$(sed -n 's/^TYPE=//p' <<<"$probe" | head -n 1)"
   label="$(sed -n 's/^LABEL=//p' <<<"$probe" | head -n 1)"
@@ -1625,9 +1492,8 @@ inspect_device() {
     elif [ -n "$tags" ]; then
       signature="an unidentified signature: ${tags% }"
     elif real_tool wipefs; then
-      # blkid names nothing at all when it finds more than one filesystem
-      # signature, and nothing either for one whose superblock it does not
-      # accept (a checksum that fails); wipefs lists them in both cases
+      # blkid names nothing when it finds several filesystem signatures, or one whose superblock
+      # it does not accept (a failing checksum); wipefs lists them in both cases.
       other="$(wipefs "$DEVICE" 2>/dev/null | awk 'NR > 1 && NF >= 3 { print $3 }' | sort -u | tr '\n' ' ' || true)"
       other="${other% }"
       case "$other" in
@@ -1674,9 +1540,8 @@ inspect_zfs() {
   pool="${ZFS_DATASET%%/*}"
   plain_dataset "$ZFS_DATASET" || die "'$ZFS_DATASET' is a name this script does not pass on to zfs (it takes letters, digits and . _ - : only) — to use such a dataset, pass --existing with the directory where it is mounted"
   zpool list -H -o name "$pool" >/dev/null 2>&1 || die "there is no ZFS pool named $pool on this host (zpool list: $(zfs_pools | tr '\n' ' '))"
-  # ZFS puts a pool's alternate root in front of every mountpoint it is
-  # given: the dataset would not be mounted where this script was told to
-  # put it, and the path it passes on would be wrong in every later run.
+  # ZFS prefixes a pool's altroot to every mountpoint: the dataset would not be mounted
+  # where this script was told, and the path it passes on would be wrong in every later run.
   value="$(pool_altroot "$pool")"
   case "$value" in
     '') ;;
@@ -1812,11 +1677,8 @@ inspect_existing() {
     2) die "cannot tell whether compression is on for $MOUNTPOINT ($fs): $note$(if [ "$fs" = zfs ] && ! command -v zfs >/dev/null 2>&1; then echo " — $(install_hint "$(os_family)" zfs)"; fi)" ;;
   esac
   require_only_tablespace "$MOUNTPOINT"
-  # A directory that compresses is not yet the one the database uses: with the
-  # tablespace defined and its PG_... directory not here, its files are
-  # somewhere else (the bare mountpoint of a pool that was not imported, on a
-  # root that compresses too). With a filesystem mounted at the directory, it
-  # is that filesystem which is not the one.
+  # A directory that compresses is not yet the one the database uses: with the tablespace defined and
+  # its PG_... directory not here, its files are elsewhere (e.g. the bare mountpoint of a pool not imported).
   if [ "$CUR_MOUNTED" -eq 1 ]; then
     if note="$(tablespace_mismatch)"; then die "$note Nothing was changed."; fi
   else
@@ -1843,9 +1705,8 @@ inspect_env() {
   cf="$(env_get "$ENV_FILE" COMPOSE_FILE)" || cf=""
   from_stack=""
   if [ -z "$cf" ] && have_docker; then
-    # Started with -f, or with COMPOSE_FILE in the shell: keep exactly those
-    # files. A stack that runs from what Compose loads by itself is given
-    # what Compose would load now: docker-compose.yml and the override file.
+    # Started with -f or COMPOSE_FILE in the shell: keep exactly those files. A stack that runs from what
+    # Compose loads by itself gets what Compose would load now: docker-compose.yml and the override file.
     from_stack="$(running_config_files "$sep")"
     for name in "" compose.override.yml compose.override.yaml docker-compose.override.yml docker-compose.override.yaml; do
       if [ "$from_stack" = "docker-compose.yml${name:+$sep$name}" ]; then from_stack=""; break; fi
@@ -1871,7 +1732,7 @@ inspect_env() {
   fi
 }
 
-# --- Doing it ---------------------------------------------------------------------
+# --- Doing it ---
 
 fstab_add() {
   local stamp
@@ -1893,9 +1754,8 @@ apply_owner() {
   fi
 }
 
-# mount_failed_note: what a mount that failed leaves behind and how to back
-# out, by what this run made. An image or a device that was there before may
-# hold every month the job moved: deleting it is never the advice then.
+# mount_failed_note: what a failed mount leaves behind and how to back out of what this run made. An image
+# or device that was there before may hold every moved month: deleting it is never the advice then.
 mount_failed_note() {
   local note
   if [ "$NEED_FSTAB" -eq 1 ]; then
@@ -1973,17 +1833,15 @@ apply_zfs() {
   fi
 }
 
-# mounted_dataset_here: the ZFS dataset that is mounted at the cold directory
-# (what is on top there), or nothing.
+# mounted_dataset_here: the ZFS dataset mounted on top at the cold directory, or nothing.
 mounted_dataset_here() {
   local line
   line="$(findmnt -rn -M "$MOUNTPOINT" -o SOURCE,FSTYPE 2>/dev/null | tail -n 1 || true)"
   if [ "${line##* }" = zfs ]; then printf '%b\n' "${line%% *}"; fi
 }
 
-# require_dataset_mounted_here: the dataset of the ZFS layout is what is
-# mounted at the cold directory. Nothing is ever chowned, and nothing is
-# reported as ready, on a path where ZFS did not put it.
+# require_dataset_mounted_here: the ZFS layout's dataset is what is mounted at the cold directory.
+# Nothing is chowned or reported as ready on a path where ZFS did not put it.
 require_dataset_mounted_here() {
   local found where
   found="$(mounted_dataset_here)"
@@ -2073,11 +1931,8 @@ verify_cold_directory() {
   info "ok  $(owner_note "$MOUNTPOINT")"
 }
 
-# tablespace_mismatch: the running database keeps its cold tablespace
-# somewhere else than in what is at the cold directory now — a filesystem
-# that is mounted there, a subvolume, a directory in use. Prints what to say
-# and returns 0; returns 1 when there is nothing to say (no such tablespace,
-# the database cannot be asked, or its directory is right here).
+# tablespace_mismatch: the running database keeps its cold tablespace elsewhere than in what is at the cold
+# directory now. Prints what to say and returns 0; 1 when there is nothing to say.
 tablespace_mismatch() {
   local name relations has
   cold_tablespace_in_database || return 1
@@ -2107,11 +1962,8 @@ verify_tablespace_here() {
   info "ok  the running database's tablespace $(cold_tablespace_name) has its directory there"
 }
 
-# container_view SERVICE PATH: one line on whether that container sees the
-# cold filesystem, and VIEW_STATE: sees, stale (it shows the bare directory:
-# started before the filesystem was mounted), unbound (the overlay is not
-# applied), elsewhere (another directory is bound), unreachable (docker exec
-# fails) or down. Status 0 for sees, 2 for down, 1 otherwise.
+# container_view SERVICE PATH: one line on whether the container sees the cold filesystem. Sets VIEW_STATE: sees,
+# stale (started before the mount), unbound, elsewhere, unreachable, down. Status 0 for sees, 2 for down, else 1.
 container_view() {
   local service="$1" path="$2" cid bound host inside
   VIEW_STATE=down
@@ -2166,10 +2018,8 @@ describe_layout() {
   esac
 }
 
-# pick_layout: sets KIND and LAYOUT_REASON. A flag decides; otherwise what is
-# already at the cold directory, then the first case that applies. A directory
-# that was a cold directory before (.env names it, or a tablespace is in it)
-# is never given a second filesystem on top.
+# pick_layout: sets KIND and LAYOUT_REASON: a flag, else what is already there, else the first case that applies.
+# A directory that was a cold directory before (.env, a tablespace) never gets a second filesystem on top.
 pick_layout() {
   local pools count have fstab_source named=0 holds=0 value fs="" sep cf rc=0
   if [ "$CUR_KIND" = foreign ] && [ "$CHOICE" != existing ]; then
@@ -2226,9 +2076,8 @@ pick_layout() {
       # It has what every layout ends with: taken as it is.
       if { [ "$fs" = btrfs ] || [ "$fs" = zfs ]; } && compression_of "$MOUNTPOINT" >/dev/null; then
         if [ "$holds" -eq 0 ]; then
-          # ... unless it is the bare mountpoint of a cold filesystem that is
-          # away, on a root that compresses too. The database knows; failing
-          # that, the chown of an earlier run is the sign.
+          # ... unless it is the bare mountpoint of a cold filesystem that is away, on a root that compresses
+          # too. The database knows; failing that, the chown of an earlier run is the sign.
           refuse_tablespace_not_here
           cold_tablespace_in_database || rc=$?
           if [ "$rc" -eq 2 ] && ! owner_is_right "$MOUNTPOINT"; then
@@ -2255,9 +2104,8 @@ pick_layout() {
     cf="$(env_get "$ENV_FILE" COMPOSE_FILE)" || cf=""
     rc=0; compose_file_with_overlay "$cf" "${sep:-:}" "" >/dev/null 2>&1 || rc=$?
     if [ -d "$MOUNTPOINT" ] || [ "$rc" -eq 3 ]; then
-      # .env speaks of a setup that was completed — whose filesystem is then
-      # not here now — or it was written ahead of this script. The database
-      # knows which: without the tablespace, nothing was ever moved.
+      # .env speaks of a completed setup (whose filesystem is not here now) or was written ahead of
+      # this script. The database knows which: without the tablespace, nothing was ever moved.
       rc=0; cold_tablespace_in_database || rc=$?
       case "$rc" in
         0) refuse_tablespace_not_here
@@ -2280,9 +2128,7 @@ pick_layout() {
     return 0
   fi
   if [ "$count" -gt 1 ]; then
-    # the example names a pool that --zfs takes
-    # the example names a pool that --zfs takes: the one with the most free
-    # room, which is not a boot pool
+    # the example names a pool that --zfs takes: the one with the most free room, not a boot pool
     have="$(zpool list -H -p -o name,free 2>/dev/null | awk -F'\t' '$1 ~ /^[A-Za-z0-9._:-]+$/ && (best == "" || $2 + 0 > room) { best = $1; room = $2 + 0 } END { print best }' || true)"
     die "this host has $count ZFS pools ($(awk 'NF { printf "%s%s", sep, $0; sep = ", " }' <<<"$pools")): say which one takes the cold dataset — the one with room for the cold months${have:+, e.g. --zfs $have/$ZFS_DATASET_NAME}"
   fi
@@ -2328,9 +2174,8 @@ describe_host() {
   info "stack           $PROJECT_DIR: $stack"
 }
 
-# config_newer_than_meshinfo: 0 when config.toml was changed after the running
-# meshinfo container was started (it reads the file once, at start), 1 when
-# it was not, 2 when that cannot be told.
+# config_newer_than_meshinfo: 0 when config.toml changed after the meshinfo container started
+# (it reads the file once, at start), 1 when not, 2 when that cannot be told.
 config_newer_than_meshinfo() {
   local cid started changed
   cid="$(service_container meshinfo)" || return 2
@@ -2443,13 +2288,8 @@ size_not_used_note() {
   echo "--size $SIZE_ARG is not used: it is the size of a new loop image, and the layout here is $(describe_layout "$KIND") — $why"
 }
 
-# check_other_claims: ZFS datasets other than the one being set up that have
-# the cold directory as their mountpoint without being mounted. Over a bare
-# directory that is refused: one of them is what belongs there. Over a cold
-# directory in use it is a warning, and mounting is never the advice: the
-# dataset would cover what is there — unless what is mounted there is the
-# copy, and the unmounted one the cold dataset: that is refused, with the way
-# to swap them, as long as the mounted one was not named.
+# check_other_claims: other ZFS datasets with the cold directory as mountpoint, not mounted. Refused over a bare
+# directory; a warning over one in use (mounting would cover it) — unless the copy is mounted: refused, with the swap.
 check_other_claims() {
   local name names="" count=0 above other
   while IFS=$'\t' read -r name above; do
@@ -2493,10 +2333,8 @@ check_other_claims() {
   die "the ZFS datasets $names have $MOUNTPOINT as their mountpoint but are not mounted — what is at that path now is the bare directory underneath$other. Mount the one that is the cold dataset (zfs mount -l NAME) and give the others another mountpoint or canmount=off, then run this again."
 }
 
-# stacked_note: more than one btrfs or ZFS is mounted at the cold directory,
-# one over the other (CUR_STACK): what it means and the way out. zfs unmount
-# and zfs set canmount=off are not it: with both mounted they take off
-# whatever is on top, whichever dataset they are given.
+# stacked_note: several btrfs/ZFS mounted one over the other at the cold directory (CUR_STACK): what it means and
+# the way out. Not zfs unmount or canmount=off: they act on whatever is on top, whichever dataset is named.
 stacked_where() {
   if [ "${CUR_STACK_AT:-$MOUNTPOINT}" = "$MOUNTPOINT" ]; then
     echo "at $MOUNTPOINT"
@@ -2547,10 +2385,8 @@ cmd_setup() {
     $entry
   mount turns down an fstab line without the zfsutil option for a dataset whose mountpoint is not legacy (ZFS mounts such a dataset itself, where its mountpoint property says) — and on a systemd host a line that fails without nofail stops the boot. Remove the entry, then run this again." ;;
           unknown)
-            # The dataset cannot be asked. When its pool is not there,
-            # inspect_zfs says so; the line may be what mounts it.
-            # A line that carries zfsutil is what mounts the dataset once it
-            # is made, as its own mount: only one without it is in the way.
+            # The dataset cannot be asked (inspect_zfs speaks for a missing pool). A line with zfsutil is
+            # what will mount the dataset once made; only one without it is in the way.
             if zpool list -H -o name "${ZFS_DATASET%%/*}" >/dev/null 2>&1 && [[ ",$(awk '{ print $4 }' <<<"$entry")," != *,zfsutil,* ]]; then
               die "$FSTAB has a line for the dataset $ZFS_DATASET, which is not there:
     $entry
@@ -2591,11 +2427,8 @@ cmd_setup() {
     subvolume) inspect_subvolume ;;
     existing)  inspect_existing ;;
   esac
-  # A new filesystem is never put where the database expects one it already
-  # uses. And what is there already — mounted, or a subvolume — must be the
-  # one the database's tablespace is on. (Where this run mounts something
-  # first, its own fstab line or a dataset that was named, that is looked at
-  # after the mount: verify_tablespace_here.)
+  # A new filesystem is never put where the database expects one it already uses, and what is there must hold
+  # its tablespace. (What this run mounts first is checked after the mount: verify_tablespace_here.)
   if [ "$CREATES" -eq 1 ]; then
     refuse_tablespace_not_here
   elif [ "$KIND" != existing ] && { [ "$CUR_MOUNTED" -eq 1 ] || [ "$CUR_KIND" = subvolume ]; }; then
@@ -2642,7 +2475,7 @@ cmd_setup() {
   print_remaining_steps
 }
 
-# --- status -------------------------------------------------------------------------
+# --- status ---
 
 cmd_status() {
   local problems=0 fs how rc entry dataset total free avail size ratio value cf sep image_bytes="" allocated adopted_mount=0
@@ -2655,9 +2488,8 @@ cmd_status() {
   detect_current
   log "Cold directory $MOUNTPOINT (from $MOUNTPOINT_FROM)"
   entry="$(fstab_entries "$FSTAB" "$MOUNTPOINT")"
-  # ZFS datasets that have this directory as their mountpoint without being
-  # mounted: over a bare directory, what belongs here; over one in use, a
-  # dataset that would cover it.
+  # ZFS datasets with this directory as mountpoint that are not mounted: over a bare
+  # directory, what belongs here; over one in use, a dataset that would cover it.
   unmounted="$(unmounted_datasets_here)"
   claims="$(awk 'NF { printf "%s%s", sep, $0; sep = ", " }' <<<"$unmounted")"
   if cold_dir_in_use; then in_use=1; fi
@@ -2895,7 +2727,7 @@ cmd_status() {
   fi
 }
 
-# --- grow ---------------------------------------------------------------------------
+# --- grow ---
 
 cmd_grow() {
   local new current delta avail dir size block finishing=0 entry
@@ -2928,9 +2760,8 @@ cmd_grow() {
   read -r size block < <(stat -f -c '%b %S' "$MOUNTPOINT")
   size=$((size * block))
   if [ "$new" -le "$current" ] && [ $((current - new)) -lt "$MIB" ] && [ "$size" -lt $((current - FS_SLACK)) ]; then
-    # fallocate went through earlier, the two steps after it did not. --to
-    # counts in MiB: for an image that is not a whole number of them (one
-    # enlarged by hand) the size status names is the one just below.
+    # fallocate went through earlier, the two steps after it did not. --to counts in MiB: for an
+    # image that is not a whole number of them, the size status names is the one just below.
     finishing=1
     new="$current"
     log "Finishing an earlier grow: $CUR_IMAGE is $(human_bytes "$current") already, the filesystem inside is $(human_bytes "$size")"

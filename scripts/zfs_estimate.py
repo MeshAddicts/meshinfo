@@ -136,9 +136,7 @@ class UsageError(Exception):
     """Bad arguments or environment; reported on stderr, exit code 2."""
 
 
-# ---------------------------------------------------------------------------
-# Tiering rule (local copy — this script must not import storage.db.tiering)
-# ---------------------------------------------------------------------------
+# --- Tiering rule (local copy: this script must not import storage.db.tiering) ---
 
 def partition_month(name: str, table: str) -> Optional[datetime.date]:
     """`<table>_YYYY_MM` -> date(YYYY, MM, 1); anything else -> None."""
@@ -172,17 +170,10 @@ def human_bytes(n: int) -> str:
     return f"{n} B" if unit == "B" else f"{value:.2f} {unit}"
 
 
-# ---------------------------------------------------------------------------
-# Codecs and the per-record ZFS model
-# ---------------------------------------------------------------------------
+# --- Codecs and the per-record ZFS model ---
 
 class Codec:
-    """One value of the ZFS `compression` property.
-
-    `compressed_size(record)` returns the bytes ZFS would store for the
-    compressed record (codec output plus ZFS's per-block header), or None for
-    `off`.
-    """
+    """One value of the ZFS `compression` property; compressed_size() includes ZFS's per-block header (None for `off`)."""
 
     def __init__(self, label: str, fn: Optional[Callable[[bytes], int]]):
         self.label = label
@@ -276,9 +267,7 @@ def model_record(codec: Codec, record: bytes, is_hole: bool) -> Tuple[int, str]:
     return _roundup(lsize), "raw"
 
 
-# ---------------------------------------------------------------------------
-# Accounting
-# ---------------------------------------------------------------------------
+# --- Accounting ---
 
 class Tally:
     """Byte and record counters for one bucket (a class, a tier, a total)."""
@@ -317,13 +306,7 @@ def _chunk_needed(chunk_index: int, per_chunk: int, sample: int, total_records: 
 
 def estimate_file(path: Path, size: int, settings: List[Tuple[Codec, int]],
                   sample: int) -> Dict[Tuple[str, int], Tally]:
-    """Model one relation file for every (codec, recordsize) setting.
-
-    The file is read once in CHUNK-sized pieces; every recordsize is cut from
-    the same chunk. Record i (per recordsize) is compressed iff i % sample == 0
-    and the physical size is scaled by records / sampled. Chunks holding no
-    sampled record for any recordsize are skipped with a seek.
-    """
+    """Model one relation file for every setting in one read; record i is compressed iff i % sample == 0, then scaled."""
     recordsizes = sorted({rs for _, rs in settings})
     by_rs: Dict[int, List[Codec]] = {rs: [c for c, r in settings if r == rs] for rs in recordsizes}
     stats = {(c.label, rs): Tally() for c, rs in settings}
@@ -383,9 +366,7 @@ def estimate_file(path: Path, size: int, settings: List[Tuple[Codec, int]],
     return stats
 
 
-# ---------------------------------------------------------------------------
-# Catalog
-# ---------------------------------------------------------------------------
+# --- Catalog ---
 
 def classify(entry: Optional[Dict[str, Any]], fork: str) -> str:
     """Storage class of a file from its catalog entry and fork name."""
@@ -506,27 +487,17 @@ def fetch_catalog_rows(dsn: str) -> List[Dict[str, Any]]:
     return rows if isinstance(rows, list) else []
 
 
-# ---------------------------------------------------------------------------
-# The walk
-# ---------------------------------------------------------------------------
+# --- The walk ---
 
 def relation_files(pgdata: Path) -> Iterator[Tuple[str, str, int, Path]]:
-    """Yield (catalog key, fork, segment, path) for every relation file under pgdata.
-
-    The key is the pg_relation_filepath form of the main fork
-    (`base/<db>/<filenode>`, `global/<filenode>`,
-    `pg_tblspc/<oid>/PG_<ver>/<db>/<filenode>`); pg_tblspc symlinks are
-    followed.
-    """
+    """Yield (catalog key, fork, segment, path) per relation file; the key is the main fork's pg_relation_filepath form."""
     for top in ("base", "global", "pg_tblspc"):
         root = pgdata / top
         if not root.is_dir():
             continue
         if top == "pg_tblspc":
-            # Every entry is a symlink to a tablespace directory. One whose target
-            # is not reachable here (a host-side run against the Docker volume
-            # once a cold tablespace exists) would silently drop every cold file
-            # from the estimate — say so loudly instead of walking past it.
+            # Each entry is a symlink to a tablespace directory; an unreachable target (a
+            # host-side run against the Docker volume) would silently drop every cold file.
             for link in sorted(root.iterdir()):
                 if link.is_symlink() and not link.is_dir():
                     try:
@@ -693,9 +664,7 @@ def print_human(report: Report, args: argparse.Namespace, meta: Dict[str, Any]) 
           f"{human_bytes(all_cold)}; tiered: {human_bytes(total.physical)}")
 
 
-# ---------------------------------------------------------------------------
-# Commands
-# ---------------------------------------------------------------------------
+# --- Commands ---
 
 def cmd_dump_catalog(args: argparse.Namespace) -> int:
     catalog = build_catalog(fetch_catalog_rows(args.dsn))

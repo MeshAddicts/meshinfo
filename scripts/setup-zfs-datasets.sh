@@ -1,41 +1,8 @@
 #!/usr/bin/env bash
-#
 # setup-zfs-datasets.sh — create the ZFS dataset(s) MeshInfo's tiered cold
-# storage expects (see ZFS.md), with the properties the benchmarks were run at.
-#
-# Full ZFS layout (the cluster itself on ZFS), two datasets under one parent:
-#   <parent>/pgdata   hot  — cluster, WAL, live months
-#                     recordsize=16K  compression=zstd-3  logbias=latency
-#   <parent>/pgcold   cold — closed months (the meshinfo_cold tablespace)
-#                     recordsize=128K compression=zstd-9  logbias=throughput
-#
-# Cold-only layout (--cold-only; the cluster stays on its Docker volume):
-#   <dataset>         cold — the same cold properties, mounted at <mountpoint>
-#
-# Every dataset gets atime=off and xattr=sa, and its mountpoint is chowned to
-# the postgres user of the official image (999:999). Idempotent: datasets that
-# already exist are left in place and only their properties are (re)applied,
-# which is a no-op when nothing changed. Changing recordsize/compression on an
-# existing dataset affects newly written blocks only — see ZFS.md.
-#
-# Usage:
-#   sudo scripts/setup-zfs-datasets.sh <parent-dataset> [--uid 999] [--gid 999] [--dry-run]
-#   sudo scripts/setup-zfs-datasets.sh --cold-only <dataset> <mountpoint> [--uid 999] [--gid 999] [--dry-run]
-#
-#   sudo scripts/setup-zfs-datasets.sh tank/meshinfo              # creates tank/meshinfo if missing
-#   scripts/setup-zfs-datasets.sh tank/meshinfo --dry-run         # print the commands, touch nothing
-#   sudo scripts/setup-zfs-datasets.sh --cold-only tank/meshinfo-cold /srv/meshinfo/pgcold
-#
-# Dataset arguments are ZFS dataset names (pool/path), not mountpoints, and
-# <dataset> in cold-only mode is a dataset below a pool, never the pool
-# itself (its properties would be inherited by every child). In the full
-# layout the datasets mount at the pool's default location (/<dataset-name>)
-# unless the pool is configured otherwise — the script prints where they
-# ended up; pass those paths to docker-compose.zfs.yml via MESHINFO_ZFS_HOT /
-# MESHINFO_ZFS_COLD. In the cold-only layout the dataset is mounted at the
-# <mountpoint> you give; pass that path to docker-compose.cold.yml via
-# MESHINFO_PGCOLD_DIR.
-#
+# storage expects, with the properties the benchmarks ran at (see ZFS.md).
+# Idempotent: existing datasets are kept and their properties (re)applied, which
+# changes newly written blocks only. Dataset arguments are names, not mountpoints.
 set -euo pipefail
 
 HOT_PROPS=(recordsize=16K compression=zstd-3 atime=off xattr=sa logbias=latency)
@@ -72,12 +39,11 @@ re-run.
 EOF
 }
 
-# plain_dataset NAME: a dataset name the cold-only layout takes: letters,
-# digits and . _ - : in each part. ZFS itself also takes a space, but that
-# layout reads the name back from findmnt, which writes a space as \x20.
+# plain_dataset NAME: letters, digits and . _ - : per part. ZFS also takes a
+# space, but the cold-only layout reads names back from findmnt (\x20).
 plain_dataset() { [[ "$1" =~ ^[A-Za-z0-9._:-]+(/[A-Za-z0-9._:-]+)*$ ]]; }
 
-# --- Arguments ---------------------------------------------------------------
+# --- Arguments ---
 while [ $# -gt 0 ]; do
   case "$1" in
     --cold-only) COLD_ONLY=1; shift ;;
@@ -136,7 +102,7 @@ for v in "$OWNER_UID" "$OWNER_GID"; do
   esac
 done
 
-# --- Pre-flight --------------------------------------------------------------
+# --- Pre-flight ---
 HAVE_ZFS=0
 command -v zfs >/dev/null 2>&1 && HAVE_ZFS=1
 
@@ -199,14 +165,12 @@ ensure_dataset() {
   done
 }
 
-# --- Datasets ----------------------------------------------------------------
+# --- Datasets ---
 # `zfs create -p` also creates a missing parent (with inherited properties).
 if [ "$COLD_ONLY" -eq 1 ]; then
   if [ "$DRY_RUN" -eq 0 ]; then
-    # Never mount over something: a directory that already holds files (a
-    # tablespace on a plain directory, a btrfs cold filesystem being switched
-    # to ZFS) would be hidden underneath the dataset — overlay=on is the Linux
-    # default — unless it is this very dataset already mounted there.
+    # Never mount over something: files already in the directory would be hidden
+    # under the dataset (overlay=on), unless this very dataset is mounted there.
     if [ -d "$COLD_MP" ] && [ -n "$(ls -A -- "$COLD_MP")" ] \
        && [ "$(findmnt -rn -M "$COLD_MP" -o SOURCE 2>/dev/null | tail -n 1 || true)" != "$COLD" ]; then
       err "$COLD_MP is not empty and is not $COLD mounted there — mounting the dataset over it would hide its contents; roll the months back (tier_partitions.py --tablespace pg_default run --apply --all) or move them aside first."
@@ -218,9 +182,8 @@ if [ "$COLD_ONLY" -eq 1 ]; then
   ensure_dataset "$COLD" "mountpoint=${COLD_MP}" "${COLD_PROPS[@]}"
   if [ "$DRY_RUN" -eq 0 ]; then
     COLD_MP="$(mountpoint_of "$COLD")"
-    # `zfs set mountpoint=` succeeds without mounting when canmount=noauto/off
-    # or an encryption key is not loaded; chowning the bare directory then
-    # would be exactly the mistake ZFS.md step 4 warns about.
+    # `zfs set mountpoint=` succeeds without mounting (canmount=noauto/off, key not
+    # loaded): chowning the bare directory then is the mistake ZFS.md warns about.
     if [ "$(zfs get -H -o value mounted "$COLD" 2>/dev/null || true)" != yes ] \
        || [ "$(findmnt -rn -M "$COLD_MP" -o SOURCE,FSTYPE 2>/dev/null | tail -n 1 || true)" != "$COLD zfs" ]; then
       err "$COLD is not mounted at $COLD_MP (canmount=noauto/off, or an encryption key not loaded?) — zfs mount -l $COLD (-l loads the key; with canmount=off, zfs set canmount=on $COLD first), then re-run."
@@ -236,14 +199,13 @@ else
   MOUNTPOINTS=("$HOT_MP" "$COLD_MP")
 fi
 
-# Ownership of the mountpoints only (not recursive): the postgres image runs
-# as 999:999 and must own /var/lib/postgresql and the tablespace directory.
-# Data copied in later (rsync -a from the old volume) carries its own owner.
+# Mountpoints only, not recursive: the postgres image runs as 999:999 and must
+# own /var/lib/postgresql and the tablespace directory.
 log "Setting ownership ${OWNER_UID}:${OWNER_GID} on the mountpoints"
 run chown "${OWNER_UID}:${OWNER_GID}" "${MOUNTPOINTS[@]}"
 run chmod 0750 "${MOUNTPOINTS[@]}"
 
-# --- Summary -----------------------------------------------------------------
+# --- Summary ---
 if [ "$DRY_RUN" -eq 0 ] && [ "$HAVE_ZFS" -eq 1 ]; then
   echo
   if [ "$COLD_ONLY" -eq 1 ]; then
