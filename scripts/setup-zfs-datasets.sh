@@ -72,6 +72,11 @@ re-run.
 EOF
 }
 
+# plain_dataset NAME: a dataset name the cold-only layout takes: letters,
+# digits and . _ - : in each part. ZFS itself also takes a space, but that
+# layout reads the name back from findmnt, which writes a space as \x20.
+plain_dataset() { [[ "$1" =~ ^[A-Za-z0-9._:-]+(/[A-Za-z0-9._:-]+)*$ ]]; }
+
 # --- Arguments ---------------------------------------------------------------
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -102,6 +107,7 @@ if [ "$COLD_ONLY" -eq 1 ]; then
     */*) ;;
     *)   err "'$COLD' is a pool, not a dataset on it — name one (e.g. ${COLD}/meshinfo-cold): the pool's root dataset passes its mountpoint and compression on to every dataset that inherits them"; exit 2 ;;
   esac
+  plain_dataset "$COLD" || { err "'$COLD' is not a dataset name --cold-only takes: letters, digits and . _ - : in each part, the parts joined by /"; exit 2; }
   case "$COLD_MP" in
     /)   err "the mountpoint must not be /"; exit 2 ;;
     /*)  ;;
@@ -202,7 +208,7 @@ if [ "$COLD_ONLY" -eq 1 ]; then
     # to ZFS) would be hidden underneath the dataset — overlay=on is the Linux
     # default — unless it is this very dataset already mounted there.
     if [ -d "$COLD_MP" ] && [ -n "$(ls -A -- "$COLD_MP")" ] \
-       && [ "$(findmnt -rn -M "$COLD_MP" -o SOURCE 2>/dev/null || true)" != "$COLD" ]; then
+       && [ "$(findmnt -rn -M "$COLD_MP" -o SOURCE 2>/dev/null | tail -n 1 || true)" != "$COLD" ]; then
       err "$COLD_MP is not empty and is not $COLD mounted there — mounting the dataset over it would hide its contents; roll the months back (tier_partitions.py --tablespace pg_default run --apply --all) or move them aside first."
       exit 1
     fi
@@ -216,8 +222,8 @@ if [ "$COLD_ONLY" -eq 1 ]; then
     # or an encryption key is not loaded; chowning the bare directory then
     # would be exactly the mistake ZFS.md step 4 warns about.
     if [ "$(zfs get -H -o value mounted "$COLD" 2>/dev/null || true)" != yes ] \
-       || [ "$(findmnt -rn -M "$COLD_MP" -o SOURCE,FSTYPE 2>/dev/null || true)" != "$COLD zfs" ]; then
-      err "$COLD is not mounted at $COLD_MP (canmount=noauto/off, or an encryption key not loaded?) — zfs mount $COLD, then re-run."
+       || [ "$(findmnt -rn -M "$COLD_MP" -o SOURCE,FSTYPE 2>/dev/null | tail -n 1 || true)" != "$COLD zfs" ]; then
+      err "$COLD is not mounted at $COLD_MP (canmount=noauto/off, or an encryption key not loaded?) — zfs mount -l $COLD (-l loads the key; with canmount=off, zfs set canmount=on $COLD first), then re-run."
       exit 1
     fi
   fi
