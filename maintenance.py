@@ -10,20 +10,9 @@ host-side alternative (and the only path that pushes to remote_target, since
 SSH keys live on the host). One-time compaction of pre-dedup history is a
 separate manual step: scripts/compact_mqtt_partitions.py.
 
-Tiering: with [storage.tiering] enabled = true, run_tiering moves at most
-max_partitions_per_cycle closed, cold monthly partitions of the archive tables
-onto the cold tablespace once an hour, creating that tablespace at
-cold_tablespace_location on the first cycle if it does not exist yet, and
-warning on every cycle when cold_filesystem is not on a compressing
-filesystem. storage/db/tiering.py does the work on a dedicated connection
-with no command timeout (the app pool's 10 s would kill the copy); one
-transaction per partition, so a failure leaves the original in place.
-main.maintenance_loop never runs a cycle alongside a backup (pg_dump
-holds ACCESS SHARE on every table, which the swap would queue behind) or
-while the startup node-id backfill is still running (its UPDATEs through the
-parent would deadlock with the swap). scripts/tier_partitions.py drives the
-same code by hand (status / plan / run) and works even while the scheduler is
-disabled.
+Tiering: with [storage.tiering] enabled, run_tiering moves closed months onto
+the cold tablespace once an hour (storage/db/tiering.py; ZFS.md). It never runs
+alongside a backup or the startup node-id backfill.
 """
 
 import asyncio
