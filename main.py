@@ -78,12 +78,14 @@ MAINTENANCE_INTERVAL_SEC = 60.0
 
 async def maintenance_loop(config, data, interval_seconds: float = MAINTENANCE_INTERVAL_SEC) -> None:
     """Periodic DB maintenance: mark nodes inactive past the activity threshold,
-    keep the archive tables' monthly partitions rolled forward, and enforce the
+    keep the archive tables' monthly partitions rolled forward, enforce the
     config-scheduled backups (applied on every start, so a config.toml change
-    needs only a restart — no host cron)."""
+    needs only a restart — no host cron), and, with [storage.tiering] enabled,
+    move cold monthly partitions onto the cold tablespace once an hour."""
     threshold = config['server']['node_activity_prune_threshold']
     tick = 0
     backup_task: asyncio.Task | None = None
+    tiering_task: asyncio.Task | None = None
     while True:
         try:
             pruned = await data.pg_storage.mark_nodes_inactive_by_age(threshold)
@@ -94,8 +96,19 @@ async def maintenance_loop(config, data, interval_seconds: float = MAINTENANCE_I
                 await data.pg_storage.ensure_mqtt_partitions()
             # Backups run whenever the newest dump is older than the schedule —
             # a single-flight background task; a multi-GB dump must not stall this loop.
-            if (backup_task is None or backup_task.done()) and maintenance.backup_due(config):
+            # Never alongside a tiering cycle: pg_dump holds ACCESS SHARE on every table,
+            # and the swap's ACCESS EXCLUSIVE (and every query behind it) would queue on it.
+            backup_running = backup_task is not None and not backup_task.done()
+            tiering_running = tiering_task is not None and not tiering_task.done()
+            if not backup_running and not tiering_running and maintenance.backup_due(config):
                 backup_task = asyncio.create_task(maintenance.run_backup(config))
+                backup_running = True
+            # Tiered cold storage (ZFS.md): single-flight, off this loop. Waits for a backup
+            # and for the node-id backfill, whose UPDATEs would deadlock with the swap.
+            if (not tiering_running and not backup_running
+                    and not data.pg_storage.backfill_running()
+                    and maintenance.tiering_due(config)):
+                tiering_task = asyncio.create_task(maintenance.run_tiering(config))
         except asyncio.CancelledError:
             raise
         except Exception:

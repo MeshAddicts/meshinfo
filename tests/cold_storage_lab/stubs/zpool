@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Stand-in for zpool in the lab (the lab kernel has no ZFS): the pools are the lines of
+# $ZFS_STUB_STATE/pools; calls are logged to calls.log. Plays list, get and upgrade -v.
+# get reads PROPERTY=VALUE lines of $ZFS_STUB_STATE/pool.POOL; without one, altroot is "-" and
+# feature@zstd_compress "active"; an unknown property prints nothing, as the real one does.
+# $ZFS_STUB_STATE/zfs-before-zstd plays an OpenZFS older than 2.0, which does not know zstd.
+set -euo pipefail
+state="${ZFS_STUB_STATE:?ZFS_STUB_STATE is not set}"
+echo "zpool $*" >> "$state/calls.log"
+command="${1:-}"
+shift || true
+is_pool() { grep -qxF -- "$1" "$state/pools" 2>/dev/null; }
+no_such_pool() {
+  echo "cannot open '$1': no such pool" >&2
+  exit 1
+}
+case "$command" in
+  list)
+    pool=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -o) shift 2 ;;
+        -*) shift ;;
+        *)  pool="$1"; shift ;;
+      esac
+    done
+    if [ -n "$pool" ]; then
+      is_pool "$pool" || no_such_pool "$pool"
+      echo "$pool"
+      exit 0
+    fi
+    cat "$state/pools" 2>/dev/null || true ;;
+  get)
+    words=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -o) shift 2 ;;
+        -*) shift ;;
+        *)  words+=("$1"); shift ;;
+      esac
+    done
+    if [ "${#words[@]}" -ne 2 ]; then
+      echo "zpool stub: get takes a property and a pool" >&2
+      exit 2
+    fi
+    property="${words[0]}"
+    pool="${words[1]}"
+    is_pool "$pool" || no_such_pool "$pool"
+    value=""
+    if [ -f "$state/pool.$pool" ]; then value="$(sed -n "s/^$property=//p" "$state/pool.$pool" | tail -n 1)"; fi
+    if [ -z "$value" ]; then
+      case "$property" in
+        altroot)               value="-" ;;
+        feature@zstd_compress) value=active ;;
+      esac
+    fi
+    if [ "$property" = feature@zstd_compress ] && [ -e "$state/zfs-before-zstd" ]; then value=""; fi
+    if [ -n "$value" ]; then printf '%s\n' "$value"; fi ;;
+  upgrade)
+    printf 'This system supports ZFS pool feature flags.\n\nThe following features are supported:\n\nFEAT DESCRIPTION\n'
+    printf '%s\n' 'async_destroy                         (read-only compatible)' 'lz4_compress' 'encryption'
+    if [ ! -e "$state/zfs-before-zstd" ]; then printf '%s\n' 'zstd_compress'; fi ;;
+  *)
+    echo "zpool stub: only 'list', 'get' and 'upgrade -v' are implemented" >&2
+    exit 2 ;;
+esac

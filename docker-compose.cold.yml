@@ -1,0 +1,41 @@
+# Cold-only overlay — see ZFS.md, "Choosing a layout".
+#
+# The lower-effort layout: the Postgres cluster stays on the meshinfo_pgdata
+# named volume exactly as it is, and only closed months move onto a compressed
+# filesystem — a btrfs filesystem or a ZFS dataset on the host, mounted at
+# ${MESHINFO_PGCOLD_DIR} — through the meshinfo_cold tablespace:
+#
+#   postgres   ${MESHINFO_PGCOLD_DIR} -> /var/lib/postgresql/cold   the meshinfo_cold tablespace
+#   meshinfo   ${MESHINFO_PGCOLD_DIR} -> /mnt/meshinfo-cold (ro)    free-space guard, zfs/btrfs mount check;
+#                                        set cold_filesystem = "/mnt/meshinfo-cold" in [storage.tiering]
+#
+# MESHINFO_PGCOLD_DIR has no default on purpose: Compose would otherwise bind
+# an empty directory on the root filesystem, and the tiering job would either
+# refuse every cycle (with cold_filesystem set) or create the tablespace on
+# the wrong filesystem. Put it in .env next to the compose files, together
+# with COMPOSE_FILE so that every compose command picks the overlay up
+# (`sudo scripts/setup-cold-storage.sh` prepares the directory and writes both):
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.cold.yml
+#   MESHINFO_PGCOLD_DIR=/srv/meshinfo/pgcold
+#
+#   (list docker-compose.override.yml too if you use one — naming the files
+#   switches off its automatic loading:
+#   docker-compose.yml:docker-compose.override.yml:docker-compose.cold.yml)
+#
+# or pass both files every time:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.cold.yml up -d
+#
+# The named-volume mount from docker-compose.yml and the top-level `volumes:`
+# declaration are deliberately left alone here: the bind at
+# /var/lib/postgresql/cold is a mount point inside that volume. For the full
+# ZFS layout (the cluster itself on a hot dataset) use docker-compose.zfs.yml.
+services:
+  postgres:
+    volumes:
+      - ${MESHINFO_PGCOLD_DIR:?set MESHINFO_PGCOLD_DIR to the cold directory on the compressed filesystem, see ZFS.md}:/var/lib/postgresql/cold
+
+  meshinfo:
+    volumes:
+      - ${MESHINFO_PGCOLD_DIR:?set MESHINFO_PGCOLD_DIR to the cold directory on the compressed filesystem, see ZFS.md}:/mnt/meshinfo-cold:ro

@@ -1,0 +1,40 @@
+# ZFS tiered-storage overlay — see ZFS.md.
+#
+# Puts the Postgres cluster on the two ZFS datasets created by
+# scripts/setup-zfs-datasets.sh instead of the meshinfo_pgdata named volume:
+#
+#   postgres   hot dataset   -> /var/lib/postgresql        cluster, WAL, live months
+#              cold dataset  -> /var/lib/postgresql/cold   the meshinfo_cold tablespace
+#   meshinfo   cold dataset  -> /mnt/meshinfo-cold (ro)    free-space guard, zfs/btrfs mount check;
+#                                set cold_filesystem = "/mnt/meshinfo-cold" in [storage.tiering]
+#
+# Usage (every time — the overlay must accompany docker-compose.yml):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.zfs.yml up -d
+#
+# or make it the default by adding this to .env next to the compose files:
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.zfs.yml
+#
+#   (list docker-compose.override.yml too if you use one — naming the files
+#   switches off its automatic loading:
+#   docker-compose.yml:docker-compose.override.yml:docker-compose.zfs.yml)
+#
+# Dataset mountpoints default to the layout the setup script creates under a
+# pool called `tank`; override via .env or the environment when yours differ:
+#
+#   MESHINFO_ZFS_HOT=/tank/meshinfo/pgdata
+#   MESHINFO_ZFS_COLD=/tank/meshinfo/pgcold
+#
+# The bind on /var/lib/postgresql replaces the named-volume mount from
+# docker-compose.yml (Compose merges volume entries by container path); the
+# top-level `volumes:` declaration is deliberately left alone here.
+services:
+  postgres:
+    volumes:
+      - ${MESHINFO_ZFS_HOT:-/tank/meshinfo/pgdata}:/var/lib/postgresql
+      - ${MESHINFO_ZFS_COLD:-/tank/meshinfo/pgcold}:/var/lib/postgresql/cold
+
+  meshinfo:
+    volumes:
+      - ${MESHINFO_ZFS_COLD:-/tank/meshinfo/pgcold}:/mnt/meshinfo-cold:ro

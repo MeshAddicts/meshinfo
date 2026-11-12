@@ -2,6 +2,52 @@
 
 Release-specific notes. The routine update command is in [README.md](README.md#3-update).
 
+## Tiered cold storage on ZFS or btrfs (opt-in)
+
+Closed months of the packet archive (`mqtt_messages`, `packet_receptions`)
+can now live in a `meshinfo_cold` tablespace on a heavily compressed
+filesystem — a btrfs filesystem or ZFS dataset holding only the cold months
+(`docker-compose.cold.yml`; the cluster stays on its Docker volume), or the
+cold half of a full ZFS layout (`docker-compose.zfs.yml`) — moved there by an
+hourly in-app job once they are old enough. Nothing changes unless you turn
+it on: the new `[storage.tiering]` section ships with `enabled = false`, and
+a stack without either overlay behaves exactly as before.
+
+```toml
+[storage.tiering]
+enabled = false                        # true: move cold months hourly
+cold_after_months = 1                  # whole calendar months since the month closed; current + previous stay hot
+cold_tablespace = "meshinfo_cold"      # created by the job at cold_tablespace_location
+cold_tablespace_location = "/var/lib/postgresql/cold"
+```
+
+Raising `cold_after_months` keeps more recent months hot and uncompressed, at
+the cost of compression ratio; 1 is the default and the smallest value.
+
+For the cold-only layout, `sudo scripts/setup-cold-storage.sh` prepares the
+compressed filesystem and `.env` on the Docker host in one command — it
+inspects the host, prints its plan and asks before changing anything
+(`--dry-run` only looks) — and ends with the two steps that remain: in
+`[storage.tiering]`, `enabled = true` and `cold_filesystem =
+"/mnt/meshinfo-cold"`; then `docker compose up -d`.
+
+Setup (the datasets, the overlay, carrying an existing volume across) and the
+operator guide are in [ZFS.md](ZFS.md); `scripts/tier_partitions.py status`
+shows where every month lives and `run --apply` moves months by hand (a dry
+run without `--apply`). Queries, cursors and permalinks are unaffected — the
+partitions keep their names and indexes, only their files move.
+
+Backups of a tiered database restore anywhere, with one rule: restore
+**without tablespace assignments**. `scripts/migrate-postgres.sh` already
+dumps with `pg_dump --no-tablespaces`; for the in-app scheduled dumps and
+`scripts/backup_db.sh` put the flag on the restore side,
+`pg_restore --no-tablespaces -U postgres -d meshinfo <dump>`. Every partition
+then lands on `pg_default` and the job re-tiers the cold months on its own
+(or `run --apply --all` does it in one go). Creating the tablespace first and
+restoring without the flag also works: those dumps record which months were
+cold, so `pg_restore` puts them straight back onto `meshinfo_cold` and there
+is nothing left to re-tier.
+
 ## Per-node flood guard
 
 A single node looping Meshtastic MapReports at ~50/s filled a production disk

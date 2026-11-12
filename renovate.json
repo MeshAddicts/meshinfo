@@ -38,6 +38,14 @@
     {
       "matchUpdateTypes": ["minor", "patch"],
       "automerge": true
+    },
+    {
+      "description": "PostgreSQL majors are deliberate: the on-disk format changes and every install has to migrate. The bump waits in the Dependency Dashboard; read POSTGRES.md, \"Before bumping the PostgreSQL major\", before ticking it. Its own group, so that no other image update waits with it.",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["postgres"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "postgresql",
+      "dependencyDashboardApproval": true
     }
   ],
   "customManagers": [

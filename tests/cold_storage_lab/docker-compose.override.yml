@@ -1,0 +1,20 @@
+# Lab override for the nested stack (suite.sh copies it next to the compose
+# files, where Compose picks it up as docker-compose.override.yml): the
+# meshinfo service becomes a stand-in made from the lab image — python3 and
+# asyncpg, the checkout bound at /app, idle — so that
+# scripts/tier_partitions.py runs where the real app would, with the binds the
+# real compose files give that service. Nothing else of the stack is changed,
+# and mqtt is no longer needed to start it.
+services:
+  meshinfo:
+    image: meshinfo-coldlab:latest
+    working_dir: /app
+    entrypoint: ["sleep", "infinity"]
+    healthcheck:
+      disable: true
+    ports: !reset []
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+    volumes:
+      - .:/app

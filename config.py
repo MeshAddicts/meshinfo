@@ -17,6 +17,7 @@ import uuid
 from copy import deepcopy
 from typing import Any
 
+from storage.db.tiering import TieringPolicy
 from utils import normalize_node_id
 
 logger = logging.getLogger(__name__)
@@ -164,6 +165,23 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "password": "password",
             "min_pool_size": 1,
             "max_pool_size": 5,
+        },
+        # Tiered cold storage (ZFS.md): old monthly partitions move to a compressed tablespace.
+        "tiering": {
+            "enabled": False,
+            # Whole calendar months after a month closed before it turns cold (the
+            # current and the previous month always stay hot).
+            "cold_after_months": 1,
+            "cold_tablespace": "meshinfo_cold",
+            # Where the job creates cold_tablespace when it is missing: the cold
+            # directory inside the postgres container. "" never creates it.
+            "cold_tablespace_location": "/var/lib/postgresql/cold",
+            "tables": ["mqtt_messages", "packet_receptions"],
+            "max_partitions_per_cycle": 1,
+            # Mount point of the cold dataset inside the app container, for the
+            # free-space and filesystem checks; "" skips them.
+            "cold_filesystem": "",
+            "min_free_mb": 2048,
         },
     },
     # Per-pixel land-cover clutter for coverage / scan (see RF-MODEL.md).
@@ -576,6 +594,14 @@ def validate(config: dict) -> list[str]:
             for n in denylist:
                 if normalize_node_id(n) is None:
                     warn(f"Config field 'storage.ingest_denylist' has an invalid node id {n!r} (expected hex like \"eba3d8e8\")")
+
+    # ── tiered cold storage (ZFS.md) ──────────────────────────────────
+    # TieringPolicy.from_config never raises; validate(raw=...) names what it ignored or clamped.
+    check(_validate_type(config, "storage.tiering", dict))
+    tiering_cfg = storage_cfg.get("tiering")
+    if isinstance(tiering_cfg, dict):
+        for msg in TieringPolicy.from_config(config).validate(raw=tiering_cfg):
+            warn(msg)
 
     # ── backups ───────────────────────────────────────────────────────
     check(_validate_one_of(config, "backups.schedule", ["off", "daily", "weekly", "monthly"]))

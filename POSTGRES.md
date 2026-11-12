@@ -203,6 +203,63 @@ Notes:
   re-initialises empty, `docker compose up -d postgres`, then restore —
   `gzip -dc backups/<dump>.sql.gz | docker compose exec -T postgres psql -U postgres -d meshinfo`.
 
+## Before bumping the PostgreSQL major
+
+For maintainers, not operators. The stack is pinned to one PostgreSQL major
+on purpose, and three things keep it there until someone decides otherwise:
+the `postgres:18` image in `docker-compose.yml` and `docker-compose-dev.yml`;
+a Renovate rule (`renovate.json`) that parks a major update in the Dependency
+Dashboard until its box is ticked, instead of opening a PR; and
+`tests/test_postgres_major.py`, which fails CI when a pinned major — the
+compose files, any CI service image, the `postgresql-client-<major>` package
+in the `Dockerfile` — differs from the value recorded in that test. If you
+are here because that test failed, do not just change the recorded value:
+
+- **Why the repo stays on one major.** Every PostgreSQL major is supported
+  for five years — 18 until 2030-11-14 — and its fixes arrive as minor
+  releases through the floating `postgres:18` tag, with an ordinary `docker
+  compose pull`. Nothing needs doing until then; a newer major brings
+  features, not safety.
+- **What a bump costs today.** Majors have incompatible on-disk formats, so
+  every install has to run `scripts/migrate-postgres.sh` once ("Upgrading
+  PostgreSQL major versions" above): dump with a temporary container of the
+  old version, recreate the volume, restore. On a tiered install
+  ([ZFS.md](ZFS.md)) it dumps with `--no-tablespaces`, so the restore puts
+  the whole archive back onto the hot volume, uncompressed — the script
+  refuses up front when that will not fit — and only afterwards does the
+  tiering job re-tier the cold months, one partition an hour by default (on
+  a full-ZFS install the script declines to run and ZFS.md has the same
+  steps by hand). For a large archive that is a long maintenance window and
+  the whole database's size free on the hot volume.
+- **The planned improvement** — a design note; none of it exists yet.
+  Upgrade in place with `pg_upgrade --link` instead of dumping and
+  restoring. From 18 on, the official image keeps each cluster in
+  `/var/lib/postgresql/<major>/docker` inside the one volume, so the old and
+  the new cluster share a filesystem and hard links work. Run it from a
+  two-version image built in this repository — `FROM postgres:<new>` plus
+  the `postgresql-<old>` package from the PostgreSQL apt repository — with
+  the image's entrypoint bypassed, so that nothing initialises or starts a
+  server around `pg_upgrade`. Tablespaces are linked in place: the cold
+  tablespace gets a `PG_<new>_…` directory beside `PG_<old>_…` on the same
+  compressed filesystem, so cold months stay cold and nothing is rewritten.
+  `--check` first; a backup gate (no upgrade without a fresh, verified dump,
+  because the old cluster cannot be used again once the new one has
+  started); dump-and-restore stays as the path for clusters below 18, whose
+  images keep the cluster directly in a volume mounted at
+  `/var/lib/postgresql/data`.
+- **The steps, in this order.**
+  1. Implement that and test old → new on the default layout and on a
+     cold-only layout (ZFS.md, "Choosing a layout"), with real data and a
+     populated cold tablespace.
+  2. Add the UPGRADING.md entry: what operators run, how long it takes, how
+     to roll back.
+  3. Update the recorded value — `RECORDED_POSTGRES_MAJOR` in
+     `tests/test_postgres_major.py` — together with
+     `postgresql-client-<major>` in the `Dockerfile` (`pg_dump` refuses a
+     server newer than itself, which would break the in-app backups).
+  4. Approve the bump in Renovate's Dependency Dashboard. Its PR changes the
+     images; CI turns green only once that PR also carries step 3.
+
 ## Partitioning the mqtt_messages archive
 
 `mqtt_messages` is the raw packet firehose and dominates the database — it
@@ -357,6 +414,63 @@ host-cron runs, and is the path that pushes to `remote_target` (SSH keys live
 on the host, not in the container). Environment variables (`KEEP_DAYS`,
 `BACKUP_DIR`, `REMOTE_TARGET`, `CONTAINER`, `DB_USER`, `DB_NAME`) override the
 config for one-off runs.
+
+## Tiered cold storage (ZFS or btrfs)
+
+The archive only grows, and stock Postgres compresses nothing but TOASTed
+values. The tiering job moves each month's `mqtt_messages` /
+`packet_receptions` partitions into the `meshinfo_cold` tablespace once the
+month is old enough, and that tablespace lives on a compressed filesystem:
+in the cold-only layout a btrfs filesystem or a ZFS dataset holding just the
+closed months, with the cluster left on its Docker volume
+(`docker-compose.cold.yml`); in the full layout the whole cluster sits on a
+compressed ZFS dataset too (`docker-compose.zfs.yml`). No schema or query
+changes either way. For the cold-only layout, `sudo
+scripts/setup-cold-storage.sh` prepares the filesystem and `.env` in one
+command — a ZFS dataset, a btrfs subvolume or a btrfs loop image, by what
+the host has — and ends by printing the two lines to add below (`--dry-run`
+only looks). Choosing a layout, setup, the tablespace, moving an existing
+volume and the full operator guide are in [ZFS.md](ZFS.md).
+
+```toml
+[storage.tiering]
+enabled = false                       # true: the app moves cold months hourly
+cold_after_months = 1                 # whole calendar months since the month closed; current + previous stay hot
+cold_tablespace = "meshinfo_cold"     # created by the job when missing, at …
+cold_tablespace_location = "/var/lib/postgresql/cold"   # … this path inside the postgres container
+tables = ["mqtt_messages", "packet_receptions"]
+max_partitions_per_cycle = 1          # partitions moved per hourly cycle
+cold_filesystem = ""                  # e.g. "/mnt/meshinfo-cold": free-space check + zfs/btrfs mount check
+min_free_mb = 2048                    # free space to keep on cold_filesystem after a move
+```
+
+A month is cold once `cold_after_months` whole calendar months have elapsed
+since it closed; the current and the previous month never move (default 1;
+higher keeps more recent months uncompressed, at the cost of ratio). The CLI works
+whether or not the scheduler is enabled and is a dry run unless told
+otherwise:
+
+```sh
+docker compose exec meshinfo python scripts/tier_partitions.py status         # every month: hot/cold, tablespace, size
+docker compose exec meshinfo python scripts/tier_partitions.py plan           # what the next cycle would move
+docker compose exec meshinfo python scripts/tier_partitions.py run --apply    # move (dry run without --apply)
+docker compose exec meshinfo python scripts/tier_partitions.py --tablespace pg_default \
+  run --apply --partition mqtt_messages_2026_07                               # move a month back
+```
+
+Each partition moves in one transaction: the copy onto the cold tablespace
+runs under a SHARE lock, so **readers continue** and ingest into other months
+is unaffected; the swap that puts the copy in the original's place is
+metadata-only but takes a **brief ACCESS EXCLUSIVE lock on the parent**,
+waiting at most 2.5 s per attempt (`lock_timeout`, plus `statement_timeout`
+on the `DETACH` so that no request ever queues behind it for longer) and
+retrying up to 10 times with growing pauses before giving up as
+`busy` (everything rolls back, nothing changes, the job retries next hour). Row
+counts are verified before the swap (`--deep-verify` adds a digest), the
+free-space guard assumes zero compression, and backups stay restorable
+anywhere: `migrate-postgres.sh` dumps with `pg_dump --no-tablespaces`, custom
+format dumps restore with `pg_restore --no-tablespaces`, and the job
+re-tiers what lands on `pg_default`.
 
 ## Security
 

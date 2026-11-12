@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """
 In-app scheduled maintenance (#526): pg_dump snapshot backups driven by
-config.toml's [backups] section.
+config.toml's [backups] section, and tiered cold storage (ZFS.md) driven by
+[storage.tiering].
 
-main.maintenance_loop enforces the schedule, so a config change takes effect
+main.maintenance_loop enforces the schedules, so a config change takes effect
 on the next restart — no host cron required. scripts/backup_db.sh remains the
 host-side alternative (and the only path that pushes to remote_target, since
 SSH keys live on the host). One-time compaction of pre-dedup history is a
 separate manual step: scripts/compact_mqtt_partitions.py.
+
+Tiering: with [storage.tiering] enabled, run_tiering moves closed months onto
+the cold tablespace once an hour (storage/db/tiering.py; ZFS.md). It never runs
+alongside a backup or the startup node-id backfill.
 """
 
 import asyncio
@@ -18,6 +23,18 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import asyncpg
+
+from storage.db.tiering import (
+    CycleResult,
+    TieringError,
+    TieringPolicy,
+    check_cold_filesystem,
+    connect_kwargs,
+    ensure_cold_tablespace,
+    run_cycle,
+)
+
 logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -26,6 +43,11 @@ BACKUP_INTERVAL_DAYS = {"daily": 1, "weekly": 7, "monthly": 30}
 
 # Failure backoff so a broken pg_dump doesn't retry every maintenance tick.
 _next_backup_attempt_monotonic = 0.0
+
+# At most once an hour. Cadence and failure backoff share one clock, armed at
+# the start of every run, so a failed cycle also waits an hour.
+TIERING_INTERVAL_SEC = 3600
+_next_tiering_attempt_monotonic = 0.0
 
 
 def backup_dir(config: Dict[str, Any]) -> Path:
@@ -114,3 +136,55 @@ async def run_backup(config: Dict[str, Any]) -> Optional[Path]:
         logger.info("remote_target is set — off-box pushes are done by "
                     "scripts/backup_db.sh on the host (SSH keys live there)")
     return out
+
+
+def tiering_due(config: Dict[str, Any]) -> bool:
+    """True when tiering is enabled and the hourly cadence / failure backoff has elapsed."""
+    if not TieringPolicy.from_config(config).enabled:
+        return False
+    return time.monotonic() >= _next_tiering_attempt_monotonic
+
+
+async def run_tiering(config: Dict[str, Any]) -> Optional[CycleResult]:
+    """One tiering cycle on a dedicated connection; returns the CycleResult, or None when it could not run. Never raises."""
+    global _next_tiering_attempt_monotonic
+    _next_tiering_attempt_monotonic = time.monotonic() + TIERING_INTERVAL_SEC
+
+    policy = TieringPolicy.from_config(config)
+    kwargs = connect_kwargs(config)
+    conn: Optional[asyncpg.Connection] = None
+    try:
+        fs_warning = check_cold_filesystem(policy)
+        if fs_warning:
+            logger.warning("tiering: %s", fs_warning)
+        conn = await asyncpg.connect(**kwargs)
+        if await ensure_cold_tablespace(conn, policy, fs_warning=fs_warning):
+            logger.warning("tiering: created tablespace %s at %s (set cold_tablespace_location = "
+                           "\"\" to manage tablespaces by hand)",
+                           policy.cold_tablespace, policy.cold_tablespace_location)
+        result = await run_cycle(conn, policy)
+    except asyncio.CancelledError:
+        raise
+    except TieringError as e:
+        # A bad policy, or a cold tablespace that is missing and cannot be created.
+        logger.warning("tiering: cycle not run: %s", e)
+        return None
+    except (OSError, asyncpg.PostgresError, asyncpg.InterfaceError) as e:
+        # Unreachable database, connect timeout, lost connection, SQL error.
+        logger.warning("tiering: cycle failed (%s: %s) — database %s:%s; next attempt in %d s",
+                       type(e).__name__, e, kwargs["host"], kwargs["port"], TIERING_INTERVAL_SEC)
+        return None
+    except Exception:
+        logger.exception("tiering: cycle failed; next attempt in %d s", TIERING_INTERVAL_SEC)
+        return None
+    finally:
+        if conn is not None:
+            try:
+                await conn.close(timeout=10)
+            except Exception as e:  # asyncpg aborts the socket itself when this fails
+                logger.warning("tiering: closing the maintenance connection failed (%s: %s)",
+                               type(e).__name__, e)
+
+    noisy = result.busy or result.refused or result.failed
+    logger.log(logging.WARNING if noisy else logging.INFO, "%s", result.summary())
+    return result
