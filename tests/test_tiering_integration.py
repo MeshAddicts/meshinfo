@@ -1,17 +1,8 @@
-"""Real-database tests for storage/db/tiering.py, gated on BOTH
-MESHINFO_TIERING_TEST_DSN and MESHINFO_TIERING_TEST_TABLESPACE (a disposable
-PostgreSQL with the meshinfo schema applied plus a second tablespace):
-
-    MESHINFO_TIERING_TEST_DSN=postgresql://postgres:password@127.0.0.1:55432/meshinfo \\
-    MESHINFO_TIERING_TEST_TABLESPACE=meshinfo_cold \\
-    python -m pytest -q tests/test_tiering_integration.py
-
-Every scenario creates the far-past months 2025_01 and 2025_02 for both
-archive tables (the DDL ensure_mqtt_partitions uses), fills them through the
-PARENT tables so the node-id trigger runs, and drops them again in `finally`
-together with any *_tiering* leftover it produced, verifying the database is
-back to its previous state. Live partitions are only ever used to assert a
-refusal; nothing but the synthetic months is moved."""
+"""Real-database tests for storage/db/tiering.py, run only with MESHINFO_TIERING_TEST_DSN
+and MESHINFO_TIERING_TEST_TABLESPACE set (a disposable PostgreSQL with the meshinfo
+schema and a second tablespace). Each scenario creates the far-past months 2025_01 and
+2025_02, fills them through the parent tables and drops them again; live partitions are
+only ever used to assert a refusal."""
 
 import asyncio
 import dataclasses
@@ -120,9 +111,7 @@ ORDER BY 1
 """
 
 
-# ----------------------------------------------------------------------------
-# Synthetic months: create, fill through the parents, drop
-# ----------------------------------------------------------------------------
+# --- Synthetic months: create, fill through the parents, drop ---
 
 async def _connect() -> asyncpg.Connection:
     conn = await asyncpg.connect(DSN, command_timeout=None)
@@ -152,11 +141,7 @@ async def _create_partitions(conn: asyncpg.Connection, months=MONTHS) -> None:
 
 
 def _synthetic_rows(month: datetime.date) -> Tuple[List[tuple], List[tuple]]:
-    """(mqtt rows, reception rows) for one month. JSON payloads carry from/to/id
-    so the node-id trigger fills from_node_id/to_node_id/packet_id; every
-    NON_JSON_EVERY-th payload is raw text whose from_node_id stays NULL exactly
-    like legacy rows the backfill can never fix; pairs of rows share a
-    created_at so ORDER BY created_at, id is what fixes their order."""
+    """(mqtt rows, reception rows) for one month; every NON_JSON_EVERY-th payload is raw text, pairs share a created_at."""
     lo, _ = month_bounds(month)
     mqtt: List[tuple] = []
     receptions: List[tuple] = []
@@ -200,9 +185,7 @@ async def _fill(conn: asyncpg.Connection, months=MONTHS) -> None:
 
 
 def _ours(name: str) -> bool:
-    """Only objects derived from THIS file's synthetic months count: a shared
-    test database may hold other far-past partitions we must neither trip over
-    nor drop."""
+    """Only objects derived from this file's synthetic months: a shared test database may hold other far-past partitions."""
     return any(name == base or name.startswith(base + "_") for base in SYNTHETIC)
 
 
@@ -215,8 +198,7 @@ async def _tiering_constraints(conn: asyncpg.Connection) -> List[str]:
 
 
 async def _scratch_objects(conn: asyncpg.Connection, *, allow_old: bool = False) -> List[str]:
-    """Relations and constraints named like tiering scratch objects; with
-    allow_old the detached original's *_tiering_old family is tolerated."""
+    """Relations and constraints named like tiering scratch objects; allow_old tolerates the *_tiering_old family."""
     names = await _tiering_relations(conn) + await _tiering_constraints(conn)
     if allow_old:
         names = [n for n in names if not n.endswith(OLD_SUFFIX)]
@@ -228,8 +210,7 @@ async def _synthetic_partitions(conn: asyncpg.Connection) -> List[str]:
 
 
 async def _cleanup(conn: asyncpg.Connection) -> None:
-    """Drop the synthetic partitions and every scratch/old relation derived from
-    them, then verify the database is back to its pre-test state."""
+    """Drop the synthetic partitions and every scratch/old relation, then verify the database is as it was."""
     await conn.execute("SET lock_timeout = '30s'")
     for name in SYNTHETIC:
         for rel in (name, safe_name(name, SCRATCH_SUFFIX), safe_name(name, OLD_SUFFIX)):
@@ -248,9 +229,7 @@ async def _cleanup(conn: asyncpg.Connection) -> None:
 
 
 def _run(scenario, *args) -> None:
-    """asyncio.run() one scenario against freshly created synthetic months.
-    Cleanup runs on its own connection after the scenario's connection is
-    closed, so a lock the scenario still holds can never block the DROPs."""
+    """Run one scenario on fresh synthetic months; cleanup has its own connection so a lock the scenario holds cannot block it."""
 
     async def main() -> None:
         conn = await _connect()
@@ -272,9 +251,7 @@ def _run(scenario, *args) -> None:
     asyncio.run(main())
 
 
-# ----------------------------------------------------------------------------
-# Catalog probes
-# ----------------------------------------------------------------------------
+# --- Catalog probes ---
 
 async def _partition(conn: asyncpg.Connection, name: str) -> PartitionInfo:
     table = _table_of(name)
@@ -337,9 +314,7 @@ async def _is_attached(conn: asyncpg.Connection, name: str, table: str) -> bool:
 async def _assert_layout(conn: asyncpg.Connection, name: str, tablespace: str, *,
                          indexes_before: Dict[str, Tuple[Optional[str], str]],
                          allow_old: bool = False) -> PartitionInfo:
-    """A partition (re)built by a move: attached, entirely on tablespace (TOAST
-    included), the same index names attached to the same parent partitioned
-    indexes, PK constraint + trigger clone for mqtt_messages, no scratch objects."""
+    """A partition rebuilt by a move: attached, wholly on tablespace, same index names and parents, no scratch objects."""
     table = _table_of(name)
     part = await _partition(conn, name)
     assert part.is_monthly()
@@ -369,14 +344,10 @@ async def _assert_layout(conn: asyncpg.Connection, name: str, tablespace: str, *
     return part
 
 
-# ----------------------------------------------------------------------------
-# Scenarios
-# ----------------------------------------------------------------------------
+# --- Scenarios ---
 
 def test_full_move_to_cold_with_deep_verify():
-    """2025_01 (both tables) -> cold tablespace with deep verification: rows and
-    order through the parent unchanged, index names restored and attached, PK
-    and trigger clone present, no scratch objects; a second move is a no-op."""
+    """Rows and order through the parent unchanged, index names restored and attached; a second move is a no-op."""
     _run(_full_move_scenario)
 
 
@@ -441,10 +412,7 @@ async def _full_move_scenario(conn: asyncpg.Connection) -> None:
 
 
 def test_targeted_cycle_keep_original_leaves_detached_copy():
-    """run_cycle(only=[...], keep_original=True) moves the named partition and
-    leaves the original detached as <part>_tiering_old (indexes renamed with
-    it); an unknown name is refused; the leftover blocks a further move until
-    it is dropped."""
+    """keep_original leaves the detached original as <part>_tiering_old, which blocks a further move until dropped."""
     _run(_keep_original_scenario)
 
 
@@ -499,8 +467,7 @@ async def _keep_original_scenario(conn: asyncpg.Connection) -> None:
 
 
 def test_inserts_through_parent_route_into_moved_partition():
-    """After the move the parent still routes 2025_01 rows into the rebuilt
-    partition, the trigger clone fills node ids and the rebuilt PK enforces."""
+    """After the move the parent still routes rows into the rebuilt partition; trigger clone and PK still work."""
     _run(_routing_scenario)
 
 
@@ -541,9 +508,7 @@ async def _routing_scenario(conn: asyncpg.Connection) -> None:
 
 
 def test_refused_when_node_id_backfill_pending():
-    """A row with from_node_id NULL and a JSON payload (what the startup
-    backfill still has to fix) refuses the move; non-JSON payloads with NULL
-    node ids never block it."""
+    """A NULL from_node_id with a JSON payload (backfill pending) refuses the move; non-JSON payloads never block it."""
     _run(_backfill_pending_scenario)
 
 
@@ -577,10 +542,7 @@ async def _backfill_pending_scenario(conn: asyncpg.Connection) -> None:
 
 
 def test_refused_for_live_month_not_closed_or_not_cold():
-    """The live partition for the current month (2026_11 when this was written)
-    is never moved: refused as not closed at the real clock and as not cold at
-    a clock one month later; the DEFAULT partition is refused outright; a
-    synthetic closed-but-not-cold month is refused for the cold tablespace."""
+    """The live month is refused as not closed (and not cold a month later), the DEFAULT partition outright."""
     _run(_not_cold_scenario)
 
 
@@ -628,8 +590,7 @@ async def _not_cold_scenario(conn: asyncpg.Connection) -> None:
 
 
 def test_refused_for_missing_tablespace():
-    """A target tablespace that does not exist is refused before anything is
-    touched, directly and through run_cycle; an invalid policy never runs."""
+    """A missing target tablespace is refused before anything is touched; an invalid policy never runs."""
     _run(_missing_tablespace_scenario)
 
 
@@ -661,9 +622,7 @@ async def _missing_tablespace_scenario(conn: asyncpg.Connection) -> None:
 
 
 def test_refused_when_cold_filesystem_unreadable_or_full(tmp_path):
-    """policy.cold_filesystem pointing at a missing path refuses the move; so
-    does a readable path without the reserve; the check guards only the cold
-    tablespace and passes with a sane reserve."""
+    """An unreadable cold_filesystem or one without the reserve refuses the move; only the cold tablespace is guarded."""
     _run(_free_space_scenario, tmp_path)
 
 
@@ -705,8 +664,7 @@ async def _free_space_scenario(conn: asyncpg.Connection, tmp_path) -> None:
 
 
 def test_dry_run_changes_nothing():
-    """dry_run reports rows/indexes/bytes and "would move", then rolls back:
-    same oid, tablespace, indexes and data; no scratch objects."""
+    """dry_run reports rows/indexes/bytes, then rolls back: same oid, tablespace, indexes and data."""
     _run(_dry_run_scenario)
 
 
@@ -744,9 +702,7 @@ async def _dry_run_scenario(conn: asyncpg.Connection) -> None:
 
 
 def test_concurrent_access_exclusive_lock_is_busy():
-    """With another session holding ACCESS EXCLUSIVE on the partition the move
-    gives up after lock_timeout (5 s) with TieringBusy — never queueing behind
-    the lock — and leaves nothing behind; it succeeds once the lock is gone."""
+    """Behind another session's ACCESS EXCLUSIVE the move gives up after lock_timeout (TieringBusy) and leaves nothing."""
     _run(_busy_scenario)
 
 
@@ -768,9 +724,8 @@ async def _busy_scenario(conn: asyncpg.Connection) -> None:
         assert "lock" in str(excinfo.value).lower()
         assert not conn.is_in_transaction()
 
-        # The scheduler path (run_cycle) must not queue behind the lock either: it
-        # surfaces as a "busy" result, or as TieringBusy when listing the partition
-        # (pg_total_relation_size takes ACCESS SHARE) already hits lock_timeout.
+        # run_cycle must not queue behind the lock either: a "busy" result, or TieringBusy
+        # when listing the partition (pg_total_relation_size takes ACCESS SHARE) already times out.
         started = time.monotonic()
         try:
             cycle = await asyncio.wait_for(run_cycle(conn, POLICY, only=[MQTT_JAN]), timeout=30)
@@ -794,9 +749,7 @@ async def _busy_scenario(conn: asyncpg.Connection) -> None:
 
 
 def test_move_back_to_default_tablespace():
-    """The --tablespace pg_default direction: run_cycle(target=<default>) moves
-    2025_01 back from the cold tablespace, which any closed month may do even
-    when it is not cold (the cold tablespace stays off-limits to such months)."""
+    """Any closed month may move back to the default tablespace, cold or not; the cold tablespace stays off-limits."""
     _run(_move_back_scenario)
 
 
@@ -846,9 +799,7 @@ async def _move_back_scenario(conn: asyncpg.Connection) -> None:
 
 
 def test_plan_lists_cold_months_oldest_first():
-    """plan() proposes the synthetic months oldest first (mqtt before
-    receptions) for the cold tablespace, never an unclosed month, honours
-    `limit` and `only`, and has nothing to do for the default tablespace."""
+    """plan() lists the synthetic months oldest first (mqtt before receptions), never an unclosed one; honours limit/only."""
     _run(_plan_scenario)
 
 
@@ -878,10 +829,7 @@ async def _plan_scenario(conn: asyncpg.Connection) -> None:
 
 
 def test_swap_retries_after_lock_timeout_then_succeeds():
-    """A reader holding ACCESS SHARE on the parent blocks the swap's ACCESS
-    EXCLUSIVE: with the lock timeout shortened to 1 s the first attempt rolls
-    back to the savepoint and a later attempt succeeds once the reader is gone
-    (swap_attempts > 1, layout intact)."""
+    """A reader's ACCESS SHARE on the parent blocks the swap: the attempt rolls back and a later one succeeds."""
     _run(_swap_retry_scenario)
 
 
@@ -915,10 +863,7 @@ async def _swap_retry_scenario(conn: asyncpg.Connection) -> None:
 
 
 def test_swap_postponed_behind_a_long_holder_is_busy():
-    """A session that has held a lock on the parent for longer than the probe
-    window makes every attempt pointless: the swap is postponed without ever
-    queueing an ACCESS EXCLUSIVE request, and after the last attempt the move
-    is busy with the original untouched and the copy discarded."""
+    """A long-standing holder of the parent postpones every attempt without queueing a request; the move ends busy."""
     _run(_long_holder_scenario)
 
 
@@ -952,12 +897,7 @@ async def _long_holder_scenario(conn: asyncpg.Connection) -> None:
 
 
 def test_swap_attempt_never_stalls_other_sessions_longer_than_the_lock_timeout():
-    """While a long query holds ACCESS SHARE on the parent, the swap's pending
-    ACCESS EXCLUSIVE makes every new query on the parent queue behind it — for
-    at most SWAP_LOCK_TIMEOUT, after which the attempt rolls back and the
-    queue drains. A probe query issued while the swap is waiting must return
-    within that timeout plus a margin, and the move still completes on a
-    later attempt once the long query is gone."""
+    """Queries queued behind the swap's pending ACCESS EXCLUSIVE wait at most SWAP_LOCK_TIMEOUT; the move completes later."""
     _run(_stall_bound_scenario)
 
 
@@ -1005,9 +945,7 @@ async def _stall_bound_scenario(conn: asyncpg.Connection) -> None:
 
 
 def test_cold_tablespace_creation_against_the_server():
-    """ensure_cold_tablespace leaves an existing tablespace alone, refuses with
-    an actionable message when the location is not a directory on the server
-    (nothing created), and refuses without a location."""
+    """ensure_cold_tablespace leaves an existing one alone and refuses a location that is no directory, or none."""
     _run(_ensure_tablespace_scenario)
 
 
@@ -1025,9 +963,8 @@ async def _ensure_tablespace_scenario(conn: asyncpg.Connection) -> None:
         await ensure_cold_tablespace(conn, dataclasses.replace(policy, cold_tablespace_location=""))
     assert "cold_tablespace_location" in str(excinfo.value)
     assert not await tablespace_exists(conn, missing)
-    # Nothing is created while cold_filesystem fails the zfs/btrfs mount check
-    # (a tablespace on the bare mountpoint of an unmounted dataset would hide
-    # the moved months once the dataset mounts over it).
+    # Nothing is created while cold_filesystem fails the mount check: a tablespace on the
+    # bare mountpoint would hide the moved months once the dataset mounts over it.
     warning = "cold tablespace is on ext4 (/, holding cold_filesystem = '/mnt/meshinfo-cold') — months will move but not compress"
     with pytest.raises(TieringRefused) as excinfo:
         await ensure_cold_tablespace(conn, policy, fs_warning=warning)
@@ -1047,12 +984,7 @@ async def _ensure_tablespace_scenario(conn: asyncpg.Connection) -> None:
 
 
 def test_long_holder_probe_measures_on_the_wall_clock_and_watches_the_partition():
-    """The swap probe runs inside the move's transaction, where now() is frozen
-    at BEGIN (before the copy) and pg_stat_activity is cached from its first
-    read: a holder that began after the move started must still be flagged
-    once it has held its lock for longer than the window, and a session that
-    holds the partition alone (a cursor over the month) counts as much as one
-    holding the parent — DETACH needs ACCESS EXCLUSIVE on both."""
+    """The probe flags a holder that began after the move's BEGIN (wall clock) and one that holds the partition alone."""
     _run(_probe_wall_clock_scenario)
 
 
@@ -1101,11 +1033,7 @@ async def _probe_wall_clock_scenario(conn: asyncpg.Connection) -> None:
 
 
 def test_deadlock_waiter_is_detected_and_released_at_once():
-    """A writer through the parent (the node-id backfill's UPDATE) that queued
-    on the copy's SHARE lock holds the parent and waits for the partition: the
-    probe reports it as a waiter, and once the move's transaction ends the
-    writer completes. _swap gives the copy up at once on that kind (unit
-    test); this checks the probe against the real lock graph."""
+    """A parent-first writer queued on the copy's SHARE lock is reported as a waiter, against the real lock graph."""
     _run(_deadlock_waiter_scenario)
 
 
@@ -1148,10 +1076,7 @@ async def _deadlock_waiter_scenario(conn: asyncpg.Connection) -> None:
 
 
 def test_refused_while_the_default_partition_holds_rows():
-    """ATTACH PARTITION validates a non-empty DEFAULT partition with a full
-    scan under the parent's ACCESS EXCLUSIVE lock, which no timeout bounds:
-    the move is refused before the copy while rows sit there, and goes
-    through once they are gone."""
+    """A non-empty DEFAULT partition refuses the move (ATTACH would scan it under ACCESS EXCLUSIVE, unbounded)."""
     _run(_default_partition_scenario)
 
 

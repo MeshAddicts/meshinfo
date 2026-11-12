@@ -1,21 +1,11 @@
 #!/usr/bin/env bash
-#
-# The lab suite for scripts/setup-cold-storage.sh. It runs INSIDE the
-# privileged lab container that run.sh starts, as root, and exercises the
-# script for real: loop devices, mkfs, mounts, /etc/fstab, .env, and a Docker
-# daemon of its own that runs the stack from the real compose files.
-# Everything it makes lives in that container, except what is the kernel's:
-# the loop devices and, where the kernel has ZFS, the pools of the zfs_real
-# section. It records each one it makes, and detaches and destroys them again.
-# Do not run it anywhere else: it formats loop devices and rewrites /etc/fstab.
-#
+# The lab suite for scripts/setup-cold-storage.sh. It runs INSIDE the privileged lab container that
+# run.sh starts, as root, and exercises the script for real. Do not run it anywhere else: it formats
+# loop devices and rewrites /etc/fstab. Loop devices and ZFS pools are the kernel's: it records each one.
 #   suite.sh            every section
 #   suite.sh NAME...    only those sections (see SECTIONS below)
 #   suite.sh bootstrap  only prepare the container (loop nodes, Docker, disks)
-#   suite.sh cleanup    only undo that: stop a suite that is still running
-#                       here, unmount, destroy the lab's pools, detach the
-#                       loop devices
-#
+#   suite.sh cleanup    only undo that: stop a running suite, unmount, destroy the lab's pools, detach its loop devices
 set -uo pipefail
 
 REPO="${REPO:-/opt/meshinfo}"
@@ -28,9 +18,8 @@ POOL_LIST="$LAB/pools"
 PID_FILE="$LAB/suite.pid"
 MP=/srv/meshinfo/pgcold
 DEFAULT_IMAGE=/var/lib/meshinfo-cold.img
-# The lab image's own zpool and zfs. They are kept off PATH (see the
-# Dockerfile): pools belong to the kernel, and with them on PATH every run of
-# the script here would see the pools of the machine the lab runs on.
+# The lab image's own zpool and zfs, kept off PATH (see the Dockerfile): on PATH every
+# run of the script here would see the pools of the machine the lab runs on.
 ZFS_TOOLS=/opt/zfs/sbin
 MIB=$((1024 * 1024))
 GIB=$((1024 * MIB))
@@ -49,7 +38,7 @@ DEVICES=()   # the loop devices this run attached
 POOLS=()     # the ZFS pools this run created
 PREFIX=()    # put in front of the script by setup(), e.g. env PATH=...
 
-# --- Reporting ---------------------------------------------------------------------
+# --- Reporting ---
 
 section() { printf '\n=== %s\n' "$*"; }
 note() { printf '  note  %s\n' "$*"; }
@@ -92,11 +81,8 @@ print("%d B" % value if index == 0 else "%.1f %s" % (value, units[index]))' "$1"
 
 allocated_bytes() { echo $(($(stat -c %b "$1") * 512)); }
 
-# own_loops: the loop devices whose file is a file of this container, with
-# that file. The kernel's list holds those of the whole machine — of other
-# containers, of the machine itself — which come and go without the script
-# having done anything; a device is the lab's when the path it names leads,
-# here, to the very file the kernel has (same inode on the same filesystem).
+# own_loops: the loop devices whose file is a file of this container, with that file. The kernel lists
+# the whole machine's; one is the lab's when its path leads, here, to the very file the kernel has (same inode).
 own_loops() {
   local name inode device file
   while read -r name inode device file; do
@@ -105,11 +91,8 @@ own_loops() {
   done < <(losetup -l -n --raw -O NAME,BACK-INO,BACK-MAJ:MIN,BACK-FILE 2>/dev/null)
 }
 
-# lab_disk_loop DEVICE: the loop device is on one of this container's disk
-# files — also on one that was deleted since. The path alone does not say
-# so: another lab container on the machine has a /lab/disks too. The
-# filesystem does: the kernel names the one a backing file is on, and this
-# container's /lab/disks is on one of its own.
+# lab_disk_loop DEVICE: the loop device is on one of this container's disk files, deleted or not. The path does
+# not say so (another lab container has a /lab/disks too); the filesystem the kernel names for the file does.
 lab_disk_loop() {
   local where file ours
   read -r where file < <(losetup -n --raw -O BACK-MAJ:MIN,BACK-FILE "$1" 2>/dev/null) || return 1
@@ -203,7 +186,7 @@ ends_with_the_two_steps() {
   fi
 }
 
-# --- Fixtures ------------------------------------------------------------------------
+# --- Fixtures ---
 
 # attach FILE [LOSETUP-OPTIONS]: a loop device for FILE; sets DISK and records
 # the device, so that cleanup can detach it whatever happens.
@@ -223,9 +206,8 @@ make_disk() {
   attach "$file"
 }
 
-# make_partition NAME SIZE: such a file with one partition in it, on a loop
-# device that shows its partitions; sets DISK and PART. Status 1 when the lab
-# cannot get at the partition.
+# make_partition NAME SIZE: such a file with one partition, on a loop device that shows its
+# partitions; sets DISK and PART. Status 1 when the lab cannot get at the partition.
 make_partition() {
   local file="$LAB/disks/$1.img"
   rm -f "$file"
@@ -236,11 +218,8 @@ make_partition() {
   partition_node
 }
 
-# partition_node: the device node for PART, the first partition of DISK. A
-# container's /dev does not follow the kernel, so the node is made by hand —
-# every time, from the numbers the kernel gives this partition now. A node
-# that is there already, left over from an earlier run, is never taken over:
-# its numbers may belong to another device of the machine by now.
+# partition_node: the device node for PART, made by hand from the numbers the kernel gives it now (a container's
+# /dev does not follow the kernel). A leftover node is never taken over: its numbers may be another device's by now.
 partition_node() {
   local numbers="" sys
   sys="/sys/block/${DISK##*/}/${DISK##*/}p1/dev"
@@ -253,13 +232,8 @@ partition_node() {
   [ "$(stat -c '%Hr:%Lr' "$PART" 2>/dev/null)" = "$numbers" ]
 }
 
-# real_pool NAME SIZE [ZPOOL-CREATE-OPTIONS]: a ZFS pool of the lab's own, on
-# a partition of a loop device (the kernel opens a vdev by its path in the
-# /dev of the machine, where a file inside this container does not exist;
-# and given a whole loop device, zpool would partition it and wait for nodes
-# that nothing makes here). No -f: the partition is new and holds nothing, so
-# a zpool that finds something on it is looking at a device that is not the
-# lab's. The pool is recorded, so that cleanup destroys it.
+# real_pool NAME SIZE [ZPOOL-CREATE-OPTIONS]: a pool of the lab's own on a partition of a loop device (a file is not in
+# the machine's /dev; a whole loop device zpool would partition, then wait for nodes). No -f: the partition must be blank.
 real_pool() {
   local name="$1" size="$2"
   shift 2
@@ -271,17 +245,15 @@ real_pool() {
   POOLS+=("$name")
 }
 
-# foreign_datasets POOL: every dataset that is not on the lab's pool POOL or
-# on its second pool POOLb, with its mountpoint and canmount: what the lab
-# must leave exactly as it finds it.
+# foreign_datasets POOL: every dataset not on the lab's pools POOL and POOLb, with its
+# mountpoint and canmount: what the lab must leave exactly as it finds it.
 foreign_datasets() {
   "$ZFS_TOOLS/zfs" list -H -t filesystem,volume -o name,mountpoint,canmount 2>/dev/null |
     awk -F'\t' -v pool="$1" '{ split($1, part, "/"); if (part[1] != pool && part[1] != pool "b") print }'
 }
 
-# drop_pool NAME: destroy one of the lab's pools and forget it. The loop
-# device it was on goes with it (the section makes several pools in a row),
-# when it is one of the lab's own disk files.
+# drop_pool NAME: destroy one of the lab's pools and forget it, with the loop device
+# it was on when that is one of the lab's own disk files.
 drop_pool() {
   local pool device
   local -a kept=()
@@ -356,9 +328,8 @@ documented_fstab_line() {
   esac
 }
 
-# hidden TOOL...: binds for with_binds that put a file which cannot be run
-# over each TOOL, wherever PATH — or the sbin directories the script adds to
-# it — would find it.
+# hidden TOOL...: binds for with_binds that put a file which cannot be run over each TOOL,
+# wherever PATH (or the sbin directories the script adds) would find it.
 hidden() {
   local tool dir
   : > "$LAB/not-a-tool"
@@ -416,9 +387,8 @@ with_binds() {
 wait_for_postgres() {
   local _
   for _ in $(seq 300); do
-    # The image initialises a new cluster under a temporary server, which
-    # answers pg_isready and is then shut down again. Only the server that is
-    # process 1 of the container is the one that stays.
+    # The image initialises a new cluster under a temporary server that answers pg_isready
+    # and is then shut down: only the server that is process 1 of the container stays.
     # shellcheck disable=SC2016  # expanded by the shell inside the container
     if (cd "$1" && docker compose exec -T postgres sh -c 'test "$(cat /proc/1/comm)" = postgres && pg_isready -q -U postgres -d meshinfo') >/dev/null 2>&1; then return 0; fi
     sleep 1
@@ -477,12 +447,8 @@ descendants() {
   done
 }
 
-# stop_running_suite: a suite that is still running in this container is
-# stopped, with everything it started, before anything is cleaned up beside
-# it. That happens after Ctrl-C at run.sh: the interrupt ends the docker
-# client, not what docker exec started, and the suite would go on making
-# loop devices and pools while they are being taken away. Only the cleanup
-# command does this; the suite's own trap never signals itself.
+# stop_running_suite: stop a suite still running here, with everything it started, before cleaning up beside it:
+# Ctrl-C at run.sh ends the docker client, not what docker exec started. Only the cleanup command does this.
 stop_running_suite() {
   local pid _
   local -a tree=()
@@ -512,9 +478,8 @@ stop_running_suite() {
   echo "stopped the suite that was still running here (process $pid)"
 }
 
-# cleanup: stop what the suite started, unmount what it mounted, destroy the
-# pools it made and detach every loop device it attached — in this run or an
-# earlier one.
+# cleanup: stop what the suite started, unmount what it mounted, destroy its pools and
+# detach every loop device it attached, in this run or an earlier one.
 cleanup() {
   local device target project pool
   (cd "$REPO" && docker compose down -v --remove-orphans) >/dev/null 2>&1
@@ -561,7 +526,7 @@ cleanup() {
   return 0
 }
 
-# --- Sections ------------------------------------------------------------------------
+# --- Sections ---
 
 t_static() {
   local flag flags missing="" before device
@@ -577,9 +542,8 @@ t_static() {
   done
   is "--help names every option the parser takes ($(wc -w <<<"$flags") of them) and the subcommands" "$missing" ""
 
-  # The lab's own eyes: "nothing was changed" is only worth something when a
-  # loop device the script attached would show, and one that another
-  # container of the machine attaches meanwhile would not.
+  # "nothing was changed" is only worth something when a loop device the script attached
+  # would show, and one that another container attaches meanwhile would not.
   is "(the lab finds its own loop devices among the kernel's)" "$(own_loops | grep -c " $LAB/disks/hostfs.img\$")" 1
   before="$(fingerprint)"
   truncate -s 8M /tmp/lab-loop.img
@@ -979,9 +943,8 @@ t_refusals() {
   # a blank partition is the documented --device case: it must not need --force
   if make_partition parted 5G; then
     part="$PART"
-    # A node at the partition's name with other numbers — what an earlier run
-    # in a kept container leaves behind — is never taken over. (No device
-    # has major 4000: whoever took this node over would open nothing.)
+    # A node at the partition's name with other numbers (left by an earlier run in a kept container)
+    # is never taken over. No device has major 4000: whoever took it over would open nothing.
     rm -f "$part"
     mknod "$part" b 4000 9
     partition_node
@@ -1416,9 +1379,8 @@ MESHINFO_PGCOLD_DIR=$adopt"
   ok "status"
   said "status: what is there" 'layout +a directory on btrfs'
 
-  # .env names a directory on a compressing filesystem that nobody has handed
-  # to postgres yet: it could as well be the bare mountpoint of a filesystem
-  # that is away, so it takes --existing to say that the directory is meant
+  # .env names a directory on a compressing filesystem that nobody handed to postgres yet: it could be
+  # the bare mountpoint of a filesystem that is away, so it takes --existing to say it is meant.
   new_project env-ahead
   mkdir -p /btrfszstd/named-only
   echo 'MESHINFO_PGCOLD_DIR=/btrfszstd/named-only' > "$PROJ/.env"
@@ -1582,9 +1544,8 @@ MESHINFO_PGCOLD_DIR=/srv/zcold"
   sed -i 's/^xattr=.*/xattr=on/' "$dataset_file"
   refuses "OpenZFS before 2.3: xattr=on is dir there, and is refused" 'exists with other properties: xattr=on \(the cold layout has sa\)' --zfs backup/cold --mountpoint /srv/zcold --project-dir "$PROJ" --yes
   sed -i 's/^xattr=.*/xattr=sa/' "$dataset_file"
-  # zfs built against musl (Alpine) reads "atime" into the mount option
-  # "noatime": for a mounted dataset with atime=off it prints atime=on, with
-  # the source "temporary". The mount is what counts then.
+  # zfs built against musl (Alpine) reads "atime" into the mount option "noatime" and prints
+  # atime=on with the source "temporary" for a mounted atime=off dataset: the mount counts then.
   sed -i 's/^atime=.*/atime=on/' "$dataset_file"
   printf 'atime.source=temporary\nmountoptions=rw,noatime,xattr,posixacl\n' >> "$dataset_file"
   is "(the stand-in plays zfs on musl: atime=off reads back as on, from the mount)" "$("$HERE/stubs/zfs" get -H -o value,source atime backup/cold | tr '\t' ' ')" "on temporary"
@@ -1629,9 +1590,8 @@ MESHINFO_PGCOLD_DIR=/srv/zcold"
   refuses "an fstab line for a dataset that is not there, on a pool that is: the line would be in the way of the dataset this script makes" '/etc/fstab has a line for the dataset backup/notyet, which is not there' --zfs backup/notyet --mountpoint /srv/znotyet --no-env --yes
   sed -i '\|^backup/notyet /srv/znotyet |d' /etc/fstab
 
-  # Another dataset with the same mountpoint that is not mounted (a copy
-  # received from another pool): a cold directory in use is not refused for
-  # it, and mounting the copy is never the advice.
+  # Another dataset with the same mountpoint that is not mounted (a copy received from another
+  # pool): a cold directory in use is not refused for it, and mounting the copy is never the advice.
   printf 'mountpoint=/srv/zcold\nmountpoint.source=received\ncompression=zstd-9\ncanmount=noauto\nmounted=no\n' > "$state/datasets/tank%replica"
   changes_nothing "an unmounted copy has the same mountpoint: the re-run goes through" --zfs backup/cold --mountpoint /srv/zcold --project-dir "$PROJ" --yes
   said "... with a warning" 'warn: the ZFS dataset tank/replica also has /srv/zcold as its mountpoint and is not mounted\. Leave it unmounted'
@@ -1769,9 +1729,8 @@ MESHINFO_PGCOLD_DIR=/srv/zcold"
   setup --existing /tank/plain --no-env --yes
   ok "--existing: a ZFS dataset made elsewhere, with compression on"
   said "... how compression is on" 'compression is on: ZFS property compression=lz4'
-  # a cold directory in use that is no mount point of its own (a directory
-  # inside that dataset, holding the tablespace), and a stray dataset that
-  # has its path: mounted, the stray one would hide the tablespace
+  # a cold directory in use that is no mount point of its own (a directory inside that dataset, holding
+  # the tablespace), and a stray dataset that has its path: mounted, it would hide the tablespace
   mkdir -p /tank/plain/cold/PG_18_202506291
   printf 'mountpoint=/tank/plain/cold\ncompression=off\ncanmount=on\nmounted=no\n' > "$state/datasets/tank%stray"
   setup --existing /tank/plain/cold --no-env --yes
@@ -1786,9 +1745,8 @@ MESHINFO_PGCOLD_DIR=/srv/zcold"
   rm -f "$state/datasets/tank%stray"
   rm -rf /tank/plain/cold
 
-  # --- What real pools showed, played here so that every machine holds it ---
-  # A snapshot directory that is visible (snapdir=visible): ZFS's own .zfs at
-  # the root of a dataset is not something the cold directory holds.
+  # --- Real-pool behaviour, played by the stand-ins ---
+  # snapdir=visible: ZFS's own .zfs at the root of a dataset is not something the cold directory holds.
   mkdir -p /tank/plain/.zfs
   changes_nothing "--existing: a dataset that shows its .zfs directory is taken as empty" --existing /tank/plain --no-env --yes
   mkdir -p /tank/plain/PG_18_202506291
@@ -1842,9 +1800,8 @@ MESHINFO_PGCOLD_DIR=/srv/zcold"
   setup status --mountpoint /srv/zcold --project-dir "$PROJ"
   exits "... with the cold dataset on top it is the same problem: exit 1" 1
   said "... named in that order" 'one over the other: tank/replica, backup/cold — the last is on top'
-  # the way out as the message gives it: the directory unmounted until nothing
-  # is mounted there (umount /srv/zcold, twice), canmount=off on the copy, the
-  # cold dataset mounted again
+  # the way out as the message gives it: umount until nothing is mounted there (twice),
+  # canmount=off on the copy, the cold dataset mounted again
   sed -i 's/^mounted=.*/mounted=no/' "$dataset_file" "$state/datasets/tank%replica"
   "$HERE/stubs/zfs" set canmount=off tank/replica
   "$HERE/stubs/zfs" mount -l backup/cold
@@ -1852,9 +1809,8 @@ MESHINFO_PGCOLD_DIR=/srv/zcold"
   setup status --mountpoint /srv/zcold --project-dir "$PROJ"
   ok "... and status has nothing to say"
 
-  # The copy alone is mounted and the cold dataset is not: its key was not
-  # loaded at a boot, zfs mount -a passed over it and mounted the copy. What
-  # is mounted has its mountpoint from a zfs receive; the other one has not.
+  # The copy alone is mounted: the cold dataset's key was not loaded at a boot, and zfs mount -a
+  # passed over it. What is mounted has its mountpoint from a zfs receive; the other one has not.
   sed -i 's/^mounted=.*/mounted=no/' "$dataset_file"
   echo 'keystatus=unavailable' >> "$dataset_file"
   "$HERE/stubs/zfs" set canmount=on tank/replica
@@ -2089,15 +2045,8 @@ MESHINFO_PGCOLD_DIR=/srv/zcold"
   rm -rf /srv/zcold /srv/zother /srv/zlegacy /srv/zalt /srv/znozstd /srv/zvol /tank
 }
 
-# The ZFS layout on a pool of the lab's own — where one can be created: the
-# kernel these containers run on must have ZFS (the lab cannot load a module).
-# Elsewhere the section says that it did not run, and why. Pools belong to
-# the kernel, not to this container: the lab's are named coldlab<time>, sit
-# on the lab's own loop devices and are destroyed again. Any other pool is
-# only ever listed: with one present the dataset is always named with --zfs,
-# the two refusals that count the pools are dry runs (a script that failed
-# to refuse would otherwise have a pool of the machine to work on), and the
-# datasets of the other pools are compared before and after.
+# The ZFS layout on a pool of the lab's own (coldlab<time>, on the lab's loop devices, destroyed again), where the
+# kernel has ZFS. Other pools are only ever listed: --zfs names the dataset, the pool-counting refusals are dry runs.
 t_zfs_real() {
   local pool second mp=/srv/zreal dataset others why="" minor ratio bare property
   local month before json moved files due foreign changed
@@ -2208,9 +2157,8 @@ MESHINFO_PGCOLD_DIR=$mp"
   said "... for what it is" 'fstab +UNEXPECTED entry for this dataset, which ZFS mounts itself'
   sed -i "\\|^$dataset $mp |d" /etc/fstab
 
-  # another dataset with the same mountpoint that is not mounted: made by
-  # hand, so nothing marks it as a copy (its mountpoint is as local as the
-  # cold dataset's)
+  # another dataset with the same mountpoint that is not mounted, made by hand: nothing
+  # marks it as a copy (its mountpoint is as local as the cold dataset's)
   "${zfs[@]}" create -o canmount=noauto -o mountpoint="$mp" "$pool/copy"
   is "(a second dataset with the cold directory as its mountpoint, not mounted)" "$("${zfs[@]}" get -H -o value mounted "$pool/copy")" no
   changes_nothing "an unmounted second dataset has the same mountpoint: the re-run goes through" --zfs "$dataset" --mountpoint "$mp" --project-dir "$PROJ" --yes
@@ -2223,10 +2171,8 @@ MESHINFO_PGCOLD_DIR=$mp"
   silent_on "... and is not mentioned" "$pool/copy"
   "${zfs[@]}" destroy "$pool/copy"
 
-  # Two datasets mounted at the cold directory, one over the other: a copy
-  # made the usual way (send -p | receive -u keeps the mountpoint), then
-  # mounted as zfs mount -a or a boot would mount it. Only the lab's own
-  # dataset is named: zfs mount -a would reach the machine's other pools.
+  # Two datasets mounted one over the other: a copy made the usual way (send -p | receive -u keeps the mountpoint),
+  # then mounted. Only the lab's own dataset is named: zfs mount -a would reach the machine's other pools.
   "${zfs[@]}" snapshot "$dataset@copy"
   "${zfs[@]}" send -p "$dataset@copy" | "${zfs[@]}" receive -u "$pool/copy"
   is "(a received copy: the same mountpoint, canmount=on, not mounted)" "$(for property in mountpoint canmount mounted; do "${zfs[@]}" get -H -o value "$property" "$pool/copy"; done | tr '\n' ' ')" "$mp on no "
@@ -2255,9 +2201,8 @@ MESHINFO_PGCOLD_DIR=$mp"
   setup status --mountpoint "$mp" --project-dir "$PROJ"
   ok "... and status has nothing to say"
 
-  # The copy alone is mounted and the cold dataset is not, as after a boot
-  # at which the cold dataset did not mount (its key not loaded, its pool
-  # late) and the copy did.
+  # The copy alone is mounted and the cold dataset is not, as after a boot at which
+  # the cold dataset did not mount (key not loaded, pool late) and the copy did.
   umount "$mp"
   "${zfs[@]}" set canmount=on "$pool/copy"
   "${zfs[@]}" mount "$pool/copy" 2>/dev/null
@@ -2522,9 +2467,8 @@ MESHINFO_PGCOLD_DIR=$mp"
   cd / || exit 1
 
   PREFIX=()
-  # What the script could have done to a pool of the machine: a dataset that
-  # is new or changed, named as the cold dataset or mounted where this
-  # section works. Anything else that changed there, the machine did itself.
+  # What the script could have done to a pool of the machine: a dataset that is new or changed, named as the
+  # cold dataset or mounted where this section works. Anything else that changed there, the machine did itself.
   changed="$(comm -13 <(sort <<<"$foreign") <(foreign_datasets "$pool" | sort))"
   is "nothing on another pool is new or changed that this section could have made (a meshinfo-cold dataset, a mountpoint under /srv)" "$(awk -F'\t' '$1 ~ /\/meshinfo-cold$/ || $2 ~ /^\/srv(\/|$)/' <<<"$changed")" ""
   if [ -n "$changed" ]; then note "other pools changed while the section ran: $(tr '\n\t' '; ' <<<"$changed")"; fi
@@ -2744,9 +2688,8 @@ print(" ".join([first] + rest))' "$LAB/tier-first.json" "$LAB/tier-plan.json" 2>
   ok "the filesystem back: status is clean again"
   is "... and the cold month reads" "$(psql_at "SELECT count(*) > 0 FROM mqtt_messages_${first/-/_}")" t
 
-  # A filesystem is mounted at the cold directory, but it is not the one the
-  # tablespace's files are on (played with the same one, the tablespace's
-  # directory taken out of it): the re-run does not call that ready.
+  # A filesystem is mounted at the cold directory, but not the one the tablespace's files are on
+  # (played by taking the tablespace's directory out of it): the re-run does not call that ready.
   docker compose stop postgres meshinfo >/dev/null 2>&1
   mkdir -p /hostfs/aside
   mv "$MP"/PG_* /hostfs/aside/
@@ -2810,9 +2753,8 @@ print(" ".join([first] + rest))' "$LAB/tier-first.json" "$LAB/tier-plan.json" 2>
   (cd "$PROJ" && MESHINFO_ZFS_HOT="$LAB/zfs-hot" MESHINFO_ZFS_COLD="$LAB/zfs-cold" docker compose -f docker-compose.yml -f docker-compose.zfs.yml down -v --remove-orphans) >/dev/null 2>&1
   rm -rf "$LAB/zfs-hot" "$LAB/zfs-cold"
 
-  # .env written, and the stack started with the overlay, before the storage
-  # was there: Docker made the bare directory. The database has no cold
-  # tablespace, so nothing was ever moved and the storage can still be made.
+  # .env written and the stack started with the overlay before the storage was there: Docker made the bare
+  # directory. The database has no cold tablespace, so nothing was ever moved and the storage can still be made.
   new_project ahead
   printf 'COMPOSE_FILE=docker-compose.yml:docker-compose.cold.yml\nMESHINFO_PGCOLD_DIR=/srv/ahead/pgcold\n' > "$PROJ/.env"
   (cd "$PROJ" && docker compose up -d postgres) >/dev/null 2>&1
@@ -2830,11 +2772,8 @@ print(" ".join([first] + rest))' "$LAB/tier-first.json" "$LAB/tier-plan.json" 2>
   rm -rf /srv/ahead
   rm -f "$DEFAULT_IMAGE"
 
-  # A directory that compresses is not thereby the one the database uses: on
-  # a root (here: a filesystem) that compresses too, the bare mountpoint of a
-  # cold filesystem that is away passes every check --existing makes of the
-  # directory. The database knows: it has the tablespace, and its PG_...
-  # directory is not there.
+  # On a root that compresses too, the bare mountpoint of a cold filesystem that is away passes every check
+  # --existing makes of the directory. The database knows: it has the tablespace, and its PG_... directory is not there.
   adopted=/btrfszstd/coldx
   rm -rf "$adopted" /btrfszstd/aside
   mkdir -p "$adopted" /btrfszstd/aside
@@ -2848,10 +2787,8 @@ print(" ".join([first] + rest))' "$LAB/tier-first.json" "$LAB/tier-plan.json" 2>
   ok "(the tablespace is created, as the job does on its first cycle)"
   holds "(... which puts its PG_ directory into the cold directory)" bash -c "compgen -G '$adopted/PG_*'"
   changes_nothing "the tablespace defined and its directory here: --existing has nothing to object to" --existing "$adopted" --project-dir "$PROJ" --yes
-  # The tablespace's directory away while nothing is stored on it yet. That
-  # is the ordinary state of a young install — the job creates the tablespace
-  # before any month is due — whose filesystem did not come back after a
-  # reboot, and also what a rollback leaves that stopped before its last step.
+  # The tablespace's directory away while nothing is stored on it yet: the ordinary state of a young install
+  # whose filesystem did not come back after a reboot, and what a rollback leaves that stopped before its last step.
   (cd "$PROJ" && docker compose stop postgres) >/dev/null 2>&1
   mv "$adopted"/PG_* /btrfszstd/aside/
   chown 0:0 "$adopted"; chmod 755 "$adopted"
@@ -2928,9 +2865,8 @@ print(" ".join([first] + rest))' "$LAB/tier-first.json" "$LAB/tier-plan.json" 2>
   ok "the tablespace's directory back in place: --existing adopts it"
   is "... and the table on it reads" "$(psql_in "SELECT count(*) FROM lab_moved" 2>&1)" 0
 
-  # Where the tablespace is, is what the database says — not "a PG_ directory
-  # at the top of the cold directory": cold_tablespace_location may name a
-  # directory below the bind, or a path the overlay does not bind at all.
+  # Where the tablespace is, is what the database says, not "a PG_ directory at the top": cold_tablespace_location
+  # may name a directory below the bind, or a path the overlay does not bind at all.
   run psql_in "DROP TABLE lab_moved"
   run psql_in "DROP TABLESPACE meshinfo_cold"
   ok "(the tablespace dropped, with nothing on it and its directory in place)"
@@ -2963,7 +2899,7 @@ t_pytest() {
   said "... nothing skipped" '[0-9]+ passed in'
 }
 
-# --- Main --------------------------------------------------------------------------
+# --- Main ---
 
 [ "$(id -u)" -eq 0 ] || { echo "run this as root inside the lab container (run.sh does)" >&2; exit 1; }
 [ -f /.dockerenv ] || { echo "this is not a container: the suite formats loop devices and rewrites /etc/fstab — use run.sh" >&2; exit 1; }

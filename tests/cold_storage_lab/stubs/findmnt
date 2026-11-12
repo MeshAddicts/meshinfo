@@ -1,18 +1,9 @@
 #!/usr/bin/env bash
-# Stand-in for findmnt in the ZFS part of the lab: answers as a ZFS mount for
-# the mountpoints of the stub datasets (stubs/zfs) — for a dataset with a
-# mountedat= line, the place where fstab mounts it; with the options of its
-# mountoptions= line — and hands every other question to the real findmnt.
-# A mount is asked for by its place (-M, -T) or by the dataset (-S).
-#
-# As the real one answers for ZFS: datasets mounted at one place are a line
-# each for -M, the one mounted last — the one on top — last (the order is
-# their mountorder= line, which stubs/zfs writes), and -T answers for the top
-# one only; a mountpoint is compared resolved, because ZFS keeps the property
-# as it was typed (a trailing slash, a symlink on the way) and mounts at the
-# real place; and under -r a space in a dataset name is written \x20. A
-# dataset file with an under=TYPE line plays a mount of that type beneath the
-# dataset (an automount point: under=autofs), which -M lists first.
+# Stand-in for findmnt in the ZFS part of the lab: answers as a ZFS mount for the stub datasets
+# (stubs/zfs) and hands every other question to the real findmnt. As the real one: -M lists the
+# datasets mounted at one place bottom to top (mountorder=), -T answers for the top one, mountpoints
+# are compared resolved, and -r writes a space as \x20. mountedat=, mountoptions= and under=TYPE
+# lines in a dataset file play a legacy mount, its options and a mount beneath the dataset.
 set -euo pipefail
 # the real one: the findmnt that PATH has without this directory, wherever in
 # PATH this directory is

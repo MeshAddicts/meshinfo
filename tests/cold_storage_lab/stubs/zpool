@@ -1,17 +1,9 @@
 #!/usr/bin/env bash
-# Stand-in for zpool in the lab (the lab kernel has no ZFS): the pools are the
-# lines of $ZFS_STUB_STATE/pools. Every call is logged to calls.log.
-#
-#   zpool list [-H] [-o name] [POOL]
-#   zpool get [-H] [-o value] PROPERTY POOL   a pool's property is a
-#       PROPERTY=VALUE line in $ZFS_STUB_STATE/pool.POOL; without one, altroot
-#       is "-" (none) and feature@zstd_compress is "active", as on a pool of
-#       today that was imported the plain way. A property zpool does not know
-#       prints nothing, as the real one does.
-#   zpool upgrade -v                          the features this ZFS knows.
-#
-# $ZFS_STUB_STATE/zfs-before-zstd plays an OpenZFS older than 2.0: it does not
-# know the zstd feature, in "get" or in "upgrade -v".
+# Stand-in for zpool in the lab (the lab kernel has no ZFS): the pools are the lines of
+# $ZFS_STUB_STATE/pools; calls are logged to calls.log. Plays list, get and upgrade -v.
+# get reads PROPERTY=VALUE lines of $ZFS_STUB_STATE/pool.POOL; without one, altroot is "-" and
+# feature@zstd_compress "active"; an unknown property prints nothing, as the real one does.
+# $ZFS_STUB_STATE/zfs-before-zstd plays an OpenZFS older than 2.0, which does not know zstd.
 set -euo pipefail
 state="${ZFS_STUB_STATE:?ZFS_STUB_STATE is not set}"
 echo "zpool $*" >> "$state/calls.log"

@@ -1,21 +1,9 @@
 #!/usr/bin/env python3
-"""The image size scripts/setup-cold-storage.sh should work out, computed a
-second time from the brief rather than from the script.
+"""The image size scripts/setup-cold-storage.sh should work out, computed independently of it.
 
-stdin: one "partition bytes" line per monthly partition of mqtt_messages and
-packet_receptions that is not on the cold tablespace (any order).
-argv:  the database's current month (YYYY-MM), cold_after_months, min_free_mb.
-stdout: "<image bytes> <bytes the guard needs free at the tightest move> <that
-        partition> <its bytes> <bytes assumed inside before it> <partitions>".
-argv[4], optional: the only table the job is told to tier.
-
-The job moves the partitions of months older than the cutoff, oldest month
-first and mqtt_messages before packet_receptions, and refuses a move unless
-the partition's uncompressed size plus min_free_mb is free; what it moved
-earlier is assumed to sit inside at a quarter of its size. A new btrfs keeps
-about 0.5 GiB to itself (2 GiB above 50 GiB). Then + 10 %, a whole number of
-GiB, and never under 4 GiB.
-"""
+stdin: "partition bytes" lines; argv: current month (YYYY-MM), cold_after_months, min_free_mb[, the only table].
+stdout: "<image bytes> <bytes the guard needs free at the tightest move> <that partition> <its bytes>
+<bytes assumed inside before it> <partitions>"."""
 import math
 import re
 import sys

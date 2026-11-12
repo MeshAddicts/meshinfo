@@ -1,9 +1,7 @@
-"""The two tiered-storage overlays (ZFS.md): docker-compose.zfs.yml puts the
-whole cluster on ZFS datasets, docker-compose.cold.yml binds only the cold
-directory and leaves the named volume alone. Both must bind the cold
-directory where the job creates the tablespace (/var/lib/postgresql/cold in
-postgres) and read-only where the job checks it (/mnt/meshinfo-cold in
-meshinfo, the cold_filesystem value the docs use)."""
+"""The two tiered-storage overlays (ZFS.md): docker-compose.zfs.yml puts the whole
+cluster on ZFS datasets, docker-compose.cold.yml binds only the cold directory.
+Both must bind it where the job creates the tablespace (postgres) and read-only
+where the job checks it (meshinfo)."""
 from pathlib import Path
 
 import pytest
@@ -21,9 +19,7 @@ def _overlay(name: str) -> dict:
 
 
 def _binds(service: dict) -> dict:
-    """container path -> (host expression, read-only) from short-syntax volume
-    entries. The host expression may itself contain colons (${VAR:-default},
-    ${VAR:?message}); the container path never does."""
+    """container path -> (host expression, read-only) from short-syntax volumes; only the host part may contain colons."""
     out = {}
     for entry in service["volumes"]:
         read_only = entry.endswith(":ro")

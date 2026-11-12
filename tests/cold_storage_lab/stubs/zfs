@@ -1,23 +1,9 @@
 #!/usr/bin/env bash
-# Stand-in for zfs in the lab (the lab kernel has no ZFS). A dataset is the
-# file $ZFS_STUB_STATE/datasets/<name, with % for />, holding property=value
-# lines. "Mounting" makes the mountpoint directory and sets mounted=yes and a
-# mountorder= line (a counter: what was mounted last is on top); stubs/findmnt
-# then answers for that directory as a ZFS mount (a mountedat= line plays a
-# mountpoint=legacy dataset that fstab mounts there, a mountoptions= line the
-# options it is mounted with). Every call is logged to calls.log, which is
-# what the suite checks the delegated commands in.
-#
-# Played as the real one does it: zfs set mountpoint= and zfs mount -a mount
-# a dataset only when its canmount is on; zfs mount NAME also one that is
-# noauto; none mounts a dataset whose keystatus= line says unavailable, unless
-# it is zfs mount -l. Not played: -o on zfs create, an alternate root, a pool
-# without a feature (stubs/zpool answers for those two; the script asks it
-# before it creates anything).
-#
-# $ZFS_STUB_STATE/version holds the OpenZFS release played (2.2.7 when the
-# file is not there). The 2.3 series answers "on" for a dataset whose xattr is
-# sa, as the real one does: on means sa there.
+# Stand-in for zfs in the lab (the lab kernel has no ZFS). A dataset is the file
+# $ZFS_STUB_STATE/datasets/<name, with % for />, holding property=value lines; mounting sets
+# mounted=yes and a mountorder= counter, which stubs/findmnt answers from. Calls are logged to
+# calls.log. canmount, keystatus (zfs mount -l) and the 2.3 series' xattr "on" are played as the real
+# one does (not zfs create -o); $ZFS_STUB_STATE/version is the release played (2.2.7 by default).
 set -euo pipefail
 state="${ZFS_STUB_STATE:?ZFS_STUB_STATE is not set}"
 mkdir -p "$state/datasets"
@@ -131,10 +117,8 @@ case "$command" in
       if mounts_by_itself "$name"; then mount_it "$name" 2>/dev/null || true; else put "$name" mounted no; fi
     fi ;;
   get)
-    # zfs get -H -o value|source|value,source PROPERTY DATASET. The source
-    # is "local" unless the dataset file has a PROPERTY.source= line
-    # ("temporary" plays a value that zfs took from the mount instead of the
-    # property, "received" a copy that was received with its properties).
+    # zfs get -H -o value|source|value,source PROPERTY DATASET. The source is "local" unless the dataset
+    # file has a PROPERTY.source= line ("temporary": taken from the mount; "received": a received copy).
     name="${*: -1}"
     property="${*: -2:1}"
     columns=value

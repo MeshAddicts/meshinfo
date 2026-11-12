@@ -1,16 +1,7 @@
-"""PostgreSQL major-version tripwire.
-
-The stack stays on one PostgreSQL major on purpose. A major bump changes the
-on-disk format, so every install has to migrate (scripts/migrate-postgres.sh),
-and on a tiered install that migration is expensive. POSTGRES.md, "Before
-bumping the PostgreSQL major", is the checklist. Renovate parks major bumps in
-its Dependency Dashboard (renovate.json); this test is the second line: every
-place that pins the server major must agree with RECORDED_POSTGRES_MAJOR, so
-an image cannot be bumped — by a bot or by hand — without touching the
-recorded value, which is a step of that checklist.
-
-Deliberately dependency-free (no YAML parser): it must never be skipped.
-"""
+"""PostgreSQL major-version tripwire: every place that pins the server major must agree
+with RECORDED_POSTGRES_MAJOR, so an image cannot be bumped without the checklist in
+POSTGRES.md, "Before bumping the PostgreSQL major". Deliberately dependency-free
+(no YAML parser): it must never be skipped."""
 import re
 from pathlib import Path
 from typing import List, NamedTuple, Optional
@@ -19,9 +10,8 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# The PostgreSQL major this repository runs. Changing it is a step of the
-# checklist in POSTGRES.md, "Before bumping the PostgreSQL major" — never the
-# way to make this test pass.
+# The PostgreSQL major this repository runs. Changing it is a step of the checklist
+# in POSTGRES.md, never the way to make this test pass.
 RECORDED_POSTGRES_MAJOR = 18
 
 CHECKLIST_HEADING = "## Before bumping the PostgreSQL major"
@@ -50,8 +40,7 @@ class Pin(NamedTuple):
 
 
 def postgres_image_major(ref: str) -> Optional[int]:
-    """The major of an official-postgres image reference, None when it names
-    none; raises ValueError for any other image."""
+    """The major of an official-postgres image reference (None when it names none); ValueError for any other image."""
     match = _POSTGRES_REF.match(ref)
     if match is None:
         raise ValueError(f"not a postgres image: {ref!r}")
@@ -80,8 +69,7 @@ def _image_pins(path: Path, root: Path) -> List[Pin]:
 
 
 def _compose_files(root: Path) -> List[Path]:
-    """The two stack definitions first, then every other compose file at the
-    root (the overlays): an image set there must not slip past the wire."""
+    """The two stack definitions, then every other compose file at the root: an image set in an overlay must not slip past."""
     named = [root / name for name in COMPOSE_FILES]
     others = sorted(
         path
@@ -93,9 +81,7 @@ def _compose_files(root: Path) -> List[Path]:
 
 
 def postgres_pins(root: Path = REPO_ROOT) -> List[Pin]:
-    """Every place under root that pins the PostgreSQL major: the server image
-    in the compose files, any service or container image in a CI workflow, and
-    the client package the app image installs for pg_dump."""
+    """Every pin of the PostgreSQL major under root: compose server images, CI workflow images, the pg_dump client package."""
     pins: List[Pin] = []
     for path in _compose_files(root):
         pins += _image_pins(path, root)
@@ -136,7 +122,7 @@ def failure_message(found: List[str], recorded: int = RECORDED_POSTGRES_MAJOR) -
     )
 
 
-# ── the tripwire ─────────────────────────────────────────────────────────────
+# --- the tripwire ---
 
 def test_postgres_major_is_the_recorded_one_everywhere():
     found = problems(postgres_pins())
@@ -148,7 +134,7 @@ def test_the_checklist_named_in_the_failure_message_exists():
     assert CHECKLIST_HEADING in lines, f"{CHECKLIST} is missing: the tripwire's message would point nowhere"
 
 
-# ── the tripwire's own parsing ───────────────────────────────────────────────
+# --- the tripwire's own parsing ---
 
 @pytest.mark.parametrize("ref,major", [
     ("postgres:18", 18),

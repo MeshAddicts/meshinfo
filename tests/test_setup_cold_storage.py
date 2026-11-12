@@ -1,18 +1,8 @@
 """scripts/setup-cold-storage.sh: what can be checked without root.
 
-Two kinds of test. The text-level ones hold the script against the things it
-must agree with — the fstab lines ZFS.md documents, the paths the cold overlay
-binds, the dataset properties of the script it delegates to, the docs that
-name it — and run everywhere. The bash-level ones source the script (its
-`main` only runs when it is executed) and call its pure helpers: sizes, the
-free-space simulation, paths, .env editing, config.toml reading, the
-per-distribution hints. They need bash and a POSIX system, which CI has.
-
-What needs root, loop devices, btrfs or Docker — the layouts, the refusals,
-grow, status, an end-to-end move — is exercised by tests/cold_storage_lab/run.sh
-in a privileged container; the ZFS layout there against stand-ins for zpool
-and zfs, and on a real pool where the kernel the lab runs on has ZFS.
-"""
+Text-level tests hold the script against what it must agree with (ZFS.md, the cold overlay,
+the script it delegates to) and run everywhere; bash-level tests source it and call its
+helpers. What needs root, loop devices, btrfs, ZFS or Docker runs in tests/cold_storage_lab."""
 import os
 import re
 import shutil
@@ -46,8 +36,7 @@ def _constant(name: str) -> str:
 
 
 def sh(snippet: str, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-    """Run snippet in a bash that has sourced the script (so `set -euo
-    pipefail` is on); args arrive as $1, $2, ..."""
+    """Run snippet in a bash that has sourced the script (set -euo pipefail is on); args arrive as $1, $2, ..."""
     # $0 must not be the script: its last lines run main when it is executed
     # rather than sourced, and tell the two apart by comparing $0.
     return subprocess.run(
@@ -72,7 +61,7 @@ def _tool(directory: Path, name: str, body: str) -> None:
     os.chmod(path, 0o755)
 
 
-# ── text level: the script against what it must agree with ───────────────────
+# --- text level: the script against what it must agree with ---
 
 def _documented_fstab_lines() -> dict:
     lines = re.findall(r"^\s*echo '([^']+)' \| sudo tee -a /etc/fstab$", _text(REPO / "ZFS.md"), re.MULTILINE)
@@ -90,9 +79,8 @@ def test_fstab_options_are_the_ones_zfs_md_documents():
 
 
 def test_an_image_is_kept_from_discard_and_from_fstrim():
-    # Either one hands the preallocation of the image back to the filesystem
-    # underneath, and the job's free-space guard then measures room that is
-    # not there.
+    # Either one hands the image's preallocation back to the filesystem underneath, and
+    # the job's free-space guard then measures room that is not there.
     options = _constant("FSTAB_OPTS_IMAGE").split(",")
     assert "nodiscard" in options and "X-fstrim.notrim" in options
     assert "X-fstrim.notrim" in _text(REPO / "ZFS.md")
@@ -131,9 +119,8 @@ def test_config_toml_is_only_ever_read():
 
 
 def test_awk_programs_do_without_posix_character_classes():
-    # mawk 1.3.3, the awk of older Debian and Ubuntu, does not know
-    # [[:space:]] and friends: a program that uses one silently matches
-    # nothing there, and .env would be appended to instead of edited.
+    # mawk 1.3.3 (older Debian and Ubuntu) does not know [[:space:]] and friends: a program that
+    # uses one silently matches nothing there, and .env would be appended to instead of edited.
     programs = re.findall(r"\bawk\b((?:[^'\n]*'[^']*')+)", _text(SCRIPT))
     assert len(programs) >= 12, "the awk programs of the script were not found"
     assert [program for program in programs if "[[:" in program] == []
@@ -156,9 +143,8 @@ def test_mkfs_is_never_told_to_force():
 
 
 def test_status_and_grow_agree_on_when_a_filesystem_is_smaller_than_its_image():
-    # status, the branch of grow that finishes an earlier one, and the check
-    # after the resize ask the same question. With different answers a grow
-    # is reported as unfinished and refused as finished at the same time.
+    # status, the finishing branch of grow and the check after the resize ask the same question;
+    # with different answers a grow is reported as unfinished and refused as finished at once.
     comparisons = re.findall(r"-lt \$\(\((\w+) - (\w+)\)\)", _text(SCRIPT))
     assert comparisons == [("image_bytes", "FS_SLACK"), ("current", "FS_SLACK"), ("new", "FS_SLACK")]
     # ... with a margin below the smallest step grow can be asked for (1 MiB),
@@ -185,7 +171,7 @@ def test_env_backups_are_ignored_by_git():
     assert ".env.bak-*" in _text(REPO / ".gitignore").split()
 
 
-# ── bash level ────────────────────────────────────────────────────────────────
+# --- bash level ---
 
 @needs_bash
 def test_syntax():
@@ -653,9 +639,8 @@ def test_the_delegated_script_still_ends_its_output_the_way_this_one_cuts_it():
 
 @needs_bash
 def test_fstab_targets_that_are_mounted_are_compared_as_written(tmp_path):
-    # A network mount whose server is away hangs whatever looks at it. What
-    # is mounted is spelled the way the kernel spells it, without symlinks,
-    # so such a line is never resolved; only the others are.
+    # A network mount whose server is away hangs whatever looks at it: what is mounted is spelled
+    # the kernel's way, without symlinks, so such a line is never resolved; only the others are.
     base = tmp_path.resolve()
     _tool(base / "bin", "findmnt", f"echo /; echo {base}/hung")      # the kernel's list of mount points
     fstab = base / "fstab"
@@ -776,9 +761,7 @@ def test_a_size_that_is_not_used_is_said_to_be(kind, why):
 
 
 def _away_note(tmp_path: Path, relations: str, claims: str = "") -> str:
-    """storage_away_note for a database that reports RELATIONS on the cold
-    tablespace, on a host where the datasets in CLAIMS have the cold directory
-    as their mountpoint without being mounted."""
+    """storage_away_note with RELATIONS on the cold tablespace and the unmounted datasets in CLAIMS claiming the cold directory."""
     listing = "".join(f"{name}\t/srv/meshinfo/pgcold\tno\ton\n" for name in claims.split())
     (tmp_path / "bin").mkdir(exist_ok=True)
     (tmp_path / "bin" / "list.txt").write_text(listing, encoding="utf-8")
@@ -795,10 +778,8 @@ def _away_note(tmp_path: Path, relations: str, claims: str = "") -> str:
     ("", "already has the tablespace meshinfo_cold: PostgreSQL expects"),          # the catalog did not answer
 ])
 def test_bringing_the_filesystem_back_is_always_the_first_advice(tmp_path, relations, says):
-    # A tablespace with nothing on it is the ordinary state of a young install
-    # (the job creates it before any month is due), not a leftover: with its
-    # filesystem only not mounted, dropping it would leave the PG_ directory
-    # behind on that filesystem and take away the one sign that it belongs here.
+    # A tablespace with nothing on it is the ordinary state of a young install, not a leftover: dropping
+    # it while its filesystem is only not mounted would take away the one sign that it belongs here.
     note = _away_note(tmp_path, relations)
     assert says in note
     # fstab has no line for the directory in the states this is printed in, so "mount DIR" is not among them
@@ -807,9 +788,8 @@ def test_bringing_the_filesystem_back_is_always_the_first_advice(tmp_path, relat
             "this again.") in note
     assert "mount /srv/meshinfo/pgcold" not in note
     assert "leftover" not in note
-    # With the filesystem away PostgreSQL drops a tablespace that is in use
-    # without complaint: dropping is named only when nothing is on it, and
-    # only for a filesystem that is gone for good.
+    # With the filesystem away PostgreSQL drops a tablespace that is in use without complaint: dropping
+    # is named only when nothing is on it, and only for a filesystem that is gone for good.
     assert ("DROP TABLESPACE meshinfo_cold" in note) is (relations == "0")
     if relations == "0":
         assert note.index("Bring it back") < note.index("Only if that filesystem is gone for good") < note.index("DROP TABLESPACE")
@@ -820,9 +800,8 @@ def test_bringing_the_filesystem_back_is_always_the_first_advice(tmp_path, relat
 @pytest.mark.parametrize("relations", ["0", "3", ""])
 def test_a_dataset_that_is_not_mounted_is_what_to_mount_when_the_tablespace_is_away(tmp_path, relations):
     note = _away_note(tmp_path, relations, "tank/meshinfo-cold")
-    # -l: zfs mount NAME fails for a dataset whose key is not loaded. And the
-    # one dataset that has the path may be a copy: mounting it is not said
-    # without the condition.
+    # -l: zfs mount NAME fails for a dataset whose key is not loaded. And the one dataset
+    # that has the path may be a copy: mounting it is not said without the condition.
     assert ("and the ZFS dataset tank/meshinfo-cold, which has /srv/meshinfo/pgcold as its mountpoint, is not mounted. "
             "If it is the cold dataset, mount it (zfs mount -l tank/meshinfo-cold; -l loads the key of one that is "
             "encrypted) and run this again. If it is a copy (received from another pool), the cold dataset itself is "
@@ -835,8 +814,7 @@ def test_a_dataset_that_is_not_mounted_is_what_to_mount_when_the_tablespace_is_a
 
 
 def _stack_docker(directory: Path, location: str) -> None:
-    """A docker that plays a running stack whose database answers the
-    script's question for the place of the cold tablespace with LOCATION."""
+    """A docker that plays a running stack whose database places the cold tablespace at LOCATION."""
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "location.txt").write_text(location + "\n" if location else "", encoding="utf-8")
     _tool(directory, "docker",
@@ -911,10 +889,8 @@ def test_the_database_is_asked_again_when_it_is_only_just_starting(tmp_path, fai
 
 @needs_bash
 def test_a_question_that_took_its_whole_time_limit_is_not_asked_again(tmp_path):
-    # timeout reports a command it had to end as 124 (coreutils) or as 143
-    # (busybox); and there may be no timeout at all. The time it took tells.
-    # A timeout of the test's own stands in for the kinds that do not say 124:
-    # it only runs the command, which takes longer than the limit.
+    # timeout reports a command it had to end as 124 (coreutils) or 143 (busybox), or is not there at
+    # all: the time it took tells. This stand-in only runs the command, which takes longer than the limit.
     _tool(tmp_path, "timeout", 'shift; exec "$@"')
     _tool(tmp_path, "docker",
           'here="$(dirname "$0")"; count=$(( $(cat "$here/count" 2>/dev/null || echo 0) + 1 )); echo "$count" > "$here/count"\n'
@@ -929,10 +905,7 @@ def test_a_question_that_took_its_whole_time_limit_is_not_asked_again(tmp_path):
 
 def _claims(tmp_path: Path, state: str, sources: str = "tank/cold local\nbackup/copy received\nbackup/never received\n",
             copy_canmount: str = "noauto") -> subprocess.CompletedProcess:
-    """check_other_claims with a zfs that lists four datasets: the mounted
-    cold one, an unmounted copy with the same mountpoint, one more copy that
-    can never be mounted, and an unrelated one. SOURCES says where each has
-    its mountpoint from (a copy received with its properties: received)."""
+    """check_other_claims with a zfs that lists the cold dataset, an unmounted copy, a canmount=off copy and an unrelated one."""
     base = tmp_path.resolve()
     cold = base / "cold"
     cold.mkdir(exist_ok=True)
@@ -1006,10 +979,8 @@ def test_when_nothing_says_which_of_two_datasets_is_the_copy_both_readings_are_g
 
 @needs_bash
 def test_a_copy_that_is_mounted_in_the_cold_datasets_place_is_not_taken_for_it(tmp_path):
-    # After a reboot the cold dataset did not mount (its key was not loaded,
-    # its canmount is noauto, its pool came late) and a received copy with the
-    # same mountpoint did. The mounted one has its mountpoint from a zfs
-    # receive; the one that is not mounted has it local.
+    # After a reboot the cold dataset did not mount (key not loaded, noauto, pool late) and a received
+    # copy with the same mountpoint did: the mounted one's mountpoint is "received", the other's local.
     sources = "tank/cold received\nbackup/copy local\nbackup/never received\n"
     mounted = "CUR_MOUNTED=1; CUR_KIND=zfs; CUR_SOURCE=tank/cold"
     # no layout flag: the script took what is mounted there by itself
@@ -1030,7 +1001,7 @@ def test_a_copy_that_is_mounted_in_the_cold_datasets_place_is_not_taken_for_it(t
         assert "Leave it unmounted" not in result.stderr, state
 
 
-# ── what real pools showed: names, spellings, mounts over mounts ─────────────
+# --- ZFS names, spellings, mounts over mounts ---
 
 def _function(name: str) -> str:
     """The body of a function of the script."""
@@ -1048,9 +1019,8 @@ def test_both_scripts_hold_dataset_names_to_the_same_rule():
 
 
 def test_a_pool_is_asked_before_anything_is_created_on_it():
-    # An alternate root moves every mountpoint; without the zstd feature the
-    # delegated script fails after it has created the dataset. Both are read
-    # before the branch that plans the delegated script.
+    # An alternate root moves every mountpoint, and without the zstd feature the delegated script
+    # fails after creating the dataset: both are read before the branch that plans that script.
     body = _function("inspect_zfs")
     plans = body.index('plan "$ZFS_SCRIPT --cold-only')
     for question in ('pool_altroot "$pool"', "zpool get -H -o value feature@zstd_compress"):
@@ -1194,9 +1164,8 @@ def test_the_way_out_of_two_filesystems_at_one_directory_names_no_dataset_to_zfs
     ("", ""),
 ])
 def test_the_dataset_of_the_zfs_layout_must_be_what_is_mounted_at_the_cold_directory(tmp_path, mounts, found):
-    # On a pool with an alternate root ZFS mounts a dataset somewhere else
-    # than at the mountpoint it was given. Nothing is chowned, and nothing is
-    # reported as ready, on a directory where the dataset is not.
+    # On a pool with an alternate root ZFS mounts a dataset elsewhere than at the mountpoint it was
+    # given: nothing is chowned or reported as ready on a directory where the dataset is not.
     (tmp_path / "mounts.txt").write_text(mounts + "\n" if mounts else "", encoding="utf-8")
     _tool(tmp_path, "findmnt", '[ -s "$(dirname "$0")/mounts.txt" ] || exit 1; cat "$(dirname "$0")/mounts.txt"')
     _tool(tmp_path, "zfs", "echo /srv/alt/srv/cold")
@@ -1292,7 +1261,7 @@ def test_how_to_mount_what_an_fstab_entry_names(tmp_path, mountpoint, altroot, p
     assert out('PATH="$1"; MOUNTPOINT=/srv/cold; mount_advice "$2"', str(tmp_path / "nothing-here"), line) == "mount /srv/cold"
 
 
-# ── the fourth review: one level up, after a reboot, and what "ready" means ──
+# --- one level up, after a reboot, and what "ready" means ---
 
 @needs_bash
 @pytest.mark.parametrize("name,printed", [
@@ -1315,9 +1284,7 @@ def test_an_fstab_line_for_a_dataset_with_a_space_in_its_name(tmp_path):
 
 
 def _findmnt_by_question(directory: Path, at_cold: str, target: str, at_target: str) -> None:
-    """A findmnt that answers three questions: what is mounted at the cold
-    directory (-M .../cold), where the filesystem of a path is mounted (-T),
-    and what is mounted there (-M of that place)."""
+    """A findmnt for three questions: what is mounted at the cold directory, where a path's filesystem is mounted, what is there."""
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "at-cold.txt").write_text(at_cold + "\n" if at_cold else "", encoding="utf-8")
     (directory / "target.txt").write_text(target + "\n" if target else "", encoding="utf-8")
@@ -1449,8 +1416,7 @@ def test_without_a_database_to_ask_the_tablespace_is_not_part_of_the_verificatio
 
 
 def _view_docker(directory: Path, bound: str, inside: str) -> None:
-    """A docker that plays one running container with BOUND at the cold path
-    and INSIDE as what stat prints for that path in the container."""
+    """A docker that plays one running container with BOUND at the cold path and INSIDE as what stat prints for it."""
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "bound.txt").write_text(bound + "\n", encoding="utf-8")
     (directory / "inside.txt").write_text(inside + "\n", encoding="utf-8")
@@ -1507,7 +1473,7 @@ def test_a_tablespace_below_the_top_of_the_cold_directory_is_not_something_to_em
     assert result.returncode == 1 and "Empty it or choose another --mountpoint." in result.stderr
 
 
-# ── the lab's own safeguards (tests/cold_storage_lab/suite.sh) ───────────────
+# --- the lab's own safeguards (tests/cold_storage_lab/suite.sh) ---
 
 SUITE = REPO / "tests" / "cold_storage_lab" / "suite.sh"
 
@@ -1519,9 +1485,8 @@ def _suite_function(name: str) -> str:
 
 
 def test_the_lab_never_forces_a_pool_onto_a_device():
-    # The partition is new and holds nothing: a zpool that finds something on
-    # it is looking at a device that is not the lab's. And a partition's node
-    # is made anew each time, never taken over.
+    # The partition is new and holds nothing: a zpool that finds something on it is looking at a
+    # device that is not the lab's. A partition's node is made anew each time, never taken over.
     pool = _suite_function("real_pool")
     assert 'zpool" create ' in pool
     assert not re.search(r'zpool" create[^\n]* -f\b', pool)
@@ -1543,8 +1508,7 @@ def test_the_lab_cleanup_knows_of_a_suite_from_its_first_moment():
 
 
 def _alive(pid: int) -> bool:
-    """A process that is running or stopped; one that only waits to be
-    collected by its parent (a zombie) is gone."""
+    """A process that is running or stopped; a zombie (waiting to be collected by its parent) counts as gone."""
     try:
         state = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()[0]
     except (OSError, IndexError):

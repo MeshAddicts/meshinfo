@@ -1,9 +1,6 @@
-"""
-Tests for tiered cold storage (storage/db/tiering.py, the [storage.tiering]
-config section and the maintenance.py scheduler gate). Pure helpers only — no
-database; the move itself is exercised by tests/test_tiering_integration.py
-against a disposable PostgreSQL.
-"""
+"""Tests for tiered cold storage: the pure helpers of storage/db/tiering.py, the
+[storage.tiering] config section and the maintenance.py scheduler gate. No
+database here; tests/test_tiering_integration.py exercises the move itself."""
 
 import asyncio
 import copy
@@ -124,7 +121,7 @@ def _part(name=PART, table="mqtt_messages", bound=None, tablespace="pg_default",
     )
 
 
-# ── month arithmetic ─────────────────────────────────────────────────────────
+# --- month arithmetic ---
 
 class TestMonthArithmetic:
     def test_add_months_forward_and_back(self):
@@ -153,7 +150,7 @@ class TestMonthArithmetic:
         assert month_label(datetime.date(2025, 12, 1)) == "2025_12"
 
 
-# ── cold semantics ───────────────────────────────────────────────────────────
+# --- cold semantics ---
 
 class TestColdSemantics:
     def test_contract_examples(self):
@@ -198,7 +195,7 @@ class TestColdSemantics:
         assert is_cold(datetime.date(2026, 8, 1), edge, 3) is False
 
 
-# ── partition bounds and names ───────────────────────────────────────────────
+# --- partition bounds and names ---
 
 class TestParseBounds:
     LO = datetime.datetime(2025, 1, 1, tzinfo=UTC)
@@ -278,7 +275,7 @@ class TestPartitionMonth:
         assert partition_month(f"mqtt_messages_{month_label(month)}", "mqtt_messages") == month
 
 
-# ── identifier helpers ───────────────────────────────────────────────────────
+# --- identifier helpers ---
 
 class TestQuoting:
     def test_quote_ident_always_quotes_and_doubles_embedded_quotes(self):
@@ -354,7 +351,7 @@ class TestSafeName:
                 assert len(safe_name("a" * n, suffix)) <= MAX_IDENT
 
 
-# ── DDL rewriting ────────────────────────────────────────────────────────────
+# --- DDL rewriting ---
 
 class TestCloneIndexSql:
     def test_plain_btree_appends_tablespace(self):
@@ -465,7 +462,7 @@ class TestConstraintAndCheckSql:
         assert "TIMESTAMPTZ '2025-02-01 00:00:00+00'" in sql
 
 
-# ── connection helpers ───────────────────────────────────────────────────────
+# --- connection helpers ---
 
 class TestConnectionHelpers:
     CFG = {"storage": {"postgres": {"host": "db.local", "port": 5433, "username": "mesh",
@@ -496,7 +493,7 @@ class TestConnectionHelpers:
         assert human_bytes(2_000_000_000_000) == "2.00 TB"
 
 
-# ── policy ───────────────────────────────────────────────────────────────────
+# --- policy ---
 
 class TestTieringPolicyFromConfig:
     def test_missing_section_gives_defaults(self):
@@ -668,8 +665,8 @@ class TestTieringPolicyValidate:
         assert TieringPolicy.from_config(_tiering_cfg(cold_after_months=0)).validate() == []
 
     def test_non_string_tablespace_name_warns_once_and_says_tiering_cannot_run(self):
-        # Review finding: the value becomes '' (tiering cannot run), it is not "ignored"
-        # and the default does not apply; and the identifier check must not fire a second time.
+        # The value becomes '' (tiering cannot run): it is not "ignored", the default does
+        # not apply, and the identifier check must not fire a second time.
         raw = {"cold_tablespace": 7}
         policy = TieringPolicy.from_config({"storage": {"tiering": raw}})
         assert policy.cold_tablespace == ""
@@ -680,7 +677,7 @@ class TestTieringPolicyValidate:
         assert len(warns) == 1 and "not a plain identifier" in warns[0]
 
 
-# ── config.validate() ────────────────────────────────────────────────────────
+# --- config.validate() ---
 
 class TestConfigValidateTiering:
     def test_defaults_produce_no_tiering_warnings(self):
@@ -747,7 +744,7 @@ def test_sample_config_tiering_block_matches_defaults():
     assert policy.validate(raw=sample["storage"]["tiering"]) == []
 
 
-# ── catalog model and results (pure parts) ───────────────────────────────────
+# --- catalog model and results (pure parts) ---
 
 class TestPartitionInfo:
     def test_monthly_partition(self):
@@ -820,7 +817,7 @@ class TestResults:
         assert "nothing to do" in cycle.summary()
 
 
-# ── scheduler ────────────────────────────────────────────────────────────────
+# --- scheduler ---
 
 class TestTieringDue:
     def setup_method(self):
@@ -878,11 +875,10 @@ class TestRunTiering:
         assert any(r.levelno >= logging.WARNING and "tiering" in r.getMessage() for r in caplog.records)
 
 
-# ── review additions: predicate detection, constraint characteristics ────────
+# --- predicate detection, constraint characteristics ---
 
 class TestCloneIndexSqlPredicateDetection:
-    """The partial-index predicate is the top-level WHERE; a ' WHERE ' inside an
-    expression literal or a quoted identifier must never attract TABLESPACE."""
+    """The predicate is the top-level WHERE: one inside a literal or a quoted identifier must never attract TABLESPACE."""
 
     def test_where_inside_a_literal_is_not_the_predicate(self):
         sql = clone_index_sql(
@@ -924,14 +920,13 @@ class TestConstraintCharacteristics:
         assert constraint_index_sql("t", "c", "UNIQUE (a)", TS).endswith(f'UNIQUE (a) USING INDEX TABLESPACE "{TS}"')
 
 
-# ── review additions: planning and cycle semantics without a database ────────
+# --- planning and cycle semantics without a database ---
 
 NOW = datetime.datetime(2026, 11, 3, 12, 0, tzinfo=datetime.timezone.utc)
 
 
 def _fake_catalog(monkeypatch, parts, default_ts="pg_default", now=NOW):
-    """plan()/run_cycle() read the catalog through three module functions; stub
-    them so the eligibility/ordering logic runs against hand-made PartitionInfos."""
+    """Stub the three catalog readers of plan()/run_cycle() so they run against hand-made PartitionInfos."""
     async def _default(conn):
         return default_ts
 
@@ -1007,8 +1002,7 @@ class TestPlanSemantics:
 
 
 class TestRunCycleSemantics:
-    """Cap counts only moved/dry-run; refusals continue; busy, verify failures
-    and unexpected errors stop the cycle; unknown names are refused."""
+    """The cap counts only moved/dry-run; refusals continue; busy, verify failures and errors stop the cycle."""
 
     def _cycle(self, monkeypatch, outcomes, **kwargs):
         parts = [_part(name) for name in outcomes]
@@ -1078,8 +1072,7 @@ class TestRunCycleSemantics:
 
 
 class TestRunTieringContract:
-    """run_tiering never raises, always closes its dedicated connection, and
-    opens it without a command timeout."""
+    """run_tiering never raises, always closes its connection, and opens it without a command timeout."""
 
     def setup_method(self):
         maintenance._next_tiering_attempt_monotonic = 0.0
@@ -1177,12 +1170,10 @@ class TestRunTieringContract:
         assert self.ensure_kwargs == [{"fs_warning": warning}] * 2
 
 
-# ── follow-up: the swap stall bound ──────────────────────────────────────────
+# --- the swap stall bound ---
 
 class TestSwapBound:
-    """The swap's per-attempt lock_timeout bounds the stall other sessions can
-    see behind the pending ACCESS EXCLUSIVE; the attempt count and the pauses
-    bound how long a move can be delayed before it is reported busy."""
+    """The per-attempt lock_timeout bounds the stall other sessions see; attempts and pauses bound the move's delay."""
 
     def test_lock_timeout_is_a_few_seconds(self):
         assert 2.0 <= timeout_seconds(SWAP_LOCK_TIMEOUT) <= 3.0
@@ -1224,18 +1215,15 @@ class TestSwapBound:
         return conn
 
     def test_long_holder_probe_uses_the_wall_clock_over_all_three_relations(self):
-        # The probe runs inside the move's transaction, where now() is frozen at
-        # BEGIN (before the copy): a holder that started during the copy would
-        # never look old. DETACH locks the parent, the DEFAULT partition and the
-        # partition, so all three are watched.
+        # now() is frozen at the move's BEGIN, so a holder that started during the copy would never
+        # look old. DETACH locks the parent, the DEFAULT partition and the partition: all three are watched.
         sql = tiering_mod._LONG_HOLDER_SQL
         assert "clock_timestamp()" in sql and "now()" not in sql
         assert "ANY($1::oid[])" in sql
 
     def test_deadlock_waiter_gives_the_copy_up_at_once(self, monkeypatch):
-        # A writer through the parent queued on our SHARE lock cannot finish
-        # before this transaction ends; sleeping through the schedule would
-        # only keep it blocked (the backfill's batches time out at 120 s).
+        # A writer through the parent queued on our SHARE lock cannot finish before this
+        # transaction ends; sleeping through the schedule would only keep it blocked.
         conn = self._swap_conn(monkeypatch, waiter=True)
         with pytest.raises(TieringBusy) as excinfo:
             asyncio.run(_swap(conn, **_SWAP_ARGS))
@@ -1279,9 +1267,7 @@ class TestSwapBound:
 
 
 class _SwapConn:
-    """asyncpg stand-in for _swap: answers the two pg_locks probes, records
-    the swap DDL and raises the queued detach_errors on successive DETACHes.
-    Pauses between attempts are recorded, not slept."""
+    """asyncpg stand-in for _swap: answers the two pg_locks probes, records the DDL, raises detach_errors in turn."""
 
     def __init__(self, *, waiter=False, holder=False, detach_errors=(), detach_delay=0.0):
         self.waiter, self.holder = waiter, holder
@@ -1320,7 +1306,7 @@ _SWAP_ARGS = dict(parent="mqtt_messages", part=PART, rep=REP, old=safe_name(PART
                   parent_oid=1, part_oid=2, default_oid=3)
 
 
-# ── follow-up: cold_tablespace_location, tablespace creation, mount check ────
+# --- cold_tablespace_location, tablespace creation, mount check ---
 
 class TestColdTablespaceLocation:
     def test_default_is_the_overlay_mount_point(self):
@@ -1343,9 +1329,8 @@ class TestColdTablespaceLocation:
         assert "ignored" not in warns[0]
 
     def test_relative_path_is_a_config_warning_only(self):
-        # The job cannot create the tablespace there (ensure_cold_tablespace
-        # refuses), but tiering runs once it exists: the bare validate() that
-        # run_cycle and the CLI gate on stays clean.
+        # The job cannot create the tablespace there, but tiering runs once it exists:
+        # the bare validate() that run_cycle and the CLI gate on stays clean.
         assert TieringPolicy(cold_tablespace_location="cold").validate() == []
         warns = TieringPolicy(cold_tablespace_location="cold").validate(raw={"cold_tablespace_location": "cold"})
         assert len(warns) == 1 and "absolute path" in warns[0] and "still runs" in warns[0]
@@ -1414,11 +1399,7 @@ class _ServerMessage:
 
 
 class _TablespaceConn:
-    """Minimal asyncpg stand-in for ensure_cold_tablespace: `exists` answers
-    the pg_tablespace probe (`exists_after` once the CREATE has raised),
-    `superuser` the is_superuser probe, `error` is raised by the CREATE
-    TABLESPACE and `messages` are the NOTICE/WARNING lines the server emits
-    with it (delivered the way asyncpg does, with call_soon)."""
+    """asyncpg stand-in for ensure_cold_tablespace: canned probe answers, a CREATE error, NOTICEs sent via call_soon."""
 
     def __init__(self, exists=False, error=None, in_tx=False, *, superuser=True, exists_after=None,
                  messages=()):
@@ -1535,9 +1516,8 @@ class TestEnsureColdTablespace:
         'konnte Zugriffsrechte für Verzeichnis »/var/lib/postgresql/cold« nicht setzen: Die Operation ist nicht erlaubt',
     ])
     def test_unwritable_directory_names_the_unmounted_dataset_before_chown(self, message):
-        # With the overlay the directory always exists (Compose binds the bare
-        # mountpoint), so an unmounted dataset surfaces as this 42501 — and
-        # chowning the bare directory would put the tablespace on the root fs.
+        # With the overlay the directory always exists, so an unmounted dataset surfaces as this
+        # 42501 — and chowning the bare directory would put the tablespace on the root filesystem.
         error = asyncpg.exceptions.InsufficientPrivilegeError(message)
         with pytest.raises(TieringRefused) as excinfo:
             asyncio.run(ensure_cold_tablespace(_TablespaceConn(error=error), self.POLICY))

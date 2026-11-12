@@ -1,30 +1,12 @@
 #!/usr/bin/env bash
-#
-# Runs the lab suite for scripts/setup-cold-storage.sh: builds the lab image,
-# starts it as a privileged container (loop devices, mounts, a Docker daemon
-# of its own), copies this checkout in, hands the inner daemon the two images
-# its stack needs, and runs suite.sh there. That container is the "host" the
-# script is tested on; nothing is formatted, mounted or written outside it.
-#
+# Runs the lab suite for scripts/setup-cold-storage.sh in a privileged container (loop
+# devices, mounts, a Docker daemon of its own): that container is the "host" under test.
 #   tests/cold_storage_lab/run.sh                 # everything
 #   tests/cold_storage_lab/run.sh image device    # only those sections of suite.sh
 #   KEEP=1 tests/cold_storage_lab/run.sh          # leave the container for a look around
-#
-# Needs Docker with privileged containers, and btrfs in the kernel the
-# containers run on (the suite stops and says so when it is missing). Works
-# from Linux and from Git Bash on Windows. ZFS is covered with stand-ins for
-# zpool and zfs (stubs/) everywhere, and on a real pool where that kernel has
-# ZFS: the suite then makes a pool of its own on one of its loop devices,
-# named coldlab<time>, and destroys it again; where it cannot, it says at the
-# end that the ZFS layout did not run on a real pool. Loop devices and pools
-# are the kernel's. Ctrl-C here ends this script, which then has the suite
-# stopped inside the container and what it made taken away; a container that
-# is removed from outside while the suite runs (docker rm -f) leaves them
-# behind — "zpool destroy" for coldlab<time> and coldlab<time>b, and
-# "losetup -d" for the devices whose file is under /lab/disks. The lab
-# expects Docker's usual overlay storage: with the container's own root on
-# btrfs or ZFS the script rightly refuses to put the default image there, and
-# those cases fail.
+# Needs privileged Docker (overlay storage) with btrfs in its kernel; ZFS runs on stand-ins (stubs/), and on a
+# real pool where that kernel has ZFS. Loop devices and pools are the kernel's: removing the container mid-run
+# leaves them behind (zpool destroy coldlab<time>, losetup -d for files under /lab/disks).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -45,9 +27,8 @@ POSTGRES_IMAGE="$(sed -n 's/^ *image: *\(postgres:[^ ]*\) *$/\1/p' "$REPO/docker
 
 docker build -q -t "$IMAGE" "$context" >/dev/null
 docker image inspect "$POSTGRES_IMAGE" >/dev/null 2>&1 || docker pull -q "$POSTGRES_IMAGE" >/dev/null
-# A container kept from an earlier run may still hold loop devices and pools,
-# or have a suite running in it: those are the kernel's, so they are taken
-# away before the container is.
+# A container kept from an earlier run may still hold loop devices and pools, or a
+# running suite: those are the kernel's, so they go before the container does.
 docker exec "$NAME" bash "$SUITE" cleanup >/dev/null 2>&1 || true
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker volume rm "$NAME-docker" >/dev/null 2>&1 || true
