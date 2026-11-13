@@ -1,7 +1,32 @@
-import type { Map as MlMap, RasterDEMSourceSpecification, SkySpecification, StyleSpecification } from "maplibre-gl";
+import type {
+  Map as MlMap,
+  RasterDEMSourceSpecification,
+  RasterLayerSpecification,
+  SkySpecification,
+  StyleSpecification,
+} from "maplibre-gl";
 
 export type MapProvider = "osm" | "mapbox";
-export type OsmBasemap = "osm" | "osm_hot" | "carto_positron" | "carto_dark";
+export type OsmBasemap = "osm" | "osm_dark" | "osm_hot";
+
+/** Basemap when no Mapbox token is configured (and no choice is stored). */
+export const DEFAULT_OSM_BASEMAP: OsmBasemap = "osm_dark";
+
+/** Stored basemap id → a current one. The Carto basemaps were removed when
+ *  their tiles began requiring an API key; a saved Carto choice maps to the
+ *  OSM basemap of the same brightness. */
+export function normalizeOsmBasemap(stored: unknown): OsmBasemap {
+  switch (stored) {
+    case "osm":
+    case "osm_dark":
+    case "osm_hot":
+      return stored;
+    case "carto_positron":
+      return "osm";
+    default:
+      return DEFAULT_OSM_BASEMAP;
+  }
+}
 
 export interface BuildStyleOptions {
   provider: MapProvider;
@@ -13,8 +38,6 @@ export interface BuildStyleOptions {
 
 const ATTRIB_OSM =
   '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors';
-const ATTRIB_CARTO =
-  '© <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>';
 const ATTRIB_MAPBOX =
   '© <a href="https://www.mapbox.com/about/maps/" target="_blank" rel="noopener">Mapbox</a>';
 // Tilezen DEM has no required attribution (public-domain USGS/NASA sources).
@@ -56,7 +79,34 @@ function normalizeMapboxStylePath(style: string): string {
     : style;
 }
 
-function osmTiles(basemap: OsmBasemap): { tiles: string[]; tileSize: 256 | 512; attribution: string } {
+type RasterPaint = NonNullable<RasterLayerSpecification["paint"]>;
+
+interface BaseTiles {
+  tiles: string[];
+  tileSize: 256 | 512;
+  attribution: string;
+  paint?: RasterPaint;
+}
+
+/** Turns the light OSM Standard tiles into a dark basemap in the renderer, so
+ *  no dark tile service (or key) is needed. Brightness min above max inverts
+ *  lightness; the 180° hue rotation then puts the hues back (water stays blue,
+ *  parks green). Saturation and contrast are pulled down so overlays stand out. */
+const OSM_DARK_PAINT: RasterPaint = {
+  "raster-brightness-min": 0.85,
+  "raster-brightness-max": 0.07,
+  "raster-hue-rotate": 180,
+  "raster-saturation": -0.45,
+  "raster-contrast": -0.15,
+};
+
+const OSM_STANDARD_TILES = [
+  "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
+  "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png",
+  "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png",
+];
+
+function osmTiles(basemap: OsmBasemap): BaseTiles {
   switch (basemap) {
     case "osm_hot":
       return {
@@ -68,43 +118,15 @@ function osmTiles(basemap: OsmBasemap): { tiles: string[]; tileSize: 256 | 512; 
         tileSize: 256,
         attribution: ATTRIB_OSM,
       };
-    case "carto_positron":
-      return {
-        tiles: [
-          "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
-          "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
-          "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
-          "https://d.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
-        ],
-        tileSize: 256,
-        attribution: `${ATTRIB_OSM} ${ATTRIB_CARTO}`,
-      };
-    case "carto_dark":
-      return {
-        tiles: [
-          "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
-          "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
-          "https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
-          "https://d.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
-        ],
-        tileSize: 256,
-        attribution: `${ATTRIB_OSM} ${ATTRIB_CARTO}`,
-      };
+    case "osm_dark":
+      return { tiles: OSM_STANDARD_TILES, tileSize: 256, attribution: ATTRIB_OSM, paint: OSM_DARK_PAINT };
     case "osm":
     default:
-      return {
-        tiles: [
-          "https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
-          "https://b.tile.openstreetmap.org/{z}/{x}/{y}.png",
-          "https://c.tile.openstreetmap.org/{z}/{x}/{y}.png",
-        ],
-        tileSize: 256,
-        attribution: ATTRIB_OSM,
-      };
+      return { tiles: OSM_STANDARD_TILES, tileSize: 256, attribution: ATTRIB_OSM };
   }
 }
 
-function mapboxTiles(token: string, stylePath: string): { tiles: string[]; tileSize: 512; attribution: string } {
+function mapboxTiles(token: string, stylePath: string): BaseTiles {
   const style = normalizeMapboxStylePath(stylePath);
   return {
     tiles: [
@@ -137,7 +159,7 @@ export function buildMapStyle(opts: BuildStyleOptions): StyleSpecification {
         id: BASE_LAYER_ID,
         type: "raster",
         source: BASE_SOURCE_ID,
-        paint: {},
+        paint: base.paint ?? {},
       },
     ],
   };
@@ -169,7 +191,7 @@ export function ensureTerrain(map: MlMap, exaggeration: number, isDark = false):
 
 /** A basemap whose tiles are dark (so the daytime sky/fog would clash). */
 export function isDarkBasemap(provider: MapProvider, osmBasemap: OsmBasemap, mapboxStyle: string): boolean {
-  return provider === "mapbox" ? mapboxStyle.includes("dark") : osmBasemap === "carto_dark";
+  return provider === "mapbox" ? mapboxStyle.includes("dark") : osmBasemap === "osm_dark";
 }
 
 /** `setTerrain(null)` alone leaves MapLibre 5's depth pass referencing destroyed
