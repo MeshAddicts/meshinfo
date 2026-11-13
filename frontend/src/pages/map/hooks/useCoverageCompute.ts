@@ -13,7 +13,12 @@ import { effectiveAltitudeMslM } from "../rf/altitudeAssessment";
 import { AGGRESSION_STOPS, type MergeOrigin, reliabilityPreset, REPRESENTATIVE_CLUTTER_DB } from "../rf/coverageAnalysis";
 import { type ContourFeatureCollection, extractCoverageContours } from "../rf/coverageContours";
 import { COVERAGE_DETAIL_MAX_TILES, COVERAGE_DETAIL_SIZE } from "../rf/coverageDetail";
-import { exportCoverage } from "../rf/coverageExport";
+import {
+  type CoverageExportFormat,
+  type CoverageMarginGrid,
+  exportCoverageGeoJson,
+  exportCoverageKmz,
+} from "../rf/coverageExport";
 import type { RasterParams } from "../rf/coverageRaster";
 import { extractCoverageRays, type VisibilityRayFeatureCollection } from "../rf/coverageRays";
 import type { SliceOrigin } from "../rf/coverageSliceWorker";
@@ -23,7 +28,7 @@ import { type BuildingRaster, downsampleBuildingRaster } from "../terrain/buildi
 import { type CanopyRaster, downsampleCanopyRaster } from "../terrain/canopyTiles";
 import { type ClutterRaster, downsampleClutterRaster } from "../terrain/landcoverTiles";
 import { buildCoverageRasters } from "../terrain/rasterBuildClient";
-import { type DEM, type DEMBounds, downsampleDEM, sampleDEMAt, unionDemBoundsAround } from "../terrain/terrainDEM";
+import { type DEM, downsampleDEM, sampleDEMAt, unionDemBoundsAround } from "../terrain/terrainDEM";
 import { type DemSource, fetchElevationAt } from "../terrain/terrainRgb";
 import { MAX_MERGE_ORIGINS } from "./useCoverageMergeOrigins";
 import type { CoverageState } from "./useCoverageState";
@@ -216,12 +221,7 @@ export function useCoverageCompute(params: CoverageComputeParams) {
   /** Cached visibility-ray fan. */
   const coverageRaysRef = useRef<VisibilityRayFeatureCollection | null>(null);
   /** Cached margin grid for export. */
-  const coverageMarginRef = useRef<{
-    data: Float32Array;
-    width: number;
-    height: number;
-    bounds: DEMBounds;
-  } | null>(null);
+  const coverageMarginRef = useRef<CoverageMarginGrid | null>(null);
   /** Blob URL for coverage-raster; tracked so we revoke on update/close (else ~5 MB leak per Survey compute). */
   const coverageRasterUrlRef = useRef<string | null>(null);
 
@@ -231,25 +231,37 @@ export function useCoverageCompute(params: CoverageComputeParams) {
     coverageResultRef.current = c.coverageResult;
   }, [c.coverageResult]);
 
-  /** Export coverage as GeoJSON or KML (iso-margin 0/10/20 dB contours + metadata).
-   *  Contours are built lazily from the cached margin grid. */
-  const handleCoverageExport = useCallback((format: "geojson" | "kml") => {
-    if (!coverageContoursRef.current && coverageMarginRef.current) {
-      const m = coverageMarginRef.current;
-      coverageContoursRef.current = extractCoverageContours({
-        margin: m.data,
-        width: m.width,
-        height: m.height,
-        bounds: m.bounds,
-        thresholdsDb: [0, 10, 20],
-      });
-    }
-    if (!coverageResultRef.current || !coverageContoursRef.current) {
+  /** Export the last compute. GeoJSON carries the iso-margin 0/10/20 dB
+   *  contours (built lazily from the cached margin grid); KMZ carries the
+   *  painted raster as a Google Earth ground overlay. */
+  const handleCoverageExport = useCallback((format: CoverageExportFormat) => {
+    const result = coverageResultRef.current;
+    const grid = coverageMarginRef.current;
+    if (!result || !grid) {
       toast("Nothing to export yet — run a coverage prediction first.");
       return;
     }
-    exportCoverage(format, coverageContoursRef.current, coverageResultRef.current);
-    toast(`Coverage exported as ${format.toUpperCase()}.`, { kind: "success" });
+    if (format === "geojson") {
+      if (!coverageContoursRef.current) {
+        coverageContoursRef.current = extractCoverageContours({
+          margin: grid.data,
+          width: grid.width,
+          height: grid.height,
+          bounds: grid.bounds,
+          thresholdsDb: [0, 10, 20],
+        });
+      }
+      exportCoverageGeoJson(coverageContoursRef.current, result);
+      toast("Coverage exported as GeoJSON.", { kind: "success" });
+      return;
+    }
+    exportCoverageKmz(grid, result).then(
+      () => toast("Coverage exported as KMZ.", { kind: "success" }),
+      (err) => {
+        console.warn("[Map] Coverage KMZ export failed:", err);
+        toast("Couldn't build the KMZ export. See the developer console.", { kind: "error" });
+      },
+    );
   }, []);
 
   /** Run pool over the registered raster generation, stitch slices, paint RGBA
