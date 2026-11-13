@@ -502,10 +502,9 @@ export function MapSettingsPanel({
                   }}
                 >
                   <optgroup label="OpenStreetMap (free)">
+                    <option value="osm:osm_dark">OSM Dark</option>
                     <option value="osm:osm">OSM Standard</option>
                     <option value="osm:osm_hot">OSM Humanitarian</option>
-                    <option value="osm:carto_positron">Carto Positron (Light)</option>
-                    <option value="osm:carto_dark">Carto Dark Matter (Dark)</option>
                   </optgroup>
                   <optgroup label={canUseMapbox ? "Mapbox (token)" : "Mapbox — token not configured"}>
                     <option value="mapbox:mapbox/dark-v11" disabled={!canUseMapbox}>Mapbox Dark</option>

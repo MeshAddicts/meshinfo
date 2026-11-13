@@ -4,6 +4,7 @@ import { useBottomSheetGesture } from "../hooks/useBottomSheet";
 import { parseLatLng } from "../lib/helpers";
 import { COMMON_ANTENNAS, COMMON_HARDWARE, type CoverageReliability, type CoverageResult, type MergeOrigin, MESHTASTIC_PRESETS, RELIABILITY_PRESETS } from "../rf/coverageAnalysis";
 import { COVERAGE_DETAIL_SIZE,type CoverageDetail } from "../rf/coverageDetail";
+import type { CoverageExportFormat } from "../rf/coverageExport";
 import { type CoveragePanelSettings, readPresetLibrary } from "../rf/coveragePresets";
 import type { DemSource } from "../terrain/terrainRgb";
 import { AggressionSlider, BuildingStatusChip, CanopyStatusChip, ClassLegend, ClutterStatusChip } from "./ClutterUI";
@@ -245,7 +246,7 @@ export function MapCoveragePanel({
   onShowContoursChange: (show: boolean) => void;
   showRays: boolean;
   onShowRaysChange: (show: boolean) => void;
-  onExport: (format: "geojson" | "kml") => void;
+  onExport: (format: CoverageExportFormat) => void;
   /** Custom coord typed into the origin label. Caller detaches any anchor and moves the pin. */
   onOriginChange?: (lngLat: [number, number]) => void;
   /** Desktop-only: open the Scan tool against the same origin + settings,
@@ -893,12 +894,12 @@ export function MapCoveragePanel({
                   const d = e.currentTarget.closest("details") as HTMLDetailsElement | null;
                   d?.removeAttribute("open");
                   d?.querySelector<HTMLElement>("summary")?.focus();
-                  onExport("kml");
+                  onExport("kmz");
                 }}
                 className="text-left px-2 py-1.5 rounded text-[11px] text-gray-200 hover:bg-cyan-500/20 hover:text-cyan-200 transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-gray-200 disabled:cursor-not-allowed"
               >
-                <div className="font-medium">KML</div>
-                <div className="text-[9px] text-gray-500">Google Earth · SPLAT!</div>
+                <div className="font-medium">KMZ</div>
+                <div className="text-[9px] text-gray-500">Google Earth · coverage overlay</div>
               </button>
             </div>
           </details>

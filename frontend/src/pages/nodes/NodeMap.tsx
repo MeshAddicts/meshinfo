@@ -9,7 +9,7 @@ import {
 import { useEffect, useMemo, useRef } from "react";
 
 import { env } from "../../env";
-import { buildMapStyle, type MapProvider, type OsmBasemap } from "../../maps/mapStyle";
+import { buildMapStyle, type MapProvider, normalizeOsmBasemap } from "../../maps/mapStyle";
 import { INode } from "../../types";
 
 interface NodePosition {
@@ -182,8 +182,7 @@ export const NodeMap = ({ node }: { node: INode }) => {
       env.MAPBOX_STYLE ??
       "mapbox/dark-v11";
 
-    const osmBasemap =
-      readJson<OsmBasemap | null>(LS_KEYS.osmBasemap, null) ?? "carto_dark";
+    const osmBasemap = normalizeOsmBasemap(readJson<unknown>(LS_KEYS.osmBasemap, null));
 
     return { provider, mapboxStyle, osmBasemap };
   }, [hasMapbox]);

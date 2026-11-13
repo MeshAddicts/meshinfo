@@ -11,7 +11,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { toast } from "../components/toastStore";
 import { env } from "../env";
 import { reverseGeocode } from "../maps/geocoder";
-import { buildMapStyle, ensureBuildings3D, ensureTerrain, isDarkBasemap, type OsmBasemap, removeBuildings3D, removeTerrain } from "../maps/mapStyle";
+import { buildMapStyle, ensureBuildings3D, ensureTerrain, isDarkBasemap, normalizeOsmBasemap, type OsmBasemap, removeBuildings3D, removeTerrain } from "../maps/mapStyle";
 import { useGetChannelsQuery, useGetConfigQuery, useGetNodesQuery, useGetTraceroutesQuery } from "../slices/apiSlice";
 import { type INode, type ITraceroutesResponse } from "../types";
 import { channelLabel, channelModeFrom, wireNamesFrom } from "../utils/channelDisplay";
@@ -188,10 +188,9 @@ export function Map() {
     );
   });
 
-  const [osmBasemap, setOsmBasemap] = useState<OsmBasemap>(() => {
-    const stored = readJson<OsmBasemap | null>(LS_KEYS.osmBasemap, null);
-    return stored ?? "carto_dark";
-  });
+  const [osmBasemap, setOsmBasemap] = useState<OsmBasemap>(() =>
+    normalizeOsmBasemap(readJson<unknown>(LS_KEYS.osmBasemap, null)),
+  );
 
   const [recentDays, setRecentDays] = useState<number>(() => {
     const stored = readJson<number | null>(LS_KEYS.recentDays, null);
