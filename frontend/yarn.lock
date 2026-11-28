@@ -566,14 +566,14 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@eslint/config-array@npm:^0.23.6":
-  version: 0.23.6
-  resolution: "@eslint/config-array@npm:0.23.6"
+"@eslint/config-array@npm:^0.23.7":
+  version: 0.23.7
+  resolution: "@eslint/config-array@npm:0.23.7"
   dependencies:
     "@eslint/object-schema": "npm:^3.0.5"
     debug: "npm:^4.3.1"
     minimatch: "npm:^11.0.5"
-  checksum: 10c0/adf798a55b4f58e1db954347633ca2c07c51d413590f274f77d1d94d3413de3d321e3558e313f616a822cb76d90e9c378ec6dd2f49b3e51a2070e61f4405f2ae
+  checksum: 10c0/56e601428716fd32f74b5e32c41eaa5264cab013fadbf679bbae55b954bb1b58f7c2f0c552eeccfca4bcb4de6e458e65fa1325ef8c7e59f857b095893c56da80
   languageName: node
   linkType: hard
 
@@ -1099,18 +1099,18 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@maplibre/geojson-vt@npm:^6.3.1":
-  version: 6.3.3
-  resolution: "@maplibre/geojson-vt@npm:6.3.3"
+"@maplibre/geojson-vt@npm:^7.0.1":
+  version: 7.0.1
+  resolution: "@maplibre/geojson-vt@npm:7.0.1"
   dependencies:
     kdbush: "npm:^4.1.0"
-  checksum: 10c0/84fa9ae08e402ea199a046a471a60607f521e382de8b3d810058fcf5f1db0d9dd807c0fbd2525fb55035d939afa182497f2b29ada900d2e6904c92f465c1e060
+  checksum: 10c0/42e0df5ac5601feab6a4bef9955f1c35fe97d317876c835c9311e603dcf984a9d5cf409b2e3840f1c9fd113bbe62def96eee39f08a26275b32d23c7b50cf7ab2
   languageName: node
   linkType: hard
 
-"@maplibre/maplibre-gl-style-spec@npm:^26.8.0":
-  version: 26.9.0
-  resolution: "@maplibre/maplibre-gl-style-spec@npm:26.9.0"
+"@maplibre/maplibre-gl-style-spec@npm:^26.11.0":
+  version: 26.11.0
+  resolution: "@maplibre/maplibre-gl-style-spec@npm:26.11.0"
   dependencies:
     "@mapbox/jsonlint-lines-primitives": "npm:^2.0.3"
     "@mapbox/unitbezier": "npm:^1.0.0"
@@ -1122,7 +1122,7 @@ __metadata:
     gl-style-format: dist/gl-style-format.mjs
     gl-style-migrate: dist/gl-style-migrate.mjs
     gl-style-validate: dist/gl-style-validate.mjs
-  checksum: 10c0/fc3fcc0547c5fad59c8d4e297388b779ba514c572a3782ad5f4f6e5b5cf03a2e604291f500059de211fe35b25711437d53759a1ad809a765ce3591bdd94c3cf1
+  checksum: 10c0/65d806531b2990f6825f740c67b06c9960bfd3c69dca6cefe52804a166c0072daf7e9fde6c773af626da2d51827cb143fae7facc104ab695b53aa39edbd0023d
   languageName: node
   linkType: hard
 
@@ -2459,12 +2459,12 @@ __metadata:
   linkType: hard
 
 "eslint@npm:^10.1.0":
-  version: 10.15.0
-  resolution: "eslint@npm:10.15.0"
+  version: 10.16.0
+  resolution: "eslint@npm:10.16.0"
   dependencies:
     "@eslint-community/eslint-utils": "npm:^4.8.0"
     "@eslint-community/regexpp": "npm:^4.12.2"
-    "@eslint/config-array": "npm:^0.23.6"
+    "@eslint/config-array": "npm:^0.23.7"
     "@eslint/config-helpers": "npm:^0.7.0"
     "@eslint/core": "npm:^1.2.1"
     "@eslint/plugin-kit": "npm:^0.7.3"
@@ -2499,7 +2499,7 @@ __metadata:
       optional: true
   bin:
     eslint: bin/eslint.js
-  checksum: 10c0/81775d3bc273007b3b6f08d114f57b0c83527e8ebbb89674726bbd29b66883a6fef016a0271e05014a067d1c1079514c5523df96b86740fdfe65ef56abacb030
+  checksum: 10c0/64e67dc2e943a596987f4f7ed721b0de5fdc3dcbfbeef64866c6415bf3d21d0a69a0b0d9e26b4092e295a5020f6f3ddd8e98d074e25e6528e53288e5dc48f771
   languageName: node
   linkType: hard
 
@@ -3251,15 +3251,15 @@ __metadata:
   linkType: hard
 
 "maplibre-gl@npm:^6.0.0":
-  version: 6.19.0
-  resolution: "maplibre-gl@npm:6.19.0"
+  version: 6.20.0
+  resolution: "maplibre-gl@npm:6.20.0"
   dependencies:
     "@mapbox/point-geometry": "npm:^1.1.0"
     "@mapbox/tiny-sdf": "npm:^2.3.0"
     "@mapbox/unitbezier": "npm:^1.0.0"
     "@mapbox/vector-tile": "npm:^3.0.0"
-    "@maplibre/geojson-vt": "npm:^6.3.1"
-    "@maplibre/maplibre-gl-style-spec": "npm:^26.8.0"
+    "@maplibre/geojson-vt": "npm:^7.0.1"
+    "@maplibre/maplibre-gl-style-spec": "npm:^26.11.0"
     "@maplibre/mlt": "npm:^1.3.0"
     "@maplibre/vt-pbf": "npm:^4.3.3"
     "@types/geojson": "npm:^7946.0.16"
@@ -3268,12 +3268,12 @@ __metadata:
     gl-matrix: "npm:^3.4.4"
     kdbush: "npm:^4.1.0"
     murmurhash-js: "npm:^1.0.0"
-    pbf: "npm:^5.1.2"
+    pbf: "npm:^5.2.0"
     potpack: "npm:^2.1.0"
     quickselect: "npm:^3.0.0"
     tinyqueue: "npm:^3.0.0"
     zustand: "npm:^5.1.0"
-  checksum: 10c0/6daeb441e778c5ad274d8fcb4e3a48d641c4ba8929a448b4ac51e20a98a6b304143b41a268d99e4599d4456a075539430db2b7e864be4c9ed3e5c95ebe798211
+  checksum: 10c0/db2b7fd603f39b38df7fbb55d5ce8953ba07589faeebd6ecfd581322457e0dd7081cdbf6d1cd9cb18aef47e4ddbda28a4a12fd35d087c656e55a81a995c203ba
   languageName: node
   linkType: hard
 
@@ -3647,6 +3647,17 @@ __metadata:
   languageName: node
   linkType: hard
 
+"pbf@npm:^5.2.0":
+  version: 5.2.1
+  resolution: "pbf@npm:5.2.1"
+  dependencies:
+    protocol-buffers-schema: "npm:^3.6.1"
+  bin:
+    pbf: bin/pbf
+  checksum: 10c0/a7e2c96f04ec96bbc9aba5ca1f3a3e07963ad660663ac071f51bf0481ecf15502c967df1ad7656ab1990df1a7143769cc30c2de6250e9c3015b559b6d5cc43ba
+  languageName: node
+  linkType: hard
+
 "picocolors@npm:^1.1.1":
   version: 1.1.1
   resolution: "picocolors@npm:1.1.1"
@@ -3719,7 +3730,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"protocol-buffers-schema@npm:^3.3.1":
+"protocol-buffers-schema@npm:^3.3.1, protocol-buffers-schema@npm:^3.6.1":
   version: 3.6.1
   resolution: "protocol-buffers-schema@npm:3.6.1"
   checksum: 10c0/e0a6858d085aa1a6719c924c0be52000dafc24bf3b0d0b1a6e1e68c8b95f8efe3d4069902e14270a2101f2144374eeefc11381dff07ad9909386a4fbc70c7ebd
